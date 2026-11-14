@@ -418,10 +418,10 @@ describe "Endpoint resolution (#3567)" do
 
   it "round-trips a marked claim through JSON and YAML" do
     endpoint = Endpoint.new("/status", "GET", Details.new(PathInfo.new("api.go", 4)))
-    endpoint.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED}
-    JSON.parse(endpoint.to_json)["resolution"].should eq(JSON.parse(%({"prefix":"unresolved"})))
-    Endpoint.from_json(endpoint.to_json).resolution.should eq({"prefix" => "unresolved"})
-    Endpoint.from_yaml(endpoint.to_yaml).resolution.should eq({"prefix" => "unresolved"})
+    endpoint.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED, "handler" => Endpoint::RESOLUTION_HEURISTIC}
+    JSON.parse(endpoint.to_json)["resolution"].should eq(JSON.parse(%({"prefix":"unresolved","handler":"heuristic"})))
+    Endpoint.from_json(endpoint.to_json).resolution.should eq({"prefix" => "unresolved", "handler" => "heuristic"})
+    Endpoint.from_yaml(endpoint.to_yaml).resolution.should eq({"prefix" => "unresolved", "handler" => "heuristic"})
     Endpoint::RESOLUTION_VALUES.should eq(["heuristic", "unresolved"])
   end
 

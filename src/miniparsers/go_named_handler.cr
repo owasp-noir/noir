@@ -112,6 +112,15 @@ class Noir::GoNamedHandler
   @handlers = Hash(String, Key).new
   # Plain-reference handler text -> the definition it names.
   @handler_bodies = Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
+  # Reference text, not body identity: the same definition can be reached
+  # through a typed receiver and through a receiver-name guess.
+  @heuristic_references = Set(String).new
+  @heuristic_handlers = Set(String).new
+  @heuristic_routes = Set(Tuple(Int32, String)).new
+  @selected_types = Hash(String, Tuple(String, String)).new
+  @handler_types = Hash(String, Tuple(String, Tuple(String, String))).new
+  @route_types = Hash(Int32, Hash(String, Set(Tuple(String, String)))).new
+  @global_types = Hash(String, Set(Tuple(String, String))).new
   @declared : Hash(String, Set(String))? = nil
   # `name` -> {package, type} for `name := pkg.T{...}` and the like.
   @qualified_types = Hash(String, Set({String, String})).new
@@ -176,6 +185,41 @@ class Noir::GoNamedHandler
     functions = Noir::GoCalleeExtractor.collect_function_bodies(content, path)
     methods = Noir::GoCalleeExtractor.collect_method_bodies(content, path)
     route_rows = routes.map(&.line).sort!
+    # A package variable is in scope too; struct fields and locals in other
+    # functions are not. Read just the top-level var declarations once.
+    Noir::TreeSitter.parse_go(content) do |root|
+      Noir::TreeSitter.each_named_child(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "var_declaration"
+        declaration = Noir::TreeSitter.node_text(node, content).lstrip.lchop("var").lstrip
+        {ASSIGNED_TYPE_RE, NEW_TYPE_RE, DECLARED_TYPE_RE}.each do |re|
+          declaration.scan(re) do |m|
+            (@global_types[m[1]] ||= Set(Tuple(String, String)).new) << {m[2]? || "", m[3]}
+          end
+        end
+      end
+    end
+    # The selection index below is file-wide: a method's own receiver, or
+    # a local in another function, can supply its type by name alone. Only
+    # a declaration in scope establishes that link.
+    # ponytail: function-level declarations still ignore nested-block
+    # shadowing; use lexical binding scopes when reading those bindings.
+    functions.each_value.chain(methods.each_value.flat_map(&.itself)).each do |fb|
+      first = route_rows.bsearch_index { |row| row >= fb.start_row }
+      next unless first
+      last = fb.start_row + fb.source.count('\n')
+      next if route_rows[first] > last
+      types = Hash(String, Set(Tuple(String, String))).new
+      declarations = fb.source.gsub(/\bvar[ \t]+/, "")
+      {ASSIGNED_TYPE_RE, NEW_TYPE_RE, DECLARED_TYPE_RE}.each do |re|
+        declarations.scan(re) do |m|
+          (types[m[1]] ||= Set(Tuple(String, String)).new) << {m[2]? || "", m[3]}
+        end
+      end
+      while first < route_rows.size && route_rows[first] <= last
+        @route_types[route_rows[first]] = types
+        first += 1
+      end
+    end
     aliases = Hash(String, String).new
     aliases_read = false
     spans = Hash(Int32, Range(Int32, Int32)).new
@@ -263,6 +307,7 @@ class Noir::GoNamedHandler
         body = resolve.call(qualifier, name)
         {body, ref} if body && !registers_routes.call(body) && handler_definition?(body)
       end.uniq!(&.[0])
+      heuristic = true
       text = handler.gsub(STRING_LITERAL, %(""))
       # A middleware applied to the handler (`mw(store)(newHandler(store))`)
       # answers with what it is applied to.
@@ -280,16 +325,24 @@ class Noir::GoNamedHandler
           qualifier, _, name = call.rpartition('.')
           body = resolve.call(qualifier, name)
           next if body.nil? || registers_routes.call(body)
+          if type = @selected_types["#{qualifier}.#{name}"]?
+            @handler_types[handler] = {qualifier, type}
+          end
           if returned_closure_row(body)
             found << {body, call}
+            heuristic = candidate != handler.gsub(STRING_LITERAL, %("")) || @heuristic_references.includes?("#{qualifier}.#{name}")
           elsif (method = returned_method(body, scope)) && !registers_routes.call(method[0])
             found << method
+            heuristic = candidate != handler.gsub(STRING_LITERAL, %("")) || @heuristic_references.includes?("#{qualifier}.#{name}")
           end
         end
         text = inner || break
       end
       next unless found.size == 1
       @resolved[handler], @handler_names[handler] = found.first
+      # The wrapper's shape selects this value; its implementation was not
+      # followed to establish that it actually serves the request.
+      @heuristic_handlers << handler if heuristic
       references[handler] = {"", ""}
     end
 
@@ -305,9 +358,16 @@ class Noir::GoNamedHandler
       end
 
       key = {body.file_path, body.start_row}
+      if type = @selected_types["#{qualifier}.#{name}"]?
+        @handler_types[handler] = {qualifier, type}
+      end
       @handlers[handler] = key
       @handler_bodies[handler] = body
       returned_closure_row(body).try { |row| @closure_rows[handler] = row }
+      if @heuristic_references.includes?("#{qualifier}.#{name}") ||
+         (handler.ends_with?(')') && !handler_definition?(body) && !@closure_rows.has_key?(handler))
+        @heuristic_handlers << handler
+      end
       # One hop further: the functions the handler body calls.
       calls = body.source.scan(CALL_RE).map(&.[1]).uniq!
       keys = (@refs[handler]? || [] of Key).concat([key]).concat(keys_for.call(calls, File.dirname(body.file_path), key))
@@ -506,10 +566,16 @@ class Noir::GoNamedHandler
     end
     types = declared_types(qualifier, content)
     found = nil
+    found_type = ""
     receivers.each do |fb, recv_name, recv_type|
       next unless types.empty? ? recv_name == qualifier : types.includes?(recv_type)
       return if found
       found = fb
+      found_type = recv_type
+    end
+    if found
+      @heuristic_references << "#{qualifier}.#{name}" if types.empty?
+      @selected_types["#{qualifier}.#{name}"] = {"", found_type}
     end
     found
   end
@@ -528,6 +594,7 @@ class Noir::GoNamedHandler
         next unless fb.source.match(RECEIVER_RE).try(&.[2]) == type
         return if found && found != fb
         found = fb
+        @selected_types["#{qualifier}.#{name}"] = {package, type}
       end
     end
     found
@@ -576,17 +643,41 @@ class Noir::GoNamedHandler
 
   def handler_for(route : Noir::TreeSitterGoRouteExtractor::Route) : Handler?
     name = primary_arg(route) || return
-    name = @bound[{route.line, name}]? || name
+    route_key = {route.line, name}
+    if bound = @bound[{route.line, name}]?
+      name = bound
+    end
     if name.matches?(CLOSURE_HANDLER)
       row = route.handler_row || return
       return Handler.new("closure", @path, row + 1)
     end
     if key = @handlers[name]?
+      @heuristic_routes << route_key if @heuristic_handlers.includes?(name) || @bound.has_key?(route_key)
+      if link = @handler_types[name]?
+        qualifier, type = link
+        types = @route_types[route.line]?.try(&.[qualifier]?) || @global_types[qualifier]?
+        unless types && types.includes?(type)
+          @heuristic_routes << route_key
+        end
+      end
       return Handler.new(@handler_names[name]? || name, key[0], (@closure_rows[name]? || key[1]) + 1)
     end
     if name.matches?(/\A[A-Za-z_]\w*\z/) && (row = local_closure_row(name, route.line))
+      @heuristic_routes << route_key
       Handler.new(name, @path, row + 1)
     end
+  end
+
+  # Read after handler_for: only a handler that was actually emitted is
+  # marked. Keep the prefix claim, and keep nil when nothing was marked.
+  # ponytail: absent handler references stay unmarked; add unresolved only
+  # after deciding whether the extra rows help readers (#3567).
+  def resolution_for(route : Noir::TreeSitterGoRouteExtractor::Route) : Hash(String, String)?
+    marks = route.resolution
+    if @heuristic_routes.includes?({route.line, primary_arg(route) || ""})
+      (marks ||= Hash(String, String).new)["handler"] = Endpoint::RESOLUTION_HEURISTIC
+    end
+    marks
   end
 
   CLOSURE_HANDLER = /\A\s*func\s*\(/

@@ -1447,15 +1447,26 @@ describe "EndpointOptimizer" do
     it "keeps a resolution mark either duplicate carries" do
       optimizer = EndpointOptimizer.new(logger, options)
       marked = Endpoint.new("/status", "GET", [] of Param, Details.new(PathInfo.new("api.gen.go", 44)))
-      marked.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED}
+      marked.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED, "handler" => Endpoint::RESOLUTION_HEURISTIC}
       plain = Endpoint.new("/status", "GET", [] of Param, Details.new(PathInfo.new("openapi.yaml", 3)))
 
       [[marked, plain], [plain, marked]].each do |endpoints|
         result = optimizer.optimize_endpoints(endpoints)
         result.size.should eq(1)
-        result[0].resolution.should eq({"prefix" => "unresolved"})
+        result[0].resolution.should eq({"prefix" => "unresolved", "handler" => "heuristic"})
       end
       optimizer.optimize_endpoints([plain, plain]).first.resolution.should be_nil
+    end
+
+    it "unions different resolution claims when duplicates merge" do
+      prefix = Endpoint.new("/status", "GET")
+      prefix.resolution = {"prefix" => "unresolved"}
+      handler = Endpoint.new("/status", "GET")
+      handler.resolution = {"handler" => "heuristic"}
+      [[prefix, handler], [handler, prefix]].each do |rows|
+        EndpointOptimizer.new(logger, options).optimize_endpoints(rows).first.resolution
+          .should eq({"prefix" => "unresolved", "handler" => "heuristic"})
+      end
     end
 
     # `internal` marks a declaration of a request the app *makes*

@@ -135,7 +135,7 @@ module Analyzer::Go
                   controller_body.source.each_line { |body_line| add_beego_params(body_line, new_endpoint) }
                 end
                 new_endpoint.handler = named.handler_for(route) unless beego_router_lines.includes?(route.line)
-                new_endpoint.resolution = route.resolution
+                new_endpoint.resolution = beego_router_lines.includes?(route.line) ? route.resolution : named.resolution_for(route)
                 result << new_endpoint
                 named.bind(route, new_endpoint) unless beego_router_lines.includes?(route.line)
                 last_endpoint = new_endpoint

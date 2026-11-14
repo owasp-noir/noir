@@ -293,3 +293,178 @@ describe "Noir::GoNamedHandler#handler_for" do
     by_path["/stream"].try(&.name).should eq("stream.serveHTTP()")
   end
 end
+
+# Exercise the same handler -> map order every Go adapter uses.
+private def handler_endpoints(source : String, path = "app/routes.go", files = Hash(String, String).new,
+                              imports = Hash(String, String).new) : Hash(String, Endpoint)
+  routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+  named = Noir::GoNamedHandler.new(source, path, routes, Noir::GoNamedHandler.scope(files.merge({path => source}), imports))
+  routes.to_h do |route|
+    ep = Endpoint.new(route.path, route.verb)
+    ep.handler = named.handler_for(route)
+    ep.resolution = named.resolution_for(route)
+    {route.path, ep}
+  end
+end
+
+describe "GoNamedHandler handler resolution (#3567)" do
+  it "leaves inline, same-file, same-package and imported function definitions unmarked" do
+    source = <<-GO
+      package app
+      import api "example/api"
+      func routes() {
+          r.GET("/inline", func(c *gin.Context) {})
+          r.GET("/local", local)
+          r.GET("/sibling", sibling)
+          r.GET("/import", api.Show)
+          r.GET("/missing", api.Missing)
+      }
+      func local(c *gin.Context) {}
+      GO
+    eps = handler_endpoints(source, files: {
+      "app/other.go" => "package app\nfunc sibling(c *gin.Context) {}",
+      "api/api.go"   => "package api\nfunc Show(c *gin.Context) {}",
+    }, imports: {"example/api" => "api"})
+    eps.values.count(&.handler).should eq(4)
+    eps.values.compact_map(&.resolution).should be_empty
+  end
+
+  it "follows receiver types in the registering function, across files and imports" do
+    source = <<-GO
+      package app
+      import api "example/api"
+      func routes() {
+          a := &A{}
+          b := new(B)
+          c := api.C{}
+          r.GET("/a", a.Show)
+          r.GET("/b", b.Show)
+          r.GET("/c", c.Show)
+      }
+      func (a *A) Show(c *gin.Context) {}
+      GO
+    eps = handler_endpoints(source, files: {
+      "app/other.go" => "package app\nfunc (b *B) Show(c *gin.Context) {}",
+      "api/api.go"   => "package api\nfunc (c *C) Show(ctx *gin.Context) {}",
+    }, imports: {"example/api" => "api"})
+    eps.values.count(&.handler).should eq(3)
+    eps.values.compact_map(&.resolution).should be_empty
+  end
+
+  it "follows an explicitly typed package variable" do
+    source = <<-GO
+      package app
+      var h *H
+      func routes() { r.GET("/global", h.Show) }
+      func (h *H) Show(c *gin.Context) {}
+      GO
+    ep = handler_endpoints(source)["/global"]
+    ep.handler.should_not be_nil
+    ep.resolution.should be_nil
+  end
+
+  it "marks a receiver name or a type declaration borrowed from another function" do
+    source = <<-GO
+      package app
+      func routes() {
+          r.GET("/name", h.Show)
+          r.GET("/package", b.Other)
+          r.GET("/untyped-package", z.Last)
+      }
+      func (h *A) Show(c *gin.Context) {}
+      func elsewhere() { b := &B{} }
+      GO
+    eps = handler_endpoints(source, files: {
+      "app/other.go" => "package app\nfunc (b *B) Other(c *gin.Context) {}\nfunc (z *Z) Last(c *gin.Context) {}",
+    })
+    eps.values.each do |ep|
+      ep.handler.should_not be_nil
+      ep.resolution.should eq({"handler" => "heuristic"})
+    end
+  end
+
+  it "marks an imported receiver type borrowed by name from another function" do
+    source = <<-GO
+      package app
+      import api "example/api"
+      func routes() { r.GET("/guess", h.Show) }
+      func elsewhere(h *api.H) {}
+      GO
+    ep = handler_endpoints(source, files: {
+      "api/api.go" => "package api\nfunc (h *H) Show(c *gin.Context) {}",
+    }, imports: {"example/api" => "api"})["/guess"]
+    ep.handler.should eq(Handler.new("h.Show", "api/api.go", 2))
+    ep.resolution.should eq({"handler" => "heuristic"})
+  end
+
+  it "keeps two handlers on the same source row separate" do
+    source = <<-GO
+      package app
+      func routes() { r.GET("/guess", auth(show)); r.GET("/read", show) }
+      func show(c *gin.Context) {}
+      GO
+    eps = handler_endpoints(source)
+    eps["/guess"].resolution.should eq({"handler" => "heuristic"})
+    eps["/read"].resolution.should be_nil
+  end
+
+  it "marks wrapper shape and proximity bindings, preserving the prefix claim" do
+    source = <<-GO
+      package app
+      func routes(base string) {
+          h := func(c *gin.Context) {}
+          bound := factory("x")
+          r.GET("/wrapped", auth(show))
+          r.GET(base+"/closure", h)
+          r.GET("/bound", bound)
+          r.GET("/absent", auth(missing))
+      }
+      func show(c *gin.Context) {}
+      func factory(s string) gin.HandlerFunc {
+          return func(c *gin.Context) {}
+      }
+      GO
+    eps = handler_endpoints(source)
+    ["/wrapped", "/bound"].each { |url| eps[url].resolution.should eq({"handler" => "heuristic"}) }
+    eps["/closure"].resolution.should eq({"prefix" => "unresolved", "handler" => "heuristic"})
+    eps["/absent"].handler.should be_nil
+    eps["/absent"].resolution.should be_nil
+  end
+
+  it "follows a factory's returned closure or typed method, but marks a factory body used as the handler" do
+    source = <<-GO
+      package app
+      func routes() {
+          r.GET("/closure", factory("x"))
+          r.GET("/noargs", factory0())
+          r.GET("/method", methodFactory())
+          r.GET("/method-args", methodFactoryArg("x"))
+          r.GET("/body", unknown())
+          r.GET("/applied", auth(store)(factory("x")))
+          r.GET("/wrapped-call", auth(factory("x")))
+      }
+      func factory(s string) gin.HandlerFunc {
+          return func(c *gin.Context) {}
+      }
+      func factory0() gin.HandlerFunc {
+          return func(c *gin.Context) {}
+      }
+      func methodFactory() http.Handler {
+          h := &H{}
+          return http.HandlerFunc(h.serve)
+      }
+      func methodFactoryArg(s string) http.Handler {
+          h := new(H)
+          return h.serve
+      }
+      func (h *H) serve(c *gin.Context) {}
+      func unknown() gin.HandlerFunc { return nil }
+      GO
+    eps = handler_endpoints(source)
+    ["/closure", "/noargs", "/method", "/method-args"].each do |url|
+      eps[url].handler.should_not be_nil
+      eps[url].resolution.should be_nil
+    end
+    ["/body", "/applied", "/wrapped-call"].each { |url| eps[url].resolution.should eq({"handler" => "heuristic"}) }
+  end
+end

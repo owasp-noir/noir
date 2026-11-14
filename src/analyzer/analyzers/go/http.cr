@@ -258,7 +258,7 @@ module Analyzer::Go
                   params.each { |param| add_route_param(param, new_endpoint) }
                 end
                 new_endpoint.handler = named.handler_for(route)
-                new_endpoint.resolution = route.resolution
+                new_endpoint.resolution = named.resolution_for(route)
                 # The resolved definition, wherever it is declared (a method
                 # value of another package, a factory's returned method).
                 named.handler_body(route).try do |body|
