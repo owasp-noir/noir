@@ -5,8 +5,8 @@ require "../../../src/miniparsers/go_named_handler"
 # each (`h0 := func(...)` ... `r.Get("/p0", h0)`). Finding a route's local
 # binding walked back line by line from the route to its function's head, once
 # for the bound call and once more for the closure row: 8000 routes took ~16x
-# what 2000 did. The file's bindings are indexed once now, so 4x the routes
-# must cost about 4x the time.
+# what 2000 did. The file's bindings are indexed once now, so 8x the routes
+# must cost about 8x the time.
 private def timed_handlers(routes : Int32) : Time::Span
   source = String.build do |io|
     io << "package main\n\nfunc main() {\n\tr := chi.NewRouter()\n"
@@ -29,9 +29,15 @@ end
 
 describe "Go named-handler local binding scaling" do
   it "resolves locally bound closures in linear time" do
-    small = (0...3).min_of { timed_handlers(2000) }
-    large = (0...3).min_of { timed_handlers(8000) }
-    # Linear is ~4x; the per-route walks were ~16x.
-    (large / {small, 1.millisecond}.max).should be < 10.0
+    # Sizes alternate, so a slow stretch on a shared runner slows both rather
+    # than only the large runs (Windows CI once read 11.3 off a 4x spread
+    # timed as three small runs then three large).
+    small = large = Time::Span::MAX
+    5.times do
+      small = {small, timed_handlers(1000)}.min
+      large = {large, timed_handlers(8000)}.min
+    end
+    # 8x the routes: linear measures ~8x, the per-route walks ~60x.
+    (large / {small, 1.millisecond}.max).should be < 22.0
   end
 end
