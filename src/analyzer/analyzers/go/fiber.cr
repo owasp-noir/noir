@@ -6,6 +6,8 @@ module Analyzer::Go
 
     IMPORT_MARKER = "github.com/gofiber/fiber"
     BUILDER_TYPE  = "fiber.Router"
+    # Struct field types that hold a router (`s.app.Get(...)`).
+    ROUTER_TYPES = {IMPORT_MARKER => %w[App Router Group]}
 
     def analyze
       # Source Analysis
@@ -24,6 +26,7 @@ module Analyzer::Go
       wrappers = resolve_router_wrappers(file_contents, BUILDER_TYPE)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
+      router_fields = package_router_fields(file_contents, ROUTER_TYPES)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
@@ -42,7 +45,8 @@ module Analyzer::Go
         # the closure; `app.Mount("/mnt", micro)` prefixes a sub-app.
         ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
           content, cross_file_groups, handle_method: "Add",
-          closure_group_methods: ["Route"], mount_methods: ["Mount"])
+          closure_group_methods: ["Route"], mount_methods: ["Mount"],
+          router_fields: router_fields[dir]? || Set(String).new)
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route

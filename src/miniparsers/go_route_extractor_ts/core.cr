@@ -241,6 +241,9 @@ module Noir
     # `<router>.HandleFunc("/path", h).Methods("METHOD")` chain — the
     # outer call is `.Methods(...)`, so this piggybacks on the walk rather
     # than `decode_verb_call`.
+    # `router_fields` names the struct fields the package declares with a
+    # router type (`router *gin.Engine`), so `s.router.GET(...)` has a
+    # router receiver; see `router_operand_info`.
     def extract_routes(source : String,
                        external_groups : Hash(String, String) = Hash(String, String).new,
                        group_method : String = "Group",
@@ -255,7 +258,8 @@ module Noir
                        verb_calls : Bool = true,
                        string_seed : Hash(String, String)? = nil,
                        extra_group_methods : Array(String) = [] of String,
-                       literal_join : Bool = false) : Array(Route)
+                       literal_join : Bool = false,
+                       router_fields : Set(String) = Set(String).new) : Array(Route)
       routes = [] of Route
       group_prefixes = external_groups.dup
       all_handle_many = handle_many_methods.dup
@@ -298,11 +302,11 @@ module Noir
         declarers = DeclarerCache.new
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          if verb_calls && (route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups, literal_join, declarers))
+          if verb_calls && (route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups, literal_join, declarers, router_fields))
             routes << route
-          elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method, group_method, group_aliases, string_values))
+          elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method, group_method, group_aliases, string_values, router_fields))
             routes << route
-          elsif !all_handle_many.empty? && (many = decode_handle_many_call(node, source, group_prefixes, all_handle_many, group_method, group_aliases, string_values)) && !many.empty?
+          elsif !all_handle_many.empty? && (many = decode_handle_many_call(node, source, group_prefixes, all_handle_many, group_method, group_aliases, string_values, router_fields)) && !many.empty?
             many.each { |r| routes << r }
           elsif handlefunc_methods && !mux_chained_operands.includes?(node_key(node))
             # Mux's `.Methods(...)` can list several verbs at once
@@ -1521,7 +1525,8 @@ module Noir
                                  string_values : Hash(String, String) = Hash(String, String).new,
                                  closure_groups : Array(ClosureGroup) = [] of ClosureGroup,
                                  literal_join : Bool = false,
-                                 declarers : DeclarerCache = DeclarerCache.new) : Route?
+                                 declarers : DeclarerCache = DeclarerCache.new,
+                                 router_fields : Set(String) = Set(String).new) : Route?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -1533,7 +1538,7 @@ module Noir
       verb = Noir::TreeSitter.node_text(field, source)
       return unless HTTP_VERB_METHODS.includes?(verb) || extra_verbs.includes?(verb)
 
-      router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values)
+      router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values, router_fields)
       return unless router_info
       router_name, chain_prefix = router_info
       # Reject known non-router operands so call shapes like
@@ -1729,20 +1734,24 @@ module Noir
                                     groups : Hash(String, String),
                                     group_method : String,
                                     group_aliases : Array(String),
-                                    string_values : Hash(String, String)) : Tuple(String, String)?
+                                    string_values : Hash(String, String),
+                                    router_fields : Set(String)) : Tuple(String, String)?
       case Noir::TreeSitter.node_type(operand)
       when "identifier"
         {Noir::TreeSitter.node_text(operand, source), ""}
       when "selector_expression"
-        # A router held in a `Router` field — PocketBase's
-        # `se.Router.GET(...)` inside `OnServe().BindFunc`. Only that field
-        # name, so `c.Request.Get(...)`-style value lookups stay out.
+        # A router held in a struct field: one named `Router` (PocketBase's
+        # `se.Router.GET(...)` inside `OnServe().BindFunc`), or one the
+        # package declares with a router type (`router *gin.Engine`, in
+        # `router_fields`). Any other field stays out, so
+        # `c.Request.Get(...)` and `s.client.Get(url)` are not routes.
         field = Noir::TreeSitter.field(operand, "field")
-        if field && Noir::TreeSitter.node_text(field, source) == "Router"
+        name = field.try { |f| Noir::TreeSitter.node_text(f, source) }
+        if name && (name == "Router" || router_fields.includes?(name))
           {Noir::TreeSitter.node_text(operand, source), ""}
         end
       when "call_expression"
-        group_chain_operand_info(operand, source, groups, group_method, group_aliases, string_values)
+        group_chain_operand_info(operand, source, groups, group_method, group_aliases, string_values, router_fields)
       end
     end
 
@@ -1751,7 +1760,8 @@ module Noir
                                          groups : Hash(String, String),
                                          group_method : String,
                                          group_aliases : Array(String),
-                                         string_values : Hash(String, String)) : Tuple(String, String)?
+                                         string_values : Hash(String, String),
+                                         router_fields : Set(String)) : Tuple(String, String)?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -1767,7 +1777,7 @@ module Noir
       # (the verb's operand is the `.Use(...)` call) would resolve to
       # nil and the route would be dropped.
       if PASSTHROUGH_CHAIN_METHODS.includes?(method_name)
-        return router_operand_info(parent, source, groups, group_method, group_aliases, string_values)
+        return router_operand_info(parent, source, groups, group_method, group_aliases, string_values, router_fields)
       end
 
       return unless method_name == group_method || group_aliases.includes?(method_name)
@@ -1783,7 +1793,7 @@ module Noir
         return if prefix.empty?
       end
 
-      parent_info = router_operand_info(parent, source, groups, group_method, group_aliases, string_values)
+      parent_info = router_operand_info(parent, source, groups, group_method, group_aliases, string_values, router_fields)
       return unless parent_info
       router_name, parent_prefix = parent_info
       chain_prefix = prefix.empty? ? parent_prefix : group_join(parent_prefix, prefix)
@@ -1816,7 +1826,8 @@ module Noir
                                    handle_method : String,
                                    group_method : String = "Group",
                                    group_aliases : Array(String) = [] of String,
-                                   string_values : Hash(String, String) = Hash(String, String).new) : Route?
+                                   string_values : Hash(String, String) = Hash(String, String).new,
+                                   router_fields : Set(String) = Set(String).new) : Route?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -1826,7 +1837,7 @@ module Noir
       return unless operand && field
       return unless Noir::TreeSitter.node_text(field, source) == handle_method
 
-      router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values)
+      router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values, router_fields)
       return unless router_info
       router_name, chain_prefix = router_info
       return if non_router_operand?(router_name, groups)
@@ -1898,7 +1909,8 @@ module Noir
                                         handle_many_methods : Array(String),
                                         group_method : String = "Group",
                                         group_aliases : Array(String) = [] of String,
-                                        string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)
+                                        string_values : Hash(String, String) = Hash(String, String).new,
+                                        router_fields : Set(String) = Set(String).new) : Array(Route)
       empty = [] of Route
       function = Noir::TreeSitter.field(call, "function")
       return empty unless function
@@ -1908,7 +1920,7 @@ module Noir
       return empty unless operand && field
       return empty unless handle_many_methods.includes?(Noir::TreeSitter.node_text(field, source))
 
-      router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values)
+      router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values, router_fields)
       return empty unless router_info
       router_name, chain_prefix = router_info
       return empty if non_router_operand?(router_name, groups)

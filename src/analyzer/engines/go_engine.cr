@@ -2,6 +2,7 @@ require "../../models/analyzer"
 require "../../miniparsers/go_callee_extractor"
 require "../../miniparsers/go_route_extractor_ts"
 require "../../miniparsers/go_named_handler"
+require "../../miniparsers/go_struct_fields"
 require "../../miniparsers/go_request_param_extractor"
 require "../../utils/worker_threads"
 require "../../utils/c_comments"
@@ -316,6 +317,45 @@ module Analyzer::Go
     # empty map when the directory has no registered groups.
     def ts_groups_for_directory(package_groups : Hash(String, Hash(String, String)), dir : String) : Hash(String, String)
       package_groups[dir]? || Hash(String, String).new
+    end
+
+    # Per package directory, the struct fields declared with one of the
+    # router `types` ({import path => type names}, `/vN` major-version
+    # segments ignored): `router *gin.Engine`, `v1 gin.IRouter`, an embedded
+    # `*echo.Echo` (named `Echo`). Passed to the extractor as
+    # `router_fields`, so `s.router.GET(...)` is a route whatever the field
+    # is called. The qualifier is resolved through the declaring file's
+    # imports, so an aliased import counts and an unrelated `gin` package
+    # does not. A name the package also declares with another type is
+    # dropped.
+    # ponytail: keyed by field name per package, not per struct, and a
+    # same-named field of another type is only seen in files that also
+    # declare a router field; resolve the receiver's struct type if that
+    # admits a look-alike call.
+    def package_router_fields(file_contents : Hash(String, String), types : Hash(String, Array(String))) : Hash(String, Set(String))
+      routers = Hash(String, Set(String)).new
+      others = Hash(String, Set(String)).new
+      # A line that declares a field of one of the types (`router *gin.Engine`,
+      # `struct{ *echo.Echo }`): only those files are parsed.
+      names = types.values.flatten.uniq!.map { |t| Regex.escape(t) }.join('|')
+      gate = Regex.new("(?:^|[{;])[ \\t]*(?:\\w+(?:[ \\t]*,[ \\t]*\\w+)*[ \\t]+)?\\*?\\w+\\.(?:#{names})[ \\t]*(?:`|//|}|\\r?$)", Regex::Options::MULTILINE)
+      file_contents.each do |path, content|
+        next if go_test_path?(path)
+        next unless content.includes?("struct") && types.each_key.any? { |imp| content.includes?(imp) } && content.matches?(gate)
+        aliases = Noir::GoCalleeExtractor.extract_import_aliases(content)
+        dir = File.dirname(path)
+        Noir::GoStructFields.collect(content).each_value do |fields|
+          fields.each do |field|
+            qualifier, _, type_name = field.type.lchop('*').split('[').first.rpartition('.')
+            import_path = aliases[qualifier]?.try(&.gsub(/\/v\d+(?=\/|\z)/, ""))
+            router = import_path && types[import_path]?.try(&.includes?(type_name))
+            name = field.embedded ? type_name : field.name
+            ((router ? routers : others)[dir] ||= Set(String).new) << name
+          end
+        end
+      end
+      routers.each { |dir, found| others[dir]?.try { |o| found.subtract(o) } }
+      routers
     end
 
     # Project-wide string facts a route or group path can be built from:
