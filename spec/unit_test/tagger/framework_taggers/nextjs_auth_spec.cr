@@ -299,8 +299,8 @@ describe "NextjsAuthTagger" do
       FileUtils.rm_rf(dir)
       elapsed
     end
-    small = timed.call(400)
-    large = timed.call(1600)
+    small = (0...3).min_of { timed.call(400) }
+    large = (0...3).min_of { timed.call(1600) }
     # Linear is ~4x; the old per-line lookups were ~16x and more.
     (large < small * 10 || large < 0.3).should be_true
   end
