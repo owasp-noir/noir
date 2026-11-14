@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <meta name="description" content="Noir 스캔 결과에서 검토 대상을 좁히고, 소스 파일과 연결된 엔드포인트를 찾고, 실제 요청을 라우트에 대응시키는 방법.">
+  <title>엔드포인트 목록 다음에 할 일: query, reach, trace - OWASP Noir</title>
+  
+
+  
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+
+  
+  <script>
+    (function () {
+      var r = document.documentElement;
+      r.classList.add("js");
+      try {
+        var t = localStorage.getItem("noir-theme");
+        if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+
+  
+  <meta property="og:title" content="엔드포인트 목록 다음에 할 일: query, reach, trace">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/ko/blog/query-reach-trace/">
+  <meta property="og:description" content="Noir 스캔 결과에서 검토 대상을 좁히고, 소스 파일과 연결된 엔드포인트를 찾고, 실제 요청을 라우트에 대응시키는 방법.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/ko-blog-query-reach-trace.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="엔드포인트 목록 다음에 할 일: query, reach, trace">
+  <meta name="twitter:description" content="Noir 스캔 결과에서 검토 대상을 좁히고, 소스 파일과 연결된 엔드포인트를 찾고, 실제 요청을 라우트에 대응시키는 방법.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/ko-blog-query-reach-trace.png">
+  
+  
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/ko/blog/query-reach-trace/">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"엔드포인트 목록 다음에 할 일: query, reach, trace","url":"https://owasp-noir.github.io/noir/ko/blog/query-reach-trace/","datePublished":"2026-11-06","dateModified":"2026-11-15T01:58:24+09:00","description":"Noir 스캔 결과에서 검토 대상을 좁히고, 소스 파일과 연결된 엔드포인트를 찾고, 실제 요청을 라우트에 대응시키는 방법.","image":"https://owasp-noir.github.io/noir/og-images/ko-blog-query-reach-trace.png","author":{"@type":"Person","name":"Hak"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"OWASP Noir","item":"https://owasp-noir.github.io/noir/ko/"},{"@type":"ListItem","position":2,"name":"블로그","item":"https://owasp-noir.github.io/noir/ko/blog/"},{"@type":"ListItem","position":3,"name":"엔드포인트 목록 다음에 할 일: query, reach, trace"}]}</script>
+  
+  <link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/blog/query-reach-trace/">
+<link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/blog/query-reach-trace/">
+<link rel="alternate" hreflang="x-default" href="https://owasp-noir.github.io/noir/blog/query-reach-trace/">
+  
+  
+
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/geist-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+</head>
+<body>
+  <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+  
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+    <path d="M21 21l-6 -6" />
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+  </symbol>
+  <symbol id="i-contrast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M12 17a5 5 0 0 0 0 -10v10" />
+  </symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 9l6 6l6 -6" />
+  </symbol>
+  <symbol id="i-menu-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 6l16 0" />
+    <path d="M4 12l16 0" />
+    <path d="M4 18l16 0" />
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+    <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l5 5l10 -10" />
+  </symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M13 18l6 -6" />
+    <path d="M13 6l6 6" />
+  </symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 7l-10 10" />
+    <path d="M8 7l9 0l0 9" />
+  </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M5 12l6 6" />
+    <path d="M5 12l6 -6" />
+  </symbol>
+  <symbol id="i-brand-github" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+    <path d="M13.5 6.5l4 4" />
+  </symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 13a8 8 0 0 1 7 7a6 6 0 0 0 3 -5a9 9 0 0 0 6 -8a3 3 0 0 0 -3 -3a9 9 0 0 0 -8 6a6 6 0 0 0 -5 3" />
+    <path d="M7 14a6 6 0 0 0 -3 6a6 6 0 0 0 6 -3" />
+    <path d="M14 9a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+  </symbol>
+  <symbol id="i-terminal-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 9l3 3l-3 3" />
+    <path d="M13 15l3 0" />
+    <path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />
+  </symbol>
+  <symbol id="i-lifebuoy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M15 15l3.35 3.35" />
+    <path d="M9 15l-3.35 3.35" />
+    <path d="M5.65 5.65l3.35 3.35" />
+    <path d="M18.35 5.65l-3.35 3.35" />
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l11 0" />
+    <path d="M9 12l11 0" />
+    <path d="M9 18l11 0" />
+    <path d="M5 6l0 .01" />
+    <path d="M5 12l0 .01" />
+    <path d="M5 18l0 .01" />
+  </symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 8l-4 4l4 4" />
+    <path d="M17 8l4 4l-4 4" />
+    <path d="M14 4l-4 16" />
+  </symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    <path d="M4 4a16 16 0 0 1 16 16" />
+    <path d="M4 11a9 9 0 0 1 9 9" />
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12" />
+    <path d="M16 3v4" />
+    <path d="M8 3v4" />
+    <path d="M4 11h16" />
+    <path d="M11 15h1" />
+    <path d="M12 15v3" />
+  </symbol>
+</svg>
+
+<header class="site-header">
+  <div class="header-inner">
+    <button class="icon-btn hamburger" id="drawerToggle" aria-label="메뉴 열기" aria-expanded="false" aria-controls="sidebar">
+      <svg class="ic" aria-hidden="true"><use href="#i-menu-2"/></svg>
+    </button>
+
+    <a href="https://owasp-noir.github.io/noir/ko/" class="header-logo" aria-label="OWASP Noir 홈">
+      <img class="logo-dark" src="https://owasp-noir.github.io/noir/images/noir-dark.png" alt="OWASP Noir" width="1280" height="337">
+      <img class="logo-light" src="https://owasp-noir.github.io/noir/images/noir-light.png" alt="OWASP Noir" width="1280" height="337">
+    </a>
+    <a class="header-version" href="https://github.com/owasp-noir/noir/releases" target="_blank" rel="noopener noreferrer">v1.5.0</a>
+
+    <nav class="header-nav" aria-label="주요 메뉴">
+      <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">시작하기</a>
+      <a href="https://owasp-noir.github.io/noir/ko/usage/">사용 가이드</a>
+      <a href="https://owasp-noir.github.io/noir/ko/development/">개발</a>
+      <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+      <a href="https://owasp-noir.github.io/noir/ko/resources/">리소스</a>
+    </nav>
+
+    <div class="header-right">
+      <button class="header-btn search-trigger" id="searchTrigger" aria-label="문서 검색">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <span>검색</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      
+      
+      <nav class="lang-switcher" aria-label="언어">
+        
+        <a href="https://owasp-noir.github.io/noir/blog/query-reach-trace/" hreflang="en">EN</a>
+        
+        <a href="https://owasp-noir.github.io/noir/ko/blog/query-reach-trace/" hreflang="ko" aria-current="true">KO</a>
+        
+      </nav>
+      
+
+      <a class="icon-btn" href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer" aria-label="GitHub의 OWASP Noir">
+        <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
+      </a>
+
+      
+      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="테마">
+        <svg class="ic ic-auto" aria-hidden="true"><use href="#i-contrast"/></svg>
+        <svg class="ic ic-light" aria-hidden="true"><use href="#i-sun"/></svg>
+        <svg class="ic ic-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<div class="search-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="문서 검색" hidden>
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="searchInput" aria-label="문서 검색" placeholder="문서 검색" autocomplete="off" spellcheck="false">
+      <kbd id="searchClose" role="button" tabindex="0">Esc</kbd>
+    </div>
+    <div class="search-results" id="searchResults" role="listbox" aria-label="검색"></div>
+  </div>
+</div>
+<main id="main" class="blog">
+  <div class="wrap blog-inner">
+    <a class="blog-back" href="https://owasp-noir.github.io/noir/ko/blog/">
+      <svg class="ic" aria-hidden="true"><use href="#i-arrow-left"/></svg>
+      블로그로 돌아가기
+    </a>
+
+    <article class="blog-post">
+      <header class="blog-post-head">
+        <time class="post-date" datetime="2026-11-06">2026-11-06</time>
+        <h1 class="blog-post-title">엔드포인트 목록 다음에 할 일: query, reach, trace</h1>
+        <p class="blog-post-lede">Noir 스캔 결과에서 검토 대상을 좁히고, 소스 파일과 연결된 엔드포인트를 찾고, 실제 요청을 라우트에 대응시키는 방법.</p>
+        
+        <div class="post-tags">
+          <code>tips</code><code>query</code><code>reach</code><code>trace</code><code>workflow</code>
+        </div>
+        
+
+        
+        <ul class="author-row">
+          
+          
+          <li class="author-chip">
+            
+            <img class="author-avatar" src="https://owasp-noir.github.io/noir/images/authors/hak.jpg" alt="Hak" width="40" height="40" loading="lazy" decoding="async">
+            
+            <span class="author-chip-info">
+              
+              <a class="author-name" href="https://owasp-noir.github.io/noir/ko/authors/hak/">Hak</a>
+              <span class="author-role">Noir Docs Bot</span>
+            </span>
+            
+            
+            <a class="author-link" href="https://github.com/apps/hak-owasp-noir-bot" target="_blank" rel="noopener noreferrer">
+              
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+
+              <span>@hak-owasp-noir-bot</span>
+            </a>
+            
+          </li>
+          
+        </ul>
+        
+      </header>
+
+      <div class="prose blog-post-body">
+        <p>엔드포인트 목록을 뽑고 나면 다음 질문이 생긴다. 인증 확인이 안 보이는 라우트는 어디일까. 방금 수정한 공통 함수는 어떤 요청에서 사용할까. 프록시에서 본 요청은 어느 핸들러로 들어갈까.</p>
+<p>목록을 처음부터 다시 읽는 대신, 알고 있는 정보에서 시작하면 된다. Noir의 <code>query</code>는 조건에 맞는 엔드포인트를 고르고, <code>reach</code>는 소스 파일에 연결된 엔드포인트를 찾는다. <code>trace</code>는 실제 요청에 맞는 라우트를 보여준다.</p>
+<h2 id="스캔은-한-번-질문은-여러-번">스캔은 한 번, 질문은 여러 번</h2>
+<p>각 명령에 코드 경로를 넘겨 바로 스캔할 수도 있다. 다만 리뷰하다 보면 질문이 계속 바뀐다. 보고서를 저장해 두면 같은 코드를 매번 스캔하지 않고도 질문을 이어 갈 수 있다.</p>
+<p>아래 예시는 <a href="https://github.com/owasp-noir/noir/tree/main/spec/functional_test/fixtures/python/flask_callees">Noir 저장소의 Flask callee fixture</a>로 Noir 1.5.0에서 직접 실행했다. 저장소 루트에서 시작하며, <code>noir</code>가 <code>PATH</code>에 있어야 한다. 이 fixture에는 폼을 받는 핸들러와 주문 조회 핸들러, 두 핸들러가 함께 호출하는 함수가 있다. Flask 서버를 띄울 필요는 없다.</p>
+<pre><code class="language-bash hljs">cd spec/functional_test/fixtures/python/flask_callees
+noir scan . --ai-context --include callee -f json \
+	-o /tmp/noir-review.json --no-log &gt; /dev/null
+</code></pre>
+<p><code>--ai-context</code>는 정적 분석으로 리뷰에 필요한 정보를 모은다. AI 제공업체를 설정할 필요는 없다. <code>--include callee</code>로 호출 정보도 보고서에 남긴다. <code>scan</code>은 <code>-o</code>로 저장하면서 같은 보고서를 stdout에도 출력하므로, 여기서는 리다이렉션으로 화면 출력을 숨겼다.</p>
+<p>직접 스캔할 때와 <code>--from</code>으로 읽을 때는 차이가 있다. query 계열 명령이 직접 스캔하면 전체 AI context와 callee 수집이 기본으로 켜진다. 반면 저장된 보고서에는 처음 스캔에서 모은 정보만 있다. 수집하지 않은 guard나 sink가 나중에 생기지는 않는다. 소스 코드를 수정했다면 보고서도 다시 만들어야 한다.</p>
+<h2 id="query로-먼저-볼-곳을-고른다">Query로 먼저 볼 곳을 고른다</h2>
+<p><code>name</code>이라는 폼 필드를 받는 POST 핸들러 중에서, 인증이나 권한 검사가 기록되지 않은 곳부터 보고 싶다고 하자.</p>
+<pre><code class="language-bash hljs">noir query --method POST --no-guard --param name --param-type form \
+	--from /tmp/noir-review.json -f text
+</code></pre>
+<pre><code class="language-text hljs">POST /users  ./app.py:7  python_flask  handler=create_user@./app.py:8  signals=guard_absence
+</code></pre>
+<p>이제 <code>app.py:8</code>의 <code>create_user</code>를 열어 보면 된다. 서로 다른 필터는 AND로 묶이고, 한 필터 안에 쉼표로 나열한 값은 OR다. 따라서 <code>--method GET,POST</code>는 둘 중 어느 메서드든 받는다. 파라미터 이름과 타입을 함께 지정하면 같은 파라미터가 두 조건을 모두 만족해야 한다.</p>
+<p><code>--no-guard</code>를 곧바로 &quot;인증 없는 엔드포인트&quot;로 읽으면 안 된다. Noir가 인증이나 인가 guard를 기록하지 못했다는 뜻이다. 분석기가 해석하지 못한 미들웨어나 앞단 게이트웨이에서 인증할 수도 있다. rate limit이나 CSRF 검사도 인증 guard에는 포함되지 않는다.</p>
+<p>보고서에 데이터베이스 sink가 있다면 <code>--sink sql</code>로 대상을 더 좁힐 수 있다. 다만 SQL sink가 있다는 것은 코드를 살펴볼 이유이지, SQL injection이 있다는 판정은 아니다.</p>
+<h2 id="reach는-바뀐-파일에서-시작한다">Reach는 바뀐 파일에서 시작한다</h2>
+<p>이번에는 <code>helpers.py:5</code>에 정의된 <code>run_sql_query</code>를 수정했다고 하자. 어떤 엔드포인트를 다시 확인해야 할까.</p>
+<pre><code class="language-bash hljs">noir reach helpers.py:5 --from /tmp/noir-review.json -f text
+</code></pre>
+<pre><code class="language-text hljs">POST /users  ./app.py:7  python_flask  handler=create_user@./app.py:8  signals=guard_absence  via=callee:run_sql_query@./helpers.py:5,callee:build_user_query@./helpers.py:1,callee:notify_admin@./helpers.py:10,callee:log_audit@./helpers.py:14
+GET /orders/&lt;order_id&gt;  ./app.py:17  python_flask  handler=get_order@./app.py:18  signals=path_param,idor  via=callee:run_sql_query@./helpers.py:5,callee:build_user_query@./helpers.py:1
+</code></pre>
+<p><code>/users</code>와 <code>/orders/&lt;order_id&gt;</code>가 함께 나온다. <code>via</code>에는 <code>helpers.py</code>에서 찾은 callee 기록이 들어 있다. 그중 <code>run_sql_query</code>의 정의가 지정한 줄에 가장 가까워서 먼저 표시된다.</p>
+<p>줄 번호는 일치한 기록의 순서를 정하는 데 쓴다. 그 줄이 들어 있는 함수만 골라 주는 옵션은 아니다. Noir는 선언 위치를 기록하며, 함수의 시작과 끝 전체를 기록하지는 않는다. 줄 번호를 넘기면 JSON과 JSONL 결과에는 <code>nearest_line</code>도 포함된다.</p>
+<p>파일은 경로의 뒷부분이 일치하는지로 찾으므로 여기서는 <code>helpers.py</code>만으로 충분하다. 큰 저장소에 같은 이름의 파일이 여럿 있다면 상위 디렉터리도 포함하는 편이 낫다. 검색 대상은 라우트와 핸들러, callee, guard, source, sink, validator에 기록된 위치다. 모든 호출 관계를 분석하는 기능은 아니며, 상속이나 동적 로딩도 따라가지 않는다. 결과가 없다는 이유만으로 이 파일이 어느 라우트에도 영향을 주지 않는다고 결론 내릴 수는 없다.</p>
+<h2 id="trace는-실제-요청에서-시작한다">Trace는 실제 요청에서 시작한다</h2>
+<p>프록시 로그에는 보통 구체적인 경로가 나오고, 코드에는 라우트 템플릿이 있다. 같은 보고서에서 주문 조회 요청을 찾아보자.</p>
+<pre><code class="language-bash hljs">noir trace &quot;GET /orders/42&quot; --from /tmp/noir-review.json -f text
+</code></pre>
+<pre><code class="language-text hljs">GET /orders/&lt;order_id&gt;  ./app.py:17  python_flask  matched_by=pattern  handler=get_order@./app.py:18  signals=path_param,idor
+</code></pre>
+<p><code>matched_by=pattern</code>을 보면 <code>/orders/42</code>가 <code>/orders/&lt;order_id&gt;</code> 패턴에 맞아서 나왔다는 것을 알 수 있다. 저장된 보고서에서 찾는 작업이므로 HTTP 요청은 보내지 않는다.</p>
+<p>메서드를 알고 있으면 함께 지정하는 편이 좋다. 생략하면 경로에 맞는 라우트를 메서드 구분 없이 보여준다. HEAD는 GET 라우트에도 대응한다. 일치하는 라우트가 여럿이면 구체적인 결과부터 나온다.</p>
+<p>catch-all은 오타가 난 경로도 받아줄 수 있다. 와일드카드나 prefix 라우트만 일치하면 <code>trace</code>는 비슷한 후보도 찾아본다. 전혀 일치하지 않을 때는 종료 코드 1을 반환하며, 비슷한 후보를 찾았다면 함께 보여준다. JSON과 JSONL 출력의 <code>endpoint</code>에는 일치한 엔드포인트의 전체 기록이 들어가므로, 다시 스캔하지 않고도 파라미터와 context를 확인할 수 있다.</p>
+<h2 id="다음에-읽을-코드를-찾는-데-쓴다">다음에 읽을 코드를 찾는 데 쓴다</h2>
+<p>정해진 순서는 없다. 찾고 싶은 조건이 있으면 <code>query</code>, 수정한 파일이 있으면 <code>reach</code>, 실제 요청이 있으면 <code>trace</code>부터 쓰면 된다. 그다음에는 결과에 나온 근거를 실제 코드와 맞춰 본다.</p>
+<p>터미널에서는 text 출력이 읽기 편하다. 스크립트용 기본 출력은 JSONL이고, <code>query</code>나 <code>reach</code> 결과에 전체 엔드포인트 정보가 필요하면 <code>--full</code>을 더한다. <code>--limit</code>은 출력할 행 수를 제한한다. <code>--count</code>는 개수를 출력하지만, 둘을 같이 쓰면 제한된 행의 개수만 센다. 세 명령 모두 결과가 없으면 종료 코드 1을 반환한다.</p>
+<p>스캔 경로나 스캔 전용 플래그는 보고서를 만들 때 지정한다. <code>--from</code>은 디렉터리를 스캔하는 대신 보고서를 읽으므로 이 옵션들을 함께 넘기면 사용법 오류가 난다. 전체 필터와 출력 옵션은 <a href="/noir/ko/usage/cli_commands/#trace-reach-query">CLI 문서</a>에서 확인할 수 있다.</p>
+
+      </div>
+    </article>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <span>OWASP Noir는 MIT 라이선스로 배포되는 오픈소스입니다.</span>
+    <nav class="footer-links" aria-label="푸터">
+      <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">문서</a>
+      <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+      <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://owasp.org/projects/noir" target="_blank" rel="noopener noreferrer">OWASP</a>
+      <a href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">기여하기</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js" defer></script>
+<script>
+  window.NOIR_BASE = "https://owasp-noir.github.io/noir";
+  
+  window.NOIR_I18N = {
+    copy: "복사",
+    copied: "복사됨",
+    copyManual: "Ctrl C 를 누르세요",
+    noResults: "검색 결과가 없습니다:",
+    theme: "테마",
+    themeAuto: "자동",
+    themeLight: "라이트",
+    themeDark: "다크"
+  };
+</script>
+<script src="https://owasp-noir.github.io/noir/js/theme.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/nav.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/code.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/toc.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/reveal.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/mermaid.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+
+</body>
+</html>

@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <meta name="description" content="guards, callees, sources, sinks, validators, signals를 모아 엔드포인트별로 제공하는 AI 리뷰 컨텍스트입니다.">
+  <title>AI 컨텍스트 - OWASP Noir</title>
+  
+
+  
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+
+  
+  <script>
+    (function () {
+      var r = document.documentElement;
+      r.classList.add("js");
+      try {
+        var t = localStorage.getItem("noir-theme");
+        if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+
+  
+  <meta property="og:title" content="AI 컨텍스트">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/">
+  <meta property="og:description" content="guards, callees, sources, sinks, validators, signals를 모아 엔드포인트별로 제공하는 AI 리뷰 컨텍스트입니다.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/ko-usage-supported-ai_context_coverage.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AI 컨텍스트">
+  <meta name="twitter:description" content="guards, callees, sources, sinks, validators, signals를 모아 엔드포인트별로 제공하는 AI 리뷰 컨텍스트입니다.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/ko-usage-supported-ai_context_coverage.png">
+  
+  
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"AI 컨텍스트","url":"https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/","dateModified":"2026-11-15T01:58:24+09:00","description":"guards, callees, sources, sinks, validators, signals를 모아 엔드포인트별로 제공하는 AI 리뷰 컨텍스트입니다.","image":"https://owasp-noir.github.io/noir/og-images/ko-usage-supported-ai_context_coverage.png"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"OWASP Noir","item":"https://owasp-noir.github.io/noir/ko/"},{"@type":"ListItem","position":2,"name":"사용 가이드","item":"https://owasp-noir.github.io/noir/ko/usage/"},{"@type":"ListItem","position":3,"name":"지원되는 기술","item":"https://owasp-noir.github.io/noir/ko/usage/supported/"},{"@type":"ListItem","position":4,"name":"AI 컨텍스트"}]}</script>
+  
+  <link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/">
+<link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">
+<link rel="alternate" hreflang="x-default" href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">
+  
+  
+
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/geist-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+</head>
+<body>
+  <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+  
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+    <path d="M21 21l-6 -6" />
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+  </symbol>
+  <symbol id="i-contrast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M12 17a5 5 0 0 0 0 -10v10" />
+  </symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 9l6 6l6 -6" />
+  </symbol>
+  <symbol id="i-menu-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 6l16 0" />
+    <path d="M4 12l16 0" />
+    <path d="M4 18l16 0" />
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+    <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l5 5l10 -10" />
+  </symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M13 18l6 -6" />
+    <path d="M13 6l6 6" />
+  </symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 7l-10 10" />
+    <path d="M8 7l9 0l0 9" />
+  </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M5 12l6 6" />
+    <path d="M5 12l6 -6" />
+  </symbol>
+  <symbol id="i-brand-github" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+    <path d="M13.5 6.5l4 4" />
+  </symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 13a8 8 0 0 1 7 7a6 6 0 0 0 3 -5a9 9 0 0 0 6 -8a3 3 0 0 0 -3 -3a9 9 0 0 0 -8 6a6 6 0 0 0 -5 3" />
+    <path d="M7 14a6 6 0 0 0 -3 6a6 6 0 0 0 6 -3" />
+    <path d="M14 9a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+  </symbol>
+  <symbol id="i-terminal-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 9l3 3l-3 3" />
+    <path d="M13 15l3 0" />
+    <path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />
+  </symbol>
+  <symbol id="i-lifebuoy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M15 15l3.35 3.35" />
+    <path d="M9 15l-3.35 3.35" />
+    <path d="M5.65 5.65l3.35 3.35" />
+    <path d="M18.35 5.65l-3.35 3.35" />
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l11 0" />
+    <path d="M9 12l11 0" />
+    <path d="M9 18l11 0" />
+    <path d="M5 6l0 .01" />
+    <path d="M5 12l0 .01" />
+    <path d="M5 18l0 .01" />
+  </symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 8l-4 4l4 4" />
+    <path d="M17 8l4 4l-4 4" />
+    <path d="M14 4l-4 16" />
+  </symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    <path d="M4 4a16 16 0 0 1 16 16" />
+    <path d="M4 11a9 9 0 0 1 9 9" />
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12" />
+    <path d="M16 3v4" />
+    <path d="M8 3v4" />
+    <path d="M4 11h16" />
+    <path d="M11 15h1" />
+    <path d="M12 15v3" />
+  </symbol>
+</svg>
+
+<header class="site-header">
+  <div class="header-inner">
+    <button class="icon-btn hamburger" id="drawerToggle" aria-label="메뉴 열기" aria-expanded="false" aria-controls="sidebar">
+      <svg class="ic" aria-hidden="true"><use href="#i-menu-2"/></svg>
+    </button>
+
+    <a href="https://owasp-noir.github.io/noir/ko/" class="header-logo" aria-label="OWASP Noir 홈">
+      <img class="logo-dark" src="https://owasp-noir.github.io/noir/images/noir-dark.png" alt="OWASP Noir" width="1280" height="337">
+      <img class="logo-light" src="https://owasp-noir.github.io/noir/images/noir-light.png" alt="OWASP Noir" width="1280" height="337">
+    </a>
+    <a class="header-version" href="https://github.com/owasp-noir/noir/releases" target="_blank" rel="noopener noreferrer">v1.5.0</a>
+
+    <nav class="header-nav" aria-label="주요 메뉴">
+      <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">시작하기</a>
+      <a href="https://owasp-noir.github.io/noir/ko/usage/">사용 가이드</a>
+      <a href="https://owasp-noir.github.io/noir/ko/development/">개발</a>
+      <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+      <a href="https://owasp-noir.github.io/noir/ko/resources/">리소스</a>
+    </nav>
+
+    <div class="header-right">
+      <button class="header-btn search-trigger" id="searchTrigger" aria-label="문서 검색">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <span>검색</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      
+      
+      <nav class="lang-switcher" aria-label="언어">
+        
+        <a href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/" hreflang="en">EN</a>
+        
+        <a href="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/" hreflang="ko" aria-current="true">KO</a>
+        
+      </nav>
+      
+
+      <a class="icon-btn" href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer" aria-label="GitHub의 OWASP Noir">
+        <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
+      </a>
+
+      
+      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="테마">
+        <svg class="ic ic-auto" aria-hidden="true"><use href="#i-contrast"/></svg>
+        <svg class="ic ic-light" aria-hidden="true"><use href="#i-sun"/></svg>
+        <svg class="ic ic-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<div class="search-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="문서 검색" hidden>
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="searchInput" aria-label="문서 검색" placeholder="문서 검색" autocomplete="off" spellcheck="false">
+      <kbd id="searchClose" role="button" tabindex="0">Esc</kbd>
+    </div>
+    <div class="search-results" id="searchResults" role="listbox" aria-label="검색"></div>
+  </div>
+</div>
+<div class="docs-container">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="drawer-scrim" id="drawerScrim"></div>
+<aside class="docs-sidebar" id="sidebar">
+  <nav class="sidebar-nav" aria-label="문서">
+
+    <details class="sidebar-group" data-group="get_started">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-rocket"/></svg>
+        <span>시작하기</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">Noir란?</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/installation/">Noir 설치</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/running/">첫 번째 스캔</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/ai_power/">AI 기반 분석</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/migrate_v0_to_v1/">v0에서 v1으로 마이그레이션</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="usage" open>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-terminal-2"/></svg>
+        <span>사용 가이드</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/cli_commands/">CLI 명령어</a></li>
+
+
+        <li>
+        <details class="sidebar-subgroup" data-group="supported" open>
+          <summary class="sidebar-subheading">
+            <span>지원되는 기술</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/">언어 및 프레임워크</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/specification/">명세</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/callee_coverage/">Callee 커버리지</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/" aria-current="page">AI 컨텍스트 커버리지</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/mobile/">모바일 앱</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/cli/">CLI 앱</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/tech-commands/">기술 범위</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="formats">
+          <summary class="sidebar-subheading">
+            <span>출력 형식</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/json/">JSON 및 JSONL</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/yaml/">YAML</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/">HTTP 클라이언트 명령어</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/openapi/">OpenAPI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/sarif/">SARIF</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/html/">HTML 리포트</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/mermaid/">Mermaid 차트</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/more/">추가 출력 형식</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="passive">
+          <summary class="sidebar-subheading">
+            <span>패시브 스캔</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/rule/">규칙 작성</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/default_rules/">기본 규칙</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/community_rules/">커뮤니티 규칙</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="more_features">
+          <summary class="sidebar-subheading">
+            <span>추가 기능</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/">태거</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/">Deliver</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/diff/">Diff 모드</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/pipeline-for-dast/">DAST 파이프라인</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="ai_providers">
+          <summary class="sidebar-subheading">
+            <span>AI 제공업체</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openai/">OpenAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/xai/">xAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/">Azure AI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/github_marketplace/">GitHub Models (종료)</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openrouter/">OpenRouter</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/">Ollama</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/vllm/">vLLM</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/lmstudio/">LM Studio</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/acp/">ACP 에이전트</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="configurations">
+          <summary class="sidebar-subheading">
+            <span>설정</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/configurations/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/">설정 파일</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/configurations/shell-completion/">셸 자동완성</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/github_action/">GitHub Action</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="development">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>
+        <span>개발</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/how_to_build/">빌드 방법</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/">분석기 아키텍처</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/nix_environment/">Nix 환경</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/debug_flags/">디버그 플래그</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/how_to_release/">릴리스 방법</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="resources">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-lifebuoy"/></svg>
+        <span>리소스</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/faq/">FAQ</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/troubleshooting/">문제 해결</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/artwork/">아트워크</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/contact/">연락처</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/community/">커뮤니티</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/community/media/">아티클 및 발표</a></li>
+
+      </ul>
+    </details>
+
+  </nav>
+</aside>
+  <main id="main" class="docs-main">
+    <article>
+      <h1 class="docs-title">AI 컨텍스트</h1>
+      <p class="docs-lede">guards, callees, sources, sinks, validators, signals를 모아 엔드포인트별로 제공하는 AI 리뷰 컨텍스트입니다.</p>
+      <div class="prose">
+        <p>Noir는 각 엔드포인트에 구조화된 AI 리뷰 컨텍스트를 붙일 수 있습니다. LLM 기반 SAST 도구, 코드 리뷰어, 보안 에이전트가 라우트를 검토할 때 필요한 정적 신호를 한곳에 모아 주므로, 저장소를 직접 훑지 않아도 됩니다.</p>
+<p><code>--ai-context</code>로 켭니다.</p>
+<pre><code class="language-bash hljs">noir scan . --ai-context
+</code></pre>
+<p>버킷 이름을 쉼표로 구분해 넘기면 필요한 카테고리만 남습니다. 필터가 데이터 자체에 적용되므로 JSON, SARIF, YAML, Postman, OAS 출력도 plain 출력과 같은 선택을 따릅니다.</p>
+<pre><code class="language-bash hljs">noir scan . --ai-context=guards,sinks       # auth + sink, 연결된 시그널 포함
+noir scan . --ai-context=callee             # 1-hop handler callee만
+noir scan . --ai-context=all                # &quot;전부&quot;의 명시적 형태
+noir scan . --ai-context                    # bare 형태, 동일하게 &quot;전부&quot;
+</code></pre>
+<p>쓸 수 있는 이름: <code>guards</code>, <code>callee</code>, <code>sources</code>, <code>sinks</code>, <code>validators</code>, <code>signals</code>(그리고 <code>all</code>). 대소문자는 구분하지 않습니다.</p>
+<p>파생 시그널은 근거 버킷과 연결된 채로 남습니다. <code>signals</code>를 선택하면 그
+시그널에 필요한 증거(예: <code>ssrf</code> → <code>outbound_http</code> sink)가 함께 유지되고,
+증거 버킷만 선택하면 그에 연결된 시그널만 남습니다(예: <code>guards,sinks</code>에도
+<code>authz_absence</code>가 남음). 이렇게 남은 시그널은 자기 근거도 함께 가져오므로
+<code>guards,sinks</code>를 골라도 <code>sources</code>가 나올 수 있습니다. 여러 버킷을 묶어 판단하는 <code>priority_review</code>는
+선택에 <code>signals</code>가 있을 때만 나옵니다(인자 없는 <code>--ai-context</code>와 <code>all</code>에는
+포함됩니다).</p>
+<p>plain 출력에서는 컨텍스트가 있는 엔드포인트마다 <code>ai_context:</code> 블록이 붙습니다. 구조화된 출력 형식에서는 같은 구조가 다음 위치에 들어갑니다.</p>
+<table>
+<thead>
+<tr>
+<th>출력 형식</th>
+<th>AI 컨텍스트 위치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>JSON / JSONL / YAML / TOML</td>
+<td><code>endpoints[].ai_context</code></td>
+</tr>
+<tr>
+<td>OpenAPI 2.0 / 3.0</td>
+<td>오퍼레이션 단위 <code>x-noir-ai-context</code> 확장</td>
+</tr>
+<tr>
+<td>SARIF</td>
+<td><code>result.properties.noir.ai_context</code></td>
+</tr>
+<tr>
+<td>Postman</td>
+<td>아이템 설명 뒤에 덧붙임</td>
+</tr>
+<tr>
+<td>cURL / HTTPie / PowerShell / only-url / only-param</td>
+<td>본래 출력이 바뀌지 않도록 일부러 넣지 않음</td>
+</tr>
+</tbody>
+</table>
+<h2 id="무엇이-들어가나">무엇이 들어가나</h2>
+<p>각 버킷은 <code>kind</code>, <code>name</code>, 선택적인 <code>source</code>, <code>description</code>, <code>path</code>, <code>line</code>, <code>confidence</code>, <code>snippet</code>을 가진 항목 배열입니다. 버킷은 다음과 같습니다.</p>
+<table>
+<thead>
+<tr>
+<th>버킷</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guards</code></td>
+<td>라우트에 감지된 인증/인가 게이트(미들웨어, 데코레이터, <code>requires_auth</code>, 역할 체크 등)</td>
+</tr>
+<tr>
+<td><code>callees</code></td>
+<td><code>--include callee</code>로 모으는 1-hop 핸들러 callee. 한곳에서 볼 수 있도록 AI 컨텍스트 안에도 다시 넣습니다</td>
+</tr>
+<tr>
+<td><code>sources</code></td>
+<td>핸들러에 도달하는 공격자 제어 입력. 요청 파라미터·헤더·쿠키·GraphQL 필드와 모바일 딥링크 페이로드가 여기 들어갑니다. 검토할 만한 서버 측 값 출처(Spring <code>@Value</code> 시크릿, WebSocket CORS 정책 등)도 함께 기록됩니다</td>
+</tr>
+<tr>
+<td><code>sinks</code></td>
+<td>핸들러 본문이나 callee 이름에서 추론된 위험 가능 동작(SQL, 명령 실행, 역직렬화, 템플릿 렌더링, 파일 I/O, 리다이렉트 등)</td>
+</tr>
+<tr>
+<td><code>validators</code></td>
+<td>입력 검증/정제 신호(스키마 검증기, 파라미터 형 변환, 허용 목록 패턴). sink 위험을 줄여 주는 단서</td>
+</tr>
+<tr>
+<td><code>signals</code></td>
+<td>그 외 라우트 형태 힌트(가드 없는 상태 변경 메서드, object-level 인가 점검이 필요한 path-id 사용, 파일 업로드 동작 등)</td>
+</tr>
+</tbody>
+</table>
+<p>버킷마다 나올 수 있는 kind는 <a href="#%EB%B2%84%ED%82%B7%EB%B3%84-kind">버킷별 kind</a>에 정리했습니다.</p>
+<p>목록은 찾을 수 있는 만큼 찾은 결과입니다. 항목마다 휴리스틱 신뢰도가 있어서 받는 쪽에서 기준값으로 거를 수 있습니다. 출력이 너무 커지지 않도록 버킷당 최대 16개 항목만 남깁니다.</p>
+<p>비어 있지 않은 컨텍스트에는 <code>&quot;untrusted_fields&quot;: [&quot;name&quot;, &quot;path&quot;, &quot;snippet&quot;]</code>도 함께 들어갑니다. 이 필드는 스캔한 저장소에서 그대로 가져온 값이라, <code>snippet</code>에는 그 코드를 작성한 쪽의 주석과 문자열 리터럴이 포함됩니다. 이 출력을 LLM에 넘길 때는 이 필드를 신뢰할 수 없는 데이터로 다루고 지시문과 분리하세요.</p>
+<p>이 구조는 JSON Schema로 <a href="https://owasp-noir.github.io/noir/schemas/ai-context.schema.json"><code>schemas/ai-context.schema.json</code></a>에 공개되어 있어, 검증기나 안정적인 형식이 필요한 프롬프트에서 그대로 쓸 수 있습니다. 신뢰할 수 없는 필드에는 <code>&quot;x-noir-untrusted&quot;: true</code>가 붙어 있습니다. 항목의 <code>kind</code> 값은 열린 어휘라서 새 값이 추가되어도 스키마는 바뀌지 않습니다.</p>
+<h2 id="항목-읽는-법">항목 읽는 법</h2>
+<p>Phoenix 앱의 엔드포인트 하나를 <code>--ai-context=guards,sinks</code>로 좁힌 결과입니다. 뒤쪽 스니펫은 줄였습니다.</p>
+<pre><code class="language-text hljs">DELETE /settings/keys/:id
+  ○ path: id
+  ○ tags: idor auth
+  ○ ai_context:
+    - guards:
+      * auth_guard: Phoenix :account pipeline [elixir_auth] (./lib/app_web/router.ex:36) (conf 86) - Protected by Phoenix :account pipeline :: 34: pipe_through [:browser, :account] | 36: delete &quot;/keys/:id&quot;, PageController, :delete_key | 37: end
+    - sources:
+      * request_input: path.id [param] (./lib/app_web/router.ex:36) (conf 88) - Route path parameter supplied by the caller. :: ...
+    - sinks:
+      * redirect: redirect [callee] (./lib/app_web/controllers/page_controller.ex:43) (conf 74) - Potential redirect sink inferred from code or callee name :: ...
+    - signals:
+      * authz_absence: /settings/keys/:id [heuristic] (./lib/app_web/router.ex:36) (conf 44) - Authenticated endpoint uses a path identifier with no authorization check detected; review for horizontal / vertical privilege escalation. :: ...
+</code></pre>
+<p>한 줄의 형식은 <code>kind: name [source] (path:line) (conf N) - description :: snippet</code>입니다. <code>authz_absence</code> 시그널은 <code>guards</code>에 연결되어 있어서 따라 나왔고, 자기 근거인 <code>sources</code>도 함께 가져왔습니다. 같은 가드를 JSON으로 보면 이렇습니다.</p>
+<pre><code class="language-json hljs">{
+  &quot;kind&quot;: &quot;auth_guard&quot;,
+  &quot;name&quot;: &quot;Phoenix :account pipeline&quot;,
+  &quot;source&quot;: &quot;elixir_auth&quot;,
+  &quot;description&quot;: &quot;Protected by Phoenix :account pipeline&quot;,
+  &quot;path&quot;: &quot;./lib/app_web/router.ex&quot;,
+  &quot;line&quot;: 36,
+  &quot;confidence&quot;: 86,
+  &quot;snippet&quot;: &quot;34: pipe_through [:browser, :account] | 36: delete \&quot;/keys/:id\&quot;, PageController, :delete_key | 37: end&quot;
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>필드</th>
+<th>내용</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kind</code></td>
+<td>항목의 종류. 버킷별 종류는 아래 표에 있습니다</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>구체적인 대상. callee 표현식, <code>&lt;type&gt;.&lt;name&gt;</code> 형태의 파라미터(<code>query.id</code>, <code>json.password</code>), 가드 이름, 라우트 등</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>Noir가 이 항목을 찾은 경로(아래 참고)</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>왜 살펴볼 만한지 한 문장으로 적은 설명</td>
+</tr>
+<tr>
+<td><code>path</code>, <code>line</code></td>
+<td>근거의 위치. callee는 호출 지점, 가드는 그것을 선언한 미들웨어나 어노테이션, 나머지는 대부분 라우트를 가리킵니다</td>
+</tr>
+<tr>
+<td><code>confidence</code></td>
+<td>0부터 100. 휴리스틱끼리의 상대적인 순위이며 확률이 아닙니다</td>
+</tr>
+<tr>
+<td><code>snippet</code></td>
+<td><code>line</code> 주변 소스 몇 줄. 줄 번호를 붙여 <code>|</code>로 잇고 약 240자에서 자릅니다</td>
+</tr>
+</tbody>
+</table>
+<p><code>source</code> 값은 다음 중 하나입니다.</p>
+<table>
+<thead>
+<tr>
+<th><code>source</code></th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>route</code>, <code>detector</code></td>
+<td>라우트 자체, 그리고 그 라우트를 보고한 기술</td>
+</tr>
+<tr>
+<td><code>param</code></td>
+<td>분석기가 추출한 파라미터에서 읽음</td>
+</tr>
+<tr>
+<td><code>param_tagger:&lt;tagger&gt;</code></td>
+<td>태거가 파라미터에 붙인 태그(<code>param_tagger:Hunt</code>)</td>
+</tr>
+<tr>
+<td><code>callee</code></td>
+<td>1-hop callee의 이름이나 그 호출 줄에서 매칭</td>
+</tr>
+<tr>
+<td><code>route_source</code></td>
+<td>라우트 근처 핸들러 소스 텍스트에서 매칭</td>
+</tr>
+<tr>
+<td><code>heuristic</code></td>
+<td>같은 컨텍스트의 다른 항목에서 파생</td>
+</tr>
+<tr>
+<td><code>http_method</code>, <code>realtime_method</code></td>
+<td>HTTP 메서드, 또는 WebSocket 메시지 핸들러에서 읽음</td>
+</tr>
+<tr>
+<td><code>mobile_deep_link</code></td>
+<td>모바일 딥링크나 외부에 공개된 컴포넌트</td>
+</tr>
+<tr>
+<td><code>endpoint</code>, <code>resolver</code></td>
+<td>아웃바운드 클라이언트 선언, 그리고 오퍼레이션에 연결된 GraphQL 리졸버</td>
+</tr>
+<tr>
+<td>태거나 분석기 이름</td>
+<td>해당 태거(<code>Admin</code>, <code>spring_auth</code>, <code>go_security</code>)나 분석기(<code>nginx_analyzer</code>, <code>odoo_analyzer</code>)가 붙인 태그</td>
+</tr>
+</tbody>
+</table>
+<p><code>--ai-context</code>를 켜면 callee 수집이 켜지고 모든 태거가 실행됩니다. 둘 다 컨텍스트의 재료이기 때문입니다. <code>--use-taggers</code>로 태거를 지정하면 지정한 것만 실행됩니다.</p>
+<h2 id="버킷별-kind">버킷별 kind</h2>
+<p>현재 Noir가 내보내는 kind입니다.</p>
+<h3 id="guards">guards</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auth_guard</code></td>
+<td>인증. 호출자가 누구인지 확인합니다(로그인 필수, 세션 확인, JWT나 API 키 검증)</td>
+</tr>
+<tr>
+<td><code>authz_guard</code></td>
+<td>인가. 호출자가 무엇을 할 수 있는지 확인합니다(역할, 권한, 정책, 소유자 비교)</td>
+</tr>
+<tr>
+<td><code>csrf_guard</code></td>
+<td>CSRF 보호. 토큰 검사, <code>protect_from_forgery</code>, <code>SameSite=Strict</code></td>
+</tr>
+<tr>
+<td><code>rate_limit_guard</code></td>
+<td>스로틀링이나 rate limit 계층</td>
+</tr>
+</tbody>
+</table>
+<p>가드가 이 버킷에 들어오는 길은 세 가지입니다. 먼저 <a href="/noir/ko/usage/more_features/tagger/">프레임워크별 인증 태거</a>가 프레임워크 고유의 장치(Spring Security 체인, Phoenix 파이프라인, Express 미들웨어, Noir가 본문까지 확인한 Go 미들웨어)를 읽어 <code>auth_guard</code>나 <code>authz_guard</code>를 보고합니다. 이때 <code>source</code>는 태거 이름이고 신뢰도는 86입니다. 다른 하나는 핸들러 소스의 이름 매칭(<code>login_required</code>, <code>@PreAuthorize</code>, <code>before_action :authenticate_user!</code>)으로, <code>source</code>는 <code>route_source</code>이고 신뢰도는 44에서 58 사이입니다. 마지막으로 핸들러가 호출자를 직접 확인하는 함수(<code>validateSession(req, res)</code>, <code>verifyAuth(...)</code>, <code>principal.validate_admin_session()</code>)를 부르면, 본문 어디에서 부르든 <code>source</code>가 <code>callee</code>이고 신뢰도가 56 또는 60인 가드로 보고합니다. 이 callee 매칭은 <code>verifyToken</code>이나 <code>validateApiKey</code> 호출을 가드로 보지 않습니다. 그 토큰은 호출자의 자격 증명일 수도 있지만 요청에 실려 온 재설정 토큰이나 일회용 코드인 경우도 그만큼 많기 때문입니다. 본문이나 쿼리로 자격 증명을 받는 로그인 흐름 라우트(<code>/login</code>, <code>/verify</code>, <code>/reset-password</code>)에서도 물러납니다. 그런 라우트에서는 이 호출이 로그인 자체이기 때문입니다. 두 이름 매칭은 태거가 채우지 못한 kind만 채우며, <code>csrf_guard</code>와 <code>rate_limit_guard</code>는 핸들러 소스의 이름 매칭으로만 나옵니다.</p>
+<p>프레임워크가 익명 호출을 허용한다고 명시한 라우트(tRPC <code>publicProcedure</code>, Micronaut <code>@Secured(IS_ANONYMOUS)</code>)에는 <code>anonymous</code> 시그널이 붙고, <code>auth_guard</code>와 <code>authz_guard</code>의 이름 매칭은 건너뜁니다.</p>
+<h3 id="callees">callees</h3>
+<p>kind는 <code>callee</code> 하나입니다. 핸들러 본문에서 직접 호출하는 함수이며, <code>name</code>은 호출 표현식(<code>App.Keys.delete</code>), <code>path:line</code>은 호출 지점입니다. callee를 보고하는 프레임워크는 <a href="/noir/ko/usage/supported/callee_coverage/">Callee 커버리지</a>에 있습니다.</p>
+<h3 id="sources">sources</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>request_input</code></td>
+<td>호출자가 제어하는 값. 파라미터마다 하나씩 <code>&lt;type&gt;.&lt;name&gt;</code> 이름으로 나오며, type은 <code>path</code>, <code>query</code>, <code>header</code>, <code>cookie</code>, <code>json</code>, <code>form</code>, <code>file</code>, <code>xml</code>입니다. GraphQL 선택 필드는 <code>graphql.field.&lt;name&gt;</code>, 모바일 진입점은 <code>deep_link.mobile_scheme</code>, <code>deep_link.universal_link</code>, <code>deep_link.android_intent</code>, <code>ipc.content_provider</code>입니다. 쿠키 파라미터가 추출되지 않았는데 핸들러가 쿠키를 직접 읽으면 <code>route_source</code>에서 <code>cookie.&lt;name&gt;</code>으로 나옵니다</td>
+</tr>
+<tr>
+<td><code>server_secret_source</code></td>
+<td>핸들러가 반환하는 Spring <code>@Value</code> 시크릿</td>
+</tr>
+<tr>
+<td><code>cors_policy</code></td>
+<td>Spring WebSocket/STOMP 엔드포인트에 등록된 CORS 정책</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sinks">sinks</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sql</code></td>
+<td>SQL 호출. raw SQL, DB 계열 리시버의 <code>execute</code> / <code>query</code>, Spring Data 리포지토리 메서드</td>
+</tr>
+<tr>
+<td><code>data_store_query</code></td>
+<td>문서 저장소나 그래프 저장소 질의(<code>mongo.query</code>, Neo4j 클라이언트)</td>
+</tr>
+<tr>
+<td><code>command_exec</code></td>
+<td>OS 명령 실행. <code>exec</code>, <code>system</code>, <code>spawn</code>, <code>popen</code>, <code>subprocess</code>, <code>ProcessBuilder</code></td>
+</tr>
+<tr>
+<td><code>code_eval</code></td>
+<td>프로세스 내부 코드 평가. <code>eval</code>, <code>new Function</code>, <code>instance_eval</code>, <code>ScriptEngine</code></td>
+</tr>
+<tr>
+<td><code>deserialization</code></td>
+<td>안전하지 않은 역직렬화. <code>pickle.loads</code>, <code>yaml.load</code>, <code>Marshal.load</code>, <code>unserialize</code>, <code>ObjectInputStream.readObject</code></td>
+</tr>
+<tr>
+<td><code>template_injection</code></td>
+<td>문자열로 만든 템플릿. <code>render_template_string</code>, <code>ERB.new</code>, <code>Handlebars.compile</code></td>
+</tr>
+<tr>
+<td><code>template_render</code></td>
+<td>일반적인 템플릿/뷰 렌더링</td>
+</tr>
+<tr>
+<td><code>xss</code></td>
+<td>자동 이스케이프를 우회하는 HTML 출력. <code>innerHTML</code>, <code>dangerouslySetInnerHTML</code>, <code>html_safe</code>, <code>mark_safe</code>, <code>v-html</code>, 템플릿의 <code>safe</code> 필터</td>
+</tr>
+<tr>
+<td><code>file_io</code></td>
+<td>파일 시스템 읽기/쓰기, 파일 전송, 디렉터리 목록</td>
+</tr>
+<tr>
+<td><code>redirect</code></td>
+<td>리다이렉트 응답</td>
+</tr>
+<tr>
+<td><code>outbound_http</code></td>
+<td>외부로 나가는 HTTP 요청(<code>fetch</code>, <code>axios</code>, <code>requests</code>, <code>http.Get</code>, <code>RestTemplate</code>, <code>reqwest</code>). 대상 URI가 리터럴이면 <code>name</code>에 함께 들어갑니다</td>
+</tr>
+<tr>
+<td><code>mass_assignment</code></td>
+<td>요청 파라미터를 모델에 그대로 쓰는 경우(<code>update_attributes</code>, <code>Model.create(req.body)</code>)</td>
+</tr>
+<tr>
+<td><code>crypto_weak</code></td>
+<td>약한 암호 요소. MD5나 SHA-1, DES, ECB 모드, RC4, 암호용이 아닌 난수</td>
+</tr>
+<tr>
+<td><code>webview_load</code></td>
+<td>모바일 전용. WebView가 URL이나 HTML을 로드</td>
+</tr>
+<tr>
+<td><code>intent_redirect</code></td>
+<td>모바일 전용. 들어온 딥링크 데이터로 인텐트를 실행</td>
+</tr>
+</tbody>
+</table>
+<p>callee 이름이 매칭되면 sink의 <code>source</code>는 <code>callee</code>, 핸들러 텍스트가 매칭되면 <code>route_source</code>입니다. 핸들러 텍스트에서는 kind당 sink가 하나까지만 나옵니다.</p>
+<h3 id="validators">validators</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>validation</code></td>
+<td>입력에 대한 validate, verify, permit 단계. 호출자를 확인하는 validate/verify(<code>validateSession</code>, <code>verifyAuth</code>)는 가드로 분류합니다</td>
+</tr>
+<tr>
+<td><code>schema_validation</code></td>
+<td>선언하지 않은 필드를 거부하는 스키마 검증. Pydantic, Zod, Joi, Yup, marshmallow, JSON Schema</td>
+</tr>
+<tr>
+<td><code>type_coercion</code></td>
+<td>입력을 숫자나 타입이 정해진 파라미터로 강제(<code>parseInt</code>, <code>Integer()</code>, 타입이 있는 <code>@PathVariable</code>)</td>
+</tr>
+<tr>
+<td><code>allowlist_check</code></td>
+<td>값을 고정된 집합과 비교</td>
+</tr>
+<tr>
+<td><code>sanitization</code></td>
+<td>sanitize, escape, encode, normalize 단계</td>
+</tr>
+<tr>
+<td><code>query_parameter_binding</code></td>
+<td>쿼리 파라미터를 문자열로 이어 붙이지 않고 클라이언트 API로 바인딩</td>
+</tr>
+<tr>
+<td><code>existence_validation</code></td>
+<td>쓰기 전에 존재 여부를 확인(<code>existsBy...</code>, 또는 없으면 예외를 던지는 조회)</td>
+</tr>
+<tr>
+<td><code>uniqueness_validation</code></td>
+<td>중복/유일성 검사</td>
+</tr>
+<tr>
+<td><code>expiry_validation</code></td>
+<td>토큰이나 세션의 만료 시각 비교</td>
+</tr>
+<tr>
+<td><code>credential_hashing</code>, <code>credential_verification</code></td>
+<td>Spring Security 패스워드 인코더의 <code>encode</code>, <code>matches</code></td>
+</tr>
+<tr>
+<td><code>cookie_httponly</code>, <code>cookie_secure</code></td>
+<td><code>HttpOnly</code>, <code>Secure</code>로 설정한 쿠키</td>
+</tr>
+</tbody>
+</table>
+<h3 id="signals">signals</h3>
+<p>모든 엔드포인트에 두 시그널이 붙습니다. <code>&lt;METHOD&gt; &lt;url&gt;</code> 이름의 <code>route_definition</code>과, 라우트를 보고한 기술 이름의 <code>technology</code>입니다. 나머지는 다섯 묶음으로 나뉩니다.</p>
+<p>라우트 형태:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>state_change</code></td>
+<td>메서드가 <code>POST</code>, <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code>이거나, 권한이 걸린 WebSocket 메시지 핸들러인 경우. 순수 gRPC/Thrift 메서드, GraphQL 쿼리, SOAP 읽기 오퍼레이션, 본문 파라미터 없이 읽기 callee만 호출하는 <code>POST</code>에는 붙지 않습니다</td>
+</tr>
+<tr>
+<td><code>path_param</code></td>
+<td>경로 파라미터마다 하나</td>
+</tr>
+<tr>
+<td><code>internal_endpoint</code></td>
+<td>아웃바운드 클라이언트 선언. 애플리케이션이 제공하는 엔드포인트가 아니라 호출하는 엔드포인트입니다</td>
+</tr>
+<tr>
+<td><code>deep_link_input</code></td>
+<td>모바일 딥링크나 외부에 공개된 <code>ContentProvider</code>가 앱 밖에서 데이터를 받음</td>
+</tr>
+<tr>
+<td><code>graphql_resolver</code></td>
+<td>이 오퍼레이션을 구현하는 Spring GraphQL 리졸버</td>
+</tr>
+</tbody>
+</table>
+<p>파라미터 이름. <code>source</code>는 <code>param</code>이고 이름은 <code>&lt;type&gt;.&lt;name&gt;</code>입니다.</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>대표적인 파라미터 이름</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>credential_input</code></td>
+<td><code>password</code>, <code>token</code>, <code>secret</code>, <code>api_key</code>, <code>authorization</code>, <code>jwt</code>, <code>bearer</code>. 핸들러가 <code>req.body.password</code>를 읽는데 분석기가 그 파라미터를 뽑지 못했을 때는 <code>route_source</code>에서도 나옵니다. 엔드포인트에 프레임워크 가드가 보고된 경우 헤더와 쿠키는 제외합니다. 그 값은 가드가 읽는 자격 증명이기 때문입니다</td>
+</tr>
+<tr>
+<td><code>identifier_input</code></td>
+<td><code>id</code>, <code>_id</code>나 <code>Id</code>로 끝나는 이름, <code>user</code>, <code>account</code>, <code>order</code>, <code>project</code></td>
+</tr>
+<tr>
+<td><code>redirect_input</code></td>
+<td><code>url</code>, <code>uri</code>, <code>redirect</code>, <code>return</code>, <code>next</code>, <code>continue</code>, <code>dest</code>, <code>callback</code></td>
+</tr>
+<tr>
+<td><code>file_input</code></td>
+<td><code>file</code>, <code>upload</code>, <code>attachment</code>, <code>image</code>, <code>filename</code>, <code>path</code></td>
+</tr>
+<tr>
+<td><code>query_builder_input</code></td>
+<td><code>sort</code>, <code>order</code>, <code>filter</code>, <code>where</code>, <code>search</code>, <code>select</code>, <code>field</code>, <code>column</code></td>
+</tr>
+<tr>
+<td><code>pii_input</code></td>
+<td><code>email</code>, <code>phone</code>, <code>ssn</code>, <code>dob</code>, <code>passport</code>, <code>national_id</code></td>
+</tr>
+<tr>
+<td><code>html_content_input</code></td>
+<td><code>description</code>, <code>html</code>, <code>message</code>, <code>comment</code>, <code>note</code>, <code>markdown</code></td>
+</tr>
+<tr>
+<td><code>code_input</code></td>
+<td><code>script</code>, <code>formula</code>, <code>expression</code>, <code>command</code>, <code>template</code></td>
+</tr>
+</tbody>
+</table>
+<p>태그. 엔드포인트 태그는 전부 시그널이 되며, <code>kind</code>는 태그 이름이고 <code>source</code>는 태거입니다. <code>admin</code>, <code>payment</code>, <code>webhook</code>, <code>file_upload</code>를 비롯한 <a href="/noir/ko/usage/more_features/tagger/">태거</a>의 태그, <code>cors</code>, <code>csrf-protection</code>, <code>rate-limit</code>, <code>security-headers</code> 같은 프레임워크 보호 장치 태그, <code>graphql-return</code>이나 <code>nginx-host</code> 같은 분석기 메모가 모두 여기로 옵니다. 파라미터 태그(<code>sqli</code>, <code>ssrf</code>, <code>idor</code>)도 같은 방식이고 <code>source</code>는 <code>param_tagger:&lt;tagger&gt;</code>입니다. 인증 태그만 예외로, 가드가 됩니다.</p>
+<p>약해진 보호 장치와 노출. 핸들러 소스에서 매칭합니다.</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrf_exempt</code></td>
+<td>이 라우트의 CSRF 보호가 꺼져 있음(<code>@csrf_exempt</code>, <code>csrf().disable()</code>, <code>protect_from_forgery with: :null_session</code>). 상태 변경 메서드에만 붙습니다</td>
+</tr>
+<tr>
+<td><code>jwt_unsafe</code></td>
+<td>JWT 검증이 꺼졌거나 약해짐. <code>verify=False</code>, 알고리즘 <code>none</code>, <code>ignoreExpiration: true</code></td>
+</tr>
+<tr>
+<td><code>cors_open</code></td>
+<td>와일드카드 origin과 <code>credentials: true</code>가 함께 있음</td>
+</tr>
+<tr>
+<td><code>sensitive_response</code></td>
+<td>응답에 자격 증명으로 보이는 키(<code>token</code>, <code>password</code>, <code>secret</code>)가 들어 있음</td>
+</tr>
+<tr>
+<td><code>server_secret_source</code></td>
+<td>핸들러가 Spring <code>@Value</code> 시크릿을 반환함. <code>sources</code>에도 들어갑니다</td>
+</tr>
+<tr>
+<td><code>log_injection</code></td>
+<td>핸들러가 요청 입력이나 자격 증명을 로그에 남김</td>
+</tr>
+<tr>
+<td><code>foreign_identifier_write</code></td>
+<td>요청 본문의 id가 다른 <code>...Id</code> 필드에 대입되어 저장되는데 조회나 존재 확인이 없음</td>
+</tr>
+</tbody>
+</table>
+<p>파생 시그널. 위 항목들을 조합해 만들며 <code>source</code>는 <code>heuristic</code>입니다.</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>나오는 조건</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guard_absence</code></td>
+<td>상태 변경 엔드포인트에 가드가 하나도 없고 경로에 식별자도 없음. 로그인, 로그아웃, 비밀번호 재설정 라우트는 건너뜁니다</td>
+</tr>
+<tr>
+<td><code>idor_review</code></td>
+<td>위와 같지만 경로에 식별자가 있음</td>
+</tr>
+<tr>
+<td><code>authz_absence</code></td>
+<td>상태 변경 엔드포인트에 <code>auth_guard</code>는 있고 <code>authz_guard</code>는 없으며 경로에 식별자가 있음</td>
+</tr>
+<tr>
+<td><code>rate_limit_absence</code></td>
+<td>상태 변경 엔드포인트가 본문, 쿼리, 경로로 자격 증명을 받는데 <code>rate_limit_guard</code>가 없음</td>
+</tr>
+<tr>
+<td><code>ssrf</code></td>
+<td><code>outbound_http</code> sink와 <code>redirect_input</code>이 함께 있음</td>
+</tr>
+<tr>
+<td><code>open_redirect</code></td>
+<td><code>redirect</code> sink와 <code>redirect_input</code>이 함께 있음</td>
+</tr>
+<tr>
+<td><code>path_traversal</code></td>
+<td><code>file_io</code> sink와 <code>file_input</code>이 함께 있음</td>
+</tr>
+<tr>
+<td><code>object_lookup</code></td>
+<td>식별자 입력과 조회 callee(<code>findById</code>, <code>getOne</code>, <code>repo.get</code>)가 함께 있음</td>
+</tr>
+<tr>
+<td><code>object_write</code></td>
+<td>경로에 식별자가 있는 상태 변경 엔드포인트가 조회 callee 없이 변경 callee(<code>create</code>, <code>update</code>, <code>delete</code>, <code>save</code>)를 호출. 감사 로그 기록과 메모리 안에서 값을 만드는 호출(<code>createFormBuilder</code>, <code>CreateAPIError</code>)은 변경으로 보지 않습니다</td>
+</tr>
+<tr>
+<td><code>unsafe_method</code></td>
+<td><code>GET</code>, <code>HEAD</code>, <code>OPTIONS</code>, <code>QUERY</code> 엔드포인트가 변경 callee를 호출. 핸들러가 요청 메서드(<code>request.method ==</code>, <code>$request-&gt;isMethod()</code>)나 폼 제출 확인(<code>$form-&gt;isSubmitted()</code>, <code>form.validate_on_submit()</code>)으로 분기하면 건너뜁니다</td>
+</tr>
+<tr>
+<td><code>priority_review</code></td>
+<td>종합 점수. 아래에서 설명합니다</td>
+</tr>
+</tbody>
+</table>
+<p>부재(absence) 시그널 넷은 신뢰도가 일부러 낮습니다(28에서 44). 게이트웨이나 Noir가 읽지 않은 부모 클래스에 있는 가드는 놓칠 수 있으므로, 이 시그널은 &quot;이 라우트를 보호하는 것이 없다&quot;가 아니라 &quot;여기서 감지된 것이 없다&quot;는 뜻입니다.</p>
+<p><code>priority_review</code>는 세 가지를 더합니다. 첫째는 엔드포인트의 리뷰 시그널 수(부재 시그널, <code>csrf_exempt</code>, <code>jwt_unsafe</code>, <code>cors_open</code>, <code>open_redirect</code>, <code>ssrf</code>, <code>path_traversal</code>, <code>sensitive_response</code>, <code>server_secret_source</code>, <code>unsafe_method</code>, <code>log_injection</code>, <code>deep_link_input</code>)입니다. 둘째는 무거운 sink의 kind 수(<code>sql</code>, <code>data_store_query</code>, <code>command_exec</code>, <code>code_eval</code>, <code>deserialization</code>, <code>template_injection</code>, <code>xss</code>, <code>mass_assignment</code>, <code>crypto_weak</code>, <code>webview_load</code>, <code>intent_redirect</code>)이고, 셋째는 <code>csrf_exempt</code>, <code>jwt_unsafe</code>, <code>cors_open</code>, <code>open_redirect</code> 중 하나라도 있으면 붙는 1점입니다. <code>query_parameter_binding</code> validator가 있으면 <code>sql</code>과 <code>data_store_query</code> sink는 세지 않고, <code>sanitization</code>이나 <code>schema_validation</code>이 있으면 <code>xss</code>는 세지 않습니다. 합이 2 미만이면 아무것도 나오지 않습니다. 합이 3 이상이거나, 위 네 시그널 중 하나가 있거나, 무거운 sink kind가 둘 이상이면 <code>name</code>이 <code>high</code>(신뢰도 90)이고, 나머지는 <code>medium</code>(신뢰도 70)입니다. <code>kind == &quot;priority_review&quot;</code>와 <code>confidence &gt;= 80</code>으로 거르면 우선순위가 높은 라우트만 남습니다.</p>
+<p>버킷이 가득 차면 새 항목은 순위가 가장 낮은 항목보다 높을 때만 그 자리를 대신합니다. 파생 시그널과 부재 시그널은 파라미터 단위 항목보다 순위가 높으므로, 파라미터가 많은 라우트에서도 종합 시그널은 남습니다.</p>
+<h2 id="대표-사용-사례">대표 사용 사례</h2>
+<ul>
+<li><strong>AI SAST</strong>: 엔드포인트 인벤토리와 AI 컨텍스트를 LLM에 함께 넘기면, 라우트 구조를 다시 발견하지 않아도 공격 표면에서 도달 가능한 취약점에 집중할 수 있습니다.</li>
+<li><strong>수동 트리아지</strong>: 큰 JSON/SARIF 리포트를 sink 종류나 <code>signals</code>(예: <code>guard_absence</code>)로 정렬하고 거를 수 있습니다.</li>
+<li><strong>CI 게이팅</strong>: <code>sinks</code>는 있고 <code>validators</code>는 없는 엔드포인트를 골라 PR에서 위험 엔드포인트로 표시합니다.</li>
+</ul>
+<h2 id="다른-플래그와-조합">다른 플래그와 조합</h2>
+<pre><code class="language-bash hljs"># 1-hop callee와 AI 컨텍스트 블록을 함께 출력
+noir scan . --include callee --ai-context
+
+# LLM 기반 SAST 파이프라인용 JSON 출력
+noir scan . --ai-context -f json -o noir-context.json
+
+# 오퍼레이션마다 `x-noir-ai-context`가 붙은 OpenAPI 내보내기
+noir scan . --ai-context -f oas3 -o spec.json
+</code></pre>
+<h2 id="완성도-참고-사항">완성도 참고 사항</h2>
+<ul>
+<li>AI 컨텍스트는 데이터를 덧붙이기만 합니다. 휴리스틱에 걸리지 않는 엔드포인트는 플래그 없이 돌렸을 때와 똑같이 나옵니다(직렬화된 모델에 <code>ai_context</code> 키가 추가되지 않음).</li>
+<li>휴리스틱은 보수적으로 튜닝되어 있지만 거짓 양성/음성 모두 존재합니다. 항목은 확정된 결론이 아니라 검토를 시작할 단서로 다루세요.</li>
+<li>guard/sink/validator 패턴은 계속 개선됩니다. 패턴을 일부러 언어에 묶지 않았기 때문에, 컨텍스트 스키마 하나가 Noir가 지원하는 모든 프레임워크에 그대로 적용됩니다.</li>
+<li>AI 컨텍스트의 많은 부분이 callee 커버리지에서 비롯됩니다. 현재 어떤 프레임워크가 핸들러 callee를 내보내는지는 <a href="/noir/ko/usage/supported/callee_coverage/">Callee 커버리지</a>를 참고하세요.</li>
+</ul>
+
+      </div>
+      
+      
+      <footer class="docs-article-footer">
+        <a class="edit-link"
+           href="https://github.com/owasp-noir/noir/edit/main/docs/content/usage/supported/ai_context_coverage/index.ko.md"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>
+          GitHub에서 이 페이지 수정
+        </a>
+        
+
+
+
+      </footer>
+    </article>
+  </main>
+  
+<nav class="docs-toc" aria-label="목차">
+  <p class="docs-toc-title">
+    <svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>
+    목차
+  </p>
+  <ul><li><a href="#무엇이-들어가나">무엇이 들어가나</a></li><li><a href="#항목-읽는-법">항목 읽는 법</a></li><li><a href="#버킷별-kind">버킷별 kind</a><ul><li><a href="#guards">guards</a></li><li><a href="#callees">callees</a></li><li><a href="#sources">sources</a></li><li><a href="#sinks">sinks</a></li><li><a href="#validators">validators</a></li><li><a href="#signals">signals</a></li></ul></li><li><a href="#대표-사용-사례">대표 사용 사례</a></li><li><a href="#다른-플래그와-조합">다른 플래그와 조합</a></li><li><a href="#완성도-참고-사항">완성도 참고 사항</a></li></ul>
+</nav>
+
+    </main>
+  </div>
+
+  <footer class="site-footer">
+  <div class="footer-inner">
+    <span>OWASP Noir는 MIT 라이선스로 배포되는 오픈소스입니다.</span>
+    <nav class="footer-links" aria-label="푸터">
+      <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">문서</a>
+      <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+      <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://owasp.org/projects/noir" target="_blank" rel="noopener noreferrer">OWASP</a>
+      <a href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">기여하기</a>
+    </nav>
+  </div>
+</footer>
+  
+<script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js" defer></script>
+<script>
+  window.NOIR_BASE = "https://owasp-noir.github.io/noir";
+  
+  window.NOIR_I18N = {
+    copy: "복사",
+    copied: "복사됨",
+    copyManual: "Ctrl C 를 누르세요",
+    noResults: "검색 결과가 없습니다:",
+    theme: "테마",
+    themeAuto: "자동",
+    themeLight: "라이트",
+    themeDark: "다크"
+  };
+</script>
+<script src="https://owasp-noir.github.io/noir/js/theme.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/nav.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/code.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/toc.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/reveal.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/mermaid.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+
+</body>
+</html>

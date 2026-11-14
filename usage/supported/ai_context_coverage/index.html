@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <meta name="description" content="Per-endpoint AI review context that aggregates guards, callees, sources, sinks, validators, and signals.">
+  <title>AI Context - OWASP Noir</title>
+  
+
+  
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+
+  
+  <script>
+    (function () {
+      var r = document.documentElement;
+      r.classList.add("js");
+      try {
+        var t = localStorage.getItem("noir-theme");
+        if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+
+  
+  <meta property="og:title" content="AI Context">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">
+  <meta property="og:description" content="Per-endpoint AI review context that aggregates guards, callees, sources, sinks, validators, and signals.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/usage-supported-ai_context_coverage.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AI Context">
+  <meta name="twitter:description" content="Per-endpoint AI review context that aggregates guards, callees, sources, sinks, validators, and signals.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/usage-supported-ai_context_coverage.png">
+  
+  
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"AI Context","url":"https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/","dateModified":"2026-11-15T01:58:24+09:00","description":"Per-endpoint AI review context that aggregates guards, callees, sources, sinks, validators, and signals.","image":"https://owasp-noir.github.io/noir/og-images/usage-supported-ai_context_coverage.png"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"OWASP Noir","item":"https://owasp-noir.github.io/noir/"},{"@type":"ListItem","position":2,"name":"Usage Guide","item":"https://owasp-noir.github.io/noir/usage/"},{"@type":"ListItem","position":3,"name":"Supported Technologies","item":"https://owasp-noir.github.io/noir/usage/supported/"},{"@type":"ListItem","position":4,"name":"AI Context"}]}</script>
+  
+  <link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">
+<link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/">
+<link rel="alternate" hreflang="x-default" href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">
+  
+  
+
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/geist-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+    <path d="M21 21l-6 -6" />
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+  </symbol>
+  <symbol id="i-contrast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M12 17a5 5 0 0 0 0 -10v10" />
+  </symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 9l6 6l6 -6" />
+  </symbol>
+  <symbol id="i-menu-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 6l16 0" />
+    <path d="M4 12l16 0" />
+    <path d="M4 18l16 0" />
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+    <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l5 5l10 -10" />
+  </symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M13 18l6 -6" />
+    <path d="M13 6l6 6" />
+  </symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 7l-10 10" />
+    <path d="M8 7l9 0l0 9" />
+  </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M5 12l6 6" />
+    <path d="M5 12l6 -6" />
+  </symbol>
+  <symbol id="i-brand-github" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+    <path d="M13.5 6.5l4 4" />
+  </symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 13a8 8 0 0 1 7 7a6 6 0 0 0 3 -5a9 9 0 0 0 6 -8a3 3 0 0 0 -3 -3a9 9 0 0 0 -8 6a6 6 0 0 0 -5 3" />
+    <path d="M7 14a6 6 0 0 0 -3 6a6 6 0 0 0 6 -3" />
+    <path d="M14 9a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+  </symbol>
+  <symbol id="i-terminal-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 9l3 3l-3 3" />
+    <path d="M13 15l3 0" />
+    <path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />
+  </symbol>
+  <symbol id="i-lifebuoy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M15 15l3.35 3.35" />
+    <path d="M9 15l-3.35 3.35" />
+    <path d="M5.65 5.65l3.35 3.35" />
+    <path d="M18.35 5.65l-3.35 3.35" />
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l11 0" />
+    <path d="M9 12l11 0" />
+    <path d="M9 18l11 0" />
+    <path d="M5 6l0 .01" />
+    <path d="M5 12l0 .01" />
+    <path d="M5 18l0 .01" />
+  </symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 8l-4 4l4 4" />
+    <path d="M17 8l4 4l-4 4" />
+    <path d="M14 4l-4 16" />
+  </symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    <path d="M4 4a16 16 0 0 1 16 16" />
+    <path d="M4 11a9 9 0 0 1 9 9" />
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12" />
+    <path d="M16 3v4" />
+    <path d="M8 3v4" />
+    <path d="M4 11h16" />
+    <path d="M11 15h1" />
+    <path d="M12 15v3" />
+  </symbol>
+</svg>
+
+<header class="site-header">
+  <div class="header-inner">
+    <button class="icon-btn hamburger" id="drawerToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar">
+      <svg class="ic" aria-hidden="true"><use href="#i-menu-2"/></svg>
+    </button>
+
+    <a href="https://owasp-noir.github.io/noir/" class="header-logo" aria-label="OWASP Noir, home">
+      <img class="logo-dark" src="https://owasp-noir.github.io/noir/images/noir-dark.png" alt="OWASP Noir" width="1280" height="337">
+      <img class="logo-light" src="https://owasp-noir.github.io/noir/images/noir-light.png" alt="OWASP Noir" width="1280" height="337">
+    </a>
+    <a class="header-version" href="https://github.com/owasp-noir/noir/releases" target="_blank" rel="noopener noreferrer">v1.5.0</a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a href="https://owasp-noir.github.io/noir/get_started/overview/">Get Started</a>
+      <a href="https://owasp-noir.github.io/noir/usage/">Usage</a>
+      <a href="https://owasp-noir.github.io/noir/development/">Development</a>
+      <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+      <a href="https://owasp-noir.github.io/noir/resources/">Resources</a>
+    </nav>
+
+    <div class="header-right">
+      <button class="header-btn search-trigger" id="searchTrigger" aria-label="Search documentation">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <span>Search</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      
+      
+      <nav class="lang-switcher" aria-label="Language">
+        
+        <a href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/" hreflang="en" aria-current="true">EN</a>
+        
+        <a href="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/" hreflang="ko">KO</a>
+        
+      </nav>
+      
+
+      <a class="icon-btn" href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer" aria-label="OWASP Noir on GitHub">
+        <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
+      </a>
+
+      
+      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="Theme">
+        <svg class="ic ic-auto" aria-hidden="true"><use href="#i-contrast"/></svg>
+        <svg class="ic ic-light" aria-hidden="true"><use href="#i-sun"/></svg>
+        <svg class="ic ic-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<div class="search-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="Search documentation" hidden>
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="searchInput" aria-label="Search documentation" placeholder="Search the docs" autocomplete="off" spellcheck="false">
+      <kbd id="searchClose" role="button" tabindex="0">Esc</kbd>
+    </div>
+    <div class="search-results" id="searchResults" role="listbox" aria-label="Search"></div>
+  </div>
+</div>
+<div class="docs-container">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="drawer-scrim" id="drawerScrim"></div>
+<aside class="docs-sidebar" id="sidebar">
+  <nav class="sidebar-nav" aria-label="Documentation">
+
+    <details class="sidebar-group" data-group="get_started">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-rocket"/></svg>
+        <span>Get Started</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/overview/">What is Noir?</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/installation/">Install Noir</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/running/">Your First Scan</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/ai_power/">AI-Powered Analysis</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/migrate_v0_to_v1/">Migrating from v0 to v1</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="usage" open>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-terminal-2"/></svg>
+        <span>Usage</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/cli_commands/">CLI Commands</a></li>
+
+
+        <li>
+        <details class="sidebar-subgroup" data-group="supported" open>
+          <summary class="sidebar-subheading">
+            <span>Supported</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/">Languages & Frameworks</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/specification/">Specifications</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/callee_coverage/">Callee Coverage</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/" aria-current="page">AI Context Coverage</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/mobile/">Mobile Apps</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/cli/">CLI Apps</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/tech-commands/">Technology Scopes</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="formats">
+          <summary class="sidebar-subheading">
+            <span>Output Formats</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/json/">JSON and JSONL</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/yaml/">YAML</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/curl/">HTTP Client Commands</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/openapi/">OpenAPI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/sarif/">SARIF</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/html/">HTML Report</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/mermaid/">Mermaid Chart</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/more/">Additional Formats</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="passive">
+          <summary class="sidebar-subheading">
+            <span>Passive Scan</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/rule/">Writing a Rule</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/default_rules/">Default Rules</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/community_rules/">Community Rules</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="more_features">
+          <summary class="sidebar-subheading">
+            <span>More Features</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/tagger/">Tagger</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/deliver/">Deliver</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/diff/">Diff Mode</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/pipeline-for-dast/">Pipeline for DAST</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="ai_providers">
+          <summary class="sidebar-subheading">
+            <span>AI Providers</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/openai/">OpenAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/xai/">xAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/azure/">Azure AI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/github_marketplace/">GitHub Models (retired)</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/openrouter/">OpenRouter</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/ollama/">Ollama</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/vllm/">vLLM</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/lmstudio/">LM Studio</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/acp/">ACP Agents</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="configurations">
+          <summary class="sidebar-subheading">
+            <span>Configuration</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/configuration_file/">Configuration File</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/shell-completion/">Shell Completions</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/github_action/">GitHub Action</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="development">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>
+        <span>Development</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/how_to_build/">How to Build</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/analyzer_architecture/">Analyzer Architecture</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/nix_environment/">Nix Environment</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/debug_flags/">Debug Flags</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/how_to_release/">How to Release</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="resources">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-lifebuoy"/></svg>
+        <span>Resources</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/faq/">FAQ</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/troubleshooting/">Troubleshooting</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/artwork/">Artwork</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/contact/">Contact</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/community/">Community</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/community/media/">Articles & Talks</a></li>
+
+      </ul>
+    </details>
+
+  </nav>
+</aside>
+  <main id="main" class="docs-main">
+    <article>
+      <h1 class="docs-title">AI Context</h1>
+      <p class="docs-lede">Per-endpoint AI review context that aggregates guards, callees, sources, sinks, validators, and signals.</p>
+      <div class="prose">
+        <p>Noir can attach a structured AI review context to each endpoint. It collects the static signals that LLM-based SAST tools, code reviewers, and security agents need to triage a route, so they don't have to walk the repository themselves.</p>
+<p>Use <code>--ai-context</code> to enable it:</p>
+<pre><code class="language-bash hljs">noir scan . --ai-context
+</code></pre>
+<p>Pass a comma-separated list of buckets to keep only the categories you need. The filter runs on the data itself, so JSON, SARIF, YAML, Postman, and OAS output get the same selection as plain text.</p>
+<pre><code class="language-bash hljs">noir scan . --ai-context=guards,sinks       # auth + sinks, plus linked signals
+noir scan . --ai-context=callee             # only the 1-hop handler callees
+noir scan . --ai-context=all                # explicit form of &quot;everything&quot;
+noir scan . --ai-context                    # bare form: also &quot;everything&quot;
+</code></pre>
+<p>Valid feature names: <code>guards</code>, <code>callee</code>, <code>sources</code>, <code>sinks</code>, <code>validators</code>, <code>signals</code> (plus <code>all</code>). Names are case-insensitive.</p>
+<p>Signals are derived from the other buckets, and the filter keeps them
+together. Selecting <code>signals</code> keeps the evidence those signals need (for
+example <code>ssrf</code> keeps <code>outbound_http</code> sinks). Selecting an evidence bucket
+keeps only the signals linked to it (for example <code>guards,sinks</code> still
+shows <code>authz_absence</code>), and each of those signals brings its own evidence
+along, so <code>guards,sinks</code> can also show <code>sources</code>. The <code>priority_review</code> roll-up, which draws on
+several buckets, appears only when <code>signals</code> is selected (bare
+<code>--ai-context</code> and <code>all</code> include it).</p>
+<p>In plain output, every endpoint with non-empty context gets an <code>ai_context:</code> block. Structured formats put the same data here:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Where AI context appears</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>JSON / JSONL / YAML / TOML</td>
+<td><code>endpoints[].ai_context</code></td>
+</tr>
+<tr>
+<td>OpenAPI 2.0 / 3.0</td>
+<td>Operation-level <code>x-noir-ai-context</code> extension</td>
+</tr>
+<tr>
+<td>SARIF</td>
+<td><code>result.properties.noir.ai_context</code></td>
+</tr>
+<tr>
+<td>Postman</td>
+<td>Appended to the item description</td>
+</tr>
+<tr>
+<td>cURL / HTTPie / PowerShell / only-url / only-param</td>
+<td>Left out on purpose, so their main output stays the same</td>
+</tr>
+</tbody>
+</table>
+<h2 id="what-goes-inside">What goes inside</h2>
+<p>Every context bucket is a list of entries with <code>kind</code>, <code>name</code>, optional <code>source</code>, <code>description</code>, <code>path</code>, <code>line</code>, <code>confidence</code>, and <code>snippet</code>. The buckets are:</p>
+<table>
+<thead>
+<tr>
+<th>Bucket</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guards</code></td>
+<td>Authentication / authorization gates detected on the route (middleware, decorators, <code>requires_auth</code>, role checks, etc.)</td>
+</tr>
+<tr>
+<td><code>callees</code></td>
+<td>The 1-hop handler callees Noir already collects with <code>--include callee</code>, repeated inside the AI context so everything is in one place</td>
+</tr>
+<tr>
+<td><code>sources</code></td>
+<td>Attacker-controlled inputs that reach the handler: each request parameter, header, cookie, and GraphQL field, plus mobile deep-link payloads. A few server-side value sources worth reviewing (a Spring <code>@Value</code> secret, a WebSocket CORS policy) land here too</td>
+</tr>
+<tr>
+<td><code>sinks</code></td>
+<td>Likely dangerous operations inferred from the handler body or callee names (SQL, command execution, deserialization, template rendering, file I/O, redirects, etc.)</td>
+</tr>
+<tr>
+<td><code>validators</code></td>
+<td>Input-validation and sanitization signals (schema validators, parameter coercion, allow-listing patterns) that mitigate sink risk</td>
+</tr>
+<tr>
+<td><code>signals</code></td>
+<td>Other route-shape hints worth surfacing (state-changing methods without a detected guard, path-id usage suggesting object-level authorization concerns, file-upload behavior, etc.)</td>
+</tr>
+</tbody>
+</table>
+<p>The kinds each bucket can hold are listed under <a href="#kinds-by-bucket">Kinds by bucket</a>.</p>
+<p>The list is best-effort. Heuristic confidence is exposed on each entry so consumers can filter by threshold. Each bucket keeps at most 16 entries so the output stays compact.</p>
+<p>Every non-empty context also carries <code>&quot;untrusted_fields&quot;: [&quot;name&quot;, &quot;path&quot;, &quot;snippet&quot;]</code>. Those fields come from the scanned repository as-is, so <code>snippet</code> includes comments and string literals written by whoever controls that code. When you pass this output to an LLM, treat those fields as untrusted data and fence them off from your instructions.</p>
+<p>The shape is published as a JSON Schema at <a href="https://owasp-noir.github.io/noir/schemas/ai-context.schema.json"><code>schemas/ai-context.schema.json</code></a>, for validators and for prompts that need a stable contract. The untrusted fields carry <code>&quot;x-noir-untrusted&quot;: true</code> there. Entry <code>kind</code> values are an open vocabulary: new ones are added without a schema change.</p>
+<h2 id="reading-an-entry">Reading an entry</h2>
+<p>Here is one endpoint from a Phoenix app, narrowed to two buckets with <code>--ai-context=guards,sinks</code>. The later snippets are cut short here:</p>
+<pre><code class="language-text hljs">DELETE /settings/keys/:id
+  ○ path: id
+  ○ tags: idor auth
+  ○ ai_context:
+    - guards:
+      * auth_guard: Phoenix :account pipeline [elixir_auth] (./lib/app_web/router.ex:36) (conf 86) - Protected by Phoenix :account pipeline :: 34: pipe_through [:browser, :account] | 36: delete &quot;/keys/:id&quot;, PageController, :delete_key | 37: end
+    - sources:
+      * request_input: path.id [param] (./lib/app_web/router.ex:36) (conf 88) - Route path parameter supplied by the caller. :: ...
+    - sinks:
+      * redirect: redirect [callee] (./lib/app_web/controllers/page_controller.ex:43) (conf 74) - Potential redirect sink inferred from code or callee name :: ...
+    - signals:
+      * authz_absence: /settings/keys/:id [heuristic] (./lib/app_web/router.ex:36) (conf 44) - Authenticated endpoint uses a path identifier with no authorization check detected; review for horizontal / vertical privilege escalation. :: ...
+</code></pre>
+<p>Each line is <code>kind: name [source] (path:line) (conf N) - description :: snippet</code>. The <code>authz_absence</code> signal came along because it is linked to <code>guards</code>, and it brought its own <code>sources</code> evidence. The same guard in JSON:</p>
+<pre><code class="language-json hljs">{
+  &quot;kind&quot;: &quot;auth_guard&quot;,
+  &quot;name&quot;: &quot;Phoenix :account pipeline&quot;,
+  &quot;source&quot;: &quot;elixir_auth&quot;,
+  &quot;description&quot;: &quot;Protected by Phoenix :account pipeline&quot;,
+  &quot;path&quot;: &quot;./lib/app_web/router.ex&quot;,
+  &quot;line&quot;: 36,
+  &quot;confidence&quot;: 86,
+  &quot;snippet&quot;: &quot;34: pipe_through [:browser, :account] | 36: delete \&quot;/keys/:id\&quot;, PageController, :delete_key | 37: end&quot;
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Content</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kind</code></td>
+<td>What the entry is. The tables below list the kinds per bucket</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>The concrete thing: a callee expression, a parameter as <code>&lt;type&gt;.&lt;name&gt;</code> (<code>query.id</code>, <code>json.password</code>), a guard&#39;s label, a route</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>How Noir found it (see below)</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>One sentence on why the entry is worth a look</td>
+</tr>
+<tr>
+<td><code>path</code>, <code>line</code></td>
+<td>Where the evidence is. A callee points at its call site, a guard at the middleware or annotation that declares it, most others at the route</td>
+</tr>
+<tr>
+<td><code>confidence</code></td>
+<td>0 to 100. It ranks the heuristics against each other. It is not a probability</td>
+</tr>
+<tr>
+<td><code>snippet</code></td>
+<td>A few numbered source lines around <code>line</code>, joined with <code>|</code> and capped at about 240 characters</td>
+</tr>
+</tbody>
+</table>
+<p><code>source</code> takes one of these values:</p>
+<table>
+<thead>
+<tr>
+<th><code>source</code></th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>route</code>, <code>detector</code></td>
+<td>The route itself and the technology that reported it</td>
+</tr>
+<tr>
+<td><code>param</code></td>
+<td>Read off a parameter the analyzer extracted</td>
+</tr>
+<tr>
+<td><code>param_tagger:&lt;tagger&gt;</code></td>
+<td>A tag a tagger put on a parameter (<code>param_tagger:Hunt</code>)</td>
+</tr>
+<tr>
+<td><code>callee</code></td>
+<td>Matched on the name of a 1-hop callee, or on the line that calls it</td>
+</tr>
+<tr>
+<td><code>route_source</code></td>
+<td>Matched on the handler&#39;s source text near the route</td>
+</tr>
+<tr>
+<td><code>heuristic</code></td>
+<td>Derived from other entries in the same context</td>
+</tr>
+<tr>
+<td><code>http_method</code>, <code>realtime_method</code></td>
+<td>Read off the HTTP method, or a WebSocket message handler</td>
+</tr>
+<tr>
+<td><code>mobile_deep_link</code></td>
+<td>A mobile deep link or exported component</td>
+</tr>
+<tr>
+<td><code>endpoint</code>, <code>resolver</code></td>
+<td>An outbound client declaration, and a GraphQL resolver matched to its operation</td>
+</tr>
+<tr>
+<td>a tagger or analyzer name</td>
+<td>A tag from that tagger (<code>Admin</code>, <code>spring_auth</code>, <code>go_security</code>) or analyzer (<code>nginx_analyzer</code>, <code>odoo_analyzer</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>--ai-context</code> turns on callee collection and runs every tagger, since both feed the context. If you name taggers with <code>--use-taggers</code>, only those run.</p>
+<h2 id="kinds-by-bucket">Kinds by bucket</h2>
+<p>These are the kinds Noir emits today.</p>
+<h3 id="guards">guards</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auth_guard</code></td>
+<td>Authentication: the route checks who the caller is (login required, session check, JWT or API key verification)</td>
+</tr>
+<tr>
+<td><code>authz_guard</code></td>
+<td>Authorization: the route checks what the caller may do (role, permission, policy, ownership comparison)</td>
+</tr>
+<tr>
+<td><code>csrf_guard</code></td>
+<td>CSRF protection: token check, <code>protect_from_forgery</code>, <code>SameSite=Strict</code></td>
+</tr>
+<tr>
+<td><code>rate_limit_guard</code></td>
+<td>A throttling or rate-limit layer</td>
+</tr>
+</tbody>
+</table>
+<p>A guard reaches the bucket one of three ways. The <a href="/noir/usage/more_features/tagger/">framework auth taggers</a> read the framework's own mechanism (a Spring Security chain, a Phoenix pipeline, an Express middleware, a Go middleware whose body Noir checked) and report <code>auth_guard</code> or <code>authz_guard</code> with the tagger as <code>source</code> and a confidence of 86. The fallback is a name match on the handler's source (<code>login_required</code>, <code>@PreAuthorize</code>, <code>before_action :authenticate_user!</code>), reported as <code>route_source</code> with a confidence between 44 and 58. A handler that calls a check of the caller itself (<code>validateSession(req, res)</code>, <code>verifyAuth(...)</code>, <code>principal.validate_admin_session()</code>) is reported with the source <code>callee</code> and a confidence of 56 or 60, wherever in the body the call sits. This callee match does not take a <code>verifyToken</code> or <code>validateApiKey</code> call: the token is as often a reset token or a one-time code the request carries as the caller's own credential. It also stands down on a login-flow route (<code>/login</code>, <code>/verify</code>, <code>/reset-password</code>) that takes a credential in its body or query, where such a call is the login itself. Both name matches only fill a kind the taggers left empty, and the match on the handler's source is the only origin of <code>csrf_guard</code> and <code>rate_limit_guard</code>.</p>
+<p>When a framework says a route admits anonymous callers (tRPC <code>publicProcedure</code>, Micronaut <code>@Secured(IS_ANONYMOUS)</code>), Noir emits an <code>anonymous</code> signal and skips the name match for <code>auth_guard</code> and <code>authz_guard</code>.</p>
+<h3 id="callees">callees</h3>
+<p>One kind, <code>callee</code>: a call made directly from the handler body. <code>name</code> is the call expression (<code>App.Keys.delete</code>) and <code>path:line</code> is the call site. See <a href="/noir/usage/supported/callee_coverage/">Callee Coverage</a> for which frameworks report callees.</p>
+<h3 id="sources">sources</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>request_input</code></td>
+<td>A value the caller controls. One entry per parameter, named <code>&lt;type&gt;.&lt;name&gt;</code> with the types <code>path</code>, <code>query</code>, <code>header</code>, <code>cookie</code>, <code>json</code>, <code>form</code>, <code>file</code> and <code>xml</code>. GraphQL selections are <code>graphql.field.&lt;name&gt;</code>. Mobile entry points are <code>deep_link.mobile_scheme</code>, <code>deep_link.universal_link</code>, <code>deep_link.android_intent</code> and <code>ipc.content_provider</code>. A cookie the handler reads directly, with no cookie parameter extracted, is <code>cookie.&lt;name&gt;</code> from <code>route_source</code></td>
+</tr>
+<tr>
+<td><code>server_secret_source</code></td>
+<td>A Spring <code>@Value</code> secret that the handler returns</td>
+</tr>
+<tr>
+<td><code>cors_policy</code></td>
+<td>The CORS policy registered for a Spring WebSocket/STOMP endpoint</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sinks">sinks</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sql</code></td>
+<td>A SQL call: raw SQL, <code>execute</code> / <code>query</code> on a database-like receiver, a Spring Data repository method</td>
+</tr>
+<tr>
+<td><code>data_store_query</code></td>
+<td>A document-store or graph-store query (<code>mongo.query</code>, a Neo4j client)</td>
+</tr>
+<tr>
+<td><code>command_exec</code></td>
+<td>An OS command: <code>exec</code>, <code>system</code>, <code>spawn</code>, <code>popen</code>, <code>subprocess</code>, <code>ProcessBuilder</code></td>
+</tr>
+<tr>
+<td><code>code_eval</code></td>
+<td>In-process evaluation: <code>eval</code>, <code>new Function</code>, <code>instance_eval</code>, a <code>ScriptEngine</code></td>
+</tr>
+<tr>
+<td><code>deserialization</code></td>
+<td>Unsafe deserialization: <code>pickle.loads</code>, <code>yaml.load</code>, <code>Marshal.load</code>, <code>unserialize</code>, <code>ObjectInputStream.readObject</code></td>
+</tr>
+<tr>
+<td><code>template_injection</code></td>
+<td>A template built from a string: <code>render_template_string</code>, <code>ERB.new</code>, <code>Handlebars.compile</code></td>
+</tr>
+<tr>
+<td><code>template_render</code></td>
+<td>An ordinary template or view render</td>
+</tr>
+<tr>
+<td><code>xss</code></td>
+<td>HTML output that skips auto-escaping: <code>innerHTML</code>, <code>dangerouslySetInnerHTML</code>, <code>html_safe</code>, <code>mark_safe</code>, <code>v-html</code>, a <code>safe</code> template filter</td>
+</tr>
+<tr>
+<td><code>file_io</code></td>
+<td>A file-system read or write, a file send, a directory listing</td>
+</tr>
+<tr>
+<td><code>redirect</code></td>
+<td>A redirect response</td>
+</tr>
+<tr>
+<td><code>outbound_http</code></td>
+<td>An outbound HTTP request (<code>fetch</code>, <code>axios</code>, <code>requests</code>, <code>http.Get</code>, <code>RestTemplate</code>, <code>reqwest</code>). <code>name</code> includes the target URI when it is a literal</td>
+</tr>
+<tr>
+<td><code>mass_assignment</code></td>
+<td>Request parameters written straight into a model (<code>update_attributes</code>, <code>Model.create(req.body)</code>)</td>
+</tr>
+<tr>
+<td><code>crypto_weak</code></td>
+<td>A weak primitive: MD5 or SHA-1, DES, ECB mode, RC4, a non-cryptographic random source</td>
+</tr>
+<tr>
+<td><code>webview_load</code></td>
+<td>Mobile only. A WebView loads a URL or HTML</td>
+</tr>
+<tr>
+<td><code>intent_redirect</code></td>
+<td>Mobile only. An intent launched from inbound deep-link data</td>
+</tr>
+</tbody>
+</table>
+<p>A sink has the source <code>callee</code> when a callee's name matched and <code>route_source</code> when the handler's text did. The handler text contributes at most one sink per kind.</p>
+<h3 id="validators">validators</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>validation</code></td>
+<td>A validate, verify or permit step on the input. A validate or verify of the caller (<code>validateSession</code>, <code>verifyAuth</code>) is a guard instead</td>
+</tr>
+<tr>
+<td><code>schema_validation</code></td>
+<td>Schema-based validation that rejects undeclared fields: Pydantic, Zod, Joi, Yup, marshmallow, JSON Schema</td>
+</tr>
+<tr>
+<td><code>type_coercion</code></td>
+<td>The input is forced to a number or a typed parameter (<code>parseInt</code>, <code>Integer()</code>, a typed <code>@PathVariable</code>)</td>
+</tr>
+<tr>
+<td><code>allowlist_check</code></td>
+<td>The value is compared against a fixed set</td>
+</tr>
+<tr>
+<td><code>sanitization</code></td>
+<td>A sanitize, escape, encode or normalize step</td>
+</tr>
+<tr>
+<td><code>query_parameter_binding</code></td>
+<td>Query parameters are bound through the client API, not concatenated into the query string</td>
+</tr>
+<tr>
+<td><code>existence_validation</code></td>
+<td>An existence check before the write (<code>existsBy...</code>, or a lookup that throws when nothing is found)</td>
+</tr>
+<tr>
+<td><code>uniqueness_validation</code></td>
+<td>A duplicate or uniqueness check</td>
+</tr>
+<tr>
+<td><code>expiry_validation</code></td>
+<td>An expiry or validity-window comparison on a token or session</td>
+</tr>
+<tr>
+<td><code>credential_hashing</code>, <code>credential_verification</code></td>
+<td>A Spring Security password encoder&#39;s <code>encode</code> or <code>matches</code></td>
+</tr>
+<tr>
+<td><code>cookie_httponly</code>, <code>cookie_secure</code></td>
+<td>A cookie set with <code>HttpOnly</code> or <code>Secure</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="signals">signals</h3>
+<p>Two signals appear on every endpoint: <code>route_definition</code>, named <code>&lt;METHOD&gt; &lt;url&gt;</code>, and <code>technology</code>, named after the tech that reported the route. The rest fall into five groups.</p>
+<p>Route shape:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>state_change</code></td>
+<td>The method is <code>POST</code>, <code>PUT</code>, <code>PATCH</code> or <code>DELETE</code>, or the endpoint is a privileged WebSocket message handler. Left out for pure gRPC and Thrift methods, GraphQL queries, SOAP read operations and a <code>POST</code> with no body parameters whose callees are all reads</td>
+</tr>
+<tr>
+<td><code>path_param</code></td>
+<td>One per path parameter</td>
+</tr>
+<tr>
+<td><code>internal_endpoint</code></td>
+<td>An outbound client declaration. The application calls this endpoint, it does not serve it</td>
+</tr>
+<tr>
+<td><code>deep_link_input</code></td>
+<td>A mobile deep link or exported <code>ContentProvider</code> receives data from outside the app</td>
+</tr>
+<tr>
+<td><code>graphql_resolver</code></td>
+<td>The Spring GraphQL resolver that implements this operation</td>
+</tr>
+</tbody>
+</table>
+<p>Parameter names. Each has the source <code>param</code> and is named <code>&lt;type&gt;.&lt;name&gt;</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Typical parameter names</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>credential_input</code></td>
+<td><code>password</code>, <code>token</code>, <code>secret</code>, <code>api_key</code>, <code>authorization</code>, <code>jwt</code>, <code>bearer</code>. Also reported from <code>route_source</code> when the handler reads <code>req.body.password</code> and the analyzer listed no such parameter. A header or cookie is left out when a framework guard is reported for the endpoint, since that guard is what reads it</td>
+</tr>
+<tr>
+<td><code>identifier_input</code></td>
+<td><code>id</code>, anything ending in <code>_id</code> or <code>Id</code>, <code>user</code>, <code>account</code>, <code>order</code>, <code>project</code></td>
+</tr>
+<tr>
+<td><code>redirect_input</code></td>
+<td><code>url</code>, <code>uri</code>, <code>redirect</code>, <code>return</code>, <code>next</code>, <code>continue</code>, <code>dest</code>, <code>callback</code></td>
+</tr>
+<tr>
+<td><code>file_input</code></td>
+<td><code>file</code>, <code>upload</code>, <code>attachment</code>, <code>image</code>, <code>filename</code>, <code>path</code></td>
+</tr>
+<tr>
+<td><code>query_builder_input</code></td>
+<td><code>sort</code>, <code>order</code>, <code>filter</code>, <code>where</code>, <code>search</code>, <code>select</code>, <code>field</code>, <code>column</code></td>
+</tr>
+<tr>
+<td><code>pii_input</code></td>
+<td><code>email</code>, <code>phone</code>, <code>ssn</code>, <code>dob</code>, <code>passport</code>, <code>national_id</code></td>
+</tr>
+<tr>
+<td><code>html_content_input</code></td>
+<td><code>description</code>, <code>html</code>, <code>message</code>, <code>comment</code>, <code>note</code>, <code>markdown</code></td>
+</tr>
+<tr>
+<td><code>code_input</code></td>
+<td><code>script</code>, <code>formula</code>, <code>expression</code>, <code>command</code>, <code>template</code></td>
+</tr>
+</tbody>
+</table>
+<p>Tags. Every endpoint tag becomes a signal whose <code>kind</code> is the tag name and whose <code>source</code> is the tagger: <code>admin</code>, <code>payment</code>, <code>webhook</code>, <code>file_upload</code> and the rest of the <a href="/noir/usage/more_features/tagger/">taggers</a>, framework findings such as <code>cors</code>, <code>csrf-protection</code>, <code>rate-limit</code> and <code>security-headers</code>, and analyzer notes such as <code>graphql-return</code> or <code>nginx-host</code>. Parameter tags (<code>sqli</code>, <code>ssrf</code>, <code>idor</code>) arrive the same way with the source <code>param_tagger:&lt;tagger&gt;</code>. Auth tags are the exception: they become guards.</p>
+<p>Weakened protections and leaks, matched on the handler's source:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>csrf_exempt</code></td>
+<td>CSRF protection is switched off for the route (<code>@csrf_exempt</code>, <code>csrf().disable()</code>, <code>protect_from_forgery with: :null_session</code>). Only on state-changing methods</td>
+</tr>
+<tr>
+<td><code>jwt_unsafe</code></td>
+<td>JWT verification is off or weakened: <code>verify=False</code>, algorithm <code>none</code>, <code>ignoreExpiration: true</code></td>
+</tr>
+<tr>
+<td><code>cors_open</code></td>
+<td>A wildcard origin together with <code>credentials: true</code></td>
+</tr>
+<tr>
+<td><code>sensitive_response</code></td>
+<td>The response includes a credential-like key (<code>token</code>, <code>password</code>, <code>secret</code>)</td>
+</tr>
+<tr>
+<td><code>server_secret_source</code></td>
+<td>The handler returns a Spring <code>@Value</code> secret. Also listed under <code>sources</code></td>
+</tr>
+<tr>
+<td><code>log_injection</code></td>
+<td>The handler logs request input or a credential</td>
+</tr>
+<tr>
+<td><code>foreign_identifier_write</code></td>
+<td>An id from the request body is assigned to a different <code>...Id</code> field and saved, with no lookup or existence check</td>
+</tr>
+</tbody>
+</table>
+<p>Derived signals, built from the entries above (source <code>heuristic</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>When it appears</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guard_absence</code></td>
+<td>A state-changing endpoint with no guard of any kind and no identifier in its path. Login, logout and password-reset routes are skipped</td>
+</tr>
+<tr>
+<td><code>idor_review</code></td>
+<td>The same, with an identifier in the path</td>
+</tr>
+<tr>
+<td><code>authz_absence</code></td>
+<td>A state-changing endpoint has an <code>auth_guard</code>, no <code>authz_guard</code>, and an identifier in its path</td>
+</tr>
+<tr>
+<td><code>rate_limit_absence</code></td>
+<td>A state-changing endpoint takes a credential in its body, query or path and has no <code>rate_limit_guard</code></td>
+</tr>
+<tr>
+<td><code>ssrf</code></td>
+<td>An <code>outbound_http</code> sink together with a <code>redirect_input</code></td>
+</tr>
+<tr>
+<td><code>open_redirect</code></td>
+<td>A <code>redirect</code> sink together with a <code>redirect_input</code></td>
+</tr>
+<tr>
+<td><code>path_traversal</code></td>
+<td>A <code>file_io</code> sink together with a <code>file_input</code></td>
+</tr>
+<tr>
+<td><code>object_lookup</code></td>
+<td>An identifier input together with a lookup callee (<code>findById</code>, <code>getOne</code>, <code>repo.get</code>)</td>
+</tr>
+<tr>
+<td><code>object_write</code></td>
+<td>A state-changing endpoint with an identifier in its path calls a mutating callee (<code>create</code>, <code>update</code>, <code>delete</code>, <code>save</code>) and no lookup callee. Writing an audit-log entry and building a value in memory (<code>createFormBuilder</code>, <code>CreateAPIError</code>) do not count as mutating</td>
+</tr>
+<tr>
+<td><code>unsafe_method</code></td>
+<td>A <code>GET</code>, <code>HEAD</code>, <code>OPTIONS</code> or <code>QUERY</code> endpoint calls a mutating callee. Skipped when the handler branches on the request method (<code>request.method ==</code>, <code>$request-&gt;isMethod()</code>) or on a form-submission check (<code>$form-&gt;isSubmitted()</code>, <code>form.validate_on_submit()</code>)</td>
+</tr>
+<tr>
+<td><code>priority_review</code></td>
+<td>The roll-up, described below</td>
+</tr>
+</tbody>
+</table>
+<p>The four absence signals carry low confidence on purpose (28 to 44). Noir can miss a guard that lives in a gateway or in a base class it did not read, so they say &quot;nothing was detected here&quot;, not &quot;nothing protects this route&quot;.</p>
+<p><code>priority_review</code> adds up three things: the review signals on the endpoint (the absence signals, <code>csrf_exempt</code>, <code>jwt_unsafe</code>, <code>cors_open</code>, <code>open_redirect</code>, <code>ssrf</code>, <code>path_traversal</code>, <code>sensitive_response</code>, <code>server_secret_source</code>, <code>unsafe_method</code>, <code>log_injection</code>, <code>deep_link_input</code>), the distinct heavy sink kinds (<code>sql</code>, <code>data_store_query</code>, <code>command_exec</code>, <code>code_eval</code>, <code>deserialization</code>, <code>template_injection</code>, <code>xss</code>, <code>mass_assignment</code>, <code>crypto_weak</code>, <code>webview_load</code>, <code>intent_redirect</code>), and one extra point if any of <code>csrf_exempt</code>, <code>jwt_unsafe</code>, <code>cors_open</code> or <code>open_redirect</code> is present. A <code>sql</code> or <code>data_store_query</code> sink does not count next to a <code>query_parameter_binding</code> validator, and <code>xss</code> does not count next to <code>sanitization</code> or <code>schema_validation</code>. A total under 2 emits nothing. Otherwise <code>name</code> is <code>high</code> (confidence 90) when the total is 3 or more, when one of those four signals is present, or when there are two heavy sink kinds, and <code>medium</code> (confidence 70) for the rest. Filtering on <code>kind == &quot;priority_review&quot;</code> and <code>confidence &gt;= 80</code> gives you the high-priority routes.</p>
+<p>When a bucket is full, a new entry replaces the lowest-ranked one only if it ranks higher. Derived signals and absence findings outrank parameter-level entries, so a route with many parameters keeps its roll-ups.</p>
+<h2 id="typical-use-cases">Typical use cases</h2>
+<ul>
+<li><strong>AI SAST</strong>: hand the endpoint inventory plus its AI context to an LLM so it can decide where vulnerabilities are reachable from the attack surface without re-discovering the route structure.</li>
+<li><strong>Manual triage</strong>: a reviewer skimming a large JSON or SARIF report can sort or filter by sink kind or by <code>signals</code> like <code>guard_absence</code>.</li>
+<li><strong>CI gating</strong>: surface <code>sinks</code> minus <code>validators</code> to flag risky endpoints in pull requests.</li>
+</ul>
+<h2 id="combine-with-other-flags">Combine with other flags</h2>
+<pre><code class="language-bash hljs"># Plain output with both 1-hop callees and the full AI context block
+noir scan . --include callee --ai-context
+
+# JSON output suitable for LLM-driven SAST pipelines
+noir scan . --ai-context -f json -o noir-context.json
+
+# OpenAPI export with `x-noir-ai-context` on every operation
+noir scan . --ai-context -f oas3 -o spec.json
+</code></pre>
+<h2 id="completeness-notes">Completeness notes</h2>
+<ul>
+<li>AI context only adds data: endpoints unaffected by any heuristic come out exactly as they would without the flag (no <code>ai_context</code> key in serialized models).</li>
+<li>Heuristics are tuned conservatively. Both false positives and false negatives exist, so treat entries as leads to review, not findings.</li>
+<li>Guard / sink / validator patterns improve over time. They are cross-language on purpose, so one context schema works for every framework Noir covers.</li>
+<li>Callee coverage drives much of the AI context. See <a href="/noir/usage/supported/callee_coverage/">Callee Coverage</a> for which frameworks expose handler callees today.</li>
+</ul>
+
+      </div>
+      
+      
+      <footer class="docs-article-footer">
+        <a class="edit-link"
+           href="https://github.com/owasp-noir/noir/edit/main/docs/content/usage/supported/ai_context_coverage/index.md"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>
+          Edit this page on GitHub
+        </a>
+        
+
+
+
+      </footer>
+    </article>
+  </main>
+  
+<nav class="docs-toc" aria-label="On this page">
+  <p class="docs-toc-title">
+    <svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>
+    On this page
+  </p>
+  <ul><li><a href="#what-goes-inside">What goes inside</a></li><li><a href="#reading-an-entry">Reading an entry</a></li><li><a href="#kinds-by-bucket">Kinds by bucket</a><ul><li><a href="#guards">guards</a></li><li><a href="#callees">callees</a></li><li><a href="#sources">sources</a></li><li><a href="#sinks">sinks</a></li><li><a href="#validators">validators</a></li><li><a href="#signals">signals</a></li></ul></li><li><a href="#typical-use-cases">Typical use cases</a></li><li><a href="#combine-with-other-flags">Combine with other flags</a></li><li><a href="#completeness-notes">Completeness notes</a></li></ul>
+</nav>
+
+    </main>
+  </div>
+
+  <footer class="site-footer">
+  <div class="footer-inner">
+    <span>OWASP Noir is free and open source under the MIT license.</span>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="https://owasp-noir.github.io/noir/get_started/overview/">Docs</a>
+      <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+      <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://owasp.org/projects/noir" target="_blank" rel="noopener noreferrer">OWASP</a>
+      <a href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">Contributing</a>
+    </nav>
+  </div>
+</footer>
+  
+<script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js" defer></script>
+<script>
+  window.NOIR_BASE = "https://owasp-noir.github.io/noir";
+  
+  window.NOIR_I18N = {
+    copy: "Copy",
+    copied: "Copied",
+    copyManual: "Press Ctrl C",
+    noResults: "No results for",
+    theme: "Theme",
+    themeAuto: "auto",
+    themeLight: "light",
+    themeDark: "dark"
+  };
+</script>
+<script src="https://owasp-noir.github.io/noir/js/theme.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/nav.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/code.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/toc.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/reveal.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/mermaid.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+
+</body>
+</html>
