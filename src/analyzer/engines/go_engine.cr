@@ -262,11 +262,16 @@ module Analyzer::Go
           own_groups_by_file[path] = own
           own.each do |k, v|
             next if ambiguous.includes?(k)
-            if (existing = local_values[k]?) && existing != v
+            existing = local_values[k]?
+            if existing.nil? || existing == v
+              local_values[k] = v
+            elsif unread_group_prefix?(existing) != unread_group_prefix?(v)
+              # A prefix not read in full gives way to one that is: before
+              # such prefixes were recorded, the read one was the only binding.
+              local_values[k] = v unless unread_group_prefix?(v)
+            else
               ambiguous << k
               local_values.delete(k)
-            else
-              local_values[k] = v
             end
           end
         end
@@ -290,7 +295,8 @@ module Analyzer::Go
               found = Noir::TreeSitterGoRouteExtractor.extract_groups(content, groups, group_method, string_seed: string_seed)
               found.each do |k, v|
                 next if ambiguous.includes?(k)
-                groups[k] ||= v
+                existing = groups[k]?
+                groups[k] = v if existing.nil? || (unread_group_prefix?(existing) && !unread_group_prefix?(v))
               end
             end
             break if groups.size == prev_size
@@ -300,6 +306,10 @@ module Analyzer::Go
       end
 
       {package_groups, file_contents}
+    end
+
+    private def unread_group_prefix?(prefix : String) : Bool
+      Noir::TreeSitterGoRouteExtractor.unread_prefix?(prefix)
     end
 
     # A wiring file's `v1 := e.Group("/api")` (or the raw-string form),
@@ -667,8 +677,18 @@ module Analyzer::Go
       end
 
       prefixes_by_dir.each do |dir, prefixes|
+        read = prefixes.compact_map { |fn, pset| fn if pset.any? { |p| !unread_group_prefix?(p) } }
         unresolved = unresolved_by_dir[dir]?
         prefixes.reject! { |fn, _| unresolved.includes?(fn) } if unresolved
+        # A call site handing a group whose prefix was not read in full was
+        # an unresolved one before such prefixes were recorded.
+        # ponytail: so a helper handed both kinds is still left out; expand
+        # it per prefix (the read ones gaining their routes) once that
+        # change of output is wanted.
+        prefixes.reject! { |_, pset| pset.any? { |p| unread_group_prefix?(p) } && !pset.all? { |p| unread_group_prefix?(p) } }
+        # A helper left out with a call site whose prefix was read stays,
+        # with no prefix to expand: see `unread_builder_routes`.
+        read.each { |fn| prefixes[fn] ||= Set(String).new }
         result[dir] = prefixes unless prefixes.empty?
       end
       result
@@ -695,6 +715,37 @@ module Analyzer::Go
         expansions << {fn, rb, pset}
       end
       expansions
+    end
+
+    # The `{line, path}` of each route a router-builder helper in `content`
+    # registers on its group parameter, or on a group built off it, when no
+    # call site handing the helper a readable prefix was found
+    # (`dir_prefixes` has no entry for it): the whole-file pass reads those
+    # routes with no prefix, and the group's prefix was not read. Only for a
+    # `builder_type` that is a group and never the root (`*gin.RouterGroup`,
+    # `*echo.Group`), and not for a helper whose parameter name the package
+    # group map binds (the whole-file pass reads it by that name). A route
+    # is marked only where the whole-file pass read the same path.
+    # ponytail: the type is matched as written (`echo.Group`), so an aliased
+    # import is not read; one parse per such helper, as an expansion costs.
+    # ponytail: an interface parameter that is handed the root as often as a
+    # group (`fiber.Router`, `gin.IRouter`, `gin.IRoutes`, `chi.Router`) is
+    # not marked; owncast's `addStaticFileEndpoints(r chi.Router)` is handed
+    # `chi.NewRouter()`. Mark one once its call sites are told apart.
+    def unread_builder_routes(content : String, builder_type : String, dir_prefixes : Hash(String, Set(String))?,
+                              cross_file_groups : Hash(String, String), handle_method : String? = nil,
+                              string_seed : Hash(String, String)? = nil, literal_join : Bool = false) : Set({Int32, String})
+      found = Set({Int32, String}).new
+      return found unless content.includes?(builder_type)
+      qualifier, _, type_name = builder_type.lchop('*').rpartition('.')
+      Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name, qualifier).each do |fn, rb|
+        next if dir_prefixes.try(&.has_key?(fn)) || cross_file_groups.has_key?(rb.param)
+        Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(content, fn, {rb.param => Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX.to_s},
+          handle_method: handle_method, string_seed: string_seed, literal_join: literal_join).each do |route|
+          found << {route.line, route.path} if route.prefix_unresolved?
+        end
+      end
+      found
     end
 
     # A struct type that embeds the framework's router (`type Admin struct {

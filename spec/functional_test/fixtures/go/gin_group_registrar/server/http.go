@@ -9,6 +9,7 @@ import (
 
 type UIConf struct {
 	APIBaseURL string
+	BaseURL    string
 }
 
 func NewHTTPServer(uiConf *UIConf, apiRouter *router.APIRouter, pluginRouter *router.PluginRouter, authMw *middleware.AuthUserMiddleware) *gin.Engine {
@@ -39,5 +40,16 @@ func NewHTTPServer(uiConf *UIConf, apiRouter *router.APIRouter, pluginRouter *ro
 	// One registrar handed two guarded groups.
 	pluginRouter.RegisterUserCenterRouter(authV1)
 	pluginRouter.RegisterUserCenterRouter(adminV1)
+
+	// Read in full: on the engine, and on a group with a literal prefix.
+	r.GET("/healthz", func(ctx *gin.Context) {})
+	plain := r.Group("/plain")
+	plain.GET("/ping", func(ctx *gin.Context) {})
+
+	// A prefix not read at all: the routes stay where they are.
+	seo := r.Group(uiConf.BaseURL)
+	seo.GET("/robots.txt", func(ctx *gin.Context) {})
+	pages := seo.Group("/pages")
+	pages.GET("/about", func(ctx *gin.Context) {})
 	return r
 }

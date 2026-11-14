@@ -51,6 +51,9 @@ module Analyzer::Go
           literal_join: true,
           router_fields: receivers
         )
+        # A helper's routes on a group no call site gave a readable prefix (#3567).
+        unread = unread_builder_routes(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups, "Add", string_seed, literal_join: true)
+        ts_routes.map! { |r| unread.includes?({r.line, r.path}) ? r.unresolve_prefix! : r } unless unread.empty?
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route

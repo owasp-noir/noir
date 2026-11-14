@@ -172,6 +172,19 @@ module Noir
       end
     end
 
+    # Leads a group prefix that was not read in full: `r.Group(cfg.Base)`
+    # is recorded as this alone, `r.Group(base+"/v1")` as this and `/v1`
+    # (the tail `route_path_text` keeps). It travels with the prefix
+    # through every group map, file and package, `group_join` keeps it in
+    # front, and `Route.new` takes it off the path and marks the route. A
+    # noncharacter, so no path a Go source spells can hold it.
+    UNREAD_PREFIX = '\u{FDD0}'
+
+    # Whether a group prefix was not read in full (see `UNREAD_PREFIX`).
+    def self.unread_prefix?(prefix : String) : Bool
+      prefix.includes?(UNREAD_PREFIX)
+    end
+
     struct Route
       getter router_name : String         # variable the verb is called on
       getter verb : String                # upper-cased verb
@@ -189,17 +202,34 @@ module Noir
       # The path's leading operand was not read: `route_path_text` kept the
       # literal tail of `options.BaseURL+"/status"`, so the real path may
       # have something in front of `path`. A group or mount prefix joined
-      # on later does not read that operand either.
-      # ponytail: only the path's own operand. A receiver whose group prefix
-      # was seen but not read (`r.Group(base+"/v1")`, an accessor or a
-      # group-typed field the group map lacks) leaves its routes unmarked;
-      # marking those needs group-typed receivers told from engine-typed ones.
+      # on later does not read that operand either. Also set when the
+      # prefix of a group the route sits on was not read in full
+      # (`r.Group(base+"/v1")`, `r.Group(cfg.BasePath)`): the prefix then
+      # carries `UNREAD_PREFIX`, which is taken off `path` here.
+      # A router-builder helper's group parameter no call site gave a
+      # readable prefix is marked by `GoEngine#unread_builder_routes`.
+      # ponytail: a receiver whose group the group map does not know at all
+      # (an accessor or a group-typed field it lacks) leaves its routes
+      # unmarked; marking those needs group-typed receivers told from
+      # engine-typed ones.
       getter? prefix_unresolved : Bool
 
-      def initialize(@router_name, @verb, @path, @raw_path, @handler, @line,
+      def initialize(@router_name, @verb, path : String, @raw_path, @handler, @line,
                      @query_params : Array(String) = [] of String,
                      @handler_args : Array(String) = [] of String,
                      *, @prefix_unresolved : Bool = false)
+        if path.includes?(UNREAD_PREFIX)
+          path = path.delete(UNREAD_PREFIX)
+          path = "/" if path.empty?
+          @prefix_unresolved = true
+        end
+        @path = path
+      end
+
+      # Marks the route (see `GoEngine#unread_builder_routes`).
+      def unresolve_prefix! : self
+        @prefix_unresolved = true
+        self
       end
 
       # The mark an endpoint built from this route carries (`Endpoint#resolution`).
@@ -659,7 +689,12 @@ module Noir
         function_groups = Hash(String, Hash(String, String)).new
         literals.each do |(qualifier, name, value, function)|
           groups = function_groups.put_if_absent(node_key(function)) { rooted_function_groups(function, source, group_method, string_values) }
-          found << WrapperConstruction.new(qualifier, name, groups[value]?)
+          # ponytail: a group whose prefix was not read in full is a
+          # construction with no prefix, as before such prefixes were
+          # recorded, so its wrapper's routes stay unmarked; expand it with
+          # the unread prefix once the builder expansion is shown to read
+          # every shape the whole-file pass does.
+          found << WrapperConstruction.new(qualifier, name, groups[value]?.try { |p| p unless unread_prefix?(p) })
         end
       end
       found
@@ -1266,10 +1301,12 @@ module Noir
       # already handled by the walker.
       return if chi_closure_arg(rhs_node)
 
-      path = chi_first_string_arg(rhs_node, source, string_values)
+      var_name = Noir::TreeSitter.node_text(var_name_node, source)
+      # An unread prefix only binds a name with no binding yet (see `collect_group`).
+      path = chi_first_string_arg(rhs_node, source, string_values) ||
+             (local_groups.has_key?(var_name) ? nil : Noir::TreeSitter.field(rhs_node, "arguments").try { |args| unread_group_prefix(Noir::TreeSitter.first_named_arg(args), source, string_values) })
       return unless path
 
-      var_name = Noir::TreeSitter.node_text(var_name_node, source)
       local_groups[var_name] = "#{parent_prefix}#{path}"
     end
 
@@ -1462,8 +1499,13 @@ module Noir
       # the effective group-declaring call. Goyave's `.Subrouter("/api")`
       # takes the prefix as its own argument, which falls through to the
       # default path-extraction branch below.
+      # A prefix not read in full is recorded only for a name with no
+      # binding yet: one read elsewhere in the file or package keeps the
+      # value it had before such prefixes were recorded at all.
       if group_method == "Subrouter" && Noir::TreeSitter.node_type(parent_node) == "call_expression"
         if prefix = subrouter_chain_prefix(parent_node, source, groups, string_values)
+          groups[var_name] = prefix
+        elsif !groups.has_key?(var_name) && (prefix = subrouter_chain_prefix(parent_node, source, groups, string_values, unread: true))
           groups[var_name] = prefix
         end
         return
@@ -1478,6 +1520,7 @@ module Noir
         next unless prefix
         break
       end
+      prefix ||= unread_group_prefix(Noir::TreeSitter.first_named_arg(args), source, string_values) unless groups.has_key?(var_name)
       return unless prefix
 
       # Stack onto parent group's prefix when it's known.
@@ -1494,10 +1537,13 @@ module Noir
     # `.PathPrefix(...)`, so `r.PathPrefix("/d").Methods("GET")` and
     # `r.Host("h").PathPrefix("/d")` both scope the subrouter to `/d`.
     # Stacks onto the chain root's own prefix when `groups` knows it.
+    # With `unread`, a `.PathPrefix(...)` argument the strict read fails on
+    # is kept as an unread prefix (`unread_group_prefix`).
     private def subrouter_chain_prefix(chain : LibTreeSitter::TSNode,
                                        source : String,
                                        groups : Hash(String, String),
-                                       string_values : Hash(String, String)) : String?
+                                       string_values : Hash(String, String),
+                                       unread : Bool = false) : String?
       segments = [] of String
       current = chain
       while Noir::TreeSitter.node_type(current) == "call_expression"
@@ -1516,6 +1562,7 @@ module Noir
             segment = string_expr_text(arg, source, string_values)
             break if segment
           end
+          segment ||= unread_group_prefix(Noir::TreeSitter.first_named_arg(inner_args), source, string_values) if unread
           return unless segment
           segments.unshift(segment)
         when "Methods", "Host", "Schemes", "Headers", "HeadersRegexp", "Queries", "MatcherFunc", "Name", "NewRoute"
@@ -2442,6 +2489,16 @@ module Noir
       string_expr_text(arg, source, values).nil?
     end
 
+    # The prefix of a group whose prefix argument `arg` the strict read
+    # failed on: `UNREAD_PREFIX`, then the tail `route_path_text` keeps
+    # under the same rules as a route path (`base+"/v1"` -> `/v1`; none for
+    # `cfg.BasePath` or a name bound from a literal). Nil for a closure,
+    # which is a scope (`r.Group(func(r chi.Router) {...})`), not a prefix.
+    private def unread_group_prefix(arg : LibTreeSitter::TSNode?, source : String, values : Hash(String, String)) : String?
+      return unless arg && Noir::TreeSitter.node_type(arg) != "func_literal"
+      "#{UNREAD_PREFIX}#{route_path_text(arg, source, values)}"
+    end
+
     # No operand of the `+` chain resolves: one runtime value, not a
     # literal with a gap in it.
     private def unresolved_operand?(node : LibTreeSitter::TSNode, source : String, values : Hash(String, String), depth : Int32) : Bool
@@ -2840,7 +2897,11 @@ module Noir
     # without a leading `/` under a group, so this also handles that case.
     # An empty path is the group's own path (`api.GET("", h)` serves
     # `/api`, not `/api/`): gin, Echo and Fiber all join it that way.
+    # An unread prefix on either side stays in front (`UNREAD_PREFIX`).
     private def group_join(prefix : String, path : String) : String
+      if prefix.includes?(UNREAD_PREFIX) || path.includes?(UNREAD_PREFIX)
+        return "#{UNREAD_PREFIX}#{group_join(prefix.delete(UNREAD_PREFIX), path.delete(UNREAD_PREFIX))}"
+      end
       return prefix if path.empty? && !prefix.empty?
       "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
