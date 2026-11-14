@@ -31,3 +31,14 @@ FunctionalTester.new("fixtures/specification/postman/v2_0/", {
   :techs     => 1,
   :endpoints => 1,
 }, nil).perform_tests
+
+# Postman API export shape: the collection sits under a top-level `collection` key.
+FunctionalTester.new("fixtures/specification/postman/wrapped/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/identity/api/auth/signup", "POST", [
+    Param.new("email", "{{email}}", "json"),
+  ]),
+  Endpoint.new("/workshop/api/shop/orders/42", "GET"),
+]).perform_tests

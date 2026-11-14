@@ -12,6 +12,8 @@ module Analyzer::Specification
       each_spec_file(Noir::LocatorKeys::POSTMAN_JSON) do |postman_file|
         content = read_file_content(postman_file)
         json_obj = parse_json_lenient(content)
+        # The Postman API wraps a collection as `{"collection": {...}}`.
+        json_obj = json_obj["collection"] if json_obj["collection"]?.try(&.as_h?)
 
         # Process items (requests) in the collection. Collection variables
         # override a sibling environment: the collection is the more specific
