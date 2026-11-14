@@ -1,0 +1,35 @@
+{
+  "collection": {
+    "info": {
+      "_postman_id": "00000000-0000-4000-8000-000000000001",
+      "name": "Shop API",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+      {
+        "name": "Sign up",
+        "request": {
+          "method": "POST",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": { "mode": "raw", "raw": "{\"email\":\"{{email}}\"}" },
+          "url": {
+            "raw": "{{url}}/identity/api/auth/signup",
+            "host": ["{{url}}"],
+            "path": ["identity", "api", "auth", "signup"]
+          }
+        }
+      },
+      {
+        "name": "Get order",
+        "request": {
+          "method": "GET",
+          "url": {
+            "raw": "{{url}}/workshop/api/shop/orders/42",
+            "host": ["{{url}}"],
+            "path": ["workshop", "api", "shop", "orders", "42"]
+          }
+        }
+      }
+    ]
+  }
+}

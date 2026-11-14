@@ -78,4 +78,50 @@ describe "Detect Postman Collection" do
 
     instance.detect("collection.json", content).should be_true
   end
+
+  it "unwraps a Postman API `collection` wrapper" do
+    content = <<-JSON
+      {
+        "collection": {
+          "info": {
+            "name": "Wrapped",
+            "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+          },
+          "item": []
+        }
+      }
+      JSON
+
+    instance.detect("collection.json", content).should be_true
+  end
+
+  it "unwraps a schema-less `collection` wrapper with a Postman id" do
+    content = <<-JSON
+      {
+        "collection": {
+          "info": {
+            "_postman_id": "12345678-1234-4321-8765-123456789012",
+            "name": "Wrapped"
+          },
+          "item": []
+        }
+      }
+      JSON
+
+    instance.detect("collection.json", content).should be_true
+  end
+
+  it "ignores an unrelated `collection` key" do
+    content = <<-JSON
+      {
+        "_postman_id": "12345678-1234-4321-8765-123456789012",
+        "collection": {
+          "name": "albums",
+          "items": []
+        }
+      }
+      JSON
+
+    instance.detect("albums.json", content).should be_false
+  end
 end
