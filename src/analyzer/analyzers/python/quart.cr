@@ -53,6 +53,7 @@ module Analyzer::Python
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
       register_blueprint = Hash(::String, Hash(::String, Array(::String))).new
       blueprint_mounts = Hash(::String, Array(Tuple(::String, ::String, ::String?))).new
+      cross_file_mounts = [] of Tuple(::String, ::String, ::String, ::String, ::String?)
 
       python_files = python_source_files
       base_paths.each do |current_base_path|
@@ -142,11 +143,16 @@ module Analyzer::Python
               blueprint_name = register_blueprint_match[2]
               url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
               blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : nil
-              blueprint_mounts[path] ||= [] of Tuple(::String, ::String, ::String?)
-              blueprint_mounts[path] << {parent_name, blueprint_name, blueprint_mount_prefix}
-
-              if url_prefix_match && (declaration = blueprint_declaration(path, blueprint_name))
-                add_registered_prefix(register_blueprint, declaration[0], declaration[1], url_prefix_match[1])
+              # Mounted on a blueprint rather than the app: a child declared
+              # in another file is resolved once every file is read.
+              on_blueprint = blueprint_prefixes.has_key?(parent_name) && !quart_instances.has_key?(parent_name)
+              declaration = blueprint_declaration(path, blueprint_name) if on_blueprint || url_prefix_match
+              if on_blueprint && declaration && declaration[0] != path
+                cross_file_mounts << {path, parent_name, declaration[0], declaration[1], blueprint_mount_prefix}
+              else
+                blueprint_mounts[path] ||= [] of Tuple(::String, ::String, ::String?)
+                blueprint_mounts[path] << {parent_name, blueprint_name, blueprint_mount_prefix}
+                add_registered_prefix(register_blueprint, declaration[0], declaration[1], url_prefix_match[1]) if url_prefix_match && declaration
               end
             end
           end
@@ -169,6 +175,7 @@ module Analyzer::Python
         end
       end
       apply_nested_blueprint_prefixes(path_api_instances, own_api_instances, blueprint_mounts, register_blueprint)
+      apply_cross_file_mounts(cross_file_mounts, register_blueprint, path_api_instances, own_api_instances)
 
       # Iterate through the collected route decorations and extract endpoints
       @routes.each do |router_name, router_info_list|

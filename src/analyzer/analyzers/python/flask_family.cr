@@ -385,6 +385,43 @@ module Analyzer::Python
       end
     end
 
+    # A child mounted on a blueprint of another file is served under each of
+    # that blueprint's prefixes joined with the registration's url_prefix
+    # (its own one when omitted), next to any mount on the app. Passes run
+    # until no chain (A in B in C) changes, bounded against a cycle.
+    private def apply_cross_file_mounts(cross_file_mounts : Array(Tuple(::String, ::String, ::String, ::String, ::String?)),
+                                        registered : Hash(::String, Hash(::String, Array(::String))),
+                                        path_api_instances : Hash(::String, Hash(::String, ::String)),
+                                        own_api_instances : Hash(::String, Hash(::String, ::String))) : Nil
+      return if cross_file_mounts.empty?
+      direct = Hash(Tuple(::String, ::String), Array(::String)).new
+      cross_file_mounts.each do |_, _, child_path, child_name, _|
+        direct[{child_path, child_name}] = registered[child_path]?.try(&.[child_name]?).try(&.dup) || [] of ::String
+      end
+      resolved = Hash(Tuple(::String, ::String), Array(::String)).new
+      (cross_file_mounts.size + 1).times do
+        pass = direct.transform_values(&.dup)
+        cross_file_mounts.each do |parent_path, parent_name, child_path, child_name, mount|
+          parents = resolved[{parent_path, parent_name}]? ||
+                    registered[parent_path]?.try(&.[parent_name]?) ||
+                    [path_api_instances[parent_path]?.try(&.[parent_name]?) || ""]
+          child_prefix = mount || own_api_instances[child_path]?.try(&.[child_name]?) || ""
+          list = pass[{child_path, child_name}]
+          parents.each do |parent_prefix|
+            joined = File.join(parent_prefix, child_prefix)
+            list << joined unless list.includes?(joined)
+          end
+        end
+        break if pass == resolved
+        resolved = pass
+      end
+      resolved.each do |(path, name), prefixes|
+        next if prefixes.empty?
+        (registered[path] ||= Hash(::String, Array(::String)).new)[name] = prefixes
+        (path_api_instances[path] ||= Hash(::String, ::String).new)[name] = prefixes.first
+      end
+    end
+
     FUNCTION_DEF_RE = /^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/
 
     # First `def <name>(` line per name, built once per lines array (keyed
