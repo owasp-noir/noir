@@ -1075,41 +1075,7 @@ module Analyzer::Python
         end
       end
       apply_nested_blueprint_prefixes(state.path_api_instances, own_api_instances, state.blueprint_mounts, state.register_blueprint)
-      apply_cross_file_mounts(state, own_api_instances)
-    end
-
-    # A child mounted on a blueprint of another file is served under each of
-    # that blueprint's prefixes joined with the registration's url_prefix
-    # (its own one when omitted), next to any mount on the app. Passes run
-    # until no chain (A in B in C) changes, bounded against a cycle.
-    private def apply_cross_file_mounts(state : ScanState, own_api_instances : Hash(::String, Hash(::String, ::String))) : Nil
-      return if state.cross_file_mounts.empty?
-      direct = Hash(Tuple(::String, ::String), Array(::String)).new
-      state.cross_file_mounts.each do |_, _, child_path, child_name, _|
-        direct[{child_path, child_name}] = state.register_blueprint[child_path]?.try(&.[child_name]?).try(&.dup) || [] of ::String
-      end
-      resolved = Hash(Tuple(::String, ::String), Array(::String)).new
-      (state.cross_file_mounts.size + 1).times do
-        pass = direct.transform_values(&.dup)
-        state.cross_file_mounts.each do |parent_path, parent_name, child_path, child_name, mount|
-          parents = resolved[{parent_path, parent_name}]? ||
-                    state.register_blueprint[parent_path]?.try(&.[parent_name]?) ||
-                    [state.path_api_instances[parent_path]?.try(&.[parent_name]?) || ""]
-          child_prefix = mount || own_api_instances[child_path]?.try(&.[child_name]?) || ""
-          list = pass[{child_path, child_name}]
-          parents.each do |parent_prefix|
-            joined = File.join(parent_prefix, child_prefix)
-            list << joined unless list.includes?(joined)
-          end
-        end
-        break if pass == resolved
-        resolved = pass
-      end
-      resolved.each do |(path, name), prefixes|
-        next if prefixes.empty?
-        (state.register_blueprint[path] ||= Hash(::String, Array(::String)).new)[name] = prefixes
-        (state.path_api_instances[path] ||= Hash(::String, ::String).new)[name] = prefixes.first
-      end
+      apply_cross_file_mounts(state.cross_file_mounts, state.register_blueprint, state.path_api_instances, own_api_instances)
     end
 
     # Emit endpoints for the `@<router>.route(...)`-style decorators
