@@ -17,9 +17,23 @@ private def timed_handlers(routes : Int32) : Time::Span
   extracted = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
   extracted.size.should eq(routes)
   handlers = [] of Handler?
-  elapsed = Time.measure do
-    named = Noir::GoNamedHandler.new(source, "main.go", extracted)
-    handlers = extracted.map { |route| named.handler_for(route) }
+  # The guard is about the lookup's complexity, not the collector's. The
+  # 8000-route run allocates ~13 MB and takes a collection every time; the
+  # 1000-route one allocates ~1.6 MB and takes none. On the Windows runner
+  # that one collection cost ~127 ms against ~91 ms of work, so the ratio
+  # read 19.4 with it and 8.2 without (macOS: 1-5 ms, no visible effect).
+  # Start each run from a collected heap and keep the collector out of the
+  # timed block. `GC.disable` counts, and the `ensure` re-enables it even if
+  # the block raises, so the rest of the suite never runs with it off.
+  GC.collect
+  GC.disable
+  begin
+    elapsed = Time.measure do
+      named = Noir::GoNamedHandler.new(source, "main.go", extracted)
+      handlers = extracted.map { |route| named.handler_for(route) }
+    end
+  ensure
+    GC.enable
   end
   last = handlers.last.not_nil!
   last.name.should eq("h#{routes - 1}")
@@ -37,7 +51,8 @@ describe "Go named-handler local binding scaling" do
       small = {small, timed_handlers(1000)}.min
       large = {large, timed_handlers(8000)}.min
     end
-    # 8x the routes: linear measures ~8x, the per-route walks ~60x.
+    # 8x the routes: linear measures ~8x, the per-route walks ~60x, with the
+    # collector out of the timing. 22 sits about 2.7x from either side.
     (large / {small, 1.millisecond}.max).should be < 22.0
   end
 end
