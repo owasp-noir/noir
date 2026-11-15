@@ -272,12 +272,46 @@ class GoAuthTagger < FrameworkTagger
     endpoints.map! do |endpoint|
       @guard_followed = false
       check_endpoint(endpoint)
-      if !@guard_followed && endpoint.tags.any? { |tag| tag.tagger == "go_auth" && tag.name.in?("auth", "authz") }
+      guarded = endpoint.tags.any? { |tag| tag.tagger == "go_auth" && tag.name.in?("auth", "authz") }
+      if guarded && !@guard_followed && !structural_guard?(endpoint)
         # ponytail: per endpoint, not per guard; add a field on ai_context.guards if readers need to distinguish individual guards.
         endpoint.resolution = (endpoint.resolution || {} of String => String).merge({"guard" => Endpoint::RESOLUTION_HEURISTIC})
       end
       endpoint
     end
+  end
+
+  @structural_middleware = Hash(String, Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::MiddlewareProof))).new
+
+  # Tags continue to come from the existing text scopes. This independent
+  # proof can only suppress a mark, never add/change a tag or its context.
+  private def structural_guard?(endpoint : Endpoint) : Bool
+    return false unless endpoint.details.technology.in?("go_gin", "go_chi", "go_echo", "go_mux", "go_fiber")
+    endpoint.details.code_paths.any? do |path|
+      row = path.line || next false
+      declared_names(path.path) # Populates both indexes from the same parse.
+      proofs = @structural_middleware[path.path]?.try(&.[row - 1]?) || next false
+      proofs.any? do |proof|
+        evidence = guard_evidence(proof.arg, path.path)
+        next false unless evidence && evidence.followed
+        # Re-read under this request's path/method: a followed refusal on
+        # another route does not establish protection on an exempted one.
+        route_guard_evidence(proof.arg, path.path, endpoint.url, endpoint.method)
+      end
+    end
+  end
+
+  private def route_guard_evidence(arg : String, file : String, path : String, method : String) : Bool
+    ref = arg.match(MIDDLEWARE_REFERENCE) || return false
+    qualifier = ref[1].gsub(/\s+/, "").rchop('.')
+    name = ref[2]
+    fields = arg.includes?('{') ? arg.scan(LITERAL_FIELD).to_h { |field| {field[1], field[2].strip} } : nil
+    if fields.nil? && arg[ref.end - 1]? == '('
+      flags = call_args(arg[ref.end..])
+      fields = flags.each_with_index.to_h { |(flag, i)| {i.to_s, flag} } if !flags.empty? && flags.all? { |flag| flag == "true" || flag == "false" }
+    end
+    verdict, _, followed = definition_verdict(qualifier, name, file, fields, path, method)
+    followed && verdict != Guard::None && !verdict.nil?
   end
 
   private def add_direct_guard(endpoint : Endpoint, evidence : GuardEvidence?)
@@ -972,7 +1006,7 @@ class GoAuthTagger < FrameworkTagger
   # ponytail: same package plus a sibling package directory named like the
   # qualifier (or the local's type package), one hop deep; a guard reached
   # through such a delegated call still resolves by name only.
-  private def definition_verdict(qualifier : String, name : String, file : String, fields : Hash(String, String)?) : {Guard?, Bool, Bool}
+  private def definition_verdict(qualifier : String, name : String, file : String, fields : Hash(String, String)?, route_path : String? = nil, route_method : String? = nil) : {Guard?, Bool, Bool}
     dir = File.dirname(file)
     bodies = [] of Noir::GoCalleeExtractor::FunctionBody
     if qualifier.empty?
@@ -986,7 +1020,7 @@ class GoAuthTagger < FrameworkTagger
         typed = local_type_methods(qualifier, name, file)
         veto = true
         verdict = typed.max_of? do |body|
-          found = body_verdict(body, fields)
+          found = body_verdict(body, fields, route_path: route_path, route_method: route_method)
           veto &&= @last_body_name_veto
           found
         end
@@ -996,11 +1030,66 @@ class GoAuthTagger < FrameworkTagger
     end
     followed = false
     verdict = bodies.max_of? do |body|
-      found = body_verdict(body, fields)
-      followed ||= found != Guard::None && @last_body_followed
+      found = body_verdict(body, fields, route_path: route_path, route_method: route_method)
+      followed ||= found != Guard::None && @last_body_followed && (route_path.nil? || (setting_lift(body).nil? && scope_body_safe?(body, fields)))
       found
     end
     {verdict, false, followed && followed_functions?(qualifier, name, file, bodies)}
+  end
+
+  @scope_body_safe = Hash({String, Int32, Int32, String}, Bool).new
+
+  # ponytail: unread bypass predicates and path/method-aware middleware stay
+  # matched; promote them only after every exemption is read for the route.
+  private def scope_body_safe?(body : Noir::GoCalleeExtractor::FunctionBody, fields : Hash(String, String)? = nil, hops : Int32 = 3) : Bool
+    @scope_body_safe.put_if_absent({body.file_path, body.start_row, hops, fields.to_s}) do
+      source = Noir::CComments.strip(body.source, quotes: %("'`))
+      next false if source.matches?(/\.\s*(?:URL|Method|RequestURI)\b|\.\s*Path\s*\(|\b(?:Skipper|Skip\w*|Optional\w*)\b/)
+      params = source.match(FUNC_PARAMS).try(&.[1].split(',').compact_map(&.strip.split(/\s+/).first?)) || [] of String
+      known = fields.try { |values| values.transform_keys { |name| name.to_i?.try { |i| params[i]? } || name } } || Hash(String, String).new
+      options = source.match(FUNC_PARAMS).try(&.[1].split(',').reject(&.matches?(/Context|Ctx|Request|ResponseWriter|Handler/)).compact_map(&.strip.split(/\s+/).first?)) || [] of String
+      options.reject!(&.empty?)
+      roots = Set(String).new
+      source.scan(/\bfunc\s*(?:\w+\s*)?\(([^()]*)\)/).each do |head|
+        head[1].split(',').each do |param|
+          name = param.strip.split(/\s+/).first?
+          roots << name if name && !name.empty?
+        end
+      end
+      values = Hash(String, Symbol).new
+      safe = source.lines.all? do |raw|
+        next false if raw.strip.matches?(/\A(?:for|select|goto)\b/)
+        if assigned = raw.strip.match(CALLER_ASSIGNMENT)
+          caller = caller_expression?(assigned[2], values, body, hops)
+          assigned[1].split(',').each { |name| values[name.strip] = caller ? :value : :other }
+        end
+        condition = raw.strip.match(IF_OPEN).try(&.[1]) || raw.strip.match(/\Aswitch\s+(.+?)\s*\{\z/).try(&.[1]) || raw.strip.match(CASE_ARM).try(&.[1])
+        next true unless condition
+        next false if options.any? { |name| !known.has_key?(name) && condition.matches?(/\b#{Regex.escape(name)}\b/) }
+        # Each conjunct/disjunct must have caller provenance or a supplied
+        # boolean option. A caller read must not hide a global flag.
+        condition.split(/&&|\|\|/).all? do |part|
+          test = part.strip.strip('(').strip(')').strip
+          code = test.gsub(STRING_LITERAL, %("" )).gsub(/\s*\.\s*/, ".")
+          local = code.scan(/\b[A-Za-z_]\w*\b/).all? do |id|
+            name = id[0]
+            next true if id.begin > 0 && code[id.begin - 1] == '.'
+            called = code[id.end..].lstrip.starts_with?('(')
+            next name == "len" if called
+            name.in?("nil", "true", "false") || roots.includes?(name) || (values[name]? && values[name] != :other) || known.has_key?(name)
+          end
+          local && (test.in?("nil", "true", "false") || caller_expression?(test, values, body, hops) || known[test.lchop('!')]?.in?("true", "false"))
+        end
+      end
+      next false unless safe
+      package = @bodies.functions_for(File.dirname(body.file_path))
+      source.partition('{')[2].scan(BODY_CALL).all? do |call|
+        helper = package[call[1]]?
+        next true unless helper
+        guarded = body_verdict(helper, nil, false) != Guard::None
+        !guarded || (hops > 0 && scope_body_safe?(helper, nil, hops - 1))
+      end
+    end
   end
 
   # A file-wide veto, not a lexical resolver: a local, parameter or named
@@ -1010,6 +1099,7 @@ class GoAuthTagger < FrameworkTagger
       names = Set(String).new
       source = read_file(file) || ""
       Noir::TreeSitter.parse_go(source) do |root|
+        @structural_middleware[file] = Noir::TreeSitterGoRouteExtractor.guard_middleware(root, source, import_paths(file))
         Noir::TreeSitter.walk(root) do |node|
           case Noir::TreeSitter.node_type(node)
           when "parameter_declaration", "variadic_parameter_declaration", "var_spec"

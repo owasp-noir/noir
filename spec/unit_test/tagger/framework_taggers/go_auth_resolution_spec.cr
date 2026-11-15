@@ -19,10 +19,8 @@ end
 
 describe "GoAuthTagger guard resolution (#3567)" do
   {
-    "a nearby Use with a known body"  => {"gin_auth", "main.go", 24, "/api/profile", "go_gin", "GET"},
     "a constructor with a known body" => {"gin_auth", "main.go", 47, "/v1/users/add", "go_gin", "POST"},
     "a closure's trailing middleware" => {"chi_auth", "main.go", 24, "/user", "go_chi", "GET"},
-    "a closure's Use"                 => {"chi_auth", "main.go", 49, "/me", "go_chi", "GET"},
     "a file-wide middleware binding"  => {"chi_auth", "main.go", 34, "/repos/{id}/star", "go_chi", "POST"},
     "a wrapped mux"                   => {"http_wrapped", "api/api.go", 12, "/v1/items", "go_http", "POST"},
     "a local wrapping closure"        => {"http_wrapped", "reader/reader.go", 16, "/reader/edit", "go_http", "POST"},
@@ -37,11 +35,13 @@ describe "GoAuthTagger guard resolution (#3567)" do
   end
 
   {
-    "an inline body"       => {"gin_auth", "main.go", 52, "/home", "go_gin", "GET"},
-    "a With body"          => {"chi_auth", "main.go", 51, "/feed", "go_chi", "GET"},
-    "a handler wrapper"    => {"echo_wrap_auth", "main.go", 14, "/admin/users", "go_echo", "GET"},
-    "an imported function" => {"http_wrap_lookalikes", "main.go", 17, "/dup2", "go_http", "GET"},
-    "a replaced import"    => {"http_wrap_replace", "app/main.go", 11, "/forked", "go_http", "GET"},
+    "a nearby Use with a known body" => {"gin_auth", "main.go", 24, "/api/profile", "go_gin", "GET"},
+    "a closure's Use"                => {"chi_auth", "main.go", 49, "/me", "go_chi", "GET"},
+    "an inline body"                 => {"gin_auth", "main.go", 52, "/home", "go_gin", "GET"},
+    "a With body"                    => {"chi_auth", "main.go", 51, "/feed", "go_chi", "GET"},
+    "a handler wrapper"              => {"echo_wrap_auth", "main.go", 14, "/admin/users", "go_echo", "GET"},
+    "an imported function"           => {"http_wrap_lookalikes", "main.go", 17, "/dup2", "go_http", "GET"},
+    "a replaced import"              => {"http_wrap_replace", "app/main.go", 11, "/forked", "go_http", "GET"},
   }.each do |path, args|
     it "leaves #{path} followed" do
       endpoint = guard_resolution_endpoint(*args)
@@ -66,7 +66,7 @@ describe "GoAuthTagger guard resolution (#3567)" do
     guard_resolution_endpoint("gin_auth", "main.go", 13, "/health").resolution.should be_nil
   end
 
-  it "writes back all three claims through the tagger runner" do
+  it "preserves other claims when structural scope follows the guard" do
     base = File.expand_path("../../../functional_test/fixtures/go/gin_auth", __DIR__)
     # Populate the file map first, as a scan does.
     guard_resolution_endpoint("gin_auth", "main.go", 24, "/api/profile")
@@ -78,7 +78,7 @@ describe "GoAuthTagger guard resolution (#3567)" do
     endpoint.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED, "handler" => Endpoint::RESOLUTION_HEURISTIC}
     endpoints = [endpoint]
     NoirTaggers.run_tagger(endpoints, options, "go_auth")
-    endpoints.first.resolution.should eq({"prefix" => "unresolved", "handler" => "heuristic", "guard" => "heuristic"})
+    endpoints.first.resolution.should eq({"prefix" => "unresolved", "handler" => "heuristic"})
     endpoint.resolution.should eq({"prefix" => "unresolved", "handler" => "heuristic"})
   end
 end

@@ -75,7 +75,7 @@ The FastAPI analyzer marks unread prefixes on `APIRouter(prefix=...)` and `inclu
 
 `handler: heuristic` means Noir picked the handler definition by name, wrapper shape or proximity without establishing the reference's link to that definition. The handler's name, path and line still show the picked definition; `noir query --resolution heuristic` lists these rows. A handler reference that produced no definition is not marked.
 
-`guard: heuristic` means Go auth/authz tags say the endpoint is guarded, but every path to that conclusion used a name, shape or text-level scope match. A guarded Go endpoint without this mark has at least one followed guard, not necessarily every guard; an endpoint with no guard tag is left unmarked. This is a mark on the endpoint's guarded status, not on each entry in `ai_context.guards`.
+`guard: heuristic` means Go auth/authz tags say the endpoint is guarded, but every path to that conclusion used a name, shape or text-level scope match. Group and router-level middleware also counts as followed when the syntax tree shows it applies to the route and its body was followed to a refusal. A guarded Go endpoint without this mark has at least one followed guard, not necessarily every guard; an endpoint with no guard tag is left unmarked. This is a mark on the endpoint's guarded status, not on each entry in `ai_context.guards`.
 
 `spring_auth` applies the same claim to Java and Kotlin Spring endpoints. A standard restrictive annotation on the handler or class, read in full, stays unmarked. URL-rule matches, opaque or composed annotations, interceptor/filter scopes, unread configurations and shape-matched handler refusals get `guard: heuristic`, because what they mean or which routes they cover is inferred.
 
