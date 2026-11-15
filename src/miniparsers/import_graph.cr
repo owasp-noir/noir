@@ -595,6 +595,20 @@ module Noir::ImportGraph::Python
     CODE = 1
   end
 
+  # ponytail: stop after six package re-exports; raise if a real project needs a deeper chain.
+  MAX_PACKAGE_REEXPORT_HOPS = 6
+
+  @@symbol_cache = Hash(Tuple(String, String, UInt64), Hash(String, Tuple(String, String))).new
+  @@package_import_cache = Hash(Tuple(String, String), Hash(String, Tuple(String, String))).new
+  @@symbol_mutex = Mutex.new
+
+  Noir::ExtractionResultCache.register_clearer do
+    @@symbol_mutex.synchronize do
+      @@symbol_cache.clear
+      @@package_import_cache.clear
+    end
+  end
+
   # Find every `import` and `from … import …` line in `content`
   # and resolve each name to a `{filepath, package_type}` tuple.
   # Returns an empty hash for files that import nothing
@@ -620,7 +634,8 @@ module Noir::ImportGraph::Python
     import_map
   end
 
-  # Map each name an import binds to `{declaring file, original name}`.
+  # Map each name an import binds to `{declaring file, original name}`,
+  # following explicit re-exports through package `__init__.py` files.
   # `from pkg.mod import bp as users_bp` keys `users_bp` to
   # `{pkg/mod.py, "bp"}`, so a caller can find the object where it was
   # declared, under the name it was declared with. A name that binds a
@@ -631,6 +646,24 @@ module Noir::ImportGraph::Python
                                  file_path : String,
                                  content : String? = nil) : Hash(String, Tuple(String, String))
     content = Noir::TextFile.read(file_path) if content.nil?
+
+    key = {app_base_path, file_path, Noir::ExtractionResultCache.source_fingerprint(content)}
+    if cached = @@symbol_mutex.synchronize { @@symbol_cache[key]? }
+      return cached
+    end
+
+    symbols = imported_symbols_from_content(app_base_path, file_path, content)
+    symbols.each do |local, target|
+      next if target[1].empty? || File.basename(target[0]) != "__init__.py"
+      symbols[local] = resolve_package_reexport(app_base_path, target[0], target[1], 0,
+        Set(Tuple(String, String)).new) || target
+    end
+    @@symbol_mutex.synchronize { Noir::ExtractionResultCache.store_capped(@@symbol_cache, key, symbols) }
+  end
+
+  private def self.imported_symbols_from_content(app_base_path : String,
+                                                 file_path : String,
+                                                 content : String) : Hash(String, Tuple(String, String))
     file_dir = file_path.ends_with?(".py") ? File.dirname(file_path) : file_path
 
     symbols = Hash(String, Tuple(String, String)).new
@@ -659,6 +692,32 @@ module Noir::ImportGraph::Python
       end
     end
     symbols
+  end
+
+  private def self.resolve_package_reexport(app_base_path : String,
+                                            file_path : String,
+                                            name : String,
+                                            depth : Int32,
+                                            visited : Set(Tuple(String, String))) : Tuple(String, String)?
+    return if name.empty? || File.basename(file_path) != "__init__.py" || depth >= MAX_PACKAGE_REEXPORT_HOPS
+
+    key = {file_path, name}
+    return if visited.includes?(key)
+    visited << key
+
+    cache_key = {app_base_path, file_path}
+    imports = @@symbol_mutex.synchronize { @@package_import_cache[cache_key]? }
+    unless imports
+      source = CodeLocator.instance.content_for(file_path) || Noir::TextFile.read(file_path)
+      imports = imported_symbols_from_content(app_base_path, file_path, source)
+      @@symbol_mutex.synchronize do
+        Noir::ExtractionResultCache.store_capped(@@package_import_cache, cache_key, imports)
+      end
+    end
+    target = imports[name]?
+    return unless target
+
+    resolve_package_reexport(app_base_path, target[0], target[1], depth + 1, visited) || target
   end
 
   # The `.py` file a dotted module path names under `package_path`: the
