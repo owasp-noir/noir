@@ -11,7 +11,7 @@ module Scoreboard
 
   RESULTS    = "scripts/scoreboard/results.json"
   ROWS       = "tmp/scoreboard"
-  PIN_FIELDS = %w[name url commit technologies scope specs spec_prefix]
+  PIN_FIELDS = %w[name url commit technologies scope specs spec_prefix exclude_paths]
 
   def contributors(endpoint : JSON::Any) : Array(String)
     details = endpoint["details"]
@@ -77,6 +77,11 @@ module Scoreboard
   # Change only declared server metadata before Noir performs its own join.
   def strip_spec_prefix!(doc : JSON::Any, prefix : String)
     raise "spec_prefix must be a non-root path without a trailing slash" if !prefix.starts_with?('/') || prefix.size <= 1 || prefix.ends_with?('/')
+    if doc["swagger"]?.try(&.as_s) == "2.0"
+      raise "spec_prefix #{prefix} differs from declared basePath" unless doc["basePath"]?.try(&.as_s) == prefix
+      doc.as_h["basePath"] = JSON::Any.new("/")
+      return
+    end
     raise "spec_prefix requires OpenAPI 3 servers" unless doc["openapi"]?.try(&.as_s.starts_with?("3."))
     servers = doc["servers"].as_a
     raise "spec_prefix requires declared servers" if servers.empty?
@@ -128,7 +133,8 @@ module Scoreboard
     File.write(config, "{}\n")
     report_path = File.join(work, "#{repo["name"].as_s}.json")
     technologies = repo["technologies"].as_a.map(&.as_s)
-    command("./bin/noir", ["scan", stage, "--config-file", config, "--only-techs", (technologies + %w[oas2 oas3]).join(','), "--techs", technologies.join(','), "--concurrency", "1", "--exclude-path", "*.wasm,*.csv", "--no-log", "--no-color", "-f", "json", "-o", report_path], output: :close)
+    exclusions = %w[*.wasm *.csv] + (repo["exclude_paths"]?.try(&.as_a.map(&.as_s)) || [] of String)
+    command("./bin/noir", ["scan", stage, "--config-file", config, "--only-techs", (technologies + %w[oas2 oas3]).join(','), "--techs", technologies.join(','), "--concurrency", "1", "--exclude-path", exclusions.join(','), "--no-log", "--no-color", "-f", "json", "-o", report_path], output: :close)
     report = JSON.parse(File.read(report_path))
     raise "Scanner reported incomplete coverage: #{report["errors"].to_json}" unless report["errors"].as_a.empty?
     report["endpoints"].as_a.each do |endpoint|
@@ -240,7 +246,8 @@ module Scoreboard
     end
     generated += "\n"
     repos.each do |repo|
-      adjustment = repo["spec_prefix"]?.try { |prefix| " Spec rows are compared without the hosted `#{prefix.as_s}` prefix." } || ""
+      adjustment = repo["spec_prefix"]?.try { |prefix| " Spec rows are compared without the deployment `#{prefix.as_s}` prefix." } || ""
+      adjustment += repo["exclude_paths"]?.try { |paths| " Outside this service: #{paths.as_a.map { |path| "`#{path.as_s}`" }.join(", ")}." } || ""
       generated += "- [#{repo["name"]}](#{repo["url"].as_s}/tree/#{repo["commit"].as_s}) · `#{repo["commit"].as_s}` · #{repo["technologies"].as_a.map { |tech| "`#{tech.as_s}`" }.join(", ")} · scope `#{repo["scope"].as_s}` · #{repo["specs"].as_a.map { |path| "`#{path.as_s}`" }.join(", ")}. #{repo["note"].as_s}#{adjustment}\n"
     end
     File.write(RESULTS, data.to_pretty_json + "\n")

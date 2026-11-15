@@ -4,11 +4,11 @@ description = "Code analyzer recall and agreement against pinned repositories' o
 weight = 2
 +++
 
-This source-only measurement compares code analyzers with the OpenAPI contracts kept in real repositories. Fixtures are not ground truth. The corpus is small and selected for inspectable contracts; its numbers do not represent all projects using a framework.
+This source-only measurement compares code analyzers with the OpenAPI contracts kept in real repositories. Fixtures are not ground truth. The corpus contains 15 repositories across 10 technologies. It is selected for inspectable contracts; its numbers do not represent all projects using a framework.
 
 <!-- SCOREBOARD -->
 
-Measured: 2026-11-15. Analyzer source: `863ed43426e3d9ada373034088a3915100d142a9`.
+Measured: 2026-11-15. Analyzer source: `c0a143d193d61e2893a1a93250af8aeb69600e64`.
 
 A technology measured on one repository is a single data point.
 
@@ -17,24 +17,30 @@ A technology measured on one repository is a single data point.
 | cs_aspnet_core_minimal_api | 1 | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | go_chi | 2 | 264 | 41 | 249 | 86.6% | 51.5% | 262 (51.1%) |
 | go_echo | 1 | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
-| go_gin | 1 | 196 | 3 | 34 | 98.5% | 85.2% | 228 (99.1%) |
+| go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 228 (80.9%) |
 | go_mux | 1 | 26 | 1 | 60 | 96.3% | 30.2% | 0 (0.0%) |
-| js_express | 1 | 53 | 0 | 11 | 100.0% | 82.8% | 0 (0.0%) |
-| python_django | 1 | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
-| python_fastapi | 1 | 264 | 1 | 3 | 99.6% | 98.9% | 0 (0.0%) |
+| java_spring | 1 | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
+| js_express | 2 | 303 | 128 | 366 | 70.3% | 45.3% | 9 (1.3%) |
+| python_django | 2 | 235 | 0 | 300 | 100.0% | 43.9% | 0 (0.0%) |
+| python_fastapi | 2 | 268 | 81 | 194 | 76.8% | 58.0% | 0 (0.0%) |
 | ts_nestjs | 1 | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
 
 | Repository | Matched | Spec-only | Code-only | Recall | Agreement | Marked |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | InvokeAI | 264 | 1 | 3 | 99.6% | 98.9% | 0 (0.0%) |
+| NodeBB | 250 | 128 | 355 | 66.1% | 41.3% | 9 (1.5%) |
 | answer | 196 | 3 | 34 | 98.5% | 85.2% | 228 (99.1%) |
 | auth | 23 | 41 | 60 | 35.9% | 27.7% | 0 (0.0%) |
 | dvws-node | 53 | 0 | 11 | 100.0% | 82.8% | 0 (0.0%) |
 | eShop | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
+| flowable-engine | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
+| gotify | 42 | 0 | 10 | 100.0% | 80.8% | 0 (0.0%) |
 | immich | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
+| langflow | 4 | 80 | 191 | 4.8% | 2.1% | 0 (0.0%) |
 | owncast | 241 | 0 | 189 | 100.0% | 56.0% | 262 (60.9%) |
 | podinfo | 26 | 1 | 60 | 96.3% | 30.2% | 0 (0.0%) |
 | pokeapi | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
+| pretalx | 133 | 0 | 300 | 100.0% | 30.7% | 0 (0.0%) |
 | vikunja | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
 
 | Technology | Resolution claim | Marked endpoints | Share of code endpoints |
@@ -42,25 +48,31 @@ A technology measured on one repository is a single data point.
 | go_chi | `handler:heuristic` | 21 | 4.1% |
 | go_chi | `prefix:unresolved` | 241 | 47.0% |
 | go_echo | `prefix:unresolved` | 4 | 1.5% |
-| go_gin | `handler:heuristic` | 6 | 2.6% |
-| go_gin | `prefix:unresolved` | 228 | 99.1% |
+| go_gin | `handler:heuristic` | 6 | 2.1% |
+| go_gin | `prefix:unresolved` | 228 | 80.9% |
+| js_express | `prefix:unresolved` | 9 | 1.3% |
 
 - [InvokeAI](https://github.com/invoke-ai/InvokeAI/tree/9264acf9e542d51a21467013029b755686dee375) · `9264acf9e542d51a21467013029b755686dee375` · `python_fastapi` · scope `invokeai/app` · `invokeai/frontend/api/openapi.json`. openapi-checks.yml regenerates the schema from FastAPI and diffs it. Only invokeai/app is scanned; frontend and other packages are excluded.
+- [NodeBB](https://github.com/NodeBB/NodeBB/tree/5456eac373abbc93136fed7b02ce8f58060f14cc) · `5456eac373abbc93136fed7b02ce8f58060f14cc` · `js_express` · scope `.` · `public/openapi/read.yaml`, `public/openapi/write.yaml`. test/api/routes.js:24-86 compares mounted Express routes against both committed contracts, with explicit exclusions at lines 62-81. Together they cover the forum read and write APIs; UI, federation and plugin routes remain in scope as undocumented routes. The real /api/v3 mount is retained. install/web.js:63-68 starts a separate setup server and is excluded. Outside this service: `./install`.
 - [answer](https://github.com/apache/answer/tree/6744295fa888e0621fc9f9a8ace04f1a4daf8554) · `6744295fa888e0621fc9f9a8ace04f1a4daf8554` · `go_gin` · scope `.` · `docs/swagger.json`. Makefile generate runs go generate; swag annotations live on the handlers for this Gin service. Known stale annotations: personal question page lacks its service prefix; activation uses plural users instead of user; notification config documents POST instead of GET.
-- [auth](https://github.com/supabase/auth/tree/3e79d8513b67d7dc3f234153aacc074daf82db5f) · `3e79d8513b67d7dc3f234153aacc074daf82db5f` · `go_chi` · scope `.` · `openapi.yaml`. Maintained beside internal/api; the hosted prefix is declared at openapi.yaml:38 and absent from the root-local router (api.go:219-222,498,520). Reauthenticate has a stale documented verb. Spec rows are compared without the hosted `/auth/v1` prefix.
+- [auth](https://github.com/supabase/auth/tree/3e79d8513b67d7dc3f234153aacc074daf82db5f) · `3e79d8513b67d7dc3f234153aacc074daf82db5f` · `go_chi` · scope `.` · `openapi.yaml`. Maintained beside internal/api; the hosted prefix is declared at openapi.yaml:38 and absent from the root-local router (api.go:219-222,498,520). Reauthenticate has a stale documented verb. Spec rows are compared without the deployment `/auth/v1` prefix.
 - [dvws-node](https://github.com/snoopysecurity/dvws-node/tree/4221c04f132960a0ccca4bf5aa5f3a9f53172778) · `4221c04f132960a0ccca4bf5aa5f3a9f53172778` · `js_express` · scope `.` · `docs/openapi/openapi.json`. scripts/generate-openapi.js generates this contract with swagger-autogen from src/routes; test/openapi.test.js checks the document.
 - [eShop](https://github.com/dotnet/eShop/tree/913acea66708a59595351174cee9b29f37179d29) · `913acea66708a59595351174cee9b29f37179d29` · `cs_aspnet_core_minimal_api` · scope `src/Catalog.API` · `src/Catalog.API/Catalog.API.json`, `src/Catalog.API/Catalog.API_v2.json`. Catalog.API.csproj exports OpenAPI during build with Microsoft.Extensions.ApiDescription.Server. Both API versions are included; query-parameter version distinctions are outside endpoint scoring. Only Catalog.API source is scanned, not other services or shared default endpoints.
+- [flowable-engine](https://github.com/flowable/flowable-engine/tree/055f90ad53a581c76ec2a6f4973acd2498c443fd) · `055f90ad53a581c76ec2a6f4973acd2498c443fd` · `java_spring` · scope `modules/flowable-rest/src/main` · `docs/public-api/references/swagger/process/flowable-swagger-process.yaml`. Hand-written process-service controllers. docs/public-api/references/swagger/README.md:7-13 identifies the stable contract as generated from source annotations with manual corrections; docs/public-api/tools/flowable-oas-generator/pom.xml:51-84 selects this package. The application deployment prefix is declared by modules/flowable-app-rest/src/main/resources/flowable-default.properties:2,43; the scoped controller library registers local paths. Spec rows are compared without the deployment `/flowable-rest/service` prefix.
+- [gotify](https://github.com/gotify/server/tree/01086b95a8b69ee87383f6e8bcae601d8c33384b) · `01086b95a8b69ee87383f6e8bcae601d8c33384b` · `go_gin` · scope `.` · `docs/spec.json`. Makefile:41-50 regenerates docs/spec.json from source annotations and fails on a diff. Covers this notification service, including users, clients, applications, messages and plugins; UI and optional transport routes remain in scope. No prefix adjustment. plugin/example/echo/echo.go:74-77 defines an example plugin webhook, not a core service registration, and is excluded. Outside this service: `plugin/example`.
 - [immich](https://github.com/immich-app/immich/tree/e5d6eb7be67834f59d90e4b7a86f5dec7ac9af86) · `e5d6eb7be67834f59d90e4b7a86f5dec7ac9af86` · `ts_nestjs` · scope `server` · `open-api/immich-openapi-specs.json`. Generated from server controllers by the OpenAPI tooling; .github/workflows/check-openapi.yml checks contract changes. Only server is scanned.
+- [langflow](https://github.com/langflow-ai/langflow/tree/e8bbae8eeb8729abd650f07bfc55957cbdbc1636) · `e8bbae8eeb8729abd650f07bfc55957cbdbc1636` · `python_fastapi` · scope `src/backend/base` · `docs/openapi/openapi.json`. docs/openapi/generate_openapi.py:83-93 writes create_app().openapi(); lines 96-103 select this committed document. Pinned to the schema-generator introduction, before workflow routes moved into the separate lfx package, so src/backend/base contains all service routers (langflow/main.py:532-534). Component examples, frontend and tests are outside scope. No prefix adjustment.
 - [owncast](https://github.com/owncast/owncast/tree/c3a9ac1c46c043358fe7382a6d62d5227e4b2efe) · `c3a9ac1c46c043358fe7382a6d62d5227e4b2efe` · `go_chi` · scope `.` · `openapi.yaml`. Makefile api-generate produces the checked-in chi server from this spec; /api is a real mount, not a prefix to strip.
 - [podinfo](https://github.com/stefanprodan/podinfo/tree/fd3a834ed8d14b80ea334cf8a2fddd4597924da6) · `fd3a834ed8d14b80ea334cf8a2fddd4597924da6` · `go_mux` · scope `.` · `pkg/api/http/docs/swagger.json`. Makefile swagger regenerates this document from handler annotations; runtime path helpers remain part of the analyzer task. token/validate is annotated POST although registered GET.
 - [pokeapi](https://github.com/PokeAPI/pokeapi/tree/8a92bfa7dab2f12b84b5d151562f9857c133ff30) · `8a92bfa7dab2f12b84b5d151562f9857c133ff30` · `python_django` · scope `.` · `openapi.yml`. Makefile openapi-generate uses Django spectacular; describes the REST API, not the separate GraphQL service.
+- [pretalx](https://github.com/pretalx/pretalx/tree/1510dea9aafd580d1b2d7b8466736a09cd0298ec) · `1510dea9aafd580d1b2d7b8466736a09cd0298ec` · `python_django` · scope `src/pretalx` · `doc/api/schema.yml`. justfile:125-128 regenerates this committed schema through Django spectacular; src/pretalx/common/management/commands/spectacular.py:9-16 delegates to drf-spectacular. Covers the complete REST API (src/pretalx/urls.py:42 and api/urls.py); the scoped application also contains organiser, agenda and submission UI routes, which remain visible as code-only rows. No prefix adjustment.
 - [vikunja](https://github.com/go-vikunja/vikunja/tree/293264397571be437c9bc9a32b4c492bd566dbc2) · `293264397571be437c9bc9a32b4c492bd566dbc2` · `go_echo` · scope `pkg` · `pkg/swagger/swagger.json`. magefile.go Generate.SwaggerDocs runs swag; release automation regenerates and commits pkg/swagger. Only pkg is scanned; standalone example plugins and the frontend are outside this service scope. Known stale annotations: singular image instead of images in the Unsplash proxy; PUT rather than POST for label updates.
 
 <!-- /SCOREBOARD -->
 
 ## Method
 
-Each entry in [`scripts/scoreboard/corpus.json`](https://github.com/owasp-noir/noir/blob/main/scripts/scoreboard/corpus.json) contains only its repository pin, code technology, service scope, selected in-tree OpenAPI files, optional `spec_prefix`, and a short note. The runner shallow-fetches the pinned object and exports that service and the selected spec files into scratch space. Other OpenAPI entry documents are removed. Compiled WebAssembly (`*.wasm`) and CSV datasets (`*.csv`) are excluded; neither is route source for a scored analyzer. Scanner errors stop publication. Corpus applications are never built, installed, or run.
+Each entry in [`scripts/scoreboard/corpus.json`](https://github.com/owasp-noir/noir/blob/main/scripts/scoreboard/corpus.json) contains only its repository pin, code technology, service scope, selected in-tree OpenAPI files, optional `spec_prefix` and `exclude_paths`, and a short note. Exclusions are explicit service boundaries passed to Noir's existing `--exclude-path` option and included in snapshot identity: NodeBB's separate web installer (`install/web.js:63-68`) and Gotify's example plugin (`plugin/example/echo/echo.go:74-77`) are outside their scored services. The runner shallow-fetches the pinned object and exports that service and the selected spec files into scratch space. Other OpenAPI entry documents are removed. Compiled WebAssembly (`*.wasm`) and CSV datasets (`*.csv`) are excluded; neither is route source for a scored analyzer. Scanner errors stop publication. Corpus applications are never built, installed, or run.
 
 One Noir scan reads code and OpenAPI together. The counts use its optimized HTTP rows: **matched** has both the scored code technology and a `spec` contributor in `details.technologies`; **spec-only** lacks the scored code contributor; **code-only** lacks a spec contributor. A singleton contributor comes from `details.technology`. Technology totals sum repository counts before computing ratios.
 
@@ -71,17 +83,19 @@ One Noir scan reads code and OpenAPI together. The counts use its optimized HTTP
 
 ### Explicit deployment-prefix adjustment
 
-Only Supabase Auth declares `spec_prefix: "/auth/v1"`. Its `openapi.yaml:37-38` declares the hosted server URL `https://{project}.supabase.co/auth/v1`. The service itself registers root-local routes: `internal/api/api.go:219-222` opens the `/` router, and `:268` registers `/token`. `internal/api/router.go:17-31` passes these paths directly to chi. The API forwards directly to that router (`api.go:498,520`), and `cmd/serve_cmd.go:63-75` installs the API as the HTTP server handler without an `/auth/v1` mount. So the prefix is a hosted deployment boundary, not a missing source prefix.
+Supabase Auth declares `spec_prefix: "/auth/v1"`. Its `openapi.yaml:37-38` declares the hosted server URL `https://{project}.supabase.co/auth/v1`. The service itself registers root-local routes: `internal/api/api.go:219-222` opens the `/` router, and `:268` registers `/token`. `internal/api/router.go:17-31` passes these paths directly to chi. The API forwards directly to that router (`api.go:498,520`), and `cmd/serve_cmd.go:63-75` installs the API as the HTTP server handler without an `/auth/v1` mount. So the prefix is a hosted deployment boundary, not a missing source prefix.
 
 Before importing that spec, the runner removes the explicitly declared prefix from its **staged copy's root server URLs**, which makes its spec rows local before Noir joins them. It validates that every declared server path exactly equals the configured prefix, and rejects scoped server overrides. The original checkout and code rows stay unchanged. Spec line numbers for adjusted documents refer to the retained staged copy; code locations refer to the pinned source. No endpoint matcher is added.
 
-Owncast is different: `webserver/router/router.go:93` mounts the generated API at `/api/`. Its spec's `/api` is in the source and is retained. No other entry has a prefix adjustment. Noir's own normalization still handles placeholder spellings; this recipe adds no case, slash, `ANY`, wildcard, constant-prefix or gateway-rewrite matching. Gateway technologies are excluded because coverage rules are not one-to-one API operations.
+Flowable declares `spec_prefix: "/flowable-rest/service"` for its process-controller library. The committed Swagger 2 document declares that `basePath` at line 20. The separate REST application supplies `/flowable-rest` through `modules/flowable-app-rest/src/main/resources/flowable-default.properties:2` and the `/service` servlet path at line 43. `BaseRestApiConfiguration.java:41-48` in the Spring Boot autoconfigure module installs that servlet mapping. These deployment settings are outside the scoped `modules/flowable-rest/src/main` library; its hand-written controllers register local paths (for example, `DeploymentCollectionResource.java:106`). The runner requires an exact Swagger 2 `basePath` match and changes only the staged value to `/`. It does not alter operation paths.
+
+Owncast is different: `webserver/router/router.go:93` mounts the generated API at `/api/`. Its spec's `/api` is in the source and is retained. Only Supabase Auth and Flowable have prefix adjustments. Noir's own normalization still handles placeholder spellings; this recipe adds no case, slash, `ANY`, wildcard, constant-prefix or gateway-rewrite matching. Gateway technologies are excluded because coverage rules are not one-to-one API operations.
 
 ### Source audit
 
-The dated table below records a manual audit of the measured snapshot. For each technology, all unmatched rows are checked when there are at most 25; otherwise 25 are sampled. Slots are allocated across repository/side buckets, then evenly spaced positions are taken within each sorted bucket. These are sample counts, not estimated totals. An operation can appear on both unmatched sides.
+The dated table below records a manual audit of the measured snapshot. The initial audit sampled up to 25 unmatched rows per technology. Slots are allocated across repository/side buckets, then evenly spaced positions are taken within each sorted bucket. These are sample counts, not estimated totals. An operation can appear on both unmatched sides.
 
-Classifications are analyzer miss, stale spec, undocumented route, prefix/method mismatch that is not an analyzer error, and other. They do not change the ratios. Per-row evidence is not committed. Re-audit changed rows and update this dated table before publishing a new measurement; the recipe regenerates metrics, not the manual audit.
+Classifications are analyzer miss, analyzer false positive, stale or wrong spec, undocumented route, prefix/method/slash difference that is not an analyzer error, and other. They do not change the ratios. Per-row evidence is not committed. Re-audit changed rows and update this dated table before publishing a new measurement; the recipe regenerates metrics, not the manual audit.
 
 <!-- AUDIT -->
 
@@ -100,6 +114,22 @@ Audit date: 2026-11-15. 153 unmatched rows checked against the pinned sources.
 | ts_nestjs | 17 | 0 | 0 | 17 | 0 | 0 |
 
 This audit was taken at analyzer revision `8184cd4`. Two of the misses it found have since been fixed: the FastAPI row's 25 misses were all InvokeAI's dropped `/api` prefix ([#3614](https://github.com/owasp-noir/noir/issues/3614)), and the go_chi miss was supabase/auth's SCIM prefix ([#3616](https://github.com/owasp-noir/noir/issues/3616)). FastAPI's remaining 4 unmatched rows have not been re-audited. Residual slash differences are left visible. All 11 unmatched Express rows were audited.
+
+Expansion audit: 2026-11-15, analyzer revision `54ff7225277f691ac19816faad875c52979e39c0`. Another 162 unmatched rows were checked against the five new pinned repositories. Each side is sampled separately: all rows if there are at most 25, otherwise 25 evenly spaced rows from the sorted list, at index `floor(i * count / 25)`. The historical table above is retained; it is not a current re-audit of the original corpus. All metric fields for the ten original repositories are unchanged from the committed baseline.
+
+| Repository | Spec-only audited | Code-only audited | Analyzer miss | Analyzer false positive | Stale spec | Undocumented route | Prefix/method/slash | Other |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| flowable-engine | 2 | 25 | 0 | 0 | 0 | 24 | 0 | 3 |
+| NodeBB | 25 | 25 | 23 | 17 | 1 | 8 | 1 | 0 |
+| gotify | 0 | 10 | 0 | 0 | 0 | 10 | 0 | 0 |
+| langflow | 25 | 25 | 25 | 25 | 0 | 0 | 0 | 0 |
+| pretalx | 0 | 25 | 0 | 0 | 0 | 25 | 0 | 0 |
+
+Flowable's three “other” rows are two documented literal `users` operations and one sampled controller row with `{family}`. `ProcessInstanceIdentityLinkResource.java:49,73,98-100` registers and validates `users` or `groups`; this is a literal-versus-parameter specialization. Its other sampled operations are real registrations absent from the contract. Gotify's sample contains UI/docs, explicit HEAD health and conditional MCP routes. Pretalx's sample contains organiser, agenda and submission UI routes outside its REST contract.
+
+NodeBB passes each route module its mount name as an argument. `src/routes/index.js:236-254` takes the names from a plugin hook whose defaults are `admin`, `user`, `tags` and so on, and modules such as `src/routes/admin.js` build their paths as `/${name}/...`. The spec documents the default names; Noir emits `/api/{name}/...` and `/{name}/...`, so one route shows up on both unmatched sides. This accounts for 23 sampled misses and 16 false positives. One further false positive is the middleware-only `router.all` regex at `index.js:136`; `src/middleware/index.js:130-133` only calls `next()`. The stale row documents the removed read-API session-delete path; `src/routes/write/users.js:66` registers its replacement. The prefix row is `/ping`, whose source prepends configurable `relative_path` (`src/webserver.js:152,191`).
+
+Langflow loses `/api/v1` and `/api/v2` because its routers are re-exported through package `__init__.py` files (`langflow/api/v1/__init__.py:1-24`, `api/v2/__init__.py:3-6`, `api/router.py:33-87`, `main.py:532`); see [#3625](https://github.com/owasp-noir/noir/issues/3625). For example, `api/v1/users.py:49` registers `GET /whoami` on `/users`, but Noir emits `/users/whoami` instead of `/api/v1/users/whoami`. All 50 sampled rows have that cause. Handlers hidden from the contract with `include_in_schema=False` are code-only rows as well. The 4.8% recall stays in the scoreboard until the analyzer is fixed.
 
 <!-- /AUDIT -->
 
@@ -121,9 +151,11 @@ Hwaro renders the committed Markdown tables. It does not read the results file a
 
 - **spring-petclinic-rest**: method mappings are generated from its spec during build and absent from the checkout, so a 0% score would not be an analyzer failure.
 - **juice-shop**: its spec intentionally covers B2B orders only; scoring the entire service made agreement primarily a measure of that limited scope.
-- **Spring replacements**: spring-cloud-dataflow, ThingsBoard and Stirling-PDF had no suitable committed contract. Flowable has hand-written controllers and generated specs, but its decision contract also requires separate deployment/version validation. Spring is left unmeasured rather than given a misleading row.
-- **Second Express candidate**: Directus has a broad contract, but it omits current Access, Policies, Panels, Notifications and Deployment APIs and retains obsolete OAuth/relation paths. It was not added; DVWS remains a single Express data point. The RealWorld Express app had no committed OpenAPI document.
+- **Earlier Spring replacements**: spring-cloud-dataflow, ThingsBoard and Stirling-PDF had no suitable committed contract in the initial investigation. This expansion admits Flowable's 184-operation process-service Swagger 2 contract instead of its 15-operation decision contract. Its OpenAPI 3 alternatives remain excluded: `docs/public-api/references/openapi/README.md:5-7` explicitly says they are incomplete. The stable Swagger documents are identified as generated from source annotations with manual corrections in `references/swagger/README.md:7-13`; the generator selects the process-controller package at `tools/flowable-oas-generator/pom.xml:51-84`.
+- **Second Express candidate**: Directus has a broad contract, but it omits current Access, Policies, Panels, Notifications and Deployment APIs and retains obsolete OAuth/relation paths. It was not added; NodeBB now provides the second Express data point. The RealWorld Express app had no committed OpenAPI document.
 - **OWASP/crAPI**: its shared contract spans several services and cannot supply a separate denominator for one code technology.
 - **spring-petclinic-microservices**: no checked-in OpenAPI document at the inspected pin.
 - **VAmPI**: Connexion constructs routes from the same spec rather than independent Flask declarations.
 - **shlink**: left out because the corpus already covered enough technologies, not because its contract is stale.
+
+Also inspected for this expansion and not added: apache/fineract (JAX-RS `@Path` resources, not Spring mappings); novuhq/novu (its export removes endpoints without API-key authentication); thomiceli/opengist (the document covers only the token API and nothing checks it against the routes); dyrector-io/dyrectorio (the Swagger configuration is committed, the generated document is not); and PrefectHQ/prefect, freqtrade/freqtrade, healthchecks/healthchecks, PostHog/posthog, wger-project/wger and statping-ng/statping-ng (no committed service OpenAPI document). Langflow is pinned to the commit that introduced its schema generator: at its current head the workflow routes come from the separate `lfx` package, outside the scanned scope. The pin was chosen before its score was seen and does not measure current Langflow.

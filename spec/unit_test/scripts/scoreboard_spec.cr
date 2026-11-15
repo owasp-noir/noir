@@ -58,4 +58,20 @@ describe Scoreboard do
     doc = JSON.parse(%({"openapi":"3.0.3","servers":[{"url":"https://example/auth/v1"}],"paths":{"/token":{"post":{"servers":[{"url":"https://other"}]}}}}))
     expect_raises(Exception, /Scoped servers/) { Scoreboard.strip_spec_prefix!(doc, "/auth/v1") }
   end
+
+  it "removes only an explicitly declared Swagger 2 deployment basePath" do
+    doc = JSON.parse(%({"swagger":"2.0","basePath":"/flowable-rest/service","paths":{"/repository/deployments":{"get":{}}}}))
+    expect_raises(Exception, /differs from declared basePath/) { Scoreboard.strip_spec_prefix!(doc, "/service") }
+    Scoreboard.strip_spec_prefix!(doc, "/flowable-rest/service")
+    doc["basePath"].as_s.should eq("/")
+    doc["paths"].as_h.keys.should eq(["/repository/deployments"])
+    doc = JSON.parse(%({"swagger":"2.0","paths":{}}))
+    expect_raises(Exception, /differs from declared basePath/) { Scoreboard.strip_spec_prefix!(doc, "/service") }
+  end
+
+  it "includes service exclusions in the snapshot identity" do
+    repo = JSON.parse(%({"name":"service","exclude_paths":["./install"],"note":"evidence"}))
+    Scoreboard.pin(repo).keys.sort!.should eq(%w[exclude_paths name])
+    Scoreboard.pin(repo)["exclude_paths"][0].as_s.should eq("./install")
+  end
 end

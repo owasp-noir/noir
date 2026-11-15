@@ -1,6 +1,6 @@
 {
   "measured_on": "2026-11-15",
-  "analyzer_revision": "863ed43426e3d9ada373034088a3915100d142a9",
+  "analyzer_revision": "c0a143d193d61e2893a1a93250af8aeb69600e64",
   "technologies": [
     {
       "matched": 16,
@@ -53,25 +53,25 @@
       "repositories": 1
     },
     {
-      "matched": 196,
+      "matched": 238,
       "spec_only": 3,
-      "code_only": 34,
-      "recall": 0.9849246231155779,
-      "agreement": 0.8521739130434782,
+      "code_only": 44,
+      "recall": 0.9875518672199171,
+      "agreement": 0.8439716312056738,
       "marked": 228,
-      "marked_share": 0.991304347826087,
+      "marked_share": 0.8085106382978723,
       "claims": {
         "handler:heuristic": {
           "count": 6,
-          "share": 0.02608695652173913
+          "share": 0.02127659574468085
         },
         "prefix:unresolved": {
           "count": 228,
-          "share": 0.991304347826087
+          "share": 0.8085106382978723
         }
       },
       "name": "go_gin",
-      "repositories": 1
+      "repositories": 2
     },
     {
       "matched": 26,
@@ -86,40 +86,57 @@
       "repositories": 1
     },
     {
-      "matched": 53,
-      "spec_only": 0,
-      "code_only": 11,
-      "recall": 1.0,
-      "agreement": 0.828125,
+      "matched": 182,
+      "spec_only": 2,
+      "code_only": 28,
+      "recall": 0.9891304347826086,
+      "agreement": 0.8666666666666667,
       "marked": 0,
       "marked_share": 0.0,
       "claims": {},
-      "name": "js_express",
+      "name": "java_spring",
       "repositories": 1
     },
     {
-      "matched": 102,
+      "matched": 303,
+      "spec_only": 128,
+      "code_only": 366,
+      "recall": 0.703016241299304,
+      "agreement": 0.452914798206278,
+      "marked": 9,
+      "marked_share": 0.013452914798206279,
+      "claims": {
+        "prefix:unresolved": {
+          "count": 9,
+          "share": 0.013452914798206279
+        }
+      },
+      "name": "js_express",
+      "repositories": 2
+    },
+    {
+      "matched": 235,
       "spec_only": 0,
-      "code_only": 0,
+      "code_only": 300,
       "recall": 1.0,
-      "agreement": 1.0,
+      "agreement": 0.4392523364485981,
       "marked": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "python_django",
-      "repositories": 1
+      "repositories": 2
     },
     {
-      "matched": 264,
-      "spec_only": 1,
-      "code_only": 3,
-      "recall": 0.9962264150943396,
-      "agreement": 0.9887640449438202,
+      "matched": 268,
+      "spec_only": 81,
+      "code_only": 194,
+      "recall": 0.7679083094555874,
+      "agreement": 0.5800865800865801,
       "marked": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "python_fastapi",
-      "repositories": 1
+      "repositories": 2
     },
     {
       "matched": 287,
@@ -155,6 +172,36 @@
         "invokeai/frontend/api/openapi.json"
       ],
       "technology": "python_fastapi"
+    },
+    {
+      "matched": 250,
+      "spec_only": 128,
+      "code_only": 355,
+      "recall": 0.6613756613756614,
+      "agreement": 0.4132231404958678,
+      "marked": 9,
+      "marked_share": 0.01487603305785124,
+      "claims": {
+        "prefix:unresolved": {
+          "count": 9,
+          "share": 0.01487603305785124
+        }
+      },
+      "name": "NodeBB",
+      "url": "https://github.com/NodeBB/NodeBB",
+      "commit": "5456eac373abbc93136fed7b02ce8f58060f14cc",
+      "technologies": [
+        "js_express"
+      ],
+      "scope": ".",
+      "specs": [
+        "public/openapi/read.yaml",
+        "public/openapi/write.yaml"
+      ],
+      "exclude_paths": [
+        "./install"
+      ],
+      "technology": "js_express"
     },
     {
       "matched": 196,
@@ -252,6 +299,52 @@
       "technology": "cs_aspnet_core_minimal_api"
     },
     {
+      "matched": 182,
+      "spec_only": 2,
+      "code_only": 28,
+      "recall": 0.9891304347826086,
+      "agreement": 0.8666666666666667,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "flowable-engine",
+      "url": "https://github.com/flowable/flowable-engine",
+      "commit": "055f90ad53a581c76ec2a6f4973acd2498c443fd",
+      "technologies": [
+        "java_spring"
+      ],
+      "scope": "modules/flowable-rest/src/main",
+      "specs": [
+        "docs/public-api/references/swagger/process/flowable-swagger-process.yaml"
+      ],
+      "spec_prefix": "/flowable-rest/service",
+      "technology": "java_spring"
+    },
+    {
+      "matched": 42,
+      "spec_only": 0,
+      "code_only": 10,
+      "recall": 1.0,
+      "agreement": 0.8076923076923077,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "gotify",
+      "url": "https://github.com/gotify/server",
+      "commit": "01086b95a8b69ee87383f6e8bcae601d8c33384b",
+      "technologies": [
+        "go_gin"
+      ],
+      "scope": ".",
+      "specs": [
+        "docs/spec.json"
+      ],
+      "exclude_paths": [
+        "plugin/example"
+      ],
+      "technology": "go_gin"
+    },
+    {
       "matched": 287,
       "spec_only": 0,
       "code_only": 17,
@@ -271,6 +364,27 @@
         "open-api/immich-openapi-specs.json"
       ],
       "technology": "ts_nestjs"
+    },
+    {
+      "matched": 4,
+      "spec_only": 80,
+      "code_only": 191,
+      "recall": 0.047619047619047616,
+      "agreement": 0.020512820512820513,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "langflow",
+      "url": "https://github.com/langflow-ai/langflow",
+      "commit": "e8bbae8eeb8729abd650f07bfc55957cbdbc1636",
+      "technologies": [
+        "python_fastapi"
+      ],
+      "scope": "src/backend/base",
+      "specs": [
+        "docs/openapi/openapi.json"
+      ],
+      "technology": "python_fastapi"
     },
     {
       "matched": 241,
@@ -341,6 +455,27 @@
       "scope": ".",
       "specs": [
         "openapi.yml"
+      ],
+      "technology": "python_django"
+    },
+    {
+      "matched": 133,
+      "spec_only": 0,
+      "code_only": 300,
+      "recall": 1.0,
+      "agreement": 0.3071593533487298,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "pretalx",
+      "url": "https://github.com/pretalx/pretalx",
+      "commit": "1510dea9aafd580d1b2d7b8466736a09cd0298ec",
+      "technologies": [
+        "python_django"
+      ],
+      "scope": "src/pretalx",
+      "specs": [
+        "doc/api/schema.yml"
       ],
       "technology": "python_django"
     },
