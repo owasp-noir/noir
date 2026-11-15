@@ -41,7 +41,7 @@ Repository: https://github.com/owasp-noir/noir-passive-rules
 
 Both options are also configurable via `~/.config/noir/config.yaml` (`passive_scan_auto_update`, `passive_scan_no_update_check`).
 
-You can also manage the rules outside a scan: `noir rules update` pulls the latest rules, `noir rules list` shows the installed rule files, and `noir rules path` prints the rules directory.
+Outside a scan, `noir rules update` pulls the latest rules, `noir rules list` shows the installed rule files, and `noir rules path` prints the rules directory.
 
 ## Example Usage
 

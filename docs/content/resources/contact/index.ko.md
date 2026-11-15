@@ -8,7 +8,7 @@ sort_by = "weight"
 
 ## GitHub
 
-[GitHub 저장소](https://github.com/owasp-noir/noir)에서 연락할 수 있습니다.
+[GitHub 저장소](https://github.com/owasp-noir/noir)로 연락해 주세요.
 
 *   **버그 제보와 기능 요청**: [이슈](https://github.com/owasp-noir/noir/issues)를 열어주세요.
 *   **질문과 토론**: [토론](https://github.com/orgs/owasp-noir/discussions) 페이지를 이용하세요.

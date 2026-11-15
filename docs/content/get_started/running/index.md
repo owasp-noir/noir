@@ -12,8 +12,6 @@ prev_page_label = "Install Noir"
 Noir is installed. Point it at a project and see what it finds.
 {% end %}
 
-Each step builds on the one before, so follow them in order the first time.
-
 ## Run a Scan
 
 Pick a project directory and scan it:
@@ -114,7 +112,7 @@ noir scan . --exclude-techs express
 noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
-`--only-techs` and `--techs` look similar but do different things. `--only-techs` limits which detectors run, so the scan is faster and only those techs can be found. `--techs` *adds* techs on top of auto-detection, so their analyzers run even if detection missed them. Use both for "only these techs, and run them even if they weren't detected".
+`--only-techs` limits which detectors run, so the scan is faster and only those techs can be found. `--techs` *adds* techs on top of auto-detection, so their analyzers run even if detection missed them. Use both for "only these techs, and run them even if they weren't detected".
 
 ## Enrich the Output
 
@@ -194,7 +192,7 @@ For build details (Crystal / LLVM / target), run `noir version --verbose`. Run `
 
 ---
 
-That's the end of Getting Started. Where to go next:
+Where to go next:
 
 - **[CLI Commands](@/usage/cli_commands/_index.md)**: The full v1 subcommand reference (scan, trace, reach, query, list, cache, config, rules, and so on)
 - **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set default options so you don't repeat flags every time

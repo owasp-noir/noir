@@ -7,14 +7,14 @@ sort_by = "weight"
 +++
 
 {% mascot(mood="question") %}
-Almost every v0 invocation still runs on v1 unchanged. This page is a single place to look up the renames, behavior changes, and the few things that explicitly broke.
+Almost every v0 invocation still runs on v1 unchanged. This page lists the renames, behavior changes, and the few things that broke.
 {% end %}
 
 ## The short version
 
 v1.0 is **compatibility-first**. v0 call shapes like `noir -b ./app -P -f json` route automatically into the `scan` subcommand, and every renamed flag keeps its old name as a silent alias. The only things that explicitly broke are `--ollama` / `--ollama-model` (deprecated since 2024; use `--ai-provider ollama [--ai-model NAME]` instead).
 
-If you just want to upgrade and keep going, you can stop reading here. The rest of this page is for users adapting their docs, dashboards, or downstream tooling to the v1 surface.
+To upgrade and keep going, you can stop reading here. The rest of this page is for adapting docs, dashboards, or downstream tooling to the v1 surface.
 
 ## CLI structure
 
@@ -47,7 +47,7 @@ The pre-v1 terminal flags still route to the equivalent verb:
 
 ## Deliver flag rename: PROBE / EXPORT
 
-`noir scan -h` in v0 used a single `DELIVER` section. v1 splits it into **PROBE** (active HTTP replay against the discovered endpoints) and **EXPORT** (shipping the catalog to an external data store). The split makes it obvious that `--probe-match` / `--probe-skip` / `--probe-header` only affect probing, not the JSON/SARIF on stdout.
+`noir scan -h` in v0 used a single `DELIVER` section. v1 splits it into **PROBE** (active HTTP replay against the discovered endpoints) and **EXPORT** (shipping the catalog to an external data store). `--probe-match` / `--probe-skip` / `--probe-header` only affect probing, not the JSON/SARIF on stdout.
 
 | v0 flag | v1 flag |
 | --- | --- |
@@ -103,7 +103,7 @@ If both spellings are present in the same file (mid-migration), the v1 key wins.
 
 ## Behavior changes
 
-These don't change flag names, just what scans emit. The [v1.0.0 CHANGELOG](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100) has the details. The highlights:
+These change what scans emit, not flag names. The [v1.0.0 CHANGELOG](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100) has the details.
 
 * **Default concurrency** scales with the host's CPU count (clamped to 4-32) instead of v0's fixed `"20"`. Explicit `--concurrency N` / `concurrency:` in config, or the `NOIR_CONCURRENCY` env var, still take precedence.
 * **String interpolation** in route paths (Python `f""`, Ruby/Crystal/Elixir `#{}`, PHP `$var`, Kotlin `${}`) is now preserved as a `{name}` placeholder. v0 silently dropped the interpolation segment or leaked the language syntax into the URL. v1 produces a consistent template and registers the placeholder as a path parameter.
@@ -118,8 +118,6 @@ These don't change flag names, just what scans emit. The [v1.0.0 CHANGELOG](http
 
 * `--ollama URL` / `--ollama-model NAME`: both deprecated since 2024. Use `--ai-provider ollama [--ai-model NAME]` instead. If you pass either flag, Noir stops with an error that shows the replacement command.
 
-That's the entire breaking surface.
-
 ## Upgrading
 
 The install paths haven't changed:
@@ -132,4 +130,4 @@ docker pull ghcr.io/owasp-noir/noir:latest
 gh release download -R owasp-noir/noir --pattern 'noir-v*-linux-x86_64'
 ```
 
-If something stops working that this page didn't predict, please file an issue on [GitHub](https://github.com/owasp-noir/noir/issues). Silent v0 to v1 breakage is a release blocker, so we want to hear about it.
+If something breaks that this page doesn't cover, please file an issue on [GitHub](https://github.com/owasp-noir/noir/issues). We treat silent v0 to v1 breakage as a release blocker.

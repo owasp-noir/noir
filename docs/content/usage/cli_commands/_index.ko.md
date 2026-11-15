@@ -77,7 +77,6 @@ noir scan ./app --include path,techs,callee --ai-context
 ```
 
 경로를 인자로 바로 넘기든 `-b PATH`를 반복하든 동작은 같습니다.
-스크립트에서 읽기 편한 쪽을 쓰세요.
 
 > 여러 코드베이스는 나란히 있는 형제 루트로 넘기세요(`noir scan ./api ./worker`
 > 또는 `-b` 반복). 이것이 지원하는 모노레포 형태입니다. 중첩되거나 겹치는
@@ -151,9 +150,8 @@ noir scan ./app --ai-provider ollama --ai-model llama3
 
 ## Trace, Reach, Query
 
-엔드포인트를 나열하는 대신 추적하는 질의 명령 세 개입니다. AI 에이전트(또는
-구체적인 질문이 있는 리뷰어)에게 필요한 형태로, 좁은 질문을 던지면 작은 답을
-돌려줍니다. 각 명령은 `--ai-context all --include callee`가 적용된 스캔을 실행하며
+엔드포인트를 전부 나열하는 대신 좁은 질문에 답하는 질의 명령 세 개입니다. AI 에이전트나
+구체적인 질문이 있는 리뷰어에게 맞습니다. 각 명령은 `--ai-context all --include callee`가 적용된 스캔을 실행하며
 `scan`의 모든 플래그를 받습니다. `--from`으로 저장된 리포트를 읽으면 스캔 한 번으로
 여러 질문에 답할 수 있습니다.
 
@@ -224,10 +222,10 @@ noir query [filters] [paths...] [flags]
 - `--param <name,...>`: 파라미터 이름 (헤더 파라미터는 대소문자 구분 없음)
 - `--param-type <type,...>`: 파라미터 위치/유형 (`query`, `json`, `form`, `header`, `cookie`, `path`)
 - `--protocol <proto,...>`: 프로토콜 (`http`, `ws`, `cli` 등)
-- `--sink <kind,...|any>`: 해당 유형의 싱크에 도달 (`sql`, `command_exec`, `file_io`, `outbound_http`, `template_render`, `redirect`, `mass_assignment` 등)
-- `--source <kind,...|any>`: 해당 유형의 소스를 읽음
+- `--sink <kind,...|any>`: 이 유형의 싱크에 도달 (`sql`, `command_exec`, `file_io`, `outbound_http`, `template_render`, `redirect`, `mass_assignment` 등)
+- `--source <kind,...|any>`: 이 유형의 소스를 읽음
 - `--signal <kind,...|any>`: 파생 보안 리뷰 신호 포함 (`idor_review`, `ssrf`, `open_redirect` 등)
-- `--validator <kind,...|any>`: 해당 유형의 검증기 포함
+- `--validator <kind,...|any>`: 이 유형의 검증기 포함
 - `--resolution <value,...>`: 이 값 중 하나로 표시된 주장이 하나 이상 있음 (`heuristic`, `unresolved`. [resolution](@/usage/output_formats/json/index.ko.md) 참고). 다른 값은 사용법 오류
 
 Go는 `prefix`, `handler`, `guard` 세 주장을 표시합니다. `guard: heuristic`은 모든 Go auth/authz 가드 경로가 이름, 모양, 텍스트 수준의 범위 추정에 의존한다는 뜻이며, 가드 태그에 이 표시가 없으면 적어도 하나를 따라가서 확인한 것이지 모두 확인한 것은 아닙니다. 가드 태그가 없는 엔드포인트는 표시하지 않으며, `resolution`이 없다는 것은 표시된 것이 없다는 뜻이지 모든 주장이 검증되었다는 뜻은 아닙니다.
@@ -253,7 +251,7 @@ noir query --exclude resolution=heuristic --guard .
 - `--behind-gateway` / `--not-behind-gateway`: 앞에 게이트웨이 규칙이 있는지 여부 ([게이트웨이 뒤](#게이트웨이-뒤) 참고)
 
 제외 (반복 가능):
-- `--exclude <filter>=<value>`: 해당 필터에 매칭되는 엔드포인트를 결과에서 뺍니다. `<filter>`는 위 필터 이름에서 대시를 뺀 것(`protocol`, `tech`, `url`, `path`, `tag`, `sink` 등)이고, `<value>`는 그 필터의 규칙을 그대로 따릅니다(쉼표 목록은 OR, `url`/`path`/`handler`는 글롭 또는 부분 문자열, 컨텍스트 유형에는 `any` 사용 가능). 어느 하나의 `--exclude`에라도 매칭되면 다른 필터와 상관없이 빠집니다.
+- `--exclude <filter>=<value>`: 그 필터에 매칭되는 엔드포인트를 결과에서 뺍니다. `<filter>`는 위 필터 이름에서 대시를 뺀 것(`protocol`, `tech`, `url`, `path`, `tag`, `sink` 등)이고, `<value>`는 그 필터의 규칙을 그대로 따릅니다(쉼표 목록은 OR, `url`/`path`/`handler`는 글롭 또는 부분 문자열, 컨텍스트 유형에는 `any` 사용 가능). 어느 하나의 `--exclude`에라도 매칭되면 다른 필터와 상관없이 빠집니다.
 
 ```bash
 noir query --exclude protocol=cli ./app                                     # 모든 언어의 CLI 명령 제외
@@ -307,8 +305,8 @@ noir query --seen-in code --behind-gateway -f text ./app  # 행마다 앞에 있
 
 패턴 매칭 규칙:
 - 글롭 문자(`*`, `?`, `[`): `*`는 `/`를 넘어 매칭되고 `{id}`는 글자 그대로 비교됩니다. 글롭 문자가 없으면 부분 문자열로 매칭됩니다.
-- `--param`과 `--param-type`: 같은 하나의 파라미터가 두 조건을 모두 만족해야 합니다.
-- `any` 키워드: `--sink`, `--source`, `--signal`, `--validator`에서 `any`는 해당 버킷이 비어 있지 않으면 매칭됩니다.
+- `--param`과 `--param-type`: 같은 파라미터가 두 조건을 모두 만족해야 합니다.
+- `any` 키워드: `--sink`, `--source`, `--signal`, `--validator`에서 `any`는 그 버킷이 비어 있지 않으면 매칭됩니다.
 - stderr 경고: 리포트에 없는 값을 필터에 지정하면 리포트에 실제로 있는 값 목록과 함께 stderr에 경고를 출력합니다. `--ai-context` 없이 스캔된 리포트에 `--guard`나 `--sink` 같은 컨텍스트 필터를 적용하면 AI 컨텍스트가 없다는 경고를 출력합니다.
 
 #### 변경분에 대한 질의
@@ -484,12 +482,12 @@ Crystal, LLVM, 타깃 트리플 같은 빌드 정보를 함께 보여줍니다(v
 
 ## Help
 
-`noir help`는 전체 개요를, `noir help <command>`는 해당 명령어의
+`noir help`는 전체 개요를, `noir help <command>`는 그 명령어의
 플래그를 보여줍니다.
 
 ## 글로벌 플래그
 
-다음 플래그는 `scan`뿐 아니라 모든 서브커맨드에서 동작합니다.
+다음 플래그는 모든 서브커맨드에서 동작합니다.
 
 | 플래그          | 효과                                                                 |
 |----------------|----------------------------------------------------------------------|

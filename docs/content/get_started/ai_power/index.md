@@ -199,7 +199,7 @@ The same applies to `--ai-context` output. Its `snippet`, `name` and `path` fiel
 
 ## How AI-Powered Analysis Works
 
-In short: Noir picks the files to analyze, sends them to the model, parses endpoints out of each reply, and then cleans up the endpoints only the AI found. The filter and analysis calls check the response cache before calling the model.
+Noir picks the files to analyze, sends them to the model, parses endpoints out of each reply, and then cleans up the endpoints only the AI found. The filter and analysis calls check the response cache before calling the model.
 
 {% mermaid() %}
 flowchart TB

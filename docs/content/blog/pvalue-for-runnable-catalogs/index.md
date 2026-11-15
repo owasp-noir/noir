@@ -103,7 +103,7 @@ noir scan ./api -u https://staging.example.com \
 
 `--status-codes`, `--probe` and `--probe-via` all need `-u`.
 
-One thing worth knowing before you probe: without `--pvalue path=…`, Noir only auto-fills path parameters on read-only verbs (GET, HEAD, OPTIONS), using `1` or `noir`. POST, PUT, PATCH and DELETE keep the literal template, so a probe can't turn into `DELETE /users/1` by accident. An explicit `--pvalue path=id=42` removes that guard and applies to every verb, writes included. If that's what you want, fine. If not, keep writes out with `--probe-skip "POST"` or `--probe-skip "DELETE"` until you're ready.
+Without `--pvalue path=…`, Noir only auto-fills path parameters on read-only verbs (GET, HEAD, OPTIONS), using `1` or `noir`. POST, PUT, PATCH and DELETE keep the literal template, so a probe can't turn into `DELETE /users/1` by accident. An explicit `--pvalue path=id=42` removes that guard and applies to every verb, writes included. If that's what you want, fine. If not, keep writes out with `--probe-skip "POST"` or `--probe-skip "DELETE"` until you're ready.
 
 ## Put the defaults in a config file
 
@@ -140,4 +140,4 @@ A `--pvalue` on the command line still wins when a one-off run needs a different
 
 ## Wrapping up
 
-Discovery output without values is a map with no street numbers. `--pvalue` lets you number them once and reuse the result across curl, collections, OpenAPI, status-code filtering and proxy replay. Be deliberate about write verbs when probing, and once the team agrees on the placeholders, move them into the config file.
+`--pvalue` lets you declare the values once and reuse them across curl, collections, OpenAPI, status-code filtering and proxy replay. Be deliberate about write verbs when probing, and once the team agrees on the placeholders, move them into the config file.

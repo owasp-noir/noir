@@ -24,7 +24,7 @@ Settings in the config file are defaults; command-line flags override them. Use 
 noir scan . --config-file ./ci/noir.yaml
 ```
 
-You can also manage the config file directly through `noir config`:
+Manage the config file with `noir config`:
 
 ```bash
 noir config init   # create the default config (idempotent)
@@ -102,7 +102,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 
 ## Key reference
 
-`noir config init` writes a fully commented file with every supported key. The example above shows only some of them. CLI flags always override the file. The keys below match the generated file. Legacy v0 names such as `send_es` / `send_proxy` still load, but migrate to the v1 names.
+`noir config init` writes a fully commented file with every supported key. The example above shows only some of them. The keys below match the generated file. Legacy v0 names such as `send_es` / `send_proxy` still load, but migrate to the v1 names.
 
 ### Scan paths and scope
 

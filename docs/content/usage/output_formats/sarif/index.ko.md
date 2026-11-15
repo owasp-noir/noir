@@ -150,7 +150,7 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
 
 ### GitHub Code Scanning
 
-SARIF 결과를 [GitHub Code Scanning](https://docs.github.com/en/code-security/code-scanning)에 업로드하면 저장소 Security 탭에서 바로 확인할 수 있습니다.
+SARIF 결과를 [GitHub Code Scanning](https://docs.github.com/en/code-security/code-scanning)에 업로드하면 발견 사항이 저장소 Security 탭에 표시됩니다.
 
 ```bash
 # SARIF 출력 생성

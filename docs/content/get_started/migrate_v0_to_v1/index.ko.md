@@ -47,7 +47,7 @@ v1 이전의 단독 실행 플래그는 대응하는 동사로 넘어갑니다.
 
 ## Deliver 플래그 이름 변경: PROBE / EXPORT
 
-v0의 `noir scan -h`에는 `DELIVER` 섹션 하나만 있었습니다. v1은 이를 **PROBE**(발견한 엔드포인트에 실제 HTTP 요청을 다시 보냄)와 **EXPORT**(카탈로그를 외부 저장소로 보냄)로 나눕니다. 이렇게 나누면 `--probe-match` / `--probe-skip` / `--probe-header`가 프로브에만 적용되고 stdout의 JSON/SARIF는 바꾸지 않는다는 점이 분명해집니다.
+v0의 `noir scan -h`에는 `DELIVER` 섹션 하나만 있었습니다. v1은 이를 **PROBE**(발견한 엔드포인트에 실제 HTTP 요청을 다시 보냄)와 **EXPORT**(카탈로그를 외부 저장소로 보냄)로 나눕니다. `--probe-match` / `--probe-skip` / `--probe-header`는 프로브에만 적용되고 stdout의 JSON/SARIF는 바꾸지 않습니다.
 
 | v0 플래그 | v1 플래그 |
 | --- | --- |
@@ -103,7 +103,7 @@ v0 설정 파일은 그대로 읽힙니다. Noir가 파일을 옵션에 합치�
 
 ## 동작 변화
 
-플래그 이름은 그대로지만 스캔 결과가 달라지는 항목입니다. 자세한 내용은 [v1.0.0 CHANGELOG](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100)에 있습니다. 주요 항목:
+플래그 이름은 그대로지만 스캔 결과가 달라지는 항목입니다. 자세한 내용은 [v1.0.0 CHANGELOG](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100)에 있습니다.
 
 * **기본 동시성**이 v0의 고정값 `"20"` 대신 호스트 CPU 수를 따르며 4-32 범위로 제한됩니다. `--concurrency N`, 설정 파일의 `concurrency:`, `NOIR_CONCURRENCY` 환경 변수를 지정하면 그 값이 우선합니다.
 * **라우트 경로의 문자열 보간**(Python `f""`, Ruby/Crystal/Elixir `#{}`, PHP `$var`, Kotlin `${}`)이 `{name}` 자리표시자로 남습니다. v0는 보간 구간을 말없이 버리거나 언어 문법을 URL에 그대로 흘렸습니다. v1은 일관된 템플릿을 만들고 자리표시자를 path 파라미터로 등록합니다.
@@ -117,8 +117,6 @@ v0 설정 파일은 그대로 읽힙니다. Noir가 파일을 옵션에 합치�
 ## 명시적으로 깨진 것
 
 * `--ollama URL` / `--ollama-model NAME`: 둘 다 2024년부터 deprecated 상태였습니다. 대신 `--ai-provider ollama [--ai-model NAME]`을 쓰세요. 둘 중 하나라도 넘기면 Noir가 대체 명령을 보여 주는 오류를 내고 멈춥니다.
-
-깨진 항목은 이것이 전부입니다.
 
 ## 업그레이드
 

@@ -26,7 +26,7 @@ sort_by = "weight"
 
 ## 형식별 요청 본문 지원
 
-모든 형식이 모든 `param_type`을 실제 요청 본문으로 만들지는 않습니다. 아래 표로 빠르게 확인하세요(✅ = 요청 본문/multipart 파트로 출력, ➖ = 엔드포인트 기록에만 남거나 해당 없음).
+모든 형식이 모든 `param_type`을 실제 요청 본문으로 만들지는 않습니다(✅ = 요청 본문/multipart 파트로 출력, ➖ = 엔드포인트 기록에만 남거나 해당 없음).
 
 | `param_type` | `json` / `yaml` / plain | `oas2` / `oas3` | `postman` | `curl` / `httpie` / `powershell` / HTML copy-as-curl |
 |---|---|---|---|---|

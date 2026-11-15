@@ -67,7 +67,7 @@ The shape is published as a JSON Schema at [`schemas/ai-context.schema.json`](ht
 
 ## Reading an entry
 
-Here is one endpoint from a Phoenix app, narrowed to two buckets with `--ai-context=guards,sinks`. The later snippets are cut short here:
+One endpoint from a Phoenix app, narrowed to two buckets with `--ai-context=guards,sinks`. The later snippets are cut short:
 
 ```text
 DELETE /settings/keys/:id
@@ -258,8 +258,8 @@ When a bucket is full, a new entry replaces the lowest-ranked one only if it ran
 
 ## Typical use cases
 
-- **AI SAST**: hand the endpoint inventory plus its AI context to an LLM so it can decide where vulnerabilities are reachable from the attack surface without re-discovering the route structure.
-- **Manual triage**: a reviewer skimming a large JSON or SARIF report can sort or filter by sink kind or by `signals` like `guard_absence`.
+- **AI SAST**: give an LLM the endpoint inventory and its AI context, so it can judge which vulnerabilities are reachable without rediscovering the routes.
+- **Manual triage**: sort or filter a large JSON or SARIF report by sink kind, or by a signal such as `guard_absence`.
 - **CI gating**: surface `sinks` minus `validators` to flag risky endpoints in pull requests.
 
 ## Combine with other flags
@@ -279,5 +279,5 @@ noir scan . --ai-context -f oas3 -o spec.json
 
 - AI context only adds data: endpoints unaffected by any heuristic come out exactly as they would without the flag (no `ai_context` key in serialized models).
 - Heuristics are tuned conservatively. Both false positives and false negatives exist, so treat entries as leads to review, not findings.
-- Guard / sink / validator patterns improve over time. They are cross-language on purpose, so one context schema works for every framework Noir covers.
+- Guard, sink, and validator patterns are cross-language on purpose, so one context schema works for every framework Noir covers.
 - Callee coverage drives much of the AI context. See [Callee Coverage](@/usage/supported/callee_coverage/index.md) for which frameworks expose handler callees today.

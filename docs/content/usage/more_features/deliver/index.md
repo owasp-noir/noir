@@ -27,7 +27,7 @@ Relevant flags:
 | `--probe-match VAL` | Only probe endpoints matching the pattern (URL, method, or `method:URL`) |
 | `--probe-skip VAL` | Skip endpoints matching the pattern |
 
-`--probe` and `--probe-via` are independent. Passing both sends every endpoint twice, once through the proxy and once directly, which doubles the load on the target. Pass only `--probe-via` if you just want the traffic in your proxy.
+`--probe` and `--probe-via` are independent. Passing both sends every endpoint twice, once through the proxy and once directly, which doubles the load on the target. Pass only `--probe-via` if you only want the traffic in your proxy.
 
 ### Path templates
 
@@ -41,7 +41,7 @@ Override the value with `--pvalue path=...`, which applies to every verb:
 noir scan ./source -u http://localhost:3000 --probe --pvalue path=id=42
 ```
 
-The automatic fill only touches the outbound request; the report keeps the original template. A `--pvalue path=...` value is different: it is written into the reported URL too (`/users/:id` is reported as `/users/42`).
+The automatic fill only touches the outbound request; the report keeps the original template. A `--pvalue path=...` value is also written into the reported URL (`/users/:id` is reported as `/users/42`).
 
 ### Replay through a proxy
 

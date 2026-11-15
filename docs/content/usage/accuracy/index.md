@@ -71,7 +71,7 @@ One Noir scan reads code and OpenAPI together. The counts use its optimized HTTP
 
 ### Explicit deployment-prefix adjustment
 
-Only Supabase Auth declares `spec_prefix: "/auth/v1"`. Its `openapi.yaml:37-38` declares the hosted server URL `https://{project}.supabase.co/auth/v1`. The service itself registers root-local routes: `internal/api/api.go:219-222` opens the `/` router, and `:268` registers `/token`. `internal/api/router.go:17-31` passes these paths directly to chi. The API forwards directly to that router (`api.go:498,520`), and `cmd/serve_cmd.go:63-75` installs the API as the HTTP server handler without an `/auth/v1` mount. This verifies that the prefix is a hosted deployment boundary, not a missing source prefix.
+Only Supabase Auth declares `spec_prefix: "/auth/v1"`. Its `openapi.yaml:37-38` declares the hosted server URL `https://{project}.supabase.co/auth/v1`. The service itself registers root-local routes: `internal/api/api.go:219-222` opens the `/` router, and `:268` registers `/token`. `internal/api/router.go:17-31` passes these paths directly to chi. The API forwards directly to that router (`api.go:498,520`), and `cmd/serve_cmd.go:63-75` installs the API as the HTTP server handler without an `/auth/v1` mount. So the prefix is a hosted deployment boundary, not a missing source prefix.
 
 Before importing that spec, the runner removes the explicitly declared prefix from its **staged copy's root server URLs**, which makes its spec rows local before Noir joins them. It validates that every declared server path exactly equals the configured prefix, and rejects scoped server overrides. The original checkout and code rows stay unchanged. Spec line numbers for adjusted documents refer to the retained staged copy; code locations refer to the pinned source. No endpoint matcher is added.
 
@@ -81,7 +81,7 @@ Owncast is different: `webserver/router/router.go:93` mounts the generated API a
 
 The dated table below records a manual audit of the measured snapshot. For each technology, all unmatched rows are checked when there are at most 25; otherwise 25 are sampled. Slots are allocated across repository/side buckets, then evenly spaced positions are taken within each sorted bucket. These are sample counts, not estimated totals. An operation can appear on both unmatched sides.
 
-Classifications are analyzer miss, stale spec, undocumented route, prefix/method mismatch that is not an analyzer error, and other. They do not change the ratios. Per-row evidence is kept in task scratch space outside git. Re-audit changed rows and update this dated table before publishing a new measurement; the recipe regenerates metrics, not the manual audit.
+Classifications are analyzer miss, stale spec, undocumented route, prefix/method mismatch that is not an analyzer error, and other. They do not change the ratios. Per-row evidence is not committed. Re-audit changed rows and update this dated table before publishing a new measurement; the recipe regenerates metrics, not the manual audit.
 
 <!-- AUDIT -->
 
@@ -119,11 +119,11 @@ Hwaro renders the committed Markdown tables. It does not read the results file a
 
 ### Candidates not selected
 
-- **spring-petclinic-rest**: method mappings are generated from its spec during build and absent from the checkout. Its previous 0% row did not measure an analyzer failure.
+- **spring-petclinic-rest**: method mappings are generated from its spec during build and absent from the checkout, so a 0% score would not be an analyzer failure.
 - **juice-shop**: its spec intentionally covers B2B orders only; scoring the entire service made agreement primarily a measure of that limited scope.
-- **Spring replacements**: spring-cloud-dataflow, ThingsBoard and Stirling-PDF had no suitable committed contract. Flowable has hand-written controllers and generated specs, but its decision contract also requires separate deployment/version validation. Spring is left unmeasured rather than assigned another misleading row.
+- **Spring replacements**: spring-cloud-dataflow, ThingsBoard and Stirling-PDF had no suitable committed contract. Flowable has hand-written controllers and generated specs, but its decision contract also requires separate deployment/version validation. Spring is left unmeasured rather than given a misleading row.
 - **Second Express candidate**: Directus has a broad contract, but it omits current Access, Policies, Panels, Notifications and Deployment APIs and retains obsolete OAuth/relation paths. It was not added; DVWS remains a single Express data point. The RealWorld Express app had no committed OpenAPI document.
 - **OWASP/crAPI**: its shared contract spans several services and cannot supply a separate denominator for one code technology.
 - **spring-petclinic-microservices**: no checked-in OpenAPI document at the inspected pin.
 - **VAmPI**: Connexion constructs routes from the same spec rather than independent Flask declarations.
-- **shlink**: not selected after the original breadth requirement was met; its contract was not rejected as stale.
+- **shlink**: left out because the corpus already covered enough technologies, not because its contract is stale.

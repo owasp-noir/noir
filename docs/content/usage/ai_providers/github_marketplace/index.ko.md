@@ -12,8 +12,6 @@ GitHub는 2026년 7월 30일 [GitHub Models](https://docs.github.com/en/github-m
 
 ## 지원되는 제공업체 선택
 
-대신 Noir가 지원하는 다음 제공업체 중 하나를 사용하세요.
-
 *   [Azure AI](../azure/): Microsoft Foundry 리소스에 연결합니다.
 *   [OpenAI](../openai/): OpenAI API로 OpenAI 모델을 사용합니다.
 *   [OpenRouter](../openrouter/): API 하나로 여러 모델을 씁니다.

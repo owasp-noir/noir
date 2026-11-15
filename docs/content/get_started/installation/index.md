@@ -14,11 +14,11 @@ next_page_label = "Your First Scan"
 Noir is a single binary with no runtime dependencies. Homebrew is the quickest way for most users, but pick whatever fits your system.
 {% end %}
 
-Every method below installs the same `noir` binary, so pick the one that fits your platform and skip the rest. They're ordered roughly easiest-first.
+Every method below installs the same `noir` binary. They're ordered roughly easiest-first.
 
 ## Homebrew (macOS and Linux)
 
-The easiest option. Noir has an official [Homebrew formula](https://formulae.brew.sh/formula/noir).
+Noir has an official [Homebrew formula](https://formulae.brew.sh/formula/noir).
 
 To install:
 
@@ -128,7 +128,7 @@ nix run github:owasp-noir/noir -- -h
 
 ## Direct Binary Download
 
-No package manager? Grab a prebuilt binary from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Builds exist for Linux, macOS and, since v1.5.0, Windows (x86_64).
+Prebuilt binaries are on [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest) for Linux, macOS and, since v1.5.0, Windows (x86_64).
 
 To install or update:
 
@@ -172,7 +172,7 @@ To install or update:
 
 ## Debian Package (.deb)
 
-Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). It integrates with `dpkg`/`apt` like any other system package. Both `amd64` and `arm64` are provided; the commands below use `amd64`, so swap in `arm64` on ARM machines.
+Debian/Ubuntu users can use the `.deb` package from [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest). Both `amd64` and `arm64` are provided; the commands below use `amd64`, so swap in `arm64` on ARM machines.
 
 To install or update:
 
@@ -334,13 +334,11 @@ To update:
 
 ## Verify Your Installation
 
-Whichever method you chose, confirm Noir is installed:
+Confirm Noir is installed:
 
 ```bash
 noir --version
 ```
-
-If you see a version number, you're ready.
 
 ---
 

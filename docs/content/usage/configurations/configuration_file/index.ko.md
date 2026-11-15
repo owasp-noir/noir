@@ -24,7 +24,7 @@ sort_by = "weight"
 noir scan . --config-file ./ci/noir.yaml
 ```
 
-`noir config`로 설정 파일을 직접 다룰 수도 있습니다.
+설정 파일은 `noir config`로 다룹니다.
 
 ```bash
 noir config init   # 기본 설정 생성 (여러 번 실행해도 안전)
@@ -102,7 +102,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 
 ## 키 참고
 
-`noir config init`은 지원하는 모든 키에 주석을 단 파일을 만듭니다. 위 예시는 그중 일부만 골라 보여 줍니다. CLI 플래그는 항상 설정 파일보다 우선합니다. 아래 키 이름은 생성된 파일과 같습니다. v0의 `send_es` / `send_proxy` 같은 옛 이름도 읽히지만, v1 이름으로 바꿔 두세요.
+`noir config init`은 지원하는 모든 키에 주석을 단 파일을 만듭니다. 위 예시는 그중 일부만 골라 보여 줍니다. 아래 키 이름은 생성된 파일과 같습니다. v0의 `send_es` / `send_proxy` 같은 옛 이름도 읽히지만, v1 이름으로 바꿔 두세요.
 
 ### 스캔 경로와 범위
 

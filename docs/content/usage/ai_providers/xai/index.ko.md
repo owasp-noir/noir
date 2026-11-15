@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-[xAI](https://x.ai)의 Grok 모델로 코드를 분석하고 엔드포인트를 찾을 수 있습니다.
+[xAI](https://x.ai)의 Grok 모델로 코드를 분석하고 엔드포인트를 찾습니다.
 
 ## 설정
 

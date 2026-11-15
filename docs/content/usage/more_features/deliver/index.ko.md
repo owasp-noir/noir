@@ -41,7 +41,7 @@ POST, PUT, PATCH, DELETE는 템플릿을 그대로 둡니다. 여기서 값을 �
 noir scan ./source -u http://localhost:3000 --probe --pvalue path=id=42
 ```
 
-자동 채우기는 나가는 요청에만 적용되고, 리포트에는 원래 템플릿이 남습니다. `--pvalue path=...` 값은 다릅니다. 리포트의 URL에도 들어갑니다(`/users/:id`가 `/users/42`로 표시됨).
+자동 채우기는 나가는 요청에만 적용되고, 리포트에는 원래 템플릿이 남습니다. `--pvalue path=...` 값은 리포트의 URL에도 들어갑니다(`/users/:id`가 `/users/42`로 표시됨).
 
 ### 프록시로 재전송
 
@@ -77,7 +77,7 @@ noir scan ./source -u http://localhost:3000 \
 
 ### Match / skip
 
-프록시로 보낼 엔드포인트를 좁힐 수 있습니다. 패턴에는 URL 부분 문자열, HTTP 메서드(대소문자 무시), `method:URL` 조합을 쓸 수 있습니다.
+프록시로 보낼 엔드포인트를 좁힙니다. 패턴은 URL 부분 문자열, HTTP 메서드(대소문자 무시), `method:URL` 조합을 받습니다.
 
 ```bash
 # API 엔드포인트만

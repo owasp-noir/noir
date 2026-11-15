@@ -73,7 +73,7 @@ template = "landing"
     <article class="cell cell-a" data-reveal>
       <div class="cell-body">
         <h3>Endpoint extraction</h3>
-        <p>Static analysis pulls routes, methods, parameters, headers, and cookies out of the code. Shadow APIs and forgotten handlers surface in the same pass, not a separate mode.</p>
+        <p>Static analysis pulls routes, methods, parameters, headers, and cookies out of the code. Shadow APIs and forgotten handlers surface in the same pass.</p>
       </div>
       <div class="cell-shot">
         <img src="./images/landing/bento-endpoints.webp" alt="Noir output listing the HTTP methods, paths, headers, and idor tags it extracted from a codebase, beside the source tree it read." width="1420" height="564" loading="lazy" decoding="async">

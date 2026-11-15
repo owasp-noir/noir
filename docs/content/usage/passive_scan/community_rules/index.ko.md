@@ -10,7 +10,7 @@ sort_by = "weight"
 
 *   **[owasp-noir/noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules)**
 
-별도로 설치할 필요는 없습니다. 패시브 스캔을 활성화(`-P`)하면 Noir가 첫 실행 시 이 저장소를 `~/.config/noir/passive_rules/`로 클론하고, 규칙이 뒤처지면 알려줍니다. `--passive-scan-auto-update`를 추가하면 시작 시 최신 규칙을 자동으로 받아오며, 해당 디렉터리에서 직접 `git pull`을 실행해도 됩니다.
+따로 설치할 것은 없습니다. `-P`로 패시브 스캔을 켜면 Noir가 첫 실행 때 이 저장소를 `~/.config/noir/passive_rules/`로 클론하고, 규칙이 뒤처지면 알려 줍니다. `--passive-scan-auto-update`를 주면 시작할 때 최신 규칙을 받아오며, 그 디렉터리에서 직접 `git pull`을 해도 됩니다.
 
 ## 규칙 기여하기
 

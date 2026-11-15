@@ -12,7 +12,7 @@ next_page_label = "Install Noir"
 Hi! I'm Hak, the Noir mascot. Here's what Noir does.
 {% end %}
 
-Noir is an open-source SAST tool. It reads source code and extracts the endpoints an application exposes: paths, methods, parameters, headers, cookies, and the source files behind them. Shadow APIs and undocumented routes come out as part of the same inventory; they aren't a separate mode.
+Noir is an open-source SAST tool. It reads source code and extracts the endpoints an application exposes: paths, methods, parameters, headers, cookies, and the source files behind them. Shadow APIs and undocumented routes come out as part of the same inventory.
 
 That inventory feeds three audiences:
 

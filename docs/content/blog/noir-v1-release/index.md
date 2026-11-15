@@ -18,7 +18,7 @@ I could have kept extending the 0.x line, but there were two reasons to bump the
 
 Outside those two decisions, almost every change was designed around **v0 compatibility**. v0 call shapes like `noir -b ./app -P -f json` route automatically into the `scan` subcommand, and renamed flags keep their old names as silent aliases. The only thing that breaks explicitly is `--ollama` / `--ollama-model`, both deprecated since 2024.
 
-Most v0 scripts run on v1 without modification. That's the whole point of this release.
+Most v0 scripts run on v1 without modification.
 
 The full change list and the few items that need migration are collected in the [CHANGELOG v1.0.0](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100).
 

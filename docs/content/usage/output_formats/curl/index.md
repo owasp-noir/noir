@@ -10,7 +10,7 @@ Turn discovered endpoints into ready-to-run commands for common HTTP clients. Us
 
 ## cURL
 
-[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands use these options as needed:
+The generated [cURL](https://curl.se/) commands use these options as needed:
 
 - `-i` shows response headers.
 - `-g` turns off URL globbing, so `{id}` and `[..]` are sent literally.

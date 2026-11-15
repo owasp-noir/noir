@@ -12,8 +12,6 @@ This page remains as a migration note for older Noir configurations. Do not use 
 
 ## Choose a supported provider
 
-Use one of Noir's supported providers instead:
-
 *   [Azure AI](../azure/): connect to a Microsoft Foundry resource.
 *   [OpenAI](../openai/): use OpenAI models through the OpenAI API.
 *   [OpenRouter](../openrouter/): access multiple models through one API.
