@@ -1,8 +1,64 @@
 require "../../spec_helper"
 require "../../../src/models/noir"
+require "../../../src/analyzer/analyzers/python/fastapi"
 require "file_utils"
 
+class FastAPIImportRootSpecHarness < Analyzer::Python::FastAPI
+  def project_root(path : String) : String
+    fastapi_project_root_for(path)
+  end
+end
+
 describe "FastAPI prefix resolution" do
+  it "keeps a nested project marker root in the scan's relative path form" do
+    root = "spec/functional_test/fixtures/python/fastapi_nested_app_import"
+    project_root = File.join(root, "deep_case")
+    app_file = File.join(project_root, "a", "b", "api_app.py")
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(root)])
+
+    locator = CodeLocator.instance
+    previous_bases = locator.scan_base_paths
+    begin
+      locator.clear_all
+      locator.scan_base_paths = [root]
+      locator.register_path(File.join(project_root, "requirements.txt"))
+
+      FastAPIImportRootSpecHarness.new(options).project_root(app_file).should eq(project_root)
+    ensure
+      locator.clear_all
+      locator.scan_base_paths = previous_bases
+    end
+  end
+
+  it "keeps the app-relative import root when a project uses a src layout" do
+    root = File.tempname("noir-fastapi-src-root")
+    app_dir = File.join(root, "src", "dispatch")
+    app_file = File.join(app_dir, "main.py")
+    marker = File.join(root, "pyproject.toml")
+    Dir.mkdir_p(app_dir)
+    File.write(marker, "[project]\n")
+    File.write(File.join(app_dir, "__init__.py"), "")
+    File.write(File.join(app_dir, "api.py"), "router = object()\n")
+    File.write(app_file, "from dispatch.api import router\napp = FastAPI()\n")
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(root)])
+
+    locator = CodeLocator.instance
+    previous_bases = locator.scan_base_paths
+    begin
+      locator.clear_all
+      locator.scan_base_paths = [root]
+      locator.register_path(marker)
+
+      FastAPIImportRootSpecHarness.new(options).project_root(app_file).should eq(File.join(root, "src"))
+    ensure
+      locator.clear_all
+      locator.scan_base_paths = previous_bases
+      FileUtils.rm_rf(root)
+    end
+  end
+
   it "keeps safe tails, marks unread prefixes, and preserves resolved nested mounts" do
     root = File.tempname("noir-fastapi-prefix")
     Dir.mkdir_p(root)
