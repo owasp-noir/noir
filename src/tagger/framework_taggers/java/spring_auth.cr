@@ -74,11 +74,12 @@ class SpringAuthTagger < FrameworkTagger
     /\@PostAuthorize\s*\(/,
     /\@Secured\s*\(/,
     /\@RolesAllowed\s*\(/,
+    /\@DenyAll\b/,
   ]
 
   # The same authorization annotations, as the bare names they are matched by
   # when they decorate the controller *class* instead of a single handler.
-  CLASS_ANNOTATION_NAMES = ["@PreAuthorize", "@PostAuthorize", "@Secured", "@RolesAllowed", "@RequiresAuthentication", "@RequiresUser", "@RequiresPermissions", "@RequiresRoles", "@RequiresGuest"]
+  CLASS_ANNOTATION_NAMES = ["@PreAuthorize", "@PostAuthorize", "@Secured", "@RolesAllowed", "@DenyAll", "@RequiresAuthentication", "@RequiresUser", "@RequiresPermissions", "@RequiresRoles", "@RequiresGuest"]
 
   # What a `preHandle` that turns the caller away does: a 401/403 status or
   # an auth exception. `return false` alone is not read: a rate limiter or
@@ -138,7 +139,7 @@ class SpringAuthTagger < FrameworkTagger
   PUBLIC_SPEL     = /\A(?:permitAll\s*\(\s*\)|anonymous(?:\s*\(\s*\))?|isAnonymous\s*\(\s*\)|hasRole\s*\(\s*['"](?:ROLE_)?ANONYMOUS['"]\s*\)|hasAuthority\s*\(\s*['"](?:ROLE_)?ANONYMOUS['"]\s*\))\z/
   ANONYMOUS_ROLES = Set{"IS_AUTHENTICATED_ANONYMOUSLY", "ROLE_ANONYMOUS", "ANONYMOUS"}
 
-  alias SecurityAnnotation = NamedTuple(public_access: Bool, description: String, followed: Bool)
+  alias SecurityAnnotation = NamedTuple(public_access: Bool, description: String, followed: Bool, denies_all: Bool)
 
   # `module` is the build unit (Maven module) whose sources declare the
   # rule, nil when unknown. `config_key` marks a rule whose patterns are a
@@ -1670,7 +1671,7 @@ class SpringAuthTagger < FrameworkTagger
       is_anonymous = auth_type == "anonymous" ||
                      (auth_type == "hasRole" && block.byte_slice(close + 1, slice_len).matches?(/\A\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
                      (auth_type == "hasAuthority" && block.byte_slice(close + 1, slice_len).matches?(/\A\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
-      protected_rule = auth_type != "permitAll" && !is_anonymous
+      protected_rule = auth_type != "permitAll" && auth_type != "denyAll" && !is_anonymous
       # An inline `access((authentication, context) -> ..)` that admits only
       # signed-out callers (`!isAuthenticated`) is a public page, not a guard.
       access_verdict = nil
@@ -1702,6 +1703,8 @@ class SpringAuthTagger < FrameworkTagger
             "Protected by Spring Security #{auth_type} via #{match[1]}(\"#{url_pattern}\")#{ACCESS_NOTE if auth_type == "access" && access_verdict.nil?}"
           elsif is_anonymous
             "Public by Spring Security anonymous via #{match[1]}(\"#{url_pattern}\")"
+          elsif auth_type == "denyAll"
+            "Denied by Spring Security denyAll via #{match[1]}(\"#{url_pattern}\")"
           else
             "Public by Spring Security permitAll via #{match[1]}(\"#{url_pattern}\")"
           end
@@ -1722,13 +1725,15 @@ class SpringAuthTagger < FrameworkTagger
       line.scan(KOTLIN_AUTHORIZE_RULE) do |match|
         auth_type = match[4]
         is_anonymous = auth_type == "anonymous"
-        protected_rule = auth_type != "permitAll" && !is_anonymous
+        protected_rule = auth_type != "permitAll" && auth_type != "denyAll" && !is_anonymous
         if url_pattern = match[2]?
           verb =
             if protected_rule
               "Protected by Spring Security #{auth_type}"
             elsif is_anonymous
               "Public by Spring Security anonymous"
+            elsif auth_type == "denyAll"
+              "Denied by Spring Security denyAll"
             else
               "Public by Spring Security permitAll"
             end
@@ -1739,6 +1744,8 @@ class SpringAuthTagger < FrameworkTagger
               "Protected by Spring Security #{auth_type}"
             elsif is_anonymous
               "Public by Spring Security anonymous"
+            elsif auth_type == "denyAll"
+              "Denied by Spring Security denyAll"
             else
               "Public by Spring Security permitAll"
             end
@@ -1755,7 +1762,7 @@ class SpringAuthTagger < FrameworkTagger
         is_anonymous = auth_type == "anonymous" ||
                        (auth_type == "hasRole" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
                        (auth_type == "hasAuthority" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
-        protected_rule = auth_type != "permitAll" && !is_anonymous
+        protected_rule = auth_type != "permitAll" && auth_type != "denyAll" && !is_anonymous
         rule_line = block_start_line + block[0, match.begin(1)].count('\n')
         any_call = slice.includes?("anyExchange") ? "anyExchange()" : "anyRequest()"
         description =
@@ -1763,6 +1770,8 @@ class SpringAuthTagger < FrameworkTagger
             "Protected by Spring Security #{auth_type} via #{any_call}"
           elsif is_anonymous
             "Public by Spring Security anonymous via #{any_call}"
+          elsif auth_type == "denyAll"
+            "Denied by Spring Security denyAll via #{any_call}"
           else
             "Public by Spring Security permitAll via #{any_call}"
           end
@@ -1776,12 +1785,13 @@ class SpringAuthTagger < FrameworkTagger
     # A `Customizer<HttpSecurity>` bean only adds rules to a chain declared
     # elsewhere, which decides the rest itself.
     if any_request_covered && !unread_matcher && (dsl = block.match(AUTHORIZATION_DSL)) && rules.none? { |rule| rule[:pattern] == "/**" && rule[:method].nil? }
-      description = if rules.empty?
+      unread_rules = rules.empty?
+      description = if unread_rules
                       "Protected by Spring Security, configured by the authorization rules of the chain in #{File.basename(file_path)}, which noir does not read"
                     elsif dsl[0] != "authorizeRequests" && block.matches?(CHAIN_DECLARATION)
-                      "Protected by Spring Security: #{dsl[0]} denies a request no rule matches"
+                      "Denied by Spring Security: #{dsl[0]} denies a request no rule matches"
                     end
-      rules << {pattern: "/**", method: nil, description: description, protected_rule: true, module: module_dir, config_key: nil, path: file_path, line: block_start_line + block[0, dsl.begin(0)].count('\n')} if description
+      rules << {pattern: "/**", method: nil, description: description, protected_rule: unread_rules, module: module_dir, config_key: nil, path: file_path, line: block_start_line + block[0, dsl.begin(0)].count('\n')} if description
     end
     rules.concat(form_rules)
 
@@ -2306,6 +2316,7 @@ class SpringAuthTagger < FrameworkTagger
           public_access: false,
           description:   "Protected by Spring #{meta.spring_annotation} (@#{meta.name}) on the controller class",
           followed:      false,
+          denies_all:    false,
         }
       end
     end
@@ -2321,7 +2332,7 @@ class SpringAuthTagger < FrameworkTagger
   # `@Secured("IS_AUTHENTICATED_ANONYMOUSLY")`). A restricting annotation on
   # the same member wins. An argument we cannot read stays a guard.
   private def line_security_annotation(line : String, post_ok : Bool, metas : Array(MetaAnnotation), on_class : Bool) : SecurityAnnotation?
-    if match = line.match(/@((?:[\w$]+\.)*?(PreAuthorize|PostAuthorize|Secured|RolesAllowed|RequiresAuthentication|RequiresUser|RequiresPermissions|RequiresRoles|RequiresGuest))\b/)
+    if match = line.match(/@((?:[\w$]+\.)*?(PreAuthorize|PostAuthorize|Secured|RolesAllowed|DenyAll|RequiresAuthentication|RequiresUser|RequiresPermissions|RequiresRoles|RequiresGuest))\b/)
       simple = match[2]
       return if simple == "PostAuthorize" && !post_ok
       suffix = on_class ? " on the controller class" : ""
@@ -2332,13 +2343,14 @@ class SpringAuthTagger < FrameworkTagger
         public_access: admits,
         description:   "Protected by #{framework} @#{match[1]}#{suffix}",
         followed:      annotation_semantics_followed?(simple, arg),
+        denies_all:    annotation_denies_all?(simple, arg),
       }
     end
 
     metas.each do |meta|
       next unless line.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
       suffix = on_class ? " on the controller class" : ""
-      return {public_access: false, description: "Protected by Spring #{meta.spring_annotation} (@#{meta.name})#{suffix}", followed: false}
+      return {public_access: false, description: "Protected by Spring #{meta.spring_annotation} (@#{meta.name})#{suffix}", followed: false, denies_all: false}
     end
     on_class ? nil : permit_marker_annotation(line)
   end
@@ -2348,7 +2360,7 @@ class SpringAuthTagger < FrameworkTagger
   private def permit_marker_annotation(line : String) : SecurityAnnotation?
     return if @permit_marker_names.empty?
     line.gsub(STRING_LITERAL, "\"\"").scan(/(?:\A|[^@\w$.])@([A-Z][\w$]*)\b/) do |found|
-      return {public_access: true, description: "#{PERMIT_MARKER_PREFIX}#{found[1]}", followed: false} if @permit_marker_names.includes?(found[1])
+      return {public_access: true, description: "#{PERMIT_MARKER_PREFIX}#{found[1]}", followed: false, denies_all: false} if @permit_marker_names.includes?(found[1])
     end
     nil
   end
@@ -2375,7 +2387,7 @@ class SpringAuthTagger < FrameworkTagger
 
   private def annotation_admits_anonymous?(name : String, arg : String?) : Bool
     case name
-    when "RolesAllowed", "RequiresAuthentication", "RequiresUser", "RequiresPermissions", "RequiresRoles"
+    when "RolesAllowed", "DenyAll", "RequiresAuthentication", "RequiresUser", "RequiresPermissions", "RequiresRoles"
       false
     when "RequiresGuest"
       true
@@ -2385,6 +2397,10 @@ class SpringAuthTagger < FrameworkTagger
       return false unless arg
       expression_of(arg).matches?(PUBLIC_SPEL)
     end
+  end
+
+  private def annotation_denies_all?(name : String, arg : String?) : Bool
+    name == "DenyAll" || ((name == "PreAuthorize" || name == "PostAuthorize") && arg.try { |value| expression_of(value).matches?(/\AdenyAll\s*\(\s*\)\z/) } == true)
   end
 
   # A handler or class declaration establishes where a standard annotation
@@ -2439,7 +2455,7 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   private def pick_security_annotation(found : Array(SecurityAnnotation)) : SecurityAnnotation?
-    found.find { |item| !item[:public_access] } || found.first?
+    found.find(&.[:denies_all]) || found.find { |item| !item[:public_access] } || found.first?
   end
 
   private def check_endpoint(endpoint : Endpoint) : Endpoint
@@ -2456,6 +2472,7 @@ class SpringAuthTagger < FrameworkTagger
     contexts.each do |ctx|
       decision = check_annotations(ctx, endpoint.method)
       next unless decision
+      return endpoint if decision[:denies_all]
       if decision[:public_access]
         annotation_public = true
         marker ||= decision[:description].match(PERMIT_MARKER_DESCRIPTION).try(&.[1])

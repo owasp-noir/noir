@@ -40,6 +40,14 @@ describe "--ai-context on Spring auth fixtures", tags: "functional" do
     public_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/public/health" }.ai_context
     public_context = public_context.should_not be_nil
     public_context.guards.should be_empty
+
+    %w[/api/closed/config /api/closed/annotation /api/closed/marker].each do |path|
+      denied = endpoints.find! { |ep| ep.method == "GET" && ep.url == path }
+      denied.tags.none? { |tag| tag.name == "auth" || tag.name == "authz" }.should be_true
+      denied.resolution.should be_nil
+      denied.ai_context.should_not be_nil
+      denied.ai_context.not_nil!.guards.should be_empty
+    end
   end
 
   it "marks Spring Security URL-rule guards as heuristic (#3567)" do

@@ -2281,6 +2281,7 @@ module NoirAIContext
         route_scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         guard_scope = route_scope && without_self_names(route_scope, endpoint, path_info)
         guard_scope = guard_scope.gsub(POST_AUTHORIZE_ANNOTATION, "") if guard_scope && !SAFE_METHODS.includes?(endpoint.method.upcase)
+        guard_scope = guard_scope.gsub(/@(?:Pre|Post)Authorize\s*\(\s*["']\s*denyAll\s*\(\s*\)\s*["']\s*\)/, "") if guard_scope
         guard_scope = guard_scope.try(&.gsub(CALLER_CHECK_AS_HANDLER, "()"))
 
         # Try each guard category independently — a route can be

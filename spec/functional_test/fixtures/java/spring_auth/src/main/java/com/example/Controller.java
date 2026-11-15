@@ -26,4 +26,21 @@ public class Controller {
     public String deletePost(@PathVariable Long id) {
         return "deleted";
     }
+
+    @GetMapping("/closed/config")
+    public String deniedByConfig() {
+        return "closed";
+    }
+
+    @PreAuthorize("denyAll()")
+    @GetMapping("/closed/annotation")
+    public String deniedByExpression() {
+        return "closed";
+    }
+
+    @DenyAll
+    @GetMapping("/closed/marker")
+    public String deniedByMarker() {
+        return "closed";
+    }
 }

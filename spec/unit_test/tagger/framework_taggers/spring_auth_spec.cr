@@ -1154,7 +1154,7 @@ describe "SpringAuthTagger (multi-module projects)" do
     tags["GET /guest/welcome"].should be_empty
     tags["GET /signin"].should be_empty
     tags["POST /signin"].should be_empty
-    tags["GET /legacy/export"].should eq(["Protected by Spring Security denyAll via requestMatchers(\"/legacy/**\")"])
+    tags["GET /legacy/export"].should be_empty
     tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
     tags["POST /items"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
   end
@@ -1167,6 +1167,7 @@ describe "SpringAuthTagger (multi-module projects)" do
               http
                   .authorizeRequests()
                       .antMatchers("/anon/**").hasRole("ANONYMOUS")
+                      .antMatchers("/guarded/**").authenticated()
                       .anyRequest().denyAll()
                       .and()
                   .formLogin()
@@ -1183,13 +1184,15 @@ describe "SpringAuthTagger (multi-module projects)" do
       "GET /login-page",
       "POST /do-login",
       "GET /login-fail",
+      "GET /guarded/items",
       "GET /other",
     ])
     tags["GET /anon/hello"].should be_empty
     tags["GET /login-page"].should be_empty
     tags["POST /do-login"].should be_empty
     tags["GET /login-fail"].should be_empty
-    tags["GET /other"].should eq(["Protected by Spring Security denyAll via anyRequest()"])
+    tags["GET /guarded/items"].should eq(["Protected by Spring Security authenticated via antMatchers(\"/guarded/**\")"])
+    tags["GET /other"].should be_empty
 
     kotlin_config = <<-KOTLIN
       @Configuration
@@ -1232,8 +1235,27 @@ describe "SpringAuthTagger (multi-module projects)" do
 
     endpoints[0].tags.should be_empty
     endpoints[1].tags.should be_empty
-    endpoints[2].tags.map(&.description).should eq(["Protected by Spring Security denyAll via authorize(\"/legacy/**\")"])
+    endpoints[2].tags.should be_empty
     endpoints[3].tags.map(&.description).should eq(["Protected by Spring Security authenticated via authorize(anyRequest)"])
+  end
+
+  it "keeps WebFlux anyExchange denyAll separate from an authenticated path rule" do
+    config = <<-KOTLIN
+      @Configuration
+      class WebFluxSecurityConfig {
+          @Bean
+          fun chain(http: ServerHttpSecurity): SecurityWebFilterChain {
+              return http.authorizeExchange {
+                  authorize("/guarded/**", hasAuthority("ROLE_USER"))
+                  authorize(anyExchange, denyAll)
+              }.build()
+          }
+      }
+      KOTLIN
+    tags = run_spring_security_config({"WebFluxSecurityConfig.kt" => config}, ["GET /guarded/items", "GET /closed"])
+
+    tags["GET /guarded/items"].should eq(["Protected by Spring Security hasAuthority via authorize(\"/guarded/**\")"])
+    tags["GET /closed"].should be_empty
   end
 
   it "records the SecurityConfig path and rule line on chain auth tags and targets java_jaxrs endpoints" do
@@ -1286,10 +1308,8 @@ describe "SpringAuthTagger (multi-module projects)" do
     jaxrs_tag.path.should eq(config_path)
     jaxrs_tag.line.should eq(11)
 
-    legacy_tag = endpoints[1].tags.find { |t| t.name == "auth" }.should_not be_nil
-    legacy_tag.description.should eq("Protected by Spring Security denyAll via requestMatchers(\"/legacy/**\")")
-    legacy_tag.path.should eq(config_path)
-    legacy_tag.line.should eq(10)
+    endpoints[1].tags.should be_empty
+    endpoints[1].resolution.should be_nil
   end
 end
 
@@ -3717,7 +3737,7 @@ describe "SpringAuthTagger (configurations that must not read as open)" do
     routes = ["GET /", "GET /css/a.css", "GET /user/1"]
     {"authorizeHttpRequests", "authorizeExchange"}.each do |dsl|
       tags = run_spring_security_config({"SecurityConfig.kt" => chain.call(dsl)}, routes)
-      tags["GET /"].should eq(["Protected by Spring Security: #{dsl} denies a request no rule matches"])
+      tags["GET /"].should be_empty
       tags["GET /css/a.css"].should be_empty
       tags["GET /user/1"].should eq(["Protected by Spring Security hasAuthority via authorize(\"/user/**\")"])
     end
@@ -3852,9 +3872,23 @@ describe "SpringAuthTagger guard resolution (#3567)" do
           @PreAuthorize("denyAll()")
           @GetMapping("/deny-all")
           public String deniedForEveryCaller() { return "ok"; }
+          @DenyAll
+          @GetMapping("/deny-all-marker")
+          public String deniedByMarker() { return "ok"; }
+          @PostAuthorize("denyAll()")
+          @GetMapping("/post-deny-all")
+          public String deniedAfterRead() { return "ok"; }
           @AdminOnly
           @GetMapping("/composed")
           public String composedGuard() { return "ok"; }
+      }
+      JAVA
+    denied_controller = <<-JAVA
+      @DenyAll
+      @RestController
+      public class DeniedController {
+          @GetMapping("/class-deny-all")
+          public String deniedByClass() { return "ok"; }
       }
       JAVA
     meta = <<-JAVA
@@ -3874,27 +3908,73 @@ describe "SpringAuthTagger guard resolution (#3567)" do
       }
       KT
     endpoints = run_spring_endpoints_map({
-      "src/main/java/com/example/Controller.java"  => controller,
-      "src/main/java/com/example/AdminOnly.java"   => meta,
-      "src/main/kotlin/com/example/KController.kt" => kotlin,
+      "src/main/java/com/example/Controller.java"       => controller,
+      "src/main/java/com/example/DeniedController.java" => denied_controller,
+      "src/main/java/com/example/AdminOnly.java"        => meta,
+      "src/main/kotlin/com/example/KController.kt"      => kotlin,
     }, {
-      "GET /class"       => "src/main/java/com/example/Controller.java:5",
-      "GET /method"      => "src/main/java/com/example/Controller.java:8",
-      "GET /custom"      => "src/main/java/com/example/Controller.java:11",
-      "GET /deny-all"    => "src/main/java/com/example/Controller.java:14",
-      "GET /composed"    => "src/main/java/com/example/Controller.java:17",
-      "GET /kt-followed" => "src/main/kotlin/com/example/KController.kt:4",
-      "GET /kt-custom"   => "src/main/kotlin/com/example/KController.kt:7",
+      "GET /class"           => "src/main/java/com/example/Controller.java:5",
+      "GET /method"          => "src/main/java/com/example/Controller.java:8",
+      "GET /custom"          => "src/main/java/com/example/Controller.java:11",
+      "GET /deny-all"        => "src/main/java/com/example/Controller.java:14",
+      "GET /deny-all-marker" => "src/main/java/com/example/Controller.java:17",
+      "GET /post-deny-all"   => "src/main/java/com/example/Controller.java:20",
+      "GET /composed"        => "src/main/java/com/example/Controller.java:23",
+      "GET /class-deny-all"  => "src/main/java/com/example/DeniedController.java:4",
+      "GET /kt-followed"     => "src/main/kotlin/com/example/KController.kt:4",
+      "GET /kt-custom"       => "src/main/kotlin/com/example/KController.kt:7",
     })
 
     %w[GET\ /class GET\ /method GET\ /kt-followed].each do |route|
       endpoints[route].tags.map(&.name).should eq(["auth"])
       endpoints[route].resolution.should be_nil
     end
-    %w[GET\ /custom GET\ /deny-all GET\ /composed GET\ /kt-custom].each do |route|
+    %w[GET\ /custom GET\ /composed GET\ /kt-custom].each do |route|
       endpoints[route].tags.map(&.name).should eq(["auth"])
       endpoints[route].resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
     end
+    %w[GET\ /deny-all GET\ /deny-all-marker GET\ /post-deny-all GET\ /class-deny-all].each do |route|
+      endpoints[route].tags.should be_empty
+      endpoints[route].resolution.should be_nil
+    end
+  end
+
+  it "does not tag denyAll rules or their deny-by-default remainder as authentication" do
+    config = <<-JAVA
+      @Configuration
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(auth -> auth
+                  .requestMatchers("/closed/**").denyAll()
+                  .requestMatchers("/roles/**").hasRole("ADMIN"));
+              return http.build();
+          }
+      }
+      JAVA
+    controller = <<-JAVA
+      @RestController
+      public class Controller {
+          @GetMapping("/closed/items") public String closed() { return "ok"; }
+          @GetMapping("/roles/items") public String guarded() { return "ok"; }
+          @GetMapping("/unmatched") public String unmatched() { return "ok"; }
+      }
+      JAVA
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/SecurityConfig.java" => config,
+      "src/main/java/com/example/Controller.java"     => controller,
+    }, {
+      "GET /closed/items" => "src/main/java/com/example/Controller.java:3",
+      "GET /roles/items"  => "src/main/java/com/example/Controller.java:5",
+      "GET /unmatched"    => "src/main/java/com/example/Controller.java:7",
+    })
+
+    %w[GET\ /closed/items GET\ /unmatched].each do |route|
+      endpoints[route].tags.should be_empty
+      endpoints[route].resolution.should be_nil
+    end
+    endpoints["GET /roles/items"].tags.map(&.name).should eq(["auth"])
+    endpoints["GET /roles/items"].resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
   end
 
   it "follows literal role annotations on handlers" do
