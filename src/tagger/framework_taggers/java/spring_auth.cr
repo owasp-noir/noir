@@ -138,7 +138,7 @@ class SpringAuthTagger < FrameworkTagger
   PUBLIC_SPEL     = /\A(?:permitAll\s*\(\s*\)|anonymous(?:\s*\(\s*\))?|isAnonymous\s*\(\s*\)|hasRole\s*\(\s*['"](?:ROLE_)?ANONYMOUS['"]\s*\)|hasAuthority\s*\(\s*['"](?:ROLE_)?ANONYMOUS['"]\s*\))\z/
   ANONYMOUS_ROLES = Set{"IS_AUTHENTICATED_ANONYMOUSLY", "ROLE_ANONYMOUS", "ANONYMOUS"}
 
-  alias SecurityAnnotation = NamedTuple(public_access: Bool, description: String)
+  alias SecurityAnnotation = NamedTuple(public_access: Bool, description: String, followed: Bool)
 
   # `module` is the build unit (Maven module) whose sources declare the
   # rule, nil when unknown. `config_key` marks a rule whose patterns are a
@@ -202,7 +202,26 @@ class SpringAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Phase 1: Pre-scan security config files
     pre_scan_security_configs
-    super
+    endpoints.map! do |endpoint|
+      @guard_tagged = false
+      @guard_followed = false
+      endpoint = check_endpoint(endpoint)
+      if @guard_tagged && !@guard_followed
+        # ponytail: per endpoint, not per guard; add a field on ai_context.guards if readers need to distinguish individual guards.
+        endpoint.resolution = (endpoint.resolution || {} of String => String).merge({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+      end
+      endpoint
+    end
+  end
+
+  @guard_tagged = false
+  @guard_followed = false
+
+  private def add_guard_tag(endpoint : Endpoint, description : String, followed : Bool, path : String? = nil, line : Int32? = nil) : Endpoint
+    endpoint.add_tag(Tag.new("auth", description, "spring_auth", path, line))
+    @guard_tagged = true
+    @guard_followed ||= followed
+    endpoint
   end
 
   private def pre_scan_security_configs
@@ -2286,6 +2305,7 @@ class SpringAuthTagger < FrameworkTagger
         class_found << {
           public_access: false,
           description:   "Protected by Spring #{meta.spring_annotation} (@#{meta.name}) on the controller class",
+          followed:      false,
         }
       end
     end
@@ -2305,15 +2325,20 @@ class SpringAuthTagger < FrameworkTagger
       simple = match[2]
       return if simple == "PostAuthorize" && !post_ok
       suffix = on_class ? " on the controller class" : ""
-      admits = annotation_admits_anonymous?(simple, annotation_argument(line, simple))
+      arg = annotation_argument(line, simple)
+      admits = annotation_admits_anonymous?(simple, arg)
       framework = simple.starts_with?("Requires") ? "Shiro" : "Spring"
-      return {public_access: admits, description: "Protected by #{framework} @#{match[1]}#{suffix}"}
+      return {
+        public_access: admits,
+        description:   "Protected by #{framework} @#{match[1]}#{suffix}",
+        followed:      annotation_semantics_followed?(simple, arg),
+      }
     end
 
     metas.each do |meta|
       next unless line.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
       suffix = on_class ? " on the controller class" : ""
-      return {public_access: false, description: "Protected by Spring #{meta.spring_annotation} (@#{meta.name})#{suffix}"}
+      return {public_access: false, description: "Protected by Spring #{meta.spring_annotation} (@#{meta.name})#{suffix}", followed: false}
     end
     on_class ? nil : permit_marker_annotation(line)
   end
@@ -2323,7 +2348,7 @@ class SpringAuthTagger < FrameworkTagger
   private def permit_marker_annotation(line : String) : SecurityAnnotation?
     return if @permit_marker_names.empty?
     line.gsub(STRING_LITERAL, "\"\"").scan(/(?:\A|[^@\w$.])@([A-Z][\w$]*)\b/) do |found|
-      return {public_access: true, description: "#{PERMIT_MARKER_PREFIX}#{found[1]}"} if @permit_marker_names.includes?(found[1])
+      return {public_access: true, description: "#{PERMIT_MARKER_PREFIX}#{found[1]}", followed: false} if @permit_marker_names.includes?(found[1])
     end
     nil
   end
@@ -2362,6 +2387,39 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
+  # A handler or class declaration establishes where a standard annotation
+  # applies. Mark it followed only when its authorization semantics are also
+  # readable; custom SpEL beans and composed annotations remain heuristic.
+  private def annotation_semantics_followed?(name : String, arg : String?) : Bool
+    case name
+    when "RequiresAuthentication", "RequiresUser", "RequiresPermissions", "RequiresRoles"
+      true
+    when "Secured", "RolesAllowed"
+      return false unless arg
+      roles = [] of String
+      arg.scan(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/) do |match|
+        roles << (match[1]? || match[2]?).to_s
+      end
+      !roles.empty? && roles.none? { |role| ANONYMOUS_ROLES.includes?(role) }
+    when "PreAuthorize", "PostAuthorize"
+      return false unless arg
+      expression = expression_of(arg)
+      return true if expression.matches?(/\A(?:isAuthenticated|isFullyAuthenticated)\s*\(\s*\)\z/i)
+      match = expression.match(/\A(?:hasRole|hasAuthority|hasAnyRole|hasAnyAuthority)\s*\((.*)\)\z/i)
+      return false unless match
+      values = match[1]
+      role_args = /\A\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*(?:,\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*)*\z/
+      return false unless values.matches?(role_args)
+      roles = [] of String
+      values.scan(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/) do |role|
+        roles << (role[1]? || role[2]?).to_s
+      end
+      !roles.empty? && roles.none? { |role| ANONYMOUS_ROLES.includes?(role) }
+    else
+      false
+    end
+  end
+
   private def expression_of(arg : String) : String
     if quoted = arg.match(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/)
       (quoted[1]? || quoted[2]?).to_s
@@ -2384,10 +2442,10 @@ class SpringAuthTagger < FrameworkTagger
     found.find { |item| !item[:public_access] } || found.first?
   end
 
-  private def check_endpoint(endpoint : Endpoint)
-    return if endpoint.internal
+  private def check_endpoint(endpoint : Endpoint) : Endpoint
+    return endpoint if endpoint.internal
     # The login / logout / OAuth2 filters answer before any authorization rule.
-    return if endpoint.tags.includes?(Analyzer::Java::JavaEngine::SECURITY_FILTER_TAG)
+    return endpoint if endpoint.tags.includes?(Analyzer::Java::JavaEngine::SECURITY_FILTER_TAG)
 
     # Phase 2: Check annotations near code_paths. A public annotation does
     # not stop the URL-rule and in-handler checks, and it is recorded as
@@ -2402,45 +2460,46 @@ class SpringAuthTagger < FrameworkTagger
         annotation_public = true
         marker ||= decision[:description].match(PERMIT_MARKER_DESCRIPTION).try(&.[1])
       else
-        endpoint.add_tag(Tag.new("auth", decision[:description], "spring_auth"))
-        return
+        endpoint = add_guard_tag(endpoint, decision[:description], decision[:followed])
+        return endpoint
       end
     end
 
     # Phase 3: Match endpoint URL against security config rules
     if decision = check_security_config_rules(endpoint, marker)
       description, rule_path, rule_line = decision
-      endpoint.add_tag(Tag.new("auth", description, "spring_auth", rule_path, rule_line))
+      endpoint = add_guard_tag(endpoint, description, false, rule_path, rule_line)
       note_public_annotation(endpoint) if annotation_public
-      return
+      return endpoint
     end
 
     # Phase 4: Match endpoint URL against registered HandlerInterceptors
     if decision = check_interceptor_rules(endpoint)
       description, rule_path, rule_line = decision
-      endpoint.add_tag(Tag.new("auth", description, "spring_auth", rule_path, rule_line))
+      endpoint = add_guard_tag(endpoint, description, false, rule_path, rule_line)
       note_public_annotation(endpoint) if annotation_public
-      return
+      return endpoint
     end
 
     # Phase 4b: Match endpoint URL against registered servlet filters
     if decision = check_servlet_filter_rules(endpoint)
       description, rule_path, rule_line = decision
-      endpoint.add_tag(Tag.new("auth", description, "spring_auth", rule_path, rule_line))
+      endpoint = add_guard_tag(endpoint, description, false, rule_path, rule_line)
       note_public_annotation(endpoint) if annotation_public
-      return
+      return endpoint
     end
 
     # Phase 5: a handler that refuses an anonymous caller itself.
     contexts.each do |ctx|
       if description = anonymous_refusal(ctx)
-        endpoint.add_tag(Tag.new("auth", description, "spring_auth"))
+        endpoint = add_guard_tag(endpoint, description, false)
         note_public_annotation(endpoint) if annotation_public
-        return
+        return endpoint
       end
     end
 
     note_public_annotation(endpoint) if annotation_public
+    endpoint
   end
 
   private def note_public_annotation(endpoint : Endpoint)

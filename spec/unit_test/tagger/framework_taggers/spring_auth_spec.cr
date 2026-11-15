@@ -3834,6 +3834,277 @@ describe "SpringAuthTagger (configurations that must not read as open)" do
   end
 end
 
+describe "SpringAuthTagger guard resolution (#3567)" do
+  it "follows readable method and class annotations, and marks unread expressions and composed names" do
+    controller = <<-JAVA
+      package com.example;
+      @RestController
+      @PreAuthorize("hasRole('ADMIN')")
+      public class Controller {
+          @GetMapping("/class")
+          public String classGuard() { return "ok"; }
+          @PreAuthorize("hasRole('USER')")
+          @GetMapping("/method")
+          public String methodGuard() { return "ok"; }
+          @PreAuthorize("@permissions.check(authentication)")
+          @GetMapping("/custom")
+          public String customGuard() { return "ok"; }
+          @PreAuthorize("denyAll()")
+          @GetMapping("/deny-all")
+          public String deniedForEveryCaller() { return "ok"; }
+          @AdminOnly
+          @GetMapping("/composed")
+          public String composedGuard() { return "ok"; }
+      }
+      JAVA
+    meta = <<-JAVA
+      package com.example;
+      @PreAuthorize("@permissions.check(authentication)")
+      public @interface AdminOnly {}
+      JAVA
+    kotlin = <<-KT
+      @RestController
+      class KotlinController {
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/kt-followed")
+          fun followed() = "ok"
+          @PreAuthorize("@permissions.check(authentication)")
+          @GetMapping("/kt-custom")
+          fun custom() = "ok"
+      }
+      KT
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/Controller.java"  => controller,
+      "src/main/java/com/example/AdminOnly.java"   => meta,
+      "src/main/kotlin/com/example/KController.kt" => kotlin,
+    }, {
+      "GET /class"       => "src/main/java/com/example/Controller.java:5",
+      "GET /method"      => "src/main/java/com/example/Controller.java:8",
+      "GET /custom"      => "src/main/java/com/example/Controller.java:11",
+      "GET /deny-all"    => "src/main/java/com/example/Controller.java:14",
+      "GET /composed"    => "src/main/java/com/example/Controller.java:17",
+      "GET /kt-followed" => "src/main/kotlin/com/example/KController.kt:4",
+      "GET /kt-custom"   => "src/main/kotlin/com/example/KController.kt:7",
+    })
+
+    %w[GET\ /class GET\ /method GET\ /kt-followed].each do |route|
+      endpoints[route].tags.map(&.name).should eq(["auth"])
+      endpoints[route].resolution.should be_nil
+    end
+    %w[GET\ /custom GET\ /deny-all GET\ /composed GET\ /kt-custom].each do |route|
+      endpoints[route].tags.map(&.name).should eq(["auth"])
+      endpoints[route].resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+    end
+  end
+
+  it "follows literal role annotations on handlers" do
+    controller = <<-JAVA
+      @RestController
+      public class Controller {
+          @Secured("ROLE_ADMIN")
+          @GetMapping("/secured")
+          public String secured() { return "ok"; }
+          @RolesAllowed("ADMIN")
+          @GetMapping("/roles")
+          public String roles() { return "ok"; }
+          @PostAuthorize("hasRole('ADMIN')")
+          @GetMapping("/post")
+          public String post() { return "ok"; }
+          @RequiresRoles("ADMIN")
+          @GetMapping("/shiro-role")
+          public String shiroRole() { return "ok"; }
+      }
+      JAVA
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/Controller.java" => controller,
+    }, {
+      "GET /secured"    => "src/main/java/com/example/Controller.java:4",
+      "GET /roles"      => "src/main/java/com/example/Controller.java:7",
+      "GET /post"       => "src/main/java/com/example/Controller.java:10",
+      "GET /shiro-role" => "src/main/java/com/example/Controller.java:13",
+    })
+
+    %w[GET\ /secured GET\ /roles GET\ /post GET\ /shiro-role].each do |route|
+      endpoints[route].tags.map(&.name).should eq(["auth"])
+      endpoints[route].resolution.should be_nil
+    end
+  end
+
+  it "marks matched Shiro filter-chain rules as heuristic" do
+    shiro = <<-JAVA
+      class ShiroConfig {
+          ShiroFilterFactoryBean factory() {
+              ShiroFilterFactoryBean bean = new ShiroFilterFactoryBean();
+              Map<String, String> chain = new LinkedHashMap<String, String>();
+              chain.put("/shiro/**", "authc");
+              bean.setFilterChainDefinitionMap(chain);
+              return bean;
+          }
+      }
+      JAVA
+    controller = <<-JAVA
+      @RestController
+      public class Controller {
+          @GetMapping("/shiro/admin")
+          public String admin() { return "ok"; }
+      }
+      JAVA
+    endpoint = run_spring_endpoints_map({
+      "src/main/java/com/example/ShiroConfig.java" => shiro,
+      "src/main/java/com/example/Controller.java"  => controller,
+    }, {
+      "GET /shiro/admin" => "src/main/java/com/example/Controller.java:3",
+    })["GET /shiro/admin"]
+
+    endpoint.tags.map(&.name).should eq(["auth"])
+    endpoint.resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+  end
+
+  it "marks URL rule matches, while a followed annotation wins mixed evidence" do
+    security = <<-JAVA
+      @Configuration
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(auth -> auth
+                  .requestMatchers("/admin/**").hasRole("ADMIN")
+                  .requestMatchers("/custom/**").access(new PermissionManager())
+                  .requestMatchers("/public/**").permitAll()
+                  .anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    controller = <<-JAVA
+      @RestController
+      public class Controller {
+          @GetMapping("/admin/users") public String admin() { return "ok"; }
+          @GetMapping("/custom/items") public String custom() { return "ok"; }
+          @GetMapping("/private") public String privateRoute() { return "ok"; }
+          @GetMapping("/public/health") public String open() { return "ok"; }
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/mixed") public String mixed() { return "ok"; }
+      }
+      JAVA
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/SecurityConfig.java" => security,
+      "src/main/java/com/example/Controller.java"     => controller,
+    }, {
+      "GET /admin/users"   => "src/main/java/com/example/Controller.java:3",
+      "GET /custom/items"  => "src/main/java/com/example/Controller.java:4",
+      "GET /private"       => "src/main/java/com/example/Controller.java:5",
+      "GET /public/health" => "src/main/java/com/example/Controller.java:6",
+      "GET /mixed"         => "src/main/java/com/example/Controller.java:8",
+    })
+
+    %w[GET\ /admin/users GET\ /custom/items GET\ /private].each do |route|
+      endpoints[route].tags.map(&.name).should eq(["auth"])
+      endpoints[route].resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+    end
+    endpoints["GET /public/health"].tags.should be_empty
+    endpoints["GET /public/health"].resolution.should be_nil
+    endpoints["GET /mixed"].tags.map(&.name).should eq(["auth"])
+    endpoints["GET /mixed"].resolution.should be_nil
+  end
+
+  it "marks the Spring Boot default chain and unread XML security configuration" do
+    boot = run_spring_endpoints_map({
+      "app/build.gradle"                              => "dependencies { implementation 'org.springframework.boot:spring-boot-starter-security' }\n",
+      "app/src/main/java/com/example/App.java"        => "@SpringBootApplication\npublic class App {}\n",
+      "app/src/main/java/com/example/Controller.java" => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})["GET /items"]
+    boot.tags.map(&.name).should eq(["auth"])
+    boot.resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+
+    xml = %(<beans:beans xmlns="http://www.springframework.org/schema/security" xmlns:beans="http://www.springframework.org/schema/beans"><http><intercept-url pattern="/**" access="authenticated"/></http></beans:beans>)
+    unread = run_spring_endpoints_map({
+      "app/pom.xml"                                   => spring_module_pom("app", ["spring-security-config"]),
+      "app/src/main/webapp/WEB-INF/security.xml"      => xml,
+      "app/src/main/java/com/example/Controller.java" => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})["GET /items"]
+    unread.tags.map(&.name).should eq(["auth"])
+    unread.resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+  end
+
+  it "marks interceptor, servlet-filter and handler-shape matches" do
+    interceptor = <<-JAVA
+      public class AuthInterceptor implements HandlerInterceptor {
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+              if (request.getHeader("Authorization") == null) {
+                  response.sendError(401);
+                  return false;
+              }
+              return true;
+          }
+      }
+      JAVA
+    registration = <<-JAVA
+      public class WebConfig implements WebMvcConfigurer {
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new AuthInterceptor()).addPathPatterns("/guarded/**");
+          }
+      }
+      JAVA
+    filter = <<-JAVA
+      public class TokenFilter extends OncePerRequestFilter {
+          protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) {
+              if (request.getHeader("Authorization") == null) { response.setStatus(401); return; }
+              chain.doFilter(request, response);
+          }
+      }
+      @Configuration class FilterConfig {
+          @Bean FilterRegistrationBean<TokenFilter> tokenFilter() {
+              FilterRegistrationBean<TokenFilter> bean = new FilterRegistrationBean<>(new TokenFilter());
+              bean.addUrlPatterns("/filtered/*");
+              return bean;
+          }
+      }
+      JAVA
+    controller = <<-JAVA
+      @RestController
+      public class Controller {
+          @GetMapping("/guarded/items") public String guarded() { return "ok"; }
+          @GetMapping("/filtered/items") public String filtered() { return "ok"; }
+          @GetMapping("/handler") public String handler(Principal principal) {
+              if (principal == null) { return ResponseEntity.status(401).build(); }
+              return "ok";
+          }
+      }
+      JAVA
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/AuthInterceptor.java" => interceptor,
+      "src/main/java/com/example/WebConfig.java"       => registration,
+      "src/main/java/com/example/TokenFilter.java"     => filter,
+      "src/main/java/com/example/Controller.java"      => controller,
+    }, {
+      "GET /guarded/items"  => "src/main/java/com/example/Controller.java:3",
+      "GET /filtered/items" => "src/main/java/com/example/Controller.java:4",
+      "GET /handler"        => "src/main/java/com/example/Controller.java:5",
+    })
+    %w[GET\ /guarded/items GET\ /filtered/items GET\ /handler].each do |route|
+      endpoints[route].tags.map(&.name).should eq(["auth"])
+      endpoints[route].resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+    end
+  end
+
+  it "merges guard into the existing claims" do
+    root = File.tempname("spring_guard_resolution")
+    Dir.mkdir_p(root)
+    path = File.join(root, "Controller.java")
+    File.write(path, "@PreAuthorize(\"@permissions.check(authentication)\")\n@GetMapping(\"/items\")\npublic String items() { return \"ok\"; }\n")
+    CodeLocator.instance.clear_all
+    CodeLocator.instance.register_path(path)
+    options = create_test_options
+    options["base"] = YAML::Any.new(root)
+    endpoint = Endpoint.new("/items", "GET", [] of Param, Details.new(PathInfo.new(path, 2)))
+    endpoint.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED, "handler" => Endpoint::RESOLUTION_HEURISTIC}
+    endpoints = [endpoint]
+    SpringAuthTagger.new(options).perform(endpoints)
+    FileUtils.rm_rf(root)
+    endpoints.first.resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED, "handler" => Endpoint::RESOLUTION_HEURISTIC, "guard" => Endpoint::RESOLUTION_HEURISTIC})
+  end
+end
+
 describe "SpringAuthTagger (servlet path matchers)" do
   it "reads the servlet path of a matcher builder variable" do
     config = <<-JAVA

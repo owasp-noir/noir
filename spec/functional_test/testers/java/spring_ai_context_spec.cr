@@ -19,7 +19,9 @@ describe "--ai-context on Spring auth fixtures", tags: "functional" do
 
     endpoints = app.endpoints
 
-    admin_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/admin/users" }.ai_context
+    admin = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/admin/users" }
+    admin.resolution.should be_nil
+    admin_context = admin.ai_context
     admin_context = admin_context.should_not be_nil
     admin_context.guards.map(&.source).should contain("spring_auth")
 
@@ -38,5 +40,23 @@ describe "--ai-context on Spring auth fixtures", tags: "functional" do
     public_context = endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/public/health" }.ai_context
     public_context = public_context.should_not be_nil
     public_context.guards.should be_empty
+  end
+
+  it "marks Spring Security URL-rule guards as heuristic (#3567)" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/java/spring_security/")])
+    options["ai_context"] = YAML::Any.new(true)
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    endpoints = app.endpoints
+    endpoints.size.should eq(3)
+    endpoints.each do |endpoint|
+      endpoint.tags.any? { |tag| tag.name == "auth" && tag.tagger == "spring_auth" }.should be_true
+      endpoint.resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+    end
   end
 end
