@@ -228,7 +228,7 @@ class GoAuthTagger < FrameworkTagger
     @current_owner = nil.as(Gate?)
     @bodies = Noir::GoCalleeExtractor::LazyPackageBodies.empty
     @dirs_by_base = Hash(String, Array(String)).new
-    @guards = Hash({String, String, Bool, String?}, Tag?).new
+    @guards = Hash({String, String, Bool, String?}, GuardEvidence?).new
     @helper_verdicts = Hash({String, Int32, Bool, Int32, String?, Bool, String?}, Guard).new
     @imports = Hash(String, Set(String)).new
     @import_paths = Hash(String, Hash(String, String)).new
@@ -258,11 +258,32 @@ class GoAuthTagger < FrameworkTagger
     ] + RPC_TECHS
   end
 
+  private record GuardEvidence, tag : Tag, followed : Bool
+
+  @guard_followed = false
+  @last_body_followed = false
+  @body_followed = Hash({String, Int32, Bool, Int32, String?, Bool, String?}, Bool).new
+  @declared_names = Hash(String, Set(String)).new
+
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Phase 1: Pre-scan for group-level middleware (RPC endpoints read
     # their interceptor's procedure list instead).
     pre_scan_middleware_scopes unless endpoints.all? { |endpoint| RPC_TECHS.includes?(endpoint.details.technology) }
-    super
+    endpoints.map! do |endpoint|
+      @guard_followed = false
+      check_endpoint(endpoint)
+      if !@guard_followed && endpoint.tags.any? { |tag| tag.tagger == "go_auth" && tag.name.in?("auth", "authz") }
+        # ponytail: per endpoint, not per guard; add a field on ai_context.guards if readers need to distinguish individual guards.
+        endpoint.resolution = (endpoint.resolution || {} of String => String).merge({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+      end
+      endpoint
+    end
+  end
+
+  private def add_direct_guard(endpoint : Endpoint, evidence : GuardEvidence?)
+    return unless evidence
+    endpoint.add_tag(evidence.tag)
+    @guard_followed ||= evidence.followed
   end
 
   private def pre_scan_middleware_scopes
@@ -852,6 +873,10 @@ class GoAuthTagger < FrameworkTagger
   # is read through its binding in `file` (`reqSignIn :=
   # verifyAuth(&Options{SignInRequired: true})`).
   private def guard_by_definition(arg : String, file : String, authish_name : Bool = false, display : String? = nil) : Tag?
+    guard_evidence(arg, file, authish_name, display).try(&.tag)
+  end
+
+  private def guard_evidence(arg : String, file : String, authish_name : Bool = false, display : String? = nil) : GuardEvidence?
     @guards.put_if_absent({arg, file, authish_name, display}) do
       # A config with a `Skipper` lets the requests it picks through
       # unchecked: not an unconditional guard.
@@ -892,20 +917,22 @@ class GoAuthTagger < FrameworkTagger
         end
       end
       delegating = false
-      verdict, delegating = definition_verdict(qualifier, name, file, fields) if verdict.nil?
+      followed = false # Result methods above are selected by type/package name.
+      verdict, delegating, followed = definition_verdict(qualifier, name, file, fields) if verdict.nil?
       case verdict
       when Guard::Authn
-        Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers#{waiver ? ";#{waiver}" : ""})", "go_auth")
+        GuardEvidence.new(Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers#{waiver ? ";#{waiver}" : ""})", "go_auth"), followed && waiver.nil?)
       when Guard::Authz
-        Tag.new("authz", "Protected by Go middleware #{shown} (verified from its body: permission check replies 403#{waiver ? ";#{waiver}" : ""})", "go_auth")
+        GuardEvidence.new(Tag.new("authz", "Protected by Go middleware #{shown} (verified from its body: permission check replies 403#{waiver ? ";#{waiver}" : ""})", "go_auth"), followed && waiver.nil?)
       when nil
         if display.nil? && (bound = local_binding(file, shown))
-          next guard_by_definition(bound, file, authish_name, shown)
+          evidence = guard_evidence(bound, file, authish_name, shown)
+          next evidence.try { |found| GuardEvidence.new(found.tag, false) } # File-wide binding, not a lexical lookup.
         end
         # A definition in the scan that hands the check to a call the walk
         # does not follow is judged by its own name: the value it is called
         # on (`authUserMiddleware.CheckPrivateMode`) says nothing about it.
-        Tag.new("auth", "Protected by Go middleware #{shown}", "go_auth") if authish_name && (delegating ? name : reference).matches?(AUTHISH_NAME)
+        GuardEvidence.new(Tag.new("auth", "Protected by Go middleware #{shown}", "go_auth"), false) if authish_name && (delegating ? name : reference).matches?(AUTHISH_NAME)
       end
     end
   end
@@ -945,7 +972,7 @@ class GoAuthTagger < FrameworkTagger
   # ponytail: same package plus a sibling package directory named like the
   # qualifier (or the local's type package), one hop deep; a guard reached
   # through such a delegated call still resolves by name only.
-  private def definition_verdict(qualifier : String, name : String, file : String, fields : Hash(String, String)?) : {Guard?, Bool}
+  private def definition_verdict(qualifier : String, name : String, file : String, fields : Hash(String, String)?) : {Guard?, Bool, Bool}
     dir = File.dirname(file)
     bodies = [] of Noir::GoCalleeExtractor::FunctionBody
     if qualifier.empty?
@@ -958,11 +985,54 @@ class GoAuthTagger < FrameworkTagger
       if bodies.empty? && !file_imports(file).includes?(qualifier)
         typed = local_type_methods(qualifier, name, file)
         verdict = typed.max_of? { |body| body_verdict(body, fields) }
-        return {nil, true} if verdict == Guard::None && typed.any? { |body| delegates?(body) } && !typed.all? { |body| pass_through?(body) }
-        return {verdict, false}
+        return {nil, true, false} if verdict == Guard::None && typed.any? { |body| delegates?(body) } && !typed.all? { |body| pass_through?(body) }
+        return {verdict, false, false}
       end
     end
-    {bodies.max_of? { |body| body_verdict(body, fields) }, false}
+    followed = false
+    verdict = bodies.max_of? do |body|
+      found = body_verdict(body, fields)
+      followed ||= found != Guard::None && @last_body_followed
+      found
+    end
+    {verdict, false, followed && followed_functions?(qualifier, name, file, bodies)}
+  end
+
+  # A file-wide veto, not a lexical resolver: a local, parameter or named
+  # result can shadow a package function/import. Read declarations once.
+  private def declared_names(file : String) : Set(String)
+    @declared_names.put_if_absent(file) do
+      names = Set(String).new
+      source = read_file(file) || ""
+      Noir::TreeSitter.parse_go(source) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          case Noir::TreeSitter.node_type(node)
+          when "parameter_declaration", "variadic_parameter_declaration", "var_spec"
+            Noir::TreeSitter.each_named_child(node) do |id|
+              names << Noir::TreeSitter.node_text(id, source) if Noir::TreeSitter.node_type(id) == "identifier"
+            end
+          when "short_var_declaration", "assignment_statement", "range_clause"
+            Noir::TreeSitter.field(node, "left").try do |left|
+              Noir::TreeSitter.each_named_child(left) do |id|
+                names << Noir::TreeSitter.node_text(id, source) if Noir::TreeSitter.node_type(id) == "identifier"
+              end
+            end
+          end
+        end
+      end
+      names
+    end
+  end
+
+  private def followed_functions?(qualifier : String, name : String, file : String, bodies : Array(Noir::GoCalleeExtractor::FunctionBody)) : Bool
+    return false unless bodies.size == 1
+    return false if declared_names(file).includes?(qualifier.empty? ? name : qualifier)
+    body = bodies.first
+    return false unless @bodies.functions_for(File.dirname(body.file_path))[name]? == body
+    return File.dirname(body.file_path) == File.dirname(file) if qualifier.empty?
+    import = import_paths(file)[qualifier]? || return false
+    dir_import_path(File.dirname(body.file_path)) == import ||
+      replaced_dir(file, import) == File.expand_path(File.dirname(body.file_path))
   end
 
   # A gin middleware factory's returned closure: `return func(ctx *gin.Context) {`.
@@ -1089,12 +1159,14 @@ class GoAuthTagger < FrameworkTagger
                            route_path : String? = nil, strict : Bool = false, route_method : String? = nil) : Guard
     key = {body.file_path, body.start_row, follow, hops, route_path, strict, route_method}
     if fields.nil? && (cached = @helper_verdicts[key]?)
+      @last_body_followed = @body_followed[key]? || false
       return cached
     end
     source = Noir::CComments.strip(body.source, quotes: %("'`))
     net_http = source.includes?(".ServeHTTP(")
     credentials = Set(String).new
     params = source.match(FUNC_PARAMS).try(&.[1].split(',').compact_map(&.strip.split(/\s+/).first?)) || [] of String
+    options = source.match(FUNC_PARAMS).try(&.[1].split(',').reject(&.matches?(/Context|Ctx|Request|ResponseWriter|Handler/)).compact_map(&.strip.split(/\s+/).first?)) || [] of String
     fields = fields.transform_keys { |name| name.to_i?.try { |i| params[i]? } || name } if fields
     option_gated = !fields.nil? && params.any? { |param| source.includes?("#{param}.") }
     imports = file_imports(body.file_path)
@@ -1120,6 +1192,7 @@ class GoAuthTagger < FrameworkTagger
     chains = Hash(Int32, {Array(String), Array(String)}).new
     depth = 0
     verdict = Guard::None
+    followed = false
     lines = source.lines
     branched = false
     lines.each_with_index do |raw, idx|
@@ -1162,6 +1235,7 @@ class GoAuthTagger < FrameworkTagger
       conditions = frames.flat_map(&.[1])
       written_conditions = frames.flat_map(&.[2])
       next if strict && (branched || !conditions.empty?)
+      kind_followed = true
       kind = if raw.matches?(LOGIN_REDIRECT)
                Guard::Authn
              elsif line.matches?(REJECTS_REQUEST)
@@ -1176,25 +1250,42 @@ class GoAuthTagger < FrameworkTagger
                  tests.any?(&.matches?(AUTHZ_CONDITION)) ? Guard::Authz : Guard::Authn
                end
              elsif receiver && (stmt = line.match(RECEIVER_STATEMENT)) && stmt[1] == receiver[1]
-               receiver_method(body, receiver[2], stmt[2]).max_of? { |method| body_verdict(method, nil, follow, hops - 1, route_path, route_method: route_method) } || Guard::None
+               kind_followed = false
+               receiver_method(body, receiver[2], stmt[2]).max_of? do |method|
+                 found = body_verdict(method, nil, follow, hops - 1, route_path, route_method: route_method)
+                 kind_followed ||= found != Guard::None && @last_body_followed
+                 found
+               end || Guard::None
              elsif (absent = line.match(IF_OPEN)) && (test = absent[1].match(ABSENCE_TEST)) &&
                    credentials.includes?(test[1]? || test[2]? || test[3]? || "") && stops_request?(lines, idx, passers)
                Guard::Authn
              elsif package && idx > 0 # the head line names the function itself
+               kind_followed = false
                called = line.scan(BODY_CALL).max_of? do |call|
-                 package[call[1]]?.try { |helper| body_verdict(helper, nil, false) } || Guard::None
+                 found = package[call[1]]?.try { |helper| body_verdict(helper, nil, false) } || Guard::None
+                 kind_followed ||= found != Guard::None && @last_body_followed && !declared_names(body.file_path).includes?(call[1])
+                 found
                end || Guard::None
+               # Imported helpers below are selected by directory basename.
                called == Guard::None && !line.matches?(BRANCH_LINE) ? imported_call_verdict(line, imports) : called
              else
                Guard::None
              end
-      next if kind <= verdict
+      if fields.nil? && conditions.any? { |condition| ((m = condition.match(FLAG_TEST)) && options.includes?(m[2])) || ((m = condition.match(OPTION_FIELD)) && options.includes?(m[2])) }
+        kind_followed = false # An unread factory option can waive the refusal.
+      end
+      next if kind == Guard::None || (kind <= verdict && (!kind_followed || followed))
       next if conditions.any? { |condition| dead_condition?(condition, params, imports, fields) }
       next if route_path && written_conditions.any? { |condition| request_test(condition, body, route_path, route_method) == false }
       next if option_gated && conditions.none? { |condition| option_enabled?(condition, params, fields) }
-      verdict = kind
+      verdict = kind if kind > verdict
+      followed ||= kind_followed
     end
-    @helper_verdicts[key] = verdict if fields.nil?
+    @last_body_followed = followed
+    if fields.nil?
+      @helper_verdicts[key] = verdict
+      @body_followed[key] = followed
+    end
     verdict
   end
 
@@ -1643,7 +1734,7 @@ class GoAuthTagger < FrameworkTagger
     # the route's handler or mux, and the handler's own guard clauses.
     if endpoint.details.technology == "go_http"
       net_http_guards(endpoint)
-      handler_guard_clause(endpoint).try { |tag| endpoint.add_tag(tag) }
+      add_handler_guard(endpoint)
       return
     end
 
@@ -1711,9 +1802,12 @@ class GoAuthTagger < FrameworkTagger
       # the path and the handler).
       route_middleware = route_middleware_args(lines, line_idx, endpoint.method)
       route_middleware.each do |arg|
-        guard_by_definition(arg, path_info.path).try { |guard| endpoint.add_tag(guard) }
+        evidence = guard_evidence(arg, path_info.path)
+        # This argument reader assumes the handler is last; Echo puts it first.
+        evidence = evidence.try { |found| GuardEvidence.new(found.tag, false) } if endpoint.details.technology == "go_echo"
+        add_direct_guard(endpoint, evidence)
       end
-      router_wrap_guards(path_info.path, lines, line_idx, endpoint, route_middleware).each { |guard| endpoint.add_tag(guard) }
+      router_wrap_guards(path_info.path, lines, line_idx, endpoint, route_middleware).each { |guard| add_direct_guard(endpoint, guard) }
 
       case endpoint.details.technology
       when "go_pocketbase"
@@ -1727,7 +1821,7 @@ class GoAuthTagger < FrameworkTagger
         end
         if bind = statement.match(ROUTE_BIND)
           call_args(statement[bind.end..]).each do |arg|
-            guard_by_definition(arg, path_info.path, authish_name: true).try { |guard| endpoint.add_tag(guard) }
+            add_direct_guard(endpoint, guard_evidence(arg, path_info.path, authish_name: true))
           end
         end
       when "go_gozero"
@@ -1741,7 +1835,7 @@ class GoAuthTagger < FrameworkTagger
       end
     end
 
-    handler_guard_clause(endpoint).try { |tag| endpoint.add_tag(tag) }
+    add_handler_guard(endpoint)
 
     # Phase 3: Check group-level middleware scope
     check_middleware_scopes(endpoint).try { |tag| endpoint.add_tag(tag) }
@@ -1772,8 +1866,8 @@ class GoAuthTagger < FrameworkTagger
   # left to `route_middleware_args` (`middleware`), which reads it with its
   # call site's options.
   private def router_wrap_guards(file : String, lines : Array(String), idx : Int32, endpoint : Endpoint,
-                                 middleware : Array(String)) : Array(Tag)
-    tags = [] of Tag
+                                 middleware : Array(String)) : Array(GuardEvidence)
+    tags = [] of GuardEvidence
     statements = function_statements(file, lines, idx)
     index = statements.try &.index { |stmt| stmt.row == idx }
     # A route inside a closure group is not a statement of its function:
@@ -1792,7 +1886,9 @@ class GoAuthTagger < FrameworkTagger
     [args.first?, args.last?].compact.uniq!.each do |handler|
       next if seen.includes?(handler.gsub(/\s+/, ""))
       handler_wraps(handler, statements, index || 0, lines, 0).uniq.each do |(head, conditional)|
-        net_http_guard(head, file, statements, endpoint.url, endpoint.method, conditional, by_name: false).try { |tag| tags << tag }
+        net_http_guard(head, file, statements, endpoint.url, endpoint.method, conditional, by_name: false).try do |found|
+          tags << GuardEvidence.new(found.tag, found.followed && !handler.matches?(IDENTIFIER))
+        end
       end
     end
     tags
@@ -1929,13 +2025,18 @@ class GoAuthTagger < FrameworkTagger
       judge = ->(wraps : Array(Wrap)) do
         wraps.uniq.compact_map { |(head, conditional)| net_http_guard(head, path_info.path, statements, route_path, endpoint.method, conditional) }
       end
-      tags = judge.call(handler_wraps(handler.strip, statements, index, lines, 0))
+      tags = judge.call(handler_wraps(handler.strip, statements, index, lines, 0)).map do |found|
+        GuardEvidence.new(found.tag, found.followed && !handler.strip.matches?(IDENTIFIER))
+      end
       unless receiver == "http"
         chains = mux_chains(receiver, statements, Set(String).new)
         verdicts = chains.map { |chain| judge.call(chain) }
-        tags.concat(verdicts.first) if !verdicts.empty? && verdicts.all? { |found| !found.empty? }
+        if !verdicts.empty? && verdicts.all? { |found| !found.empty? }
+          # Mux lineage is a text-level scope walk, even with a known body.
+          tags.concat(verdicts.first.map { |found| GuardEvidence.new(found.tag, false) })
+        end
       end
-      tags.each { |tag| endpoint.add_tag(tag) }
+      tags.each { |tag| add_direct_guard(endpoint, tag) }
     end
   end
 
@@ -2227,13 +2328,14 @@ class GoAuthTagger < FrameworkTagger
   # wrapper whose definition is not found falls back to `guard_by_definition`
   # (a library middleware is read by name).
   private def net_http_guard(head : String, file : String, statements : Array(NetHttpStatement), route_path : String,
-                             route_method : String, conditional : Bool, by_name : Bool = true) : Tag?
+                             route_method : String, conditional : Bool, by_name : Bool = true) : GuardEvidence?
     qualifier, _, name = head.rpartition('.')
     bodies = net_http_bodies(qualifier, name, file, statements)
     if bodies.nil? || bodies.empty?
       return unless by_name
-      tag = guard_by_definition("#{head}(", file, authish_name: true) || return
-      return conditional ? Tag.new(tag.name, "#{tag.description} (applied only when a setting can lift it: inside a conditional block)", tag.tagger) : tag
+      evidence = guard_evidence("#{head}(", file, authish_name: true) || return
+      tag = evidence.tag
+      return conditional ? GuardEvidence.new(Tag.new(tag.name, "#{tag.description} (applied only when a setting can lift it: inside a conditional block)", tag.tagger), false) : evidence
     end
     bodies = bodies.select { |body| middleware_definition?(body) && (by_name || takes_handler?(body)) }
     return if bodies.empty?
@@ -2245,11 +2347,19 @@ class GoAuthTagger < FrameworkTagger
            else
              ""
            end
-    case bodies.max_of { |body| body_verdict(body, nil, route_path: route_path, route_method: route_method) }
+    followed = !conditional && lifted.nil? && followed_functions?(qualifier, name, file, bodies)
+    body_followed = false
+    verdict = bodies.max_of do |body|
+      found = body_verdict(body, nil, route_path: route_path, route_method: route_method)
+      body_followed ||= found != Guard::None && @last_body_followed
+      found
+    end
+    followed &&= body_followed
+    case verdict
     when Guard::Authn
-      Tag.new("auth", "Protected by Go middleware #{head} (verified from its body: refuses anonymous callers#{note})", "go_auth")
+      GuardEvidence.new(Tag.new("auth", "Protected by Go middleware #{head} (verified from its body: refuses anonymous callers#{note})", "go_auth"), followed)
     when Guard::Authz
-      Tag.new("authz", "Protected by Go middleware #{head} (verified from its body: permission check replies 403#{note})", "go_auth")
+      GuardEvidence.new(Tag.new("authz", "Protected by Go middleware #{head} (verified from its body: permission check replies 403#{note})", "go_auth"), followed)
     end
   end
 
@@ -2378,7 +2488,13 @@ class GoAuthTagger < FrameworkTagger
   # `s.Abort(c)`, or `Auth(c, ...).Abort(c)`); the method is found through
   # that call's declared result type. Body statements that refuse inline are
   # not read: a login handler's `401` on a bad password is not a guard.
-  private def handler_guard_clause(endpoint : Endpoint) : Tag?
+  private def add_handler_guard(endpoint : Endpoint)
+    evidence = handler_guard_clause(endpoint) || return
+    followed = evidence.followed && endpoint.resolution.try(&.["handler"]?) != Endpoint::RESOLUTION_HEURISTIC
+    add_direct_guard(endpoint, GuardEvidence.new(evidence.tag, followed))
+  end
+
+  private def handler_guard_clause(endpoint : Endpoint) : GuardEvidence?
     handler = endpoint.handler || return
     path = handler.path || return
     line = handler.line || return
@@ -2446,7 +2562,7 @@ class GoAuthTagger < FrameworkTagger
   # echo.ErrForbidden }`). Only an absence test or a `!=` comparison of the
   # credential itself, refused on the next line: `if token != ""` refuses
   # the callers that send one, and a `==` match refuses the right one.
-  private def credential_check_tag(condition : String, credentials : Hash(String, String), next_line : String?) : Tag?
+  private def credential_check_tag(condition : String, credentials : Hash(String, String), next_line : String?) : GuardEvidence?
     return unless next_line && (refusal = code_only(next_line).strip).starts_with?("return") && refusal.matches?(REJECTS_REQUEST)
     return if condition.includes?("&&") || condition.includes?("||")
     expected = nil
@@ -2461,13 +2577,14 @@ class GoAuthTagger < FrameworkTagger
     # Compared against a value the code reads rather than writes, the check
     # is only as strict as that value: empty, it equals a missing header.
     setting = expected ? "; the expected value comes from #{expected}, and when that is empty a request without the header passes" : ""
-    Tag.new("auth", "Protected by Go guard clause #{condition} (verified from its body: refuses a request whose #{key} header is missing or wrong#{setting})", "go_auth")
+    GuardEvidence.new(Tag.new("auth", "Protected by Go guard clause #{condition} (verified from its body: refuses a request whose #{key} header is missing or wrong#{setting})", "go_auth"), expected.nil?)
   end
 
   private def guard_call_tag(condition : String, init : String?, lines : Array(String), start : Int32, idx : Int32,
-                             path : String, dir : String) : Tag?
+                             path : String, dir : String) : GuardEvidence?
     bodies = [] of Noir::GoCalleeExtractor::FunctionBody
     shown = condition.lchop('!').strip
+    followed = false
     if chained = condition.match(CHAINED_GUARD_CALL)
       bodies = methods_on_result(chained[1]?, chained[2], chained[3], dir)
     elsif call = condition.match(GUARD_CALL)
@@ -2487,13 +2604,20 @@ class GoAuthTagger < FrameworkTagger
         end
         bodies = methods_on_result(binding[2]?, binding[3], name, dir) if binding
       end
+      followed = followed_functions?(qualifier || "", name, path, bodies) if qualifier.nil? || file_imports(path).includes?(qualifier)
     end
-    verdict = bodies.max_of? { |body| body_verdict(body, nil) } || Guard::None
+    body_followed = false
+    verdict = bodies.max_of? do |body|
+      found = body_verdict(body, nil)
+      body_followed ||= found != Guard::None && @last_body_followed
+      found
+    end || Guard::None
+    followed &&= body_followed
     case verdict
     when Guard::Authn
-      Tag.new("auth", "Protected by Go guard clause #{shown} (verified from its body: refuses anonymous callers)", "go_auth")
+      GuardEvidence.new(Tag.new("auth", "Protected by Go guard clause #{shown} (verified from its body: refuses anonymous callers)", "go_auth"), followed)
     when Guard::Authz
-      Tag.new("authz", "Protected by Go guard clause #{shown} (verified from its body: permission check replies 403)", "go_auth")
+      GuardEvidence.new(Tag.new("authz", "Protected by Go guard clause #{shown} (verified from its body: permission check replies 403)", "go_auth"), followed)
     end
   end
 

@@ -474,6 +474,7 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     result = router_scope_scan({"go.mod" => "module e\n", "routes.go" => helpers, "admin.go" => admin},
       [{"GET", "/admin/items", "routes.go", %("/items")}, {"GET", "/open/items", "routes.go", %("/items")}], "go_echo")
     guarded?(result["GET /admin/items"]).should be_true
+    result["GET /admin/items"].resolution.try(&.["guard"]?).should eq("heuristic")
     guarded?(result["GET /open/items"]).should be_false
   end
 
@@ -791,8 +792,10 @@ describe "GoAuthTagger (framework auth registrations)" do
       [{"GET", "/api/backups", "apis/backup.go", "sub.GET"}, {"GET", "/api/first", "apis/backup.go", %("/first")},
        {"POST", "/api/sql", "apis/backup.go", "sg.POST"}], "go_pocketbase")
     guarded?(result["GET /api/backups"]).should be_true
+    result["GET /api/backups"].resolution.try(&.["guard"]?).should eq("heuristic")
     guarded?(result["GET /api/first"]).should be_false
     guarded?(result["POST /api/sql"]).should be_true
+    result["POST /api/sql"].resolution.try(&.["guard"]?).should eq("heuristic")
   end
 
   it "reads go-zero jwt: / middleware: in .api files and rest.WithJwt in routes.go" do
@@ -860,9 +863,12 @@ describe "GoAuthTagger (framework auth registrations)" do
        {"GET", "/health", "desc/user.api", "get /health"}, {"PUT", "/users/:id", "internal/handler/routes.go", %("/users/:id")},
        {"GET", "/ping", "internal/handler/routes.go", %("/ping")}], "go_gozero")
     guarded?(result["GET /api/v1/users/:id"]).should be_true
+    result["GET /api/v1/users/:id"].resolution.try(&.["guard"]?).should eq("heuristic")
     guarded?(result["GET /stats"]).should be_true
+    result["GET /stats"].resolution.try(&.["guard"]?).should eq("heuristic")
     guarded?(result["GET /health"]).should be_false
     guarded?(result["PUT /users/:id"]).should be_true
+    result["PUT /users/:id"].resolution.try(&.["guard"]?).should eq("heuristic")
     guarded?(result["GET /ping"]).should be_false
   end
 
@@ -910,6 +916,7 @@ describe "GoAuthTagger (framework auth registrations)" do
       [{"POST", "/admin/users", "cmd/app/main.go", %("/admin/users")}, {"GET", "/hello/{name}", "api/v1/greeter_http.pb.go", %("/hello)},
        {"POST", "/open", "cmd/open/main.go", %("/open")}], "go_kratos")
     guarded?(result["POST /admin/users"]).should be_true
+    result["POST /admin/users"].resolution.try(&.["guard"]?).should eq("heuristic")
     guarded?(result["GET /hello/{name}"]).should be_true
     guarded?(result["POST /open"]).should be_false
   end
@@ -970,8 +977,10 @@ describe "GoAuthTagger (framework auth registrations)" do
       [{"GET", "/api/any", "main.go", %("/any")}, {"GET", "/hook", "main.go", %("/hook")},
        {"GET", "/api/profile", "api/v1/user.go", %(path:"/profile")}, {"POST", "/login", "api/v1/user.go", %(path:"/login")}], "go_gf")
     guarded?(result["GET /api/any"]).should be_true
+    result["GET /api/any"].resolution.try(&.["guard"]?).should eq("heuristic")
     guarded?(result["GET /hook"]).should be_false
     guarded?(result["GET /api/profile"]).should be_true
+    result["GET /api/profile"].resolution.try(&.["guard"]?).should eq("heuristic")
     guarded?(result["POST /login"]).should be_false
   end
 
@@ -1025,6 +1034,7 @@ describe "GoAuthTagger (framework auth registrations)" do
     result = router_scope_scan({"go.mod" => "module f\n", "main.go" => main, "api/v1/user.go" => api},
       [{"GET", "/user/profile", "api/v1/user.go", %(path:"/profile")}, {"GET", "/open/x", "main.go", %("/x")}], "go_gf")
     guarded?(result["GET /user/profile"]).should be_true
+    result["GET /user/profile"].resolution.try(&.["guard"]?).should eq("heuristic")
     guarded?(result["GET /open/x"]).should be_false
   end
 
@@ -1113,6 +1123,7 @@ describe "GoAuthTagger (groups handed to a registrar in another file)" do
 
       GO
     guarded?(result["GET /conversation"]).should be_true
+    result["GET /conversation"].resolution.try(&.["guard"]?).should eq("heuristic")
     guarded?(result["POST /question/report"]).should be_true
     guarded?(result["GET /siteinfo"]).should be_false
     guarded?(result["GET /connector"]).should be_false

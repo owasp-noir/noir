@@ -53,9 +53,9 @@ Noir가 보고하는 내용 중에는 정의를 따라가서 읽은 것도 있�
 *   `heuristic`: 이름, 모양, 위치로 맞춘 것
 *   `unresolved`: 참조는 보았지만 따라가지 못한 것
 
-끝까지 읽은 주장은 나열하지 않고, 나열할 것이 없는 엔드포인트에는 `resolution` 키가 없습니다. 이번 버전은 Go 분석기만 주장 두 개를 표시합니다. 따라서 키가 없다고 해서 그 엔드포인트의 모든 주장이 검증된 것은 아닙니다. 표시된 것이 없다는 뜻일 뿐입니다.
+끝까지 읽은 주장은 나열하지 않고, 나열할 것이 없는 엔드포인트에는 `resolution` 키가 없습니다. 이번 버전은 Go 분석기와 인증 태거만 주장 세 개를 표시합니다. 따라서 키가 없다고 해서 그 엔드포인트의 모든 주장이 검증된 것은 아닙니다. 표시된 것이 없다는 뜻일 뿐입니다.
 
-Go 분석기는 `prefix`와 `handler`를 표시합니다. `prefix: unresolved`는 라우트 경로 앞쪽에 Noir가 읽지 못한 피연산자가 있고, URL은 그 뒤의 리터럴 부분이라는 뜻입니다. oapi-codegen은 모든 오퍼레이션을 `r.Get(options.BaseURL+"/status", ...)`로 등록하며, 이것은 `/status`로 보고됩니다. 실제 경로 앞에는 무언가가 더 있을 수 있습니다. Noir가 읽은 그룹이나 마운트 접두사는 그대로 붙지만(`r.Mount("/api", ...)`이면 `/api/status`), 그 사이의 피연산자는 여전히 읽지 못했으므로 표시는 남습니다. 접두사를 끝까지 읽지 못한 그룹에 등록된 라우트에도, 그 아래 중첩된 그룹의 라우트에도, 라우트가 어느 파일이나 패키지에 있든 같은 표시가 붙습니다. apache/answer의 `r.Group(uiConf.APIBaseURL + "/answer/api/v1")`은 뒤쪽 `/answer/api/v1`을 남기고, woodpecker의 `e.Group(server.Config.Server.RootPath)`는 라우트 경로에 아무것도 더하지 않습니다. 인라인으로 쓴 그룹도 같은 방식으로 읽습니다. `r.Group(base + "/v1").GET("/x", h)`는 `/v1/x`로 보고되고, `register(r.Group(base + "/v2"))`는 그 함수의 라우트에 `/v2`를 붙이며, 둘 다 표시됩니다. 그룹 매개변수(`func register(g *echo.Group)`, `*gin.RouterGroup`)를 받는 라우터 빌더 함수도, 읽을 수 있는 그룹을 넘기는 호출 지점을 찾지 못하면 같은 표시가 붙습니다. 루트 라우터일 수도 있는 인터페이스 매개변수(`fiber.Router`, `gin.IRouter`)는 표시하지 않습니다. 접두사를 끝까지 읽은 그룹의 라우트에는 표시가 붙지 않습니다. 메서드와 경로가 같은 두 행이 병합되면, 어느 한쪽이라도 표시한 주장은 표시된 채로 남습니다. 이런 행은 `noir query --resolution unresolved`로 볼 수 있습니다.
+Go는 `prefix`, `handler`, `guard`를 표시합니다. `prefix: unresolved`는 라우트 경로 앞쪽에 Noir가 읽지 못한 피연산자가 있고, URL은 그 뒤의 리터럴 부분이라는 뜻입니다. oapi-codegen은 모든 오퍼레이션을 `r.Get(options.BaseURL+"/status", ...)`로 등록하며, 이것은 `/status`로 보고됩니다. 실제 경로 앞에는 무언가가 더 있을 수 있습니다. Noir가 읽은 그룹이나 마운트 접두사는 그대로 붙지만(`r.Mount("/api", ...)`이면 `/api/status`), 그 사이의 피연산자는 여전히 읽지 못했으므로 표시는 남습니다. 접두사를 끝까지 읽지 못한 그룹에 등록된 라우트에도, 그 아래 중첩된 그룹의 라우트에도, 라우트가 어느 파일이나 패키지에 있든 같은 표시가 붙습니다. apache/answer의 `r.Group(uiConf.APIBaseURL + "/answer/api/v1")`은 뒤쪽 `/answer/api/v1`을 남기고, woodpecker의 `e.Group(server.Config.Server.RootPath)`는 라우트 경로에 아무것도 더하지 않습니다. 인라인으로 쓴 그룹도 같은 방식으로 읽습니다. `r.Group(base + "/v1").GET("/x", h)`는 `/v1/x`로 보고되고, `register(r.Group(base + "/v2"))`는 그 함수의 라우트에 `/v2`를 붙이며, 둘 다 표시됩니다. 그룹 매개변수(`func register(g *echo.Group)`, `*gin.RouterGroup`)를 받는 라우터 빌더 함수도, 읽을 수 있는 그룹을 넘기는 호출 지점을 찾지 못하면 같은 표시가 붙습니다. 루트 라우터일 수도 있는 인터페이스 매개변수(`fiber.Router`, `gin.IRouter`)는 표시하지 않습니다. 접두사를 끝까지 읽은 그룹의 라우트에는 표시가 붙지 않습니다. 메서드와 경로가 같은 두 행이 병합되면, 어느 한쪽이라도 표시한 주장은 표시된 채로 남습니다. 이런 행은 `noir query --resolution unresolved`로 볼 수 있습니다.
 
 ```json
 {
@@ -70,6 +70,8 @@ Go 분석기는 `prefix`와 `handler`를 표시합니다. `prefix: unresolved`�
 ```
 
 `handler: heuristic`은 참조와 정의의 연결을 확인하지 못한 채 이름, wrapper의 모양, 위치로 핸들러 정의를 골랐다는 뜻입니다. 핸들러의 이름, 경로, 줄 번호는 고른 정의를 그대로 가리키며, 이런 행은 `noir query --resolution heuristic`으로 볼 수 있습니다. 참조는 있지만 정의를 찾지 못한 핸들러는 표시하지 않습니다.
+
+`guard: heuristic`은 Go의 auth/authz 태그가 보호된 엔드포인트라고 판단했지만, 그 근거가 모두 이름, 모양, 텍스트 수준의 범위 추정에 의존한다는 뜻입니다. 가드 태그가 있는 Go 엔드포인트에 이 표시가 없으면 적어도 하나의 가드를 따라가서 확인했다는 뜻이며, 모든 가드를 확인했다는 뜻은 아닙니다. 가드 태그가 없는 엔드포인트는 표시하지 않으며, 이 표시는 `ai_context.guards`의 개별 항목이 아닌 엔드포인트의 보호 여부에 붙습니다.
 
 YAML, JSONL, TOML 출력에도 같은 필드가 들어가고, 일반 리포트에는 `resolution` 행으로 출력됩니다.
 
