@@ -247,7 +247,7 @@ module Noir::CLI::QueryCommand
         --signal <kind,...|any> Carries a derived signal (idor_review, ssrf, open_redirect, ...)
         --validator <kind,...|any> Carries a validator of this kind
         --resolution <r,...>   A claim marked heuristic or unresolved (resolution in the row);
-                               Go path/group prefixes not read in full, or handlers matched by name/shape
+                               Go prefix, handler or guard claims; this filter matches any claim
                                A value no endpoint carries is reported on stderr with the values seen.
         --exclude <filter>=<value>
                                Drop the endpoints that filter matches (repeatable): any filter above
@@ -280,6 +280,8 @@ module Noir::CLI::QueryCommand
         noir query --seen-in code --not-behind-gateway ./app   # served, with no gateway rule in front
         noir query --exclude protocol=cli --exclude path='tests/**' --from report.json
         noir query --resolution unresolved --from report.json      # rows worth re-checking first
+        noir query --guard --resolution heuristic .                # guarded, any claim guessed
+        noir query --exclude resolution=heuristic --guard .        # guarded, no claim guessed
         noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
         noir query --diff-path ../old --change removed .
 

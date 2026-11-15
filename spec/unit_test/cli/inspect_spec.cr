@@ -1250,3 +1250,31 @@ describe "trace and query route matching (#3277)" do
     trace.call([route], "GET", "/_item/12").should eq([{"/(?:(_\\w+))/(?:(\\d+))", "pattern"}])
   end
 end
+
+describe "query guarded rows with heuristic claims (#3567)" do
+  it "combines guard presence with inclusion and exclusion of any heuristic claim" do
+    matched = endpoint("GET", "/matched")
+    matched.resolution = {"guard" => Endpoint::RESOLUTION_HEURISTIC}
+    solid = endpoint("GET", "/solid")
+    guessed_handler = endpoint("GET", "/handler")
+    guessed_handler.resolution = {"handler" => Endpoint::RESOLUTION_HEURISTIC}
+    open = endpoint("GET", "/open")
+    rows = [matched, solid, guessed_handler, open]
+    rows.first(3).each do |row|
+      context = AIContext.new
+      context.push_guard(AIContextEntry.new("auth_guard", "guard", source: "go_auth"))
+      row.ai_context = context
+      rows[rows.index!(row)] = row
+    end
+    include_filter = Noir::CLI::QueryCommand.parse_filters(["--guard", "--resolution", "heuristic"])
+    exclude_filter = Noir::CLI::QueryCommand.parse_filters(["--exclude", "resolution=heuristic", "--guard"])
+    Noir::CLI::Inspect.query(rows, include_filter.filters, false).map(&.url).should eq(["/matched", "/handler"])
+    kept = Noir::CLI::Inspect.query(rows, exclude_filter.filters, false, exclude_filter.excludes)
+    kept.map(&.url).should eq(["/solid"])
+    row = Noir::CLI::Inspect.query(rows, include_filter.filters, false).first
+    JSON.parse(row.to_json)["resolution"]["guard"].should eq("heuristic")
+    row.to_text.should contain("resolution=guard:heuristic")
+    full = Noir::CLI::Inspect.query(rows, include_filter.filters, true).first
+    JSON.parse(full.to_json)["endpoint"]["resolution"]["guard"].should eq("heuristic")
+  end
+end

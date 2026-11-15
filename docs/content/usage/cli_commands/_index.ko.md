@@ -230,6 +230,17 @@ noir query [filters] [paths...] [flags]
 - `--validator <kind,...|any>`: 해당 유형의 검증기 포함
 - `--resolution <value,...>`: 이 값 중 하나로 표시된 주장이 하나 이상 있음 (`heuristic`, `unresolved`. [resolution](@/usage/output_formats/json/index.ko.md) 참고). 다른 값은 사용법 오류
 
+Go는 `prefix`, `handler`, `guard` 세 주장을 표시합니다. `guard: heuristic`은 모든 Go auth/authz 가드 경로가 이름, 모양, 텍스트 수준의 범위 추정에 의존한다는 뜻이며, 가드 태그에 이 표시가 없으면 적어도 하나를 따라가서 확인한 것이지 모두 확인한 것은 아닙니다. 가드 태그가 없는 엔드포인트는 표시하지 않으며, `resolution`이 없다는 것은 표시된 것이 없다는 뜻이지 모든 주장이 검증되었다는 뜻은 아닙니다.
+
+```bash
+# 어느 주장이든 heuristic인 가드 행
+noir query --guard --resolution heuristic .
+# heuristic 주장이 없는 가드 행
+noir query --exclude resolution=heuristic --guard .
+```
+
+이 조합은 모든 주장을 대상으로 합니다. 첫 명령에는 가드를 따라가서 확인했어도 핸들러를 추정한 행이 포함되며, 두 번째 명령은 그 행을 제외합니다. `guard` 주장만 선택하는 필터는 아닙니다.
+
 버킷별로 나올 수 있는 kind는 [AI 컨텍스트](@/usage/supported/ai_context_coverage/index.ko.md#버킷별-kind) 문서에 정리되어 있습니다.
 
 단일 패턴을 받는 필터 (`<glob|substr>`):

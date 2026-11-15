@@ -235,6 +235,17 @@ Filters that accept a comma-separated list match with OR:
 - `--validator <kind,...|any>`: carries a validator of this kind
 - `--resolution <value,...>`: at least one claim is marked with one of these values (`heuristic`, `unresolved`; see [resolution](@/usage/output_formats/json/index.md)). Any other value is a usage error
 
+Go marks three claims: `prefix`, `handler` and `guard`. `guard: heuristic` means every Go auth/authz guard path used a name, shape or text-level scope match; an unmarked guarded Go endpoint has at least one followed guard, not necessarily all of them. Endpoints without guard tags are left unmarked, and absence of `resolution` means nothing was marked, not that every claim was verified.
+
+```bash
+# Guarded rows with any heuristic claim
+noir query --guard --resolution heuristic .
+# Guarded rows with no heuristic claim
+noir query --exclude resolution=heuristic --guard .
+```
+
+These combinations filter any claim: the first also includes a followed guard with a guessed handler, and the second excludes that row. They do not select the `guard` claim alone.
+
 The kinds each bucket can hold are listed in the [AI Context](@/usage/supported/ai_context_coverage/index.md#kinds-by-bucket) reference.
 
 Single-value pattern filters (`<glob|substr>`):

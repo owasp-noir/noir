@@ -102,6 +102,7 @@ describe "GoAuthTagger (inline group middleware closures)" do
       {"GET", "/api/v2/items", "internal/controller/meta/routes.go", %("/items")},
     ])
     closure_guarded?(result["POST /api/admin/save"]).should be_true
+    result["POST /api/admin/save"].resolution.try(&.["guard"]?).should eq("heuristic")
     result["POST /api/admin/save"].tags.find!(&.name.==("auth")).description.should contain("inline group closure")
     # A closure that only sets a header, and a group with none.
     closure_guarded?(result["GET /api/v2/items"]).should be_false

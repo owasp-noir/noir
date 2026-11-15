@@ -5,7 +5,7 @@ require "../../../../src/tagger/tagger"
 # Write `fixture_lines` to a temp Go file, run GoAuthTagger against a single
 # endpoint at `url`/`method` whose route is recorded at `line`, and return
 # the (now possibly tagged) endpoint.
-def run_go_auth(fixture_lines : Array(String), url : String, method : String, line : Int32) : Endpoint
+def run_go_auth(fixture_lines : Array(String), url : String, method : String, line : Int32, tech : String = "go_gin") : Endpoint
   CodeLocator.instance.clear_all
   tmpdir = File.tempname("go_rootgroup")
   Dir.mkdir_p(tmpdir)
@@ -23,12 +23,13 @@ def run_go_auth(fixture_lines : Array(String), url : String, method : String, li
   noir_options = create_test_options
   noir_options["base"] = YAML::Any.new(tmpdir)
   details = Details.new(PathInfo.new(file, line))
-  details.technology = "go_gin"
+  details.technology = tech
   endpoint = Endpoint.new(url, method, [] of Param, details)
 
-  GoAuthTagger.new(noir_options).perform([endpoint])
+  endpoints = [endpoint]
+  GoAuthTagger.new(noir_options).perform(endpoints)
   FileUtils.rm_rf(tmpdir)
-  endpoint
+  endpoints.first
 end
 
 describe "GoAuthTagger" do
@@ -669,6 +670,7 @@ describe "GoAuthTagger handler guard clauses" do
 
     endpoints[0].tags.map(&.name).should eq(["auth"])
     endpoints[0].tags[0].description.should contain("guard clause s.Abort(c)")
+    endpoints[0].resolution.try(&.["guard"]?).should eq("heuristic")
     # `if logged(c) { return }`: logged never refuses, so it is not a guard.
     endpoints[1].tags.should be_empty
   end

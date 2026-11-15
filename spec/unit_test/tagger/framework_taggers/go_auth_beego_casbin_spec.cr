@@ -12,7 +12,10 @@ private def beego_guards(base : String, url : String, method : String = "GET", f
   details = Details.new(PathInfo.new("#{base}/#{file}", 5))
   details.technology = "go_beego"
   endpoint = Endpoint.new(url, method, [] of Param, details)
-  GoAuthTagger.new(options).perform([endpoint]).first.tags.select(&.name.in?("auth", "authz")).map(&.name)
+  tagged = GoAuthTagger.new(options).perform([endpoint]).first
+  guards = tagged.tags.select(&.name.in?("auth", "authz"))
+  tagged.resolution.try(&.["guard"]?).should eq(guards.empty? ? nil : "heuristic")
+  guards.map(&.name)
 end
 
 private def with_beego_tree(files : Hash(String, String), &)

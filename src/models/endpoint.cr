@@ -93,8 +93,8 @@ struct Endpoint
   # was seen but not followed). A resolved claim is not listed, so an
   # endpoint with nothing marked has no map and its JSON/YAML is unchanged.
   # Absence means nothing was marked, not that every claim was verified.
-  # Go marks unread path/group prefixes (`prefix`) and handler definitions
-  # chosen by name, shape or proximity (`handler`).
+  # Go marks unread path/group prefixes (`prefix`), guessed handler
+  # definitions (`handler`) and guarded status based only on matches (`guard`).
   @[JSON::Field(ignore_serialize: !resolution.try(&.present?))]
   @[YAML::Field(ignore_serialize: !resolution.try(&.present?))]
   property resolution : Hash(String, String)?
