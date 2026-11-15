@@ -1,0 +1,28 @@
+import express from 'express';
+import users from './routes/users';
+import orders from './routes/orders';
+import { health } from './routes/barrel';
+import { build } from './routes/factory';
+const app = express();
+const fixed = '/fixed';
+app.use(config.basePath + '/v1', users);
+app.use(process.env.API_PREFIX, orders);
+app.use('/internal', health);
+app.use(fixed, build());
+const local = express.Router();
+const nested = express.Router();
+local.use(`${runtimeBase}/v2`, nested);
+app.use(config.root, local);
+nested.get('/prefix-nested', (req, res) => res.send('ok'));
+app.get('/prefix-plain', (req, res) => res.send('ok'));
+// Route-path recovery is a separate change; these must not add endpoints.
+app.get(config.basePath + '/ping', (req, res) => res.send('pong'));
+axios.get(config.basePath + '/client');
+fetch(config.basePath + '/fetch');
+request.get(config.basePath + '/request');
+supertest(app).get(config.basePath + '/test');
+http.get(config.basePath + '/http');
+map.get(key + '/map');
+cache.get(key + '/cache');
+_.get(obj, path);
+config.get('a' + b);

@@ -6,6 +6,7 @@ require "../../../../utils/url_path"
 require "../express_constants"
 require "../../../../utils/text_file"
 require "../../../../miniparsers/js_route_extractor"
+require "../../../../miniparsers/js_mount_prefix"
 require "../../../../miniparsers/firebase_functions_extractor"
 require "./js_module_resolver"
 
@@ -147,6 +148,15 @@ module Analyzer::Javascript
 
     private def exported_name(main_file : String, local : String) : String
       @import_names[main_file]?.try(&.[local]?) || local
+    end
+
+    # The extractor returns relative local mounts; this subsystem owns their locator keys.
+    def self.store_local_mounts(file : String, mounts : Hash(String, Array(String)))
+      locator = CodeLocator.instance
+      mounts.each do |binding, prefixes|
+        key = ExpressConstants.binding_key(Noir::PathScope.expand(file), binding)
+        prefixes.each { |prefix| locator.push(key, prefix) unless locator.all(key).includes?(prefix) }
+      end
     end
 
     # Main entry point: scan all files for router mount patterns
@@ -660,6 +670,7 @@ module Analyzer::Javascript
       function_map = imports[:function_map]
       var_to_function = imports[:var_to_function]
       prefix_constants = extract_string_constants(content)
+      prefix_constants.merge!(Noir::JSRouteExtractor.file_string_constants(main_file, content)) if @framework == :express
       # `const { API_PATH } = require('./paths')`: the module's own constant.
       function_map.each do |name, file|
         next if prefix_constants.has_key?(name)
@@ -699,7 +710,7 @@ module Analyzer::Javascript
         # Position scanner to start right after the opening parenthesis
         match_end = m.byte_end(0)
         args = extract_use_call_args(content, match_end)
-        next if explicit_mount_prefix_args?(args, prefix_constants)
+        next if explicit_mount_prefix_args?(args, prefix_constants) && !Noir::JSRouteExtractor.mount_middleware?(first_top_level_argument(args), content, main_file)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
@@ -813,8 +824,10 @@ module Analyzer::Javascript
           args_start = link.byte_end(0)
           args = extract_use_call_args(content, args_start)
           first = first_top_level_argument(args)
-          prefixes = if explicit_mount_prefix_args?(args, prefix_constants)
-                       extract_mount_prefixes_from_array(first, prefix_constants)
+          has_prefix = explicit_mount_prefix_args?(args, prefix_constants) &&
+                       !(@framework == :express && Noir::JSRouteExtractor.mount_middleware?(first, content, main_file))
+          prefixes = if has_prefix
+                       (@framework == :express ? express_mount_prefixes(first, prefix_constants, content, main_file) : extract_mount_prefixes_from_array(first, prefix_constants))
                      else
                        [] of String
                      end
@@ -823,7 +836,7 @@ module Analyzer::Javascript
               process_use_call(content, args_start + first.bytesize + 1, caller, prefix, main_file, locator,
                 require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
             end
-          elsif !explicit_mount_prefix_args?(args, prefix_constants)
+          elsif !has_prefix
             process_use_call(content, args_start, caller, "/", main_file, locator,
               require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
           end
@@ -844,6 +857,21 @@ module Analyzer::Javascript
       global_deferred_mounts : Array(Tuple(String, String, String, String)),
       prefix_constants : Hash(String, String),
     )
+      if @framework == :express && call_name != "route"
+        content.scan(/(\w+)\.#{Regex.escape(call_name)}\s*\(/) do |m|
+          args = extract_use_call_args(content, m.byte_end(0))
+          first = first_top_level_argument(args)
+          next unless explicit_mount_prefix_args?(args, prefix_constants)
+          next if Noir::JSRouteExtractor.mount_middleware?(first, content, main_file)
+          prefixes = express_mount_prefixes(first, prefix_constants, content, main_file)
+          prefixes.each do |prefix|
+            process_use_call(content, m.byte_end(0) + first.bytesize + 1, m[1], prefix, main_file, locator,
+              require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+          end
+        end
+        return
+      end
+
       string_re, backtick_re, ident_re, array_re = MOUNT_RES[call_name]? || @forwarder_res[call_name]
       content.scan(string_re) do |m|
         next unless m.size >= 3
@@ -898,6 +926,13 @@ module Analyzer::Javascript
       end
     end
 
+    private def express_mount_prefixes(first : String, constants : Hash(String, String), content : String, file : String) : Array(String)
+      expression = first.strip
+      return extract_mount_prefixes_from_array(first, constants) if expression.starts_with?('[')
+      previous = expression.starts_with?('`') && expression.ends_with?('`') ? Noir::JSRouteExtractor.resolve_mount_template(expression[1...-1], file, content) : nil
+      [Noir::JSMountPrefix.read(expression, Noir::JSRouteExtractor.file_string_constants(file, content), content, previous, legacy_constants: constants)]
+    end
+
     private def extract_string_constants(content : String) : Hash(String, String)
       constants = Hash(String, String).new
       content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*['"]([^'"]+)['"]/) do |m|
@@ -948,10 +983,12 @@ module Analyzer::Javascript
       return true if first_arg.starts_with?("[") && !extract_mount_prefixes_from_array(first_arg, constants).empty?
 
       if first_arg =~ /\A(\w+)\z/
-        return constants.has_key?($1)
+        return true if constants.has_key?($1)
+        return @framework == :express && args.bytesize > first_top_level_argument(args).bytesize
       end
 
-      false
+      @framework == :express && args.bytesize > first_top_level_argument(args).bytesize &&
+        !first_arg.matches?(/\A(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[\w$]+\s*=>)/)
     end
 
     private def first_top_level_argument(args : String) : String
@@ -1340,7 +1377,7 @@ module Analyzer::Javascript
     private def push_prefix_to_locator(locator : CodeLocator, key : Noir::LocatorKey(Array(String)), prefix : String, debug_msg : String)
       unless locator.all(key).includes?(prefix)
         locator.push(key, prefix)
-        @logger.debug debug_msg
+        @logger.debug debug_msg.delete(Noir::JSMountPrefix::UNREAD)
       end
     end
 
@@ -1548,7 +1585,7 @@ module Analyzer::Javascript
       return false if parent_prefixes.empty?
 
       parent_prefixes.each do |parent_prefix|
-        combined = Noir::URLPath.join(parent_prefix, prefix)
+        combined = Noir::JSMountPrefix.join(parent_prefix, prefix)
         resolve_and_store_router_prefix(
           locator, router_var, router_file_direct, combined, main_file,
           require_map, function_map, var_to_function, var_prefix,
@@ -1656,7 +1693,7 @@ module Analyzer::Javascript
 
           resolved_any = true
           parent_prefixes.each do |parent_prefix|
-            combined = Noir::URLPath.join(parent_prefix, prefix)
+            combined = Noir::JSMountPrefix.join(parent_prefix, prefix)
             store_deferred_mount(locator, router_var, combined, main_file, require_map, function_map, var_to_function, var_prefix)
           end
         end

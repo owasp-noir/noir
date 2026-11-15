@@ -1,6 +1,9 @@
 require "../models/endpoint"
 require "../minilexers/js_lexer"
 require "../utils/url_path"
+require "./js_mount_prefix"
+require "../utils/top_level_split"
+require "../utils/js_literal_scanner"
 require "set"
 
 module Noir
@@ -38,7 +41,7 @@ module Noir
     @current_route_paths : Array(String)? = nil # For multi-prefix support in route chains
     @current_route_start_idx : Int32? = nil
     @current_route_raw_path : String? = nil
-    @router_prefixes : Hash(String, Array(String)) = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+    getter router_prefixes : Hash(String, Array(String)) = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
     @named_route_receivers = Set(String).new
     # Slash-less koa-router paths accepted by `route_path_entries_from_args`;
     # the final `valid_route_path?` filter would otherwise drop them.
@@ -94,10 +97,14 @@ module Noir
     # import only a local base class).
     # `constants` seeds what the file's own declarations cannot give, such as
     # a constant imported from another module.
-    def initialize(source : String, @this_receiver_ok : Bool = true, constants : Hash(String, String)? = nil)
+    def initialize(@source : String, @this_receiver_ok : Bool = true, constants : Hash(String, String)? = nil,
+                   @resolve_mount_prefixes : Bool = false, @mount_middleware : Proc(String, Bool)? = nil,
+                   mount_constants : Hash(String, String)? = nil)
+      source = @source
       lexer = JSLexer.new(source)
       @tokens = drop_type_arguments(lexer.tokenize)
       @supports_named_routes = source.includes?("koa-router") || source.includes?("@koa/router")
+      @mount_constants = mount_constants || constants || {} of String => String
       @constants.merge!(constants) if constants
       # Extract constants from the source
       extract_constants
@@ -266,6 +273,13 @@ module Noir
            @tokens[idx + 4].type == :lbracket)
           parent_router = @tokens[idx].value
           prefixes = route_path_entries_from_args(idx + 4).map(&.path)
+          if @resolve_mount_prefixes && @tokens[idx + 2].value == "use" && next_top_level_arg_index(idx + 4)
+            args = JSLiteralScanner.extract_paren_content(@source, @tokens[idx + 3].position + 2)
+            first = args.try { |a| TopLevelSplit.split(a.content, ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS).first? }
+            if first && !first.starts_with?('[') && !(@mount_middleware.try(&.call(first)) || JSMountPrefix.middleware?(first, @source))
+              prefixes = [JSMountPrefix.read(first, @mount_constants, @source, prefixes.first?, legacy_constants: @constants)]
+            end
+          end
           if prefixes.empty?
             idx += 1
             next
@@ -273,7 +287,7 @@ module Noir
 
           # Collect all identifiers after the path to find the router
           # Routers can be before or after middleware in .use() calls
-          scan_idx = idx + 5
+          scan_idx = @resolve_mount_prefixes ? (next_top_level_arg_index(idx + 4) || idx + 5) : idx + 5
           candidates = [] of String
           paren_depth = 1
 
@@ -386,7 +400,7 @@ module Noir
         # An empty path (`router.get('', …)`) stays empty so a mount or
         # `prefix` resolves it to the prefix itself (`/items`, not
         # `/items/`); `JSRouteExtractor` roots it to `/` when unprefixed.
-        route_item.path = "/#{route_item.path}" unless route_item.path.empty? || route_item.path.starts_with?("/")
+        route_item.path = "/#{route_item.path}" unless route_item.path.empty? || route_item.path.delete(JSMountPrefix::UNREAD).starts_with?("/")
       end
 
       # Dedupe by method + path
@@ -450,7 +464,7 @@ module Noir
         # Cartesian product: combine each parent prefix with each of our prefixes
         parent_full_prefixes.each do |parent_prefix|
           prefixes.each do |prefix|
-            combined = parent_prefix.empty? ? prefix : URLPath.join(parent_prefix, prefix)
+            combined = parent_prefix.empty? ? prefix : JSMountPrefix.join(parent_prefix, prefix)
             next unless seen.add?(combined)
             if result.size >= MAX_MOUNT_PREFIXES
               @mount_prefixes_capped = true
@@ -1386,7 +1400,7 @@ module Noir
                                 end
 
             prefixes_to_apply.each do |prefix|
-              path = prefix.empty? ? base_path : URLPath.join(prefix, base_path)
+              path = prefix.empty? ? base_path : JSMountPrefix.join(prefix, base_path)
               route = JSRoutePattern.new(method, path, raw_path, start_pos)
               unless path_entry.is_regex?
                 extract_path_params(path).each do |param|
@@ -1568,7 +1582,7 @@ module Noir
             end
 
             prefixes_to_apply.each do |prefix|
-              path = prefix.empty? ? base_path : URLPath.join(prefix, base_path)
+              path = prefix.empty? ? base_path : JSMountPrefix.join(prefix, base_path)
               route = JSRoutePattern.new(method, path, raw_path, start_pos)
               unless path_entry.is_regex?
                 extract_path_params(path).each do |param|
@@ -1688,7 +1702,7 @@ module Noir
                               [""]
                             end
 
-        paths = prefixes_to_apply.map { |prefix| prefix.empty? ? base_path : URLPath.join(prefix, base_path) }
+        paths = prefixes_to_apply.map { |prefix| prefix.empty? ? base_path : JSMountPrefix.join(prefix, base_path) }
 
         # Look for method chaining after .route('/path'). Same contiguity
         # rule as the continuation scan above: only a '.' may follow the
@@ -1889,7 +1903,7 @@ module Noir
         base_path = path_entry.path
 
         prefixes_to_apply.each do |prefix|
-          prefixed_path = prefix.empty? ? base_path : URLPath.join(prefix, base_path)
+          prefixed_path = prefix.empty? ? base_path : JSMountPrefix.join(prefix, base_path)
           yield path_entry, prefixed_path
         end
       end
