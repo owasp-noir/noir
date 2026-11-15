@@ -984,8 +984,13 @@ class GoAuthTagger < FrameworkTagger
       end
       if bodies.empty? && !file_imports(file).includes?(qualifier)
         typed = local_type_methods(qualifier, name, file)
-        verdict = typed.max_of? { |body| body_verdict(body, fields) }
-        return {nil, true, false} if verdict == Guard::None && typed.any? { |body| delegates?(body) } && !typed.all? { |body| pass_through?(body) }
+        veto = true
+        verdict = typed.max_of? do |body|
+          found = body_verdict(body, fields)
+          veto &&= @last_body_name_veto
+          found
+        end
+        return {nil, true, false} if !veto && verdict == Guard::None && typed.any? { |body| delegates?(body) } && !typed.all? { |body| pass_through?(body) }
         return {verdict, false, false}
       end
     end
@@ -1115,6 +1120,8 @@ class GoAuthTagger < FrameworkTagger
     found.uniq!
   end
 
+  # Only caller-derived refusals reachable without a successful identity
+  # lookup count. A read refusal vetoes the name fallback when none qualify.
   # The strongest refusal in `body` a caller can meet: a 401 or a redirect to
   # login (`Authn`), or a 403 behind a permission test (`Authz`; behind any
   # other test it is `Authn`). Each refusal is read with the `if` conditions
@@ -1160,11 +1167,14 @@ class GoAuthTagger < FrameworkTagger
     key = {body.file_path, body.start_row, follow, hops, route_path, strict, route_method}
     if fields.nil? && (cached = @helper_verdicts[key]?)
       @last_body_followed = @body_followed[key]? || false
+      @last_body_name_veto = @body_name_veto[key]? || false
       return cached
     end
     source = Noir::CComments.strip(body.source, quotes: %("'`))
     net_http = source.includes?(".ServeHTTP(")
     credentials = Set(String).new
+    caller_values = Hash(String, Symbol).new
+    caller_control = false
     params = source.match(FUNC_PARAMS).try(&.[1].split(',').compact_map(&.strip.split(/\s+/).first?)) || [] of String
     options = source.match(FUNC_PARAMS).try(&.[1].split(',').reject(&.matches?(/Context|Ctx|Request|ResponseWriter|Handler/)).compact_map(&.strip.split(/\s+/).first?)) || [] of String
     fields = fields.transform_keys { |name| name.to_i?.try { |i| params[i]? } || name } if fields
@@ -1173,6 +1183,7 @@ class GoAuthTagger < FrameworkTagger
     package = follow ? @bodies.functions_for(File.dirname(body.file_path)) : nil
     receiver = hops > 0 ? source.match(METHOD_RECEIVER_NAME) : nil
     passers = handler_params(body)
+    caller_values[receiver[1]] = :value if receiver && receiver[2].matches?(CALLER_IDENTITY)
     # A refusal after the request reached the wrapped handler maps the
     # handler's own error (`err := next(c); if err == ErrUnauthorized {
     # 401 }`), and one in a deferred closure runs after it too. Only a call
@@ -1193,6 +1204,8 @@ class GoAuthTagger < FrameworkTagger
     depth = 0
     verdict = Guard::None
     followed = false
+    saw_refusal = false
+    saw_caller_refusal = false
     lines = source.lines
     branched = false
     lines.each_with_index do |raw, idx|
@@ -1201,6 +1214,27 @@ class GoAuthTagger < FrameworkTagger
       handed ||= unconditional?(blocks) && !!pass_call.try { |call| line.matches?(call) }
       if net_http && (read = raw.strip.match(CREDENTIAL_READ)) && CREDENTIAL_KEYS.includes?(read[2].downcase.delete("-_"))
         credentials << read[1]
+      end
+      # Keep the provenance of results, including the error/bool paired with
+      # a credential lookup; a later CSRF assignment must not revive its arm.
+      if assigned = raw.strip.sub(/\A(?:}\s*)?(?:else\s+)?if\s+/, "").match(CALLER_ASSIGNMENT)
+        value = assigned[2].split(';').first
+        caller = caller_expression?(value, caller_values, body, hops)
+        lookup = caller && value.matches?(IDENTITY_LOOKUP)
+        assigned[1].split(',').each do |name|
+          name = name.strip
+          caller_values[name] = if !caller
+                                  :other
+                                elsif !lookup
+                                  :value
+                                elsif name.matches?(/(?:err|error)\z/i)
+                                  :error
+                                elsif name == "ok"
+                                  :ok
+                                else
+                                  :identity
+                                end
+        end
       end
       closes = line.starts_with?('}')
       if closes
@@ -1213,10 +1247,10 @@ class GoAuthTagger < FrameworkTagger
         prior = (line.starts_with?('}') ? chains[depth]? : nil) || {[] of String, [] of String}
         # `if !ok { return }`: what follows runs only when the test fails.
         if passes_through?(lines, idx, passers)
-          frames << {depth, [negate(match[1], params)], [negate(written, params)]}
+          frames << {depth, [anonymous_condition(negate(match[1], params), caller_values)], [negate(written, params)]}
         end
-        frames << {depth + opened, prior[0] + match[1].split("&&").map(&.strip), prior[1] + written.split("&&").map(&.strip)}
-        chains[depth] = {prior[0] + [negate(match[1], params)], prior[1] + [negate(written, params)]}
+        frames << {depth + opened, prior[0] + match[1].split("&&").map { |test| anonymous_condition(test.strip, caller_values) }, prior[1] + written.split("&&").map(&.strip)}
+        chains[depth] = {prior[0] + [anonymous_condition(negate(match[1], params), caller_values)], prior[1] + [negate(written, params)]}
       elsif line.matches?(ELSE_OPEN)
         prior = chains[depth]? || {[] of String, [] of String}
         frames << {depth + opened, prior[0], prior[1]}
@@ -1230,12 +1264,21 @@ class GoAuthTagger < FrameworkTagger
       if (own_if = line.match(IF_OPEN)) && opened > 0
         own[depth] = {own_if[1], raw.strip.match(IF_OPEN).try(&.[1]) || own_if[1]}
       end
+      if branch = raw.strip.match(/\A(?:}\s*)?(?:else\s+)?(?:if|switch|case)\s+(.+)/)
+        caller_control ||= caller_expression?(branch[1], caller_values, body, hops)
+      end
       next if handed || blocks.includes?('d')
 
       conditions = frames.flat_map(&.[1])
       written_conditions = frames.flat_map(&.[2])
       next if strict && (branched || !conditions.empty?)
       kind_followed = true
+      refusal = raw.matches?(LOGIN_REDIRECT) || line.matches?(REJECTS_REQUEST)
+      caller_path = written_conditions.any? { |test| caller_expression?(test, caller_values, body, hops) }
+      if refusal || line.matches?(/\.\s*Abort\w*\s*\(/)
+        saw_refusal = true
+        saw_caller_refusal ||= caller_path && conditions.none? { |test| dead_condition?(test, params, imports, fields) }
+      end
       kind = if raw.matches?(LOGIN_REDIRECT)
                Guard::Authn
              elsif line.matches?(REJECTS_REQUEST)
@@ -1253,6 +1296,8 @@ class GoAuthTagger < FrameworkTagger
                kind_followed = false
                receiver_method(body, receiver[2], stmt[2]).max_of? do |method|
                  found = body_verdict(method, nil, follow, hops - 1, route_path, route_method: route_method)
+                 saw_refusal ||= @last_body_name_veto if found == Guard::None
+                 found = body_verdict(method, nil, false, strict: true) if found == Guard::None && caller_path
                  kind_followed ||= found != Guard::None && @last_body_followed
                  found
                end || Guard::None
@@ -1262,18 +1307,29 @@ class GoAuthTagger < FrameworkTagger
              elsif package && idx > 0 # the head line names the function itself
                kind_followed = false
                called = line.scan(BODY_CALL).max_of? do |call|
-                 found = package[call[1]]?.try { |helper| body_verdict(helper, nil, false) } || Guard::None
+                 found = package[call[1]]?.try do |helper|
+                   checked = body_verdict(helper, nil, false)
+                   saw_refusal ||= @last_body_name_veto if checked == Guard::None
+                   checked == Guard::None && caller_path ? body_verdict(helper, nil, false, strict: true) : checked
+                 end || Guard::None
                  kind_followed ||= found != Guard::None && @last_body_followed && !declared_names(body.file_path).includes?(call[1])
                  found
                end || Guard::None
                # Imported helpers below are selected by directory basename.
-               called == Guard::None && !line.matches?(BRANCH_LINE) ? imported_call_verdict(line, imports) : called
+               if called == Guard::None && !line.matches?(BRANCH_LINE)
+                 found = imported_call_verdict(line, imports, caller_path)
+                 saw_refusal ||= @last_body_name_veto if found == Guard::None
+                 found
+               else
+                 called
+               end
              else
                Guard::None
              end
       if fields.nil? && conditions.any? { |condition| ((m = condition.match(FLAG_TEST)) && options.includes?(m[2])) || ((m = condition.match(OPTION_FIELD)) && options.includes?(m[2])) }
         kind_followed = false # An unread factory option can waive the refusal.
       end
+      next if refusal && !strict && !(caller_path || (conditions.empty? && caller_control))
       next if kind == Guard::None || (kind <= verdict && (!kind_followed || followed))
       next if conditions.any? { |condition| dead_condition?(condition, params, imports, fields) }
       next if route_path && written_conditions.any? { |condition| request_test(condition, body, route_path, route_method) == false }
@@ -1282,11 +1338,75 @@ class GoAuthTagger < FrameworkTagger
       followed ||= kind_followed
     end
     @last_body_followed = followed
+    @last_body_name_veto = saw_refusal && !saw_caller_refusal
     if fields.nil?
       @helper_verdicts[key] = verdict
       @body_followed[key] = followed
+      @body_name_veto[key] = @last_body_name_veto
     end
     verdict
+  end
+
+  # ponytail: credential predicates retain semantic name evidence (including stubs); use typed call/result dataflow to prove their reads.
+  # ponytail: bounded lexical provenance, not Go dataflow; use typed AST values for aliases, shadowing and multi-line expressions.
+  IDENTITY_LOOKUP   = /\b(?:(?:Get|Current|Lookup|Find|Parse|Read|Extract|Load|Fetch)?(?:User|Session|Token|Credential|Identity|Principal)\w*\s*\(|(?:token|session|jwt)\s*\.|\w*Cookie\w*\s*\(|\w+\.\s*(?:GetHeader|BasicAuth|Header\s*\.\s*Get)\s*\(|\.\s*(?:Get|GetString|Value)\s*\(\s*"(?:user|session|identity|principal)")/i
+  CALLER_ASSIGNMENT = /\A(\w+(?:\s*,\s*\w+)*)\s*:?=(?!=)\s*(.+)/
+  CALLER_IDENTITY   = /\A(?:user|usr|doer|sess|session|identity|principal|claims|credential|token|api_?key|admin|perm|permission|role|isAdmin|isMember|isSigned|authenticated|loggedIn)\z/i
+  CALLER_OPERATION  = /\A(?:Get|Current|Lookup|Find|Parse|Read|Check|Verify|Validate|Valid|Require|Is|Has|Can)?(?:User|Identity|Principal|Session|Token|Credential|Permission|Role|Admin|Member|Authenticated|Authorized|SignedIn|LoggedIn|Login|Access|Owner|Scope|Bearer|JWT|BasicAuth)\w*\z/i
+  @last_body_name_veto = false
+  @body_name_veto = Hash({String, Int32, Bool, Int32, String?, Bool, String?}, Bool).new
+  @caller_reads = Hash({String, Int32, Int32}, Bool).new
+
+  private def caller_expression?(expr : String, values : Hash(String, Symbol), body : Noir::GoCalleeExtractor::FunctionBody, hops : Int32) : Bool
+    expr = expr.gsub(/\b(?:setting|settings|config|cfg|options|opts|site)\b(?:\s*\.\s*\w+)+/i, "")
+    code = expr.gsub(STRING_LITERAL, %(""))
+    return true if code.scan(/\b\w+\b/).any? do |id|
+                     next false if code[id.end(0)..].lstrip.starts_with?('(')
+                     value = values[id[0]]?
+                     value ? value != :other : id[0].matches?(CALLER_IDENTITY) || id[0].matches?(CALLER_OPERATION)
+                   end
+    return true if code.matches?(/\bHeaderAuthorization\b|\.\s*(?:Cookie|Cookies|BasicAuth)\s*\(/)
+    return true if expr.scan(/\.\s*(?:Get|GetHeader|FormValue|PostFormValue|PostForm|Query|QueryParam|GetString|Value)\s*\(\s*"([^"]+)"/).any? do |read|
+                     CREDENTIAL_KEYS.includes?(read[1].downcase.delete("-_")) || read[1].delete("-_").lchop("X").lchop("x").matches?(CALLER_IDENTITY)
+                   end
+    package = @bodies.functions_for(File.dirname(body.file_path))
+    code.scan(BODY_CALL).any? do |call|
+      call[1].matches?(CALLER_OPERATION) || call[1].matches?(/\A(?:verify|authenticate|authorize)\z/i) ||
+        (hops > 0 && package[call[1]]?.try { |helper| caller_reads?(helper, hops - 1) })
+    end || code.scan(SELECTOR_CALL).any? do |call|
+      method = call[2].split('.').last.strip
+      receiver = body.source.match(METHOD_RECEIVER_NAME)
+      methods = receiver && call[1] == receiver[1] && call[2].count('.') == 1 && hops > 0 ? receiver_method(body, receiver[2], method) : [] of Noir::GoCalleeExtractor::FunctionBody
+      methods.empty? ? method.matches?(CALLER_OPERATION) : methods.any? { |helper| caller_reads?(helper, hops - 1) }
+    end
+  end
+
+  private def caller_reads?(body : Noir::GoCalleeExtractor::FunctionBody, hops : Int32) : Bool
+    @caller_reads.put_if_absent({body.file_path, body.start_row, hops}) do
+      source = Noir::CComments.strip(body.source, quotes: %("'`))
+      caller_expression?(source.partition('{')[2], Hash(String, Symbol).new, body, hops)
+    end
+  end
+
+  # Freeze a success-only arm when it opens: nested assignments can reuse
+  # `err`, but anonymous callers could never enter the enclosing arm.
+  private def anonymous_condition(test : String, values : Hash(String, Symbol)) : String
+    if test.starts_with?("!(") && test.ends_with?(')')
+      inner = test[2...-1].strip
+      if m = inner.match(/\A(\w+)\s*(==|!=)\s*(nil|"")\z/)
+        test = "#{m[1]} #{m[2] == "==" ? "!=" : "=="} #{m[3]}"
+      elsif inner.starts_with?('!')
+        test = inner[1..].strip
+      end
+    end
+    if m = test.match(/\A(\w+)\s*(==|!=)\s*(nil|"")\z/)
+      kind = values[m[1]]? || (m[1].matches?(CALLER_IDENTITY) ? :identity : :other)
+      return PRESENT if kind == :error && m[2] == "==" && m[3] == "nil"
+      return PRESENT if kind == :identity && m[2] == "!="
+    elsif values[test]? == :ok
+      return PRESENT
+    end
+    test
   end
 
   # A test of a CSRF token: a call named for it (`!csrfOK(r)`) or a read of
@@ -1349,7 +1469,7 @@ class GoAuthTagger < FrameworkTagger
   # `-` / `_` (`api_key`, `X-Auth-Token`). A request is stopped for lack of
   # one only as authentication; a stop for lack of an `Idempotency-Key` or
   # a `page_token` is not.
-  CREDENTIAL_KEYS = Set{"authorization", "apikey", "xapikey", "accesstoken", "authtoken", "xauthtoken", "token",
+  CREDENTIAL_KEYS = Set{"authorization", "cookie", "xtoken", "xuser", "apikey", "xapikey", "accesstoken", "authtoken", "xauthtoken", "token",
                         "session", "sessionid", "sessiontoken", "jwt", "bearer"}
 
   # A call into another scanned package: `response.JSONUnauthorized(`.
@@ -1357,13 +1477,20 @@ class GoAuthTagger < FrameworkTagger
 
   # The verdict of the functions of other scanned packages a statement
   # calls, each read strictly (see `body_verdict`).
-  private def imported_call_verdict(line : String, imports : Set(String)) : Guard
-    line.scan(IMPORTED_CALL).max_of? do |call|
+  private def imported_call_verdict(line : String, imports : Set(String), caller_path : Bool) : Guard
+    veto = false
+    verdict = line.scan(IMPORTED_CALL).max_of? do |call|
       next Guard::None unless imports.includes?(call[1])
       (@dirs_by_base[call[1]]? || [] of String).max_of? do |dir|
-        @bodies.functions_for(dir)[call[2]]?.try { |helper| body_verdict(helper, nil, false, strict: true) } || Guard::None
+        @bodies.functions_for(dir)[call[2]]?.try do |helper|
+          found = body_verdict(helper, nil, false)
+          veto ||= @last_body_name_veto if found == Guard::None
+          caller_path ? body_verdict(helper, nil, false, strict: true) : Guard::None
+        end || Guard::None
       end || Guard::None
     end || Guard::None
+    @last_body_name_veto = veto
+    verdict
   end
 
   # Whether the `if` block opened at `lines[idx]` returns without handing the
