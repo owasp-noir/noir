@@ -20,7 +20,7 @@ Noir의 기본 규칙은 코드에 하드코딩된 시크릿(API 키, 토큰, �
 | Linux   | `~/.config/noir/passive_rules/`    |
 | Windows | `%APPDATA%\noir\passive_rules\`   |
 
-`NOIR_HOME`을 설정하면 규칙은 `$NOIR_HOME/passive_rules/`에 저장됩니다. 실제로 쓰는 디렉터리는 `noir rules path`로 확인할 수 있습니다.
+`NOIR_HOME`을 설정하면 규칙은 `$NOIR_HOME/passive_rules/`에 저장됩니다. `noir rules path`가 실제로 쓰는 디렉터리를 출력합니다.
 
 공식 Docker 이미지에는 `/opt/noir/passive_rules`에 규칙 스냅숏이 들어 있습니다. 사용자 디렉터리가 비어 있으면 Noir는 이 스냅숏을 쓰고 클론과 업데이트 확인을 건너뜁니다. 그래서 컨테이너에서는 git이나 네트워크 없이도 `-P`가 동작합니다.
 
@@ -41,7 +41,7 @@ Noir의 기본 규칙은 코드에 하드코딩된 시크릿(API 키, 토큰, �
 
 두 옵션은 `~/.config/noir/config.yaml`에서도 설정할 수 있습니다(`passive_scan_auto_update`, `passive_scan_no_update_check`).
 
-스캔과 별개로 규칙을 관리할 수도 있습니다. `noir rules update`는 최신 규칙을 받아오고, `noir rules list`는 설치된 규칙 파일을 보여 주며, `noir rules path`는 규칙 디렉터리를 출력합니다.
+스캔 밖에서는 `noir rules update`가 최신 규칙을 받아오고, `noir rules list`가 설치된 규칙 파일을 보여 주며, `noir rules path`가 규칙 디렉터리를 출력합니다.
 
 ## 사용 예시
 

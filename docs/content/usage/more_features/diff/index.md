@@ -26,7 +26,7 @@ noir scan ./services/billing --diff-ref origin/main -f json
 
 Noir writes the files REF tracked under the scanned paths into a temporary directory, scans them as the old side, and deletes the directory when the scan ends. Your HEAD, index and working tree are left alone, and no git hooks run. Code paths of removed endpoints are reported under the path you passed, not the temporary directory.
 
-A few things to keep in mind:
+Notes:
 
 - The new side is the working tree as it is, including untracked files. The old side has only the files git tracked at REF.
 - Every base path has to be inside the same repository. `--diff-ref` and `--diff-path` can't be used together.
@@ -127,4 +127,4 @@ exec noir scan . --diff-ref origin/main --fail-on auth-removed --no-log
 
 For a complete pull request workflow, see [GitHub Action](../../github_action/).
 
-In CI you can also feed only the `added` and `changed` endpoints to a DAST scanner, so it tests just the part of the attack surface that changed.
+In CI you can also feed only the `added` and `changed` endpoints to a DAST scanner, so it tests only the attack surface that changed.

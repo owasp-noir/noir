@@ -339,7 +339,7 @@ extractor가 한 파일로 감당하기 어려워지면 계속 키우지 말고 
 
 ## 실행 모델 참고
 
-요약하면, worker는 어떤 순서로든 끝날 수 있으므로 분석기 결과가 그 순서에 좌우되면 안 됩니다.
+worker는 어떤 순서로든 끝날 수 있으므로 분석기 결과가 그 순서에 좌우되면 안 됩니다.
 
 `parallel_analyze`의 worker(그리고 그 위에 만든 `scan_files`, `parallel_file_scan`)는 Crystal 기본 execution context 위의 fiber입니다. 이 context는 스케줄러를 하나만 돌리지만, worker가 느린 syscall에 묶이면 런타임이 스케줄러를 다른 스레드로 넘길 수 있습니다. worker는 여전히 한 번에 하나씩 실행되지만, fiber가 다른 스레드에서 이어서 실행될 수 있고 끝나는 순서도 실행할 때마다 달라집니다.
 

@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir를 [OpenAI](https://openai.com)에 연결해 GPT-5.5 같은 모델을 LLM 기반 코드 분석과 엔드포인트 탐지에 쓸 수 있습니다.
+[OpenAI](https://openai.com)의 GPT-5.5 같은 모델로 코드를 분석하고 엔드포인트를 찾습니다.
 
 ## 설정
 

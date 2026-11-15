@@ -88,7 +88,7 @@ With `--ai-context`, the handler body feeds Noir's source / sink / guard inferen
 
 **General**
 
-* Source code must be present for handler linkage. A manifest- or plist-only scan still yields the endpoints, just without callees, params, or AI context.
+* Source code must be present for handler linkage. A manifest- or plist-only scan still yields the endpoints, but without callees, params, or AI context.
 
 **Android**
 

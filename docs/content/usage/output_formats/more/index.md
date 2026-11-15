@@ -26,7 +26,7 @@ POST /query
     └── query
 ```
 
-Add `--include` to show more per endpoint: `path` (source file and line), `techs` (the analyzer), and `callee` (functions the handler calls). `--verbose` turns on `--include path` (and all taggers) for you.
+Add `--include` to show more per endpoint: `path` (source file and line), `techs` (the analyzer), and `callee` (functions the handler calls). `--verbose` turns on `--include path` (and all taggers).
 
 ```bash
 noir scan . --no-log --include path,techs

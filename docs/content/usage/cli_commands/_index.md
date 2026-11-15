@@ -76,8 +76,7 @@ noir scan ./app -P -f json -o endpoints.json
 noir scan ./app --include path,techs,callee --ai-context
 ```
 
-Positional paths and repeated `-b PATH` work the same way. Use whichever
-reads better in your scripts.
+Positional paths and repeated `-b PATH` work the same way.
 
 > Pass multiple codebases as sibling roots (`noir scan ./api ./worker`,
 > or repeated `-b`). That is the supported monorepo shape. Nested or
@@ -152,9 +151,9 @@ noir scan ./app --ai-provider ollama --ai-model llama3
 
 ## Trace, Reach, Query
 
-Three query verbs for tracking endpoints rather than listing them. They are
-the shape an AI agent (or a reviewer with a specific question) needs: ask a
-narrow question, get a small answer. Each runs a scan with
+Three query verbs answer a narrow question about the endpoints instead of
+listing them all, which suits an AI agent or a reviewer with a specific
+question. Each runs a scan with
 `--ai-context all --include callee` implied and accepts every `scan` flag, or
 reads a saved report with `--from` so one scan answers many questions.
 
@@ -493,7 +492,7 @@ the flags for a specific command.
 
 ## Global flags
 
-A small set of flags work on every subcommand, not just `scan`:
+These flags work on every subcommand:
 
 | Flag           | Effect                                                                |
 |----------------|----------------------------------------------------------------------|

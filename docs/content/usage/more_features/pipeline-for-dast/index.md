@@ -20,7 +20,7 @@ Use `--probe-via` ([Delivering Results to Other Tools](../deliver/)) to send dis
 noir scan . -u http://localhost:3000 --probe-via "http://localhost:8080"
 ```
 
-This scans the current directory, constructs URLs using `http://localhost:3000` as the base, and sends all endpoints to the proxy at `http://localhost:8080`.
+This scans the current directory, uses `http://localhost:3000` as the base URL, and sends every endpoint to the proxy at `http://localhost:8080`.
 
 ## Integrating with ZAP Automation
 

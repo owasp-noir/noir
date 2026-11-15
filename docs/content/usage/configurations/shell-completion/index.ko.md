@@ -74,4 +74,4 @@ echo 'use noir' >> ~/.config/elvish/rc.elv
 
 ## Homebrew 사용자
 
-Homebrew로 설치했다면 셸 자동완성이 이미 설정되어 있어 별도 작업이 필요 없습니다.
+Homebrew로 설치했다면 셸 자동완성이 이미 설정되어 있습니다.

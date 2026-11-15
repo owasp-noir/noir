@@ -340,7 +340,7 @@ Once an extractor outgrows one file, split it into a directory of part files beh
 
 ## Execution model note
 
-In short: workers can finish in any order, so an analyzer's result must not depend on that order.
+Workers can finish in any order, so an analyzer's result must not depend on that order.
 
 `parallel_analyze` workers (and everything built on it: `scan_files`, `parallel_file_scan`) are fibers on Crystal's default execution context. That context runs one scheduler, but when a worker sits in a slow syscall the runtime can hand the scheduler to another thread. Workers still run one at a time, but a fiber can resume on a different thread, and the order they finish in changes from run to run.
 

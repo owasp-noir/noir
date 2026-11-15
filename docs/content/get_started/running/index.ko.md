@@ -12,8 +12,6 @@ prev_page_label = "Noir 설치"
 Noir를 설치했으니 프로젝트에 돌려 보고 뭘 찾는지 보자.
 {% end %}
 
-각 단계는 앞 단계에 이어지니 처음에는 순서대로 따라가세요.
-
 ## 스캔 실행
 
 프로젝트 디렉터리를 골라 스캔합니다.
@@ -114,7 +112,6 @@ noir scan . --exclude-techs express
 noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
-`--only-techs`와 `--techs`는 비슷해 보이지만 하는 일이 다릅니다.
 `--only-techs`는 실행할 탐지기를 제한하므로 스캔이 빨라지고 지정한 기술만 탐지됩니다.
 `--techs`는 자동 탐지 결과에 기술을 *추가*하므로, 탐지가 놓쳐도 그 분석기는 실행됩니다.
 "이 기술만, 탐지되지 않아도 실행"하고 싶다면 둘을 함께 쓰세요.
@@ -193,11 +190,11 @@ noir scan . --ai-context guards,sinks
 | `--no-color`          | plain 출력의 ANSI 색상 비활성화 |
 | `--no-spinner`        | 로딩 스피너 애니메이션 비활성화 |
 
-빌드 정보(Crystal / LLVM / 타깃)는 `noir version --verbose`로 확인합니다. `noir help`는 최상위 개요를, `noir help <command>`는 해당 명령어의 전체 플래그 목록을 보여줍니다.
+빌드 정보(Crystal / LLVM / 타깃)는 `noir version --verbose`로 확인합니다. `noir help`는 최상위 개요를, `noir help <command>`는 그 명령어의 전체 플래그 목록을 보여줍니다.
 
 ---
 
-시작하기는 여기까지입니다. 다음으로 볼 만한 문서:
+다음으로 볼 만한 문서:
 
 - **[CLI 명령어](@/usage/cli_commands/_index.ko.md)**: v1 서브커맨드(scan, trace, reach, query, list, cache, config, rules 등) 전체 레퍼런스
 - **[설정](@/usage/configurations/configuration_file/index.ko.md)**: 매번 플래그를 반복하지 않도록 기본 옵션 설정

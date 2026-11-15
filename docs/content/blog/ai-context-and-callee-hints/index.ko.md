@@ -111,7 +111,7 @@ $ noir -b ./flask_app --ai-context -f json
 
 ## 동시에 hint이자 sink
 
-이 두 플래그를 동시에 hint이자 sink로 쓸 수 있다는 게 핵심입니다.
+이 두 플래그는 hint이자 sink로 동시에 쓸 수 있습니다.
 
 - **Hint**로: 엔드포인트 단위로 컨텍스트를 미리 추려 LLM의 attention을 좁혀줍니다. "전체 코드베이스" 대신 "이 핸들러 + 이 파일들"만 보면 됩니다.
 - **Sink**로(source-to-sink의 그 sink): `sinks` 카테고리는 데이터 흐름의 종착점 후보를 framework-aware하게 알려줍니다. 일반 LLM도 `User.query.filter`가 SQL이라는 것 정도는 추론할 수 있지만, 매번 토큰을 태워야 합니다. Noir가 미리 라벨링해주면 그 추론 단계를 건너뛸 수 있습니다.

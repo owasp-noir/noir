@@ -26,7 +26,7 @@ noir scan . -f oas2
 
 ## 출력 예제
 
-표준 OpenAPI 구조를 따릅니다. `info`에 메타데이터가, `paths` 아래에 각 URL의 HTTP 메서드와 파라미터, 응답이 들어갑니다. 이 결과를 [Swagger Editor](https://editor.swagger.io/)에 붙여넣으면 바로 시각화됩니다.
+표준 OpenAPI 구조를 따릅니다. `info`에 메타데이터가, `paths` 아래에 각 URL의 HTTP 메서드와 파라미터, 응답이 들어갑니다. 이 결과를 [Swagger Editor](https://editor.swagger.io/)에 붙여넣으면 시각화됩니다.
 
 ```json
 {
@@ -113,4 +113,4 @@ noir scan . -f oas2
 
 문서는 OpenAPI `3.0.3`으로 출력됩니다. 스캔 결과에 [HTTP QUERY](https://www.rfc-editor.org/rfc/rfc10008.html) 라우트가 있으면 `3.2.0`으로 나가는데, 3.0.x에는 `query` 오퍼레이션이 없기 때문입니다.
 
-경로 항목에는 동사마다 오퍼레이션이 하나뿐입니다. 그래서 모노레포의 두 프로젝트가 같은 라우트를 선언하면(`services/orders`와 `services/users`에 모두 `POST /items`가 있는 경우) 두 엔드포인트가 오퍼레이션 하나를 공유하고 파라미터가 합쳐집니다. 이를 모르고 지나치지 않도록, Noir는 해당 오퍼레이션에 `x-noir-projects`로 프로젝트 목록을 남기고 프로젝트 이름과 함께 경고를 출력합니다. 프로젝트 하나만 선언한 오퍼레이션이나 프로젝트가 없는 스캔에는 이 키가 붙지 않습니다. 오퍼레이션을 따로 얻으려면 프로젝트별로 스캔하세요(`-b services/orders`). `-f oas2`도 같습니다.
+경로 항목에는 동사마다 오퍼레이션이 하나뿐입니다. 그래서 모노레포의 두 프로젝트가 같은 라우트를 선언하면(`services/orders`와 `services/users`에 모두 `POST /items`가 있는 경우) 두 엔드포인트가 오퍼레이션 하나를 공유하고 파라미터가 합쳐집니다. Noir는 그 오퍼레이션에 `x-noir-projects`로 프로젝트 목록을 남기고 프로젝트 이름과 함께 경고를 출력합니다. 프로젝트 하나만 선언한 오퍼레이션이나 프로젝트가 없는 스캔에는 이 키가 붙지 않습니다. 오퍼레이션을 따로 얻으려면 프로젝트별로 스캔하세요(`-b services/orders`). `-f oas2`도 같습니다.

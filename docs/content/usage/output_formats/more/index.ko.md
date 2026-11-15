@@ -26,7 +26,7 @@ POST /query
     └── query
 ```
 
-`--include`로 엔드포인트별 정보를 더 볼 수 있습니다. `path`(소스 파일과 줄 번호), `techs`(분석기), `callee`(핸들러가 호출하는 함수) 중에서 고르세요. `--verbose`를 쓰면 `--include path`(그리고 모든 태거)가 자동으로 켜집니다.
+`--include`로 엔드포인트별 정보를 더 볼 수 있습니다. `path`(소스 파일과 줄 번호), `techs`(분석기), `callee`(핸들러가 호출하는 함수) 중에서 고르세요. `--verbose`를 쓰면 `--include path`(그리고 모든 태거)가 켜집니다.
 
 ```bash
 noir scan . --no-log --include path,techs

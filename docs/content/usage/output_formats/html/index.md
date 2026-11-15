@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Write the scan results as one interactive HTML file. It has no external dependencies, so it opens offline and is easy to share. Color is used only where it means something: each HTTP method and each finding severity has its own.
+Write the scan results as one interactive HTML file. It has no external dependencies, so it opens offline and is easy to share. Color marks only HTTP methods and finding severities.
 
 ## Basic Usage
 
@@ -82,7 +82,7 @@ Templates use placeholders that Noir replaces with generated content:
 | `<%= noir_scripts %>` | The interactivity scripts (theme toggle, collapsible cards and groups, search, filters, view switching, and copy buttons). |
 
 {% alert_warning() %}
-Don't forget the noir_scripts placeholder: add it to your template, usually right before the closing body tag. Without it the report still renders, but the theme toggle, collapsible cards, search, filters, view switching, and copy buttons won't work.
+Add the noir_scripts placeholder to your template, usually right before the closing body tag. Without it the report still renders, but the theme toggle, collapsible cards, search, filters, view switching, and copy buttons won't work.
 {% end %}
 
 ### Example Template

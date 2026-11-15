@@ -59,9 +59,9 @@ Joining five endpoint lists is a weekend project. The real work was keeping the 
 
 The first full run on casdoor marked nearly half the findings critical. The promotion rule was "no sign of authentication", and Noir's auth taggers had tagged nine endpoints out of almost four hundred, so "no sign" was true nearly everywhere and meant nothing. The rule now runs the other way: the presence of a signal moves severity, and an adjustment keyed to a missing tag applies only when that tag exists somewhere in the scan.
 
-Argo CD reported 58 shadow APIs and 198 phantom contracts, none of them real. Its Go code registers `/api`; its OpenAPI documents 198 paths beneath it. Same surface, two granularities, not a single shared endpoint. Zero overlap between two populated views now reads as "this comparison failed", so the rules hold back and the report explains why instead of flooding.
+Argo CD reported 58 shadow APIs and 198 phantom contracts, none of them real. Its Go code registers `/api`; its OpenAPI documents 198 paths beneath it. It is the same surface at two granularities, so the two views share no endpoint. Zero overlap between two populated views now reads as "this comparison failed", so the rules hold back and the report explains why instead of flooding.
 
-NetBox nearly shipped the worst answer of all. Its API documentation is one 12.35MB OpenAPI file, Noir skipped it for exceeding the file-size cap, and the draft report concluded that the project documents nothing. That's not an incomplete answer, it's a wrong one, delivered with full confidence. Noir now gives specification documents their own size budget ([#2671](https://github.com/owasp-noir/noir/pull/2671)), and alibi prints whatever Noir reported it couldn't read above the findings, because a missing view and an empty view mean opposite things.
+NetBox nearly shipped the worst answer of all. Its API documentation is one 12.35MB OpenAPI file, Noir skipped it for exceeding the file-size cap, and the draft report concluded that the project documents nothing. The answer was wrong, and the report gave it with full confidence. Noir now gives specification documents their own size budget ([#2671](https://github.com/owasp-noir/noir/pull/2671)), and alibi prints whatever Noir reported it couldn't read above the findings, because a missing view and an empty view mean opposite things.
 
 The same caution runs through the rest. A finding whose endpoint nearly matches another view (same path under a different verb, a parameter where the other side has a literal) is demoted and flagged, because "in code but not in the docs" is indistinguishable from "in both, but alibi failed to line them up". Snapshots record which rules actually evaluated, because dropping the contracts directory from one run makes `SHADOW` evaluate nothing, and to a naive diff that looks exactly like every shadow API having been closed.
 
@@ -77,7 +77,7 @@ NetBox is the case that shows the intended workflow, though. One repository, two
 $ alibi scan ./netbox --ignore '^/(?!api/)'
 ```
 
-Three shadow APIs remain (`/api/plugins`, `/api/schema/redoc`, `/api/schema/swagger-ui`), all genuinely served and all genuinely absent from the schema.
+Three shadow APIs remain (`/api/plugins`, `/api/schema/redoc`, `/api/schema/swagger-ui`), all served and all absent from the schema.
 
 Building this fed fixes back into Noir along the way: split OpenAPI documents that `$ref` their operations out to other files ([#2673](https://github.com/owasp-noir/noir/pull/2673)), the DRF surface a Django project actually exposes ([#2672](https://github.com/owasp-noir/noir/pull/2672)), and the spec size budget above. That loop, a companion tool stress-testing the scanner, may turn out to be alibi's second job.
 
@@ -90,4 +90,4 @@ alibi scan ./service ./contracts ./prod.har
 
 It needs noir 1.0.0 or newer on `PATH`. `-f sarif` uploads to code scanning, `--fail-on high` gates a build, and an `.alibi.yml` next to the source suppresses the gaps that are intentional.
 
-It's early. If alibi tells you something that isn't true, that's exactly the kind of bug the whole tool is organized around catching, so please [open an issue](https://github.com/owasp-noir/alibi/issues). Happy hunting :D
+It's early. If alibi tells you something that isn't true, that's the kind of bug this tool exists to catch, so please [open an issue](https://github.com/owasp-noir/alibi/issues). Happy hunting :D

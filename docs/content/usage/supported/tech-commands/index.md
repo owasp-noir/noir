@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir detects the technologies in your code on its own. Use these flags when you want to add, limit, or drop some of them.
+Noir detects the technologies in your code on its own. Use these flags to add, limit, or drop some of them.
 
 ## Flags
 

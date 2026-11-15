@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-[OpenRouter](https://openrouter.ai)를 쓰면 API 하나로 여러 AI 모델(OpenAI, Anthropic, Google, Meta 등)을 쓸 수 있습니다.
+[OpenRouter](https://openrouter.ai)를 거치면 API 하나로 여러 AI 모델(OpenAI, Anthropic, Google, Meta 등)을 쓸 수 있습니다.
 
 ## 설정
 

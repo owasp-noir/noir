@@ -14,11 +14,11 @@ next_page_label = "첫 번째 스캔"
 Noir는 런타임 의존성 없이 단일 바이너리로 배포돼. 대부분은 Homebrew가 제일 빠르지만, 시스템에 맞는 걸 골라.
 {% end %}
 
-아래 방법은 모두 같은 `noir` 바이너리를 설치하므로, 플랫폼에 맞는 하나만 고르고 나머지는 건너뛰세요. 대략 쉬운 순서로 정리했습니다.
+아래 방법은 모두 같은 `noir` 바이너리를 설치합니다. 대략 쉬운 순서로 정리했습니다.
 
 ## Homebrew (macOS 및 Linux)
 
-가장 쉬운 방법입니다. Noir에는 공식 [Homebrew formula](https://formulae.brew.sh/formula/noir)가 있습니다.
+Noir에는 공식 [Homebrew formula](https://formulae.brew.sh/formula/noir)가 있습니다.
 
 설치:
 
@@ -128,7 +128,7 @@ nix run github:owasp-noir/noir -- -h
 
 ## 바이너리 직접 다운로드
 
-패키지 매니저가 없다면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)에서 미리 빌드된 바이너리를 받으세요. Linux와 macOS용이 있고, v1.5.0부터는 Windows(x86_64)용도 있습니다.
+[GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)에 미리 빌드된 바이너리가 있습니다. Linux와 macOS용이 있고, v1.5.0부터는 Windows(x86_64)용도 있습니다.
 
 설치 및 업데이트:
 
@@ -172,7 +172,7 @@ nix run github:owasp-noir/noir -- -h
 
 ## Debian 패키지 (.deb)
 
-Debian/Ubuntu 계열이라면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.deb` 패키지를 쓸 수 있습니다. `dpkg`/`apt`로 다른 시스템 패키지처럼 관리됩니다. `amd64`와 `arm64`를 모두 제공합니다. 아래 명령은 `amd64` 기준이니 ARM 머신에서는 `arm64`로 바꾸세요.
+Debian/Ubuntu 계열이라면 [GitHub Releases](https://github.com/owasp-noir/noir/releases/latest)의 `.deb` 패키지를 쓸 수 있습니다. `amd64`와 `arm64`를 모두 제공합니다. 아래 명령은 `amd64` 기준이니 ARM 머신에서는 `arm64`로 바꾸세요.
 
 설치 및 업데이트:
 
@@ -334,13 +334,11 @@ Alpine Linux 사용자는 [GitHub Releases](https://github.com/owasp-noir/noir/r
 
 ## 설치 확인
 
-어떤 방법을 선택했든, 아래 명령으로 설치를 확인합니다.
+아래 명령으로 설치를 확인합니다.
 
 ```bash
 noir --version
 ```
-
-버전 번호가 표시되면 준비 완료입니다.
 
 ---
 

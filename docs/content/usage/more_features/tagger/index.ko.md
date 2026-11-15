@@ -58,7 +58,7 @@ noir scan <BASE_PATH> --tagger-rules ./team-rules
 noir list taggers --tagger-rules ./team-rules   # 스캔 없이 규칙과 examples만 확인
 ```
 
-매번 불러오려면 설정 파일에 `tagger_rules_path`를 지정하세요. 규칙 파일 형식이 잘못됐거나 `key`가 다른 태거와 겹치면 스캔이 시작되기 전에 파일 이름과 함께 멈춥니다. `examples`가 적힌 대로 동작하지 않으면 경고를 출력합니다. 사용할 수 있는 조건은 [규칙 형식](https://github.com/owasp-noir/noir/blob/main/src/tagger/rules/README.md)에 정리되어 있습니다. 내장 태거 중 `admin`, `payment`, `soap`, `cors`, `websocket`, `webhook`, `crypto`도 같은 형식으로 작성되어 있습니다.
+매번 불러오려면 설정 파일에 `tagger_rules_path`를 지정하세요. 규칙 파일 형식이 잘못됐거나 `key`가 다른 태거와 겹치면 스캔이 시작되기 전에 파일 이름과 함께 멈춥니다. `examples`가 적힌 대로 동작하지 않으면 경고를 출력합니다. 조건 전체는 [규칙 형식](https://github.com/owasp-noir/noir/blob/main/src/tagger/rules/README.md)에 있습니다. 내장 태거 중 `admin`, `payment`, `soap`, `cors`, `websocket`, `webhook`, `crypto`도 같은 형식을 씁니다.
 
 ## 출력
 
@@ -132,7 +132,7 @@ noir list taggers --tagger-rules ./team-rules   # 스캔 없이 규칙과 exampl
 
 ### 프레임워크 보호 장치와 위험
 
-이 태거들은 해당 엔드포인트에 두 가지를 표시합니다. 프레임워크의 보안 설정, 그리고 코드가 프레임워크의 안전한 기본값을 끈 지점입니다.
+이 태거들은 영향받는 엔드포인트에 두 가지를 표시합니다. 프레임워크의 보안 설정, 그리고 코드가 프레임워크의 안전한 기본값을 끈 지점입니다.
 
 **Rails** (`rails_security`)
 

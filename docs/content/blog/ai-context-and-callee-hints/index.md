@@ -111,7 +111,7 @@ The `@login_required` decorator landed in `guards`. To an LLM that's a negative 
 
 ## Hint and sink at the same time
 
-The interesting bit is that these flags work as both hint and sink at once.
+These flags work as both hint and sink at once.
 
 - As a **hint**: pre-curated per-endpoint context narrows the LLM's attention. Instead of "review the entire codebase", it's "this handler plus these files".
 - As a **sink** (the source-to-sink kind): the `sinks` bucket lists framework-aware candidates for where data might land. A generic LLM *can* reason that `User.query.filter` is SQL, but it burns tokens doing so every time. Noir pre-labels them so the LLM can skip that reasoning step.

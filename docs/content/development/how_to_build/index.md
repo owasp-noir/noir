@@ -9,7 +9,7 @@ sort_by = "weight"
 How to send a change, set up Crystal, build Noir, and run the tests and linter.
 
 {% mascot(mood="good") %}
-Fixes, features, docs, fixtures: every kind of contribution moves Noir forward. Thanks for being here.
+Fixes, features, docs, fixtures: every kind of contribution helps Noir. Thanks for being here.
 {% end %}
 
 ## How to Contribute

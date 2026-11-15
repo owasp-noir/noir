@@ -10,7 +10,7 @@ Passive scan rules, both the defaults and community contributions, live in a sin
 
 *   **[owasp-noir/noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules)**
 
-You do not need to install anything manually: when passive scanning is enabled (`-P`), Noir clones this repository to `~/.config/noir/passive_rules/` on first run and notifies you when it falls behind. Add `--passive-scan-auto-update` to pull the latest rules on startup, or run `git pull` in that directory yourself.
+Nothing to install by hand: with `-P`, Noir clones this repository to `~/.config/noir/passive_rules/` on first run and notifies you when it falls behind. Add `--passive-scan-auto-update` to pull the latest rules on startup, or run `git pull` in that directory yourself.
 
 ## Contributing rules
 

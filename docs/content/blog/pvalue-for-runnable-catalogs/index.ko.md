@@ -103,7 +103,7 @@ noir scan ./api -u https://staging.example.com \
 
 `--status-codes`, `--probe`, `--probe-via`는 모두 `-u`가 필요합니다.
 
-probe 전에 하나 알아두면 좋은 게 있습니다. `--pvalue path=…`가 없으면 Noir는 read-only verb(GET, HEAD, OPTIONS)에만 `1`이나 `noir`로 path 파라미터를 자동으로 채웁니다. POST, PUT, PATCH, DELETE는 리터럴 템플릿을 유지해서, 실수로 `DELETE /users/1`이 나가는 일이 없습니다. 명시적으로 `--pvalue path=id=42`를 주면 이 보호가 풀리고 write를 포함한 모든 verb에 적용됩니다. 의도한 거라면 괜찮고, 아니라면 준비될 때까지 `--probe-skip "POST"`나 `--probe-skip "DELETE"`로 write를 빼두세요.
+`--pvalue path=…`가 없으면 Noir는 read-only verb(GET, HEAD, OPTIONS)에만 `1`이나 `noir`로 path 파라미터를 자동으로 채웁니다. POST, PUT, PATCH, DELETE는 리터럴 템플릿을 유지해서, 실수로 `DELETE /users/1`이 나가는 일이 없습니다. 명시적으로 `--pvalue path=id=42`를 주면 이 보호가 풀리고 write를 포함한 모든 verb에 적용됩니다. 의도한 거라면 괜찮고, 아니라면 준비될 때까지 `--probe-skip "POST"`나 `--probe-skip "DELETE"`로 write를 빼두세요.
 
 ## 기본값은 설정 파일에
 
@@ -140,4 +140,4 @@ noir scan ./api --config-file ./ci/noir.yaml
 
 ## 정리
 
-값이 없는 discovery 결과는 번지 없는 지도입니다. `--pvalue`로 한 번 번지를 매기면 curl, 컬렉션, OpenAPI, status-code 필터, proxy replay에 같은 값을 그대로 쓸 수 있습니다. probe할 때 write verb는 신중하게 다루고, 팀이 placeholder에 합의했다면 설정 파일로 옮기세요.
+`--pvalue`로 값을 한 번 선언하면 curl, 컬렉션, OpenAPI, status-code 필터, proxy replay에 같은 값을 그대로 쓸 수 있습니다. probe할 때 write verb는 신중하게 다루고, 팀이 placeholder에 합의했다면 설정 파일로 옮기세요.

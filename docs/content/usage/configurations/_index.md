@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Two things are worth setting up once: shell completion and a configuration file.
+Set these up once:
 
 *   **[Shell Completions](shell-completion/)**: Autocompletion for Zsh, Bash, Fish, and Elvish.
 *   **[Configuration File](configuration_file/)**: Keep commonly used options and flags in a config file instead of retyping them on every run.

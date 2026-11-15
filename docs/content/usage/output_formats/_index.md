@@ -26,7 +26,7 @@ Pick an output format with `-f`. Some formats are for scripts and other tools, o
 
 ## Request body coverage by format
 
-Not every format turns every `param_type` into a wire body. Use this as a quick map (✅ = emitted as a request body / multipart part, ➖ = kept on the endpoint record only, or not applicable):
+Not every format turns every `param_type` into a wire body (✅ = emitted as a request body / multipart part, ➖ = kept on the endpoint record only, or not applicable):
 
 | `param_type` | `json` / `yaml` / plain | `oas2` / `oas3` | `postman` | `curl` / `httpie` / `powershell` / HTML copy-as-curl |
 |---|---|---|---|---|

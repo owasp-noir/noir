@@ -18,6 +18,4 @@ Three short pages take you from "what is this?" to the endpoint list of your fir
 | 2 | **[Install Noir](installation/)** | Install Noir on your system |
 | 3 | **[Your First Scan](running/)** | Run a scan and explore the results |
 
-Start with **[What is Noir?](overview/)**
-
 Upgrading from v0? See **[Migrating from v0 to v1](migrate_v0_to_v1/)** for the rename map, behavior changes, and the single explicit break.

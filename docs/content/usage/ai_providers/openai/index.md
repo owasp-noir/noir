@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Connect Noir to [OpenAI](https://openai.com) and use models like GPT-5.5 for LLM-based code analysis and endpoint detection.
+Use [OpenAI](https://openai.com) models such as GPT-5.5 for code analysis and endpoint detection.
 
 ## Setup
 
