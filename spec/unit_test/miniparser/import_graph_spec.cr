@@ -589,6 +589,99 @@ describe Noir::ImportGraph::Python do
       end
     end
 
+    it "follows relative package re-exports and aliases while preserving direct imports" do
+      with_tmpdir do |root|
+        package = File.join(root, "pkg")
+        Dir.mkdir_p(package)
+        init = File.join(package, "__init__.py")
+        routes = File.join(package, "routes.py")
+        app = File.join(root, "app.py")
+        File.write(init, "from .routes import router\nfrom .routes import router as users_router\n")
+        File.write(routes, "router = object()\n")
+        content = "from pkg import router\n" \
+                  "from pkg import users_router\n" \
+                  "from pkg import users_router as api_router\n" \
+                  "from pkg.routes import router as direct_router\n"
+
+        result = Noir::ImportGraph::Python.find_imported_symbols(root, app, content)
+        result["router"].should eq({routes, "router"})
+        result["users_router"].should eq({routes, "router"})
+        result["api_router"].should eq({routes, "router"})
+        result["direct_router"].should eq({routes, "router"})
+      end
+    end
+
+    it "follows absolute and two-hop package re-exports" do
+      with_tmpdir do |root|
+        absolute_package = File.join(root, "absolute_pkg")
+        nested_package = File.join(root, "nested_pkg", "sub")
+        Dir.mkdir_p(absolute_package)
+        Dir.mkdir_p(nested_package)
+        absolute_init = File.join(absolute_package, "__init__.py")
+        absolute_routes = File.join(absolute_package, "routes.py")
+        nested_init = File.join(root, "nested_pkg", "__init__.py")
+        nested_sub_init = File.join(nested_package, "__init__.py")
+        nested_routes = File.join(nested_package, "routes.py")
+        File.write(absolute_init, "from absolute_pkg.routes import router as users_router\n")
+        File.write(absolute_routes, "router = object()\n")
+        File.write(nested_init, "from .sub import api_router as router\n")
+        File.write(nested_sub_init, "from .routes import router as api_router\n")
+        File.write(nested_routes, "router = object()\n")
+
+        result = Noir::ImportGraph::Python.find_imported_symbols(root, File.join(root, "app.py"),
+          "from absolute_pkg import users_router\nfrom nested_pkg import router\n")
+        result["users_router"].should eq({absolute_routes, "router"})
+        result["router"].should eq({nested_routes, "router"})
+      end
+    end
+
+    it "stops package re-export cycles and leaves unbound names at the package initializer" do
+      with_tmpdir do |root|
+        a = File.join(root, "a")
+        b = File.join(root, "b")
+        pkg = File.join(root, "pkg")
+        Dir.mkdir_p(a)
+        Dir.mkdir_p(b)
+        Dir.mkdir_p(pkg)
+        a_init = File.join(a, "__init__.py")
+        b_init = File.join(b, "__init__.py")
+        pkg_init = File.join(pkg, "__init__.py")
+        similar_module = File.join(pkg, "routes.py")
+        File.write(a_init, "from b import router\n")
+        File.write(b_init, "from a import router\n")
+        File.write(pkg_init, "# router is not re-exported here\n")
+        File.write(similar_module, "router = object()\n")
+
+        cycle = Noir::ImportGraph::Python.find_imported_symbols(root, File.join(root, "cycle.py"), "from a import router\n")
+        cycle["router"].should eq({a_init, "router"})
+
+        unbound = Noir::ImportGraph::Python.find_imported_symbols(root, File.join(root, "app.py"), "from pkg import router\n")
+        unbound["router"].should eq({pkg_init, "router"})
+        unbound["router"].should_not eq({similar_module, "router"})
+      end
+    end
+
+    it "clears package re-export caches between scans and separates source content" do
+      with_tmpdir do |root|
+        package = File.join(root, "pkg")
+        Dir.mkdir_p(package)
+        init = File.join(package, "__init__.py")
+        first = File.join(package, "first.py")
+        second = File.join(package, "second.py")
+        app = File.join(root, "app.py")
+        File.write(first, "router = object()\n")
+        File.write(second, "router = object()\n")
+        File.write(init, "from .first import router\n")
+        content = "from pkg import router\n"
+        Noir::ImportGraph::Python.find_imported_symbols(root, app, content)["router"].should eq({first, "router"})
+        Noir::ImportGraph::Python.find_imported_symbols(root, app, "from pkg.second import router\n")["router"].should eq({second, "router"})
+
+        File.write(init, "from .second import router\n")
+        Noir::ExtractionResultCache.clear_all
+        Noir::ImportGraph::Python.find_imported_symbols(root, app, content)["router"].should eq({second, "router"})
+      end
+    end
+
     it "resolves `from . import name` to the package __init__.py" do
       with_tmpdir do |root|
         Dir.mkdir_p(File.join(root, "auth"))

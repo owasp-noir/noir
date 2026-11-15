@@ -402,9 +402,12 @@ module Analyzer::Python
         next if root == app_base_path || root == local_base_path
         next unless Noir::PathScope.under_root?(file_path, root)
         find_imported_modules(root, file_path, source).each do |name, import_info|
-          next if import_info[0].empty?
           existing = import_modules[name]?
-          import_modules[name] = import_info if existing.nil? || existing[0].empty?
+          if import_info[0].empty?
+            import_modules[name] ||= import_info
+          else
+            import_modules[name] = import_info if existing.nil? || existing[0].empty?
+          end
         end
       end
 
@@ -412,10 +415,10 @@ module Analyzer::Python
       # import auth` (auth/), or `from app.routes import router` defined in
       # routes/__init__.py — with an empty path, which cut every prefix
       # chain that runs through a package `__init__.py`. Fill those from
-      # the symbol resolver, which names the package's `__init__.py`.
-      # Both roots, as for modules: `from portal import router` beside the
-      # importing file names `portal/__init__.py` only from its directory.
-      (local_base_path == app_base_path ? {app_base_path} : {app_base_path, local_base_path}).each do |root|
+      # the symbol resolver, following explicit package re-exports.
+      # Try the app, local and registered project roots just like the module
+      # lookup above; nested files may need the app's root for absolute imports.
+      ([app_base_path, local_base_path] + @fastapi_project_roots).uniq.each do |root|
         break unless import_modules.any? { |_, info| info[0].empty? }
         Noir::ImportGraph::Python.find_imported_symbols(root, file_path, source).each do |name, symbol|
           existing = import_modules[name]?
@@ -803,7 +806,7 @@ module Analyzer::Python
         # dropping the ENTIRE sub-router prefix tree — the dominant
         # FastAPI accuracy bug on real apps (fastapi-realworld,
         # Netflix/dispatch) that lean on `import router as X`.
-        {import_module_path, resolve_original_import_name(source, name, target_map)}
+        {import_module_path, fastapi_original_import_name(file, source, name, import_module_path, target_map)}
       when 1
         module_name, attr = name.split(".")
         return unless imported = import_modules[module_name]?
@@ -811,6 +814,24 @@ module Analyzer::Python
         return unless include_router_map.has_key?(import_module_path)
         {import_module_path, attr}
       end
+    end
+
+    private def fastapi_original_import_name(file : ::String,
+                                             source : ::String,
+                                             local_name : ::String,
+                                             target_path : ::String,
+                                             target_map : Hash(::String, Router)) : ::String
+      original = resolve_original_import_name(source, local_name, target_map)
+      return original if target_map.has_key?(original)
+
+      roots = [fastapi_base_path_for(file, @fastapi_project_roots), File.dirname(file)] + @fastapi_project_roots
+      roots.uniq.each do |root|
+        symbols = Noir::ImportGraph::Python.find_imported_symbols(root, file, source)
+        if imported = symbols[local_name]?
+          return imported[1] if imported[0] == target_path && target_map.has_key?(imported[1])
+        end
+      end
+      original
     end
 
     # Translate a locally-used router name back to the symbol it is
