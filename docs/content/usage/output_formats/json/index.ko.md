@@ -59,6 +59,8 @@ Go는 `prefix`, `handler`, `guard`를 표시합니다. `prefix: unresolved`는 �
 
 Express도 JavaScript/TypeScript 라우터 마운트의 접두사를 끝까지 읽지 못하면 `prefix: unresolved`를 표시합니다. `app.use(config.basePath + '/v1', router)`는 `/v1`을 남기고 `app.use(process.env.API_PREFIX, router)`는 경로를 더하지 않으며, 중첩 마운트와 파일 간 라우터 해석에서도 표시가 유지되고 기존에 일부만 읽은 접두사와 템플릿 플레이스홀더 경로는 유지한 채 표시하며, 끝까지 읽은 리터럴이나 상수 접두사에는 표시가 붙지 않습니다.
 
+FastAPI 분석기는 `APIRouter(prefix=...)`와 `include_router(..., prefix=...)`의 접두사를 읽지 못하면 표시하고, `BASE + "/v1"`처럼 마지막에 오는 슬래시로 시작하는 리터럴 부분을 URL에 남깁니다.
+
 ```json
 {
   "url": "/api/status",

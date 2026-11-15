@@ -59,6 +59,8 @@ Go marks `prefix`, `handler` and `guard`. `prefix: unresolved` means the route's
 
 Express also marks `prefix: unresolved` on JavaScript/TypeScript router mounts whose prefix could not be read in full: `app.use(config.basePath + '/v1', router)` keeps `/v1`, while `app.use(process.env.API_PREFIX, router)` adds no path. The mark survives nested mounts and cross-file router resolution; existing partial prefix and template placeholder paths are retained and marked, while literal prefixes and constants read in full remain unmarked.
 
+The FastAPI analyzer marks unread prefixes on `APIRouter(prefix=...)` and `include_router(..., prefix=...)`, keeping a final slash-rooted literal tail such as `BASE + "/v1"`.
+
 ```json
 {
   "url": "/api/status",

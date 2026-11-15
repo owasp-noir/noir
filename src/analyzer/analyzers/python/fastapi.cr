@@ -131,7 +131,7 @@ module Analyzer::Python
                 router_instance_name = match[1]
                 if param_codes = effective_line.split(match[2], 2)[1]?
                   if raw_prefix = extract_python_keyword_expression(param_codes, "prefix")
-                    prefix = resolve_string_expression(raw_prefix, source, import_modules) || ""
+                    prefix = router_prefix_text(raw_prefix, source, import_modules)
                   end
                 end
 
@@ -252,6 +252,7 @@ module Analyzer::Python
 
                 details = Details.new(PathInfo.new(path, index + 1))
                 base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
+                base_endpoint = mark_unresolved_prefix(base_endpoint, router_class)
                 base_endpoint.protocol = "ws" if websocket_route
                 base_endpoint.handler = handler_at(codelines, def_line, path)
 
@@ -276,6 +277,7 @@ module Analyzer::Python
                                       Endpoint.new(full_path, method, params, details).tap do |dup_ep|
                                         dup_ep.protocol = "ws" if websocket_route
                                         dup_ep.handler = base_endpoint.handler
+                                        dup_ep.resolution = base_endpoint.resolution
                                         base_endpoint.callees.each { |c| dup_ep.push_callee(c) }
                                       end
                                     end
@@ -329,6 +331,7 @@ module Analyzer::Python
                 end
                 prog_methods.each do |m|
                   endpoint = Endpoint.new(prog_full, m, prog_params, prog_details)
+                  endpoint = mark_unresolved_prefix(endpoint, router_class)
                   endpoint.protocol = "ws" if prog_websocket_route
                   endpoint.handler = prog_handler
                   prog_callees.each { |c| endpoint.push_callee(c) }
@@ -338,7 +341,9 @@ module Analyzer::Python
 
               mount_line = coalesce_mount_call(codelines, index, line, instance_name)
               if static_mount_path = parse_fastapi_static_mount(mount_line, instance_name, source, import_modules)
-                result << Endpoint.new(static_route_path(router_class.join(static_mount_path)), "GET", Details.new(PathInfo.new(path, index + 1)))
+                endpoint = Endpoint.new(static_route_path(router_class.join(static_mount_path)), "GET", Details.new(PathInfo.new(path, index + 1)))
+                endpoint = mark_unresolved_prefix(endpoint, router_class)
+                result << endpoint
               end
             end
           end
@@ -523,7 +528,7 @@ module Analyzer::Python
         # `items.router` both declare `prefix=...` at construction
         # time, but their routes were surfacing without the
         # `/users` / `/items` segment.
-        mounted = Router.new(combine_router_prefixes(router_prefix, router_class.prefix))
+        mounted = Router.new(combine_fastapi_router_prefixes(router_prefix, router_class.prefix))
         router_class.mounted_prefixes << mounted.prefix unless router_class.mounted_prefixes.includes?(mounted.prefix)
 
         # Parse `{app}.include_router(...)` calls. Real FastAPI apps
@@ -538,21 +543,10 @@ module Analyzer::Python
 
           prefix = ""
           if raw_value = extract_python_keyword_expression(args, "prefix")
-            # Only set prefix when the value is a quoted string
-            # literal. Anything else — `prefix=settings.API_V1_STR`,
-            # `prefix=f"{base}/v1"`, `prefix=API_PREFIX` — is a
-            # cross-file reference we can't resolve from the call
-            # site alone. Letting the raw expression flow through
-            # to `router_class.join` used to surface garbage URLs
-            # like `/settings.API_V1_STR/me` (regression seen on
-            # full-stack-fastapi-template). Try one more rescue
-            # path before falling back to empty: when the value
-            # is a bare top-level constant (`API_V1_STR`) imported
-            # via `from … import …`, look up its definition.
             if lit = raw_value.match(/^['"]([^'"]*)['"]/)
-              prefix = lit[1]
-            elsif resolved = resolve_string_expression(raw_value, source, import_modules)
-              prefix = resolved
+              prefix = router_prefix_text(raw_value, source, import_modules, leading_literal: lit[1])
+            else
+              prefix = router_prefix_text(raw_value, source, import_modules)
             end
           end
 
@@ -560,7 +554,7 @@ module Analyzer::Python
           # OWN `include_router` calls are processed under the inherited
           # prefix too.
           if target = resolve_router_reference(file, source, import_modules, include_router_map, router_instance_name)
-            configure_router_prefix(target[0], include_router_map, app_base_path, mounted.join(prefix), target[1], visited)
+            configure_router_prefix(target[0], include_router_map, app_base_path, mounted.join_prefix(prefix), target[1], visited)
           end
         end
 
@@ -569,11 +563,17 @@ module Analyzer::Python
         extract_app_mount_calls(source, instance_name).each do |args|
           next unless mount = parse_app_mount(args, source, import_modules)
           if target = resolve_router_reference(file, source, import_modules, include_router_map, mount[1])
-            configure_router_prefix(target[0], include_router_map, app_base_path, mounted.join(mount[0]), target[1], visited)
+            configure_router_prefix(target[0], include_router_map, app_base_path, mounted.join_prefix(mount[0]), target[1], visited)
           end
         end
         visited.delete(visit_key)
       end
+    end
+
+    private def combine_fastapi_router_prefixes(parent : ::String, own : ::String) : ::String
+      unresolved = parent.includes?(Router::UNREAD_PREFIX) || own.includes?(Router::UNREAD_PREFIX)
+      combined = combine_router_prefixes(parent.gsub(Router::UNREAD_PREFIX, ""), own.gsub(Router::UNREAD_PREFIX, ""))
+      unresolved ? "#{Router::UNREAD_PREFIX}#{combined}" : combined
     end
 
     # A router handed to a helper that includes its parameter into an app is
@@ -1450,6 +1450,69 @@ module Analyzer::Python
       parts
     end
 
+    private def router_prefix_text(expression : ::String,
+                                   source : ::String,
+                                   import_modules : Hash(::String, Tuple(::String, Int32)),
+                                   leading_literal : ::String? = nil) : ::String
+      if literal = leading_literal
+        return literal if resolve_string_expression(expression, source, import_modules)
+        return "#{Router::UNREAD_PREFIX}#{unread_prefix_tail(expression, source, import_modules) || literal}"
+      end
+      resolve_string_expression(expression, source, import_modules) ||
+        "#{Router::UNREAD_PREFIX}#{unread_prefix_tail(expression, source, import_modules) || ""}"
+    end
+
+    # Only retain a final slash-rooted literal when every earlier operand is
+    # unread. This leaves a literal followed by a runtime value unchanged.
+    # ponytail: only + and simple f-string tails are read; add syntax when another Python template needs support.
+    private def unread_prefix_tail(expression : ::String,
+                                   source : ::String,
+                                   import_modules : Hash(::String, Tuple(::String, Int32))) : ::String?
+      if parts = split_python_expression(expression, '+')
+        tail = string_prefix_literal(parts.last) || f_string_prefix_tail(parts.last)
+        return unless tail && tail.starts_with?('/')
+        return unless parts[0...-1].all? { |part| unread_prefix_operand?(part, source, import_modules) }
+        return tail
+      end
+
+      f_string_prefix_tail(expression)
+    end
+
+    private def string_prefix_literal(expression : ::String) : ::String?
+      expression.strip.match(/^([rRuU]*)['"]([^'"]*)['"]$/).try(&.[2])
+    end
+
+    private def f_string_prefix_tail(expression : ::String) : ::String?
+      match = expression.strip.match(/^([rRuUfF]*)(['"])(.*)(['"])$/)
+      return unless match && match[1].downcase.includes?('f') && match[2] == match[4]
+
+      match[3].match(/\A(?:\{[^{}]+\})+(\/[^{}]*)\z/).try(&.[1])
+    end
+
+    private def unread_prefix_operand?(expression : ::String,
+                                       source : ::String,
+                                       import_modules : Hash(::String, Tuple(::String, Int32)),
+                                       depth : Int32 = 0) : Bool
+      return false if depth > 4
+      expr = expression.strip
+      return false if resolve_string_expression(expr, source, import_modules)
+      if parts = split_python_expression(expr, '+')
+        return parts.all? { |part| unread_prefix_operand?(part, source, import_modules, depth + 1) }
+      end
+      if match = expr.match(/^([rRuUfF]*)(['"])(.*)(['"])$/)
+        return match[3].starts_with?("{") if match[1].downcase.includes?('f') && match[2] == match[4]
+        return false
+      end
+      !!expr.match(/^(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\[[^\]]+\])?|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\()/)
+    end
+
+    private def mark_unresolved_prefix(endpoint : Endpoint, router : Router) : Endpoint
+      if router.prefix_unresolved?
+        endpoint.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED}
+      end
+      endpoint
+    end
+
     # Delegates to the shared splitter. `Rules::SHARED_DEPTH_RAW`, not
     # `Rules::PYTHON`: this loop counted `(`, `[` and `{` on ONE depth
     # counter, which is observable on the unbalanced fragments the route
@@ -1984,6 +2047,8 @@ module Analyzer::Python
 
   # Router class for handling URL prefix joining
   class Router
+    UNREAD_PREFIX = "\u{FDD0}"
+
     property prefix : ::String
     # Effective prefixes this router is served under, one per inclusion
     # path from an app (`include_router(r, prefix="/v1")` and again under
@@ -1999,6 +2064,10 @@ module Analyzer::Python
       @mounted_prefixes.map { |mounted_prefix| Router.new(mounted_prefix) }
     end
 
+    def prefix_unresolved? : Bool
+      @prefix.includes?(UNREAD_PREFIX)
+    end
+
     def join(url : ::String) : ::String
       # An empty route path adds nothing beyond the prefix:
       # `APIRouter(prefix="/user")` + `@router.get("")` resolves to
@@ -2006,12 +2075,22 @@ module Analyzer::Python
       # trailing slash, e.g. `prefix="/items"` + `"/"` → `/items/`.)
       # Without this guard every `""`-path route in a prefixed router
       # surfaced with a spurious trailing slash (fastapi-realworld).
-      return @prefix if url.empty? && !@prefix.empty?
+      compose_router_url(@prefix.gsub(UNREAD_PREFIX, ""), url)
+    end
+
+    def join_prefix(url : ::String) : ::String
+      unresolved = prefix_unresolved? || url.includes?(UNREAD_PREFIX)
+      joined = compose_router_url(@prefix.gsub(UNREAD_PREFIX, ""), url.gsub(UNREAD_PREFIX, ""))
+      unresolved ? "#{UNREAD_PREFIX}#{joined}" : joined
+    end
+
+    private def compose_router_url(prefix : ::String, url : ::String) : ::String
+      return prefix if url.empty? && !prefix.empty?
 
       url = url[1..] if prefix.ends_with?("/") && url.starts_with?("/")
       url = "/#{url}" unless prefix.ends_with?("/") || url.starts_with?("/")
 
-      @prefix + url
+      prefix + url
     end
   end
 end
