@@ -684,6 +684,8 @@ module Analyzer::Python
       app_instances.each do |app_file, _|
         root = fastapi_project_root_for(app_file)
         roots << root unless roots.includes?(root)
+        legacy_root = Path.new(File.dirname(app_file)).parent.to_s
+        roots << legacy_root unless roots.includes?(legacy_root)
       end
       # Prefer the shallow app root. Deep helper modules can also construct
       # FastAPI instances, but imports such as `from app...` resolve from the
@@ -693,7 +695,28 @@ module Analyzer::Python
     end
 
     private def fastapi_project_root_for(app_file : ::String) : ::String
-      Path.new(File.dirname(app_file)).parent.to_s
+      legacy_root = Path.new(File.dirname(app_file)).parent.to_s
+      root = python_project_root(app_file)
+      unless Path.new(app_file).absolute?
+        base = import_boundary_for(app_file)
+        unless base.empty? || Path.new(base).absolute? || Noir::PathScope.normalize_root(root) == Noir::PathScope.normalize_root(base)
+          relative_root = Noir::PathScope.relative_under(root, base)
+          root = base == "." ? relative_root : File.join(base, relative_root)
+        end
+      end
+      return legacy_root if Noir::PathScope.normalize_root(root) == Noir::PathScope.normalize_root(legacy_root)
+
+      # ponytail: custom `sys.path` edits aren't parsed; use the project root only if it resolves an import the legacy root misses.
+      source = read_file_content(app_file)
+      project_imports = find_imported_modules(root, app_file, source)
+      legacy_imports = find_imported_modules(legacy_root, app_file, source)
+      if project_imports.any? do |name, info|
+           !info[0].empty? && legacy_imports[name]?.try(&.[0].empty?) != false
+         end
+        root
+      else
+        legacy_root
+      end
     end
 
     private def fastapi_base_path_for(path : ::String, project_roots : Array(::String)) : ::String
