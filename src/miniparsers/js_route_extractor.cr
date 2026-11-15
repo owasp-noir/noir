@@ -73,7 +73,9 @@ module Noir
                             *,
                             include_callees : Bool = false,
                             route_callees : Hash(String, Array(JSCalleeExtractor::Entry))? = nil,
-                            unwrap_guards : Bool = false) : Array(Endpoint)
+                            unwrap_guards : Bool = false,
+                            resolve_mount_prefixes : Bool = false,
+                            local_mounts : Hash(String, Array(String))? = nil) : Array(Endpoint)
       return [] of Endpoint unless File.exists?(file_path)
 
       begin
@@ -118,8 +120,19 @@ module Noir
         # `${BASE_URL}/items` or `BASE_URL + '/items'`, `BASE_URL` imported
         # from `./config`.
         constants = content.includes?("${") || content.includes?('+') ? file_string_constants(file_path, content) : nil
-        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants)
+        mount_constants = resolve_mount_prefixes ? (constants || file_string_constants(file_path, content)) : nil
+        mount_middleware = resolve_mount_prefixes ? ->(expression : String) { mount_middleware?(expression, content, file_path) } : nil
+        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants, mount_constants: mount_constants, resolve_mount_prefixes: resolve_mount_prefixes, mount_middleware: mount_middleware)
         route_patterns = parser.parse_routes
+        # Helpers run after extraction and need the same relative local mounts.
+        if resolve_mount_prefixes
+          unread_bindings = parser.router_prefixes.select { |_, prefixes| prefixes.any?(&.includes?(JSMountPrefix::UNREAD)) }
+          unique = unread_bindings.empty? ? Set(String).new : JSMountPrefix.unique_bindings(content, file_path, unread_bindings.keys)
+          unread_bindings.each do |binding, prefixes|
+            next unless unique.includes?(binding)
+            local_mounts.try { |mounts| mounts[binding] = prefixes.select(&.includes?(JSMountPrefix::UNREAD)) }
+          end
+        end
 
         if debug && parser.hit_max_iterations?
           STDERR.puts "Warning: Maximum iterations reached in JS parser, parsing may be incomplete"
@@ -408,7 +421,7 @@ module Noir
 
           # Handle router.all by expanding to all HTTP methods
           prefixes.each do |prefix|
-            path_with_prefix = prefix.empty? ? pattern.path : URLPath.join(prefix, pattern.path)
+            path_with_prefix = prefix.empty? ? pattern.path : JSMountPrefix.join(prefix, pattern.path)
             path_with_prefix = "/" if path_with_prefix.empty?
 
             if normalized_method == "ALL"
@@ -428,7 +441,7 @@ module Noir
                 apply_handler_facts(endpoint, handler_facts)
                 push_callees(endpoint, chain_callees)
 
-                endpoints << endpoint
+                endpoints << JSMountPrefix.finish(endpoint)
               end
             else
               endpoint = Endpoint.new(path_with_prefix, normalized_method, route_details)
@@ -445,7 +458,7 @@ module Noir
               apply_handler_facts(endpoint, handler_facts)
               push_callees(endpoint, chain_callees)
 
-              endpoints << endpoint
+              endpoints << JSMountPrefix.finish(endpoint)
             end
           end
         end
@@ -1197,6 +1210,15 @@ module Noir
       nil
     end
 
+    # A pathless mount can put a known handler before the router.
+    def self.mount_middleware?(expression : String, content : String, file_path : String) : Bool
+      return true if JSMountPrefix.middleware?(expression, content)
+      handler = named_handler(expression, content, file_path)
+      facts = handler.try { |h| handler_definition_facts(h, false) }
+      # ponytail: opaque external middleware remains ambiguous with a runtime path; follow its definition to tell them apart.
+      !!(facts && (facts.responds || facts.guard || facts.passes_on || facts.writes_locals))
+    end
+
     # A function literal: `function`, `x =>`, or a parameter list then `=>`
     # (`async (ctx: Context<{ id: string }>) => …`). `(a || b)` is not one.
     INLINE_FUNCTION_RE = /\A\s*(?:async\s+)?(?:function\b|[A-Za-z_$][\w$]*\s*=>|\([^()]*(?:\([^()]*\)[^()]*)*\)\s*(?::[^=]*)?=>)/
@@ -1911,7 +1933,7 @@ module Noir
       capped = false
       by_parent[node]?.try &.each do |_, edge_prefix, child|
         next if on_path.includes?(child)
-        combined = URLPath.join(prefix, edge_prefix)
+        combined = JSMountPrefix.join(prefix, edge_prefix)
         list = prefixes[child]? || (prefixes[child] = [] of String)
         next if list.includes?(combined)
         if list.size >= MAX_MOUNT_PREFIXES

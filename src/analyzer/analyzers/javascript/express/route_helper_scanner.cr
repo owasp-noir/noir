@@ -426,8 +426,11 @@ module Analyzer::Javascript
             next unless raw_path
 
             path = forward.path_before + raw_path + forward.path_after
-            prefixes.each do |prefix|
-              url = prefix.empty? ? path : Noir::URLPath.join(prefix, path)
+            binding = args[spec.router_arg][0].strip
+            local = CodeLocator.instance.all(ExpressConstants.binding_key(Noir::PathScope.expand(file), binding))
+            mounted = local.empty? ? prefixes : prefixes.flat_map { |outer| local.map { |inner| Noir::JSMountPrefix.join(outer, inner) } }
+            mounted.each do |prefix|
+              url = prefix.empty? ? path : Noir::JSMountPrefix.join(prefix, path)
               next unless seen.add?({method, url})
               routes << HelperRoute.new(method, url, line, args, forward.path_arg, call_site_handler(forward, args))
             end

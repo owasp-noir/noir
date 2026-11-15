@@ -57,6 +57,8 @@ Noir가 보고하는 내용 중에는 정의를 따라가서 읽은 것도 있�
 
 Go는 `prefix`, `handler`, `guard`를 표시합니다. `prefix: unresolved`는 라우트 경로 앞쪽에 Noir가 읽지 못한 피연산자가 있고, URL은 그 뒤의 리터럴 부분이라는 뜻입니다. oapi-codegen은 모든 오퍼레이션을 `r.Get(options.BaseURL+"/status", ...)`로 등록하며, 이것은 `/status`로 보고됩니다. 실제 경로 앞에는 무언가가 더 있을 수 있습니다. Noir가 읽은 그룹이나 마운트 접두사는 그대로 붙지만(`r.Mount("/api", ...)`이면 `/api/status`), 그 사이의 피연산자는 여전히 읽지 못했으므로 표시는 남습니다. 접두사를 끝까지 읽지 못한 그룹에 등록된 라우트에도, 그 아래 중첩된 그룹의 라우트에도, 라우트가 어느 파일이나 패키지에 있든 같은 표시가 붙습니다. apache/answer의 `r.Group(uiConf.APIBaseURL + "/answer/api/v1")`은 뒤쪽 `/answer/api/v1`을 남기고, woodpecker의 `e.Group(server.Config.Server.RootPath)`는 라우트 경로에 아무것도 더하지 않습니다. 인라인으로 쓴 그룹도 같은 방식으로 읽습니다. `r.Group(base + "/v1").GET("/x", h)`는 `/v1/x`로 보고되고, `register(r.Group(base + "/v2"))`는 그 함수의 라우트에 `/v2`를 붙이며, 둘 다 표시됩니다. 그룹 매개변수(`func register(g *echo.Group)`, `*gin.RouterGroup`)를 받는 라우터 빌더 함수도, 읽을 수 있는 그룹을 넘기는 호출 지점을 찾지 못하면 같은 표시가 붙습니다. 루트 라우터일 수도 있는 인터페이스 매개변수(`fiber.Router`, `gin.IRouter`)는 표시하지 않습니다. 접두사를 끝까지 읽은 그룹의 라우트에는 표시가 붙지 않습니다. 메서드와 경로가 같은 두 행이 병합되면, 어느 한쪽이라도 표시한 주장은 표시된 채로 남습니다. 이런 행은 `noir query --resolution unresolved`로 볼 수 있습니다.
 
+Express도 JavaScript/TypeScript 라우터 마운트의 접두사를 끝까지 읽지 못하면 `prefix: unresolved`를 표시합니다. `app.use(config.basePath + '/v1', router)`는 `/v1`을 남기고 `app.use(process.env.API_PREFIX, router)`는 경로를 더하지 않으며, 중첩 마운트와 파일 간 라우터 해석에서도 표시가 유지되고 기존에 일부만 읽은 접두사와 템플릿 플레이스홀더 경로는 유지한 채 표시하며, 끝까지 읽은 리터럴이나 상수 접두사에는 표시가 붙지 않습니다.
+
 ```json
 {
   "url": "/api/status",

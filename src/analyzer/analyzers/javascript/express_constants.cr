@@ -25,6 +25,11 @@ module Analyzer::Javascript
       Noir::LocatorKeys::EXPRESS_ROUTER_PREFIX.key(file_path)
     end
 
+    # Local mounts consumed by forwarding-helper calls in the same file.
+    def self.binding_key(file_path : String, binding : String) : Noir::LocatorKey(Array(String))
+      Noir::LocatorKeys::EXPRESS_ROUTER_PREFIX.key(file_path, "@binding:#{binding}")
+    end
+
     def self.function_key(file_path : String, function_name : String) : Noir::LocatorKey(Array(String))
       Noir::LocatorKeys::EXPRESS_ROUTER_PREFIX.key(file_path, function_name)
     end

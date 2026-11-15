@@ -35,8 +35,10 @@ module Analyzer::Javascript
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :express)
         # ExpressAuthTagger reports a refusing wrapper (`withAuth(list)`) as
         # the guard, so the handler may be the function it wraps.
+        local_mounts = {} of String => Array(String)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-          include_callees: include_callee, unwrap_guards: true)
+          include_callees: include_callee, unwrap_guards: true, resolve_mount_prefixes: true, local_mounts: local_mounts)
+        RouterMountScanner.store_local_mounts(path, local_mounts)
         # A forwarding helper's own body carries the *shape* of a route,
         # not a route: `router.get(`/api${name}`, …)` inside
         # `setupPageRoute` is a rewrite of the caller's path, and the
@@ -96,6 +98,7 @@ module Analyzer::Javascript
 
       # Process static directories to create endpoints for static files
       process_js_static_dirs(static_dirs, result)
+      result.map! { |endpoint| Noir::JSMountPrefix.finish(endpoint) }
       clear_ambiguous_template_handlers(result)
 
       result
@@ -223,7 +226,7 @@ module Analyzer::Javascript
 
         if methods = package_serving_methods(args[1..])
           prefixes.each do |prefix|
-            url = prefix.empty? ? mount_path : Noir::URLPath.join(prefix, mount_path)
+            url = prefix.empty? ? mount_path : Noir::JSMountPrefix.join(prefix, mount_path)
             methods.each do |method|
               next if route_recorded_for_file?(result, path, url, method)
               endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line)))
@@ -246,7 +249,7 @@ module Analyzer::Javascript
         chain_callees = Noir::JSRouteExtractor.chain_step_callees(args[1...-1].map(&.[0]), content, path) if include_callee
 
         prefixes.each do |prefix|
-          url = prefix.empty? ? mount_path : Noir::URLPath.join(prefix, mount_path)
+          url = prefix.empty? ? mount_path : Noir::JSMountPrefix.join(prefix, mount_path)
           FILE_ROUTE_METHODS.each do |method|
             endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line)))
             url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
