@@ -1003,3 +1003,238 @@ describe "GoAuthTagger (group off a router parameter)" do
     run_go_auth(handed, "/api/v1/later", "GET", 22).tags.any? { |t| t.name == "auth" }.should be_false
   end
 end
+
+# Each body goes through the same definition walk used by inline and group
+# middleware. An auth-like method name must not override a body we read.
+describe "GoAuthTagger caller-dependent refusals" do
+  {
+    "a credential parse success arm" => {"user, session, err := parseToken(c.Request)", "err == nil", "err = checkCsrf(c.Request, user)"},
+    "a named credential parse error" => {"user, parseErr := parseToken(c.Request)", "parseErr == nil", ""},
+    "a user presence arm"            => { %(user, _ := c.Get("user")), "user != nil", "" },
+    "a session success arm"          => { %(sess, ok := c.Get("session")), "ok", "" },
+  }.each do |shape, (read, test, nested)|
+    it "does not count a refusal under #{shape}" do
+      source = <<-GO
+        package main
+        func AuthOptional(c *gin.Context) {
+          #{read}
+          if #{test} {
+            #{nested}
+            if failed {
+              c.AbortWithStatus(401)
+              return
+            }
+          }
+          c.Next()
+        }
+        func routes(r *gin.Engine) {
+          r.Use(AuthOptional)
+          r.GET("/open", h)
+        }
+        GO
+      lines = source.lines
+      endpoint = run_go_auth(lines, "/open", "GET", lines.index!(&.includes?("r.GET")) + 1)
+      endpoint.tags.should be_empty
+      endpoint.resolution.should be_nil
+    end
+  end
+
+  {
+    "feature flag"           => "enabled := settings.MCPEnabled(c)",
+    "rate limit"             => "enabled := limiter.Allow(c)",
+    "size limit"             => "enabled := c.Request.ContentLength < 1024",
+    "method"                 => %(enabled := c.Request.Method == "GET"),
+    "content type"           => %(enabled := c.GetHeader("Content-Type") == "text/plain"),
+    "maintenance"            => "enabled := !settings.Maintenance",
+    "identity-named setting" => "enabled := settings.UserRegistrationEnabled",
+  }.each do |shape, read|
+    it "does not call a #{shape} refusal authentication" do
+      source = <<-GO
+        package main
+        func AuthGate(c *gin.Context) {
+          #{read}
+          if enabled {
+            c.Next()
+            return
+          }
+          c.AbortWithStatus(403)
+        }
+        func routes(r *gin.Engine) {
+          r.Use(AuthGate)
+          r.GET("/open", h)
+        }
+        GO
+      lines = source.lines
+      endpoint = run_go_auth(lines, "/open", "GET", lines.index!(&.includes?("r.GET")) + 1)
+      endpoint.tags.should be_empty
+      endpoint.resolution.should be_nil
+    end
+  end
+
+  {
+    "missing user"       => { %(user, _ := c.Get("user")), "user == nil", "c.AbortWithStatus(401)", "auth" },
+    "permission"         => { %(user, _ := c.Get("user")), "!isAdmin(user)", "c.AbortWithStatus(403)", "authz" },
+    "missing token"      => { %(token := c.GetHeader("Authorization")), %(token == ""), "c.AbortWithStatus(401)", "auth" },
+    "verification error" => {"", "err := verify(c.Request); err != nil", "c.AbortWithStatus(401)", "auth"},
+    "session redirect"   => {"sess := session.Get(c)", "!sess.Authenticated()", %(c.Redirect(302, "/login")), "auth"},
+    "followed predicate" => {"", "!allowed(c)", "c.AbortWithStatus(401)", "auth"},
+  }.each do |shape, (read, test, refusal, kind)|
+    it "keeps a real #{shape} guard" do
+      source = <<-GO
+        package main
+        func checkpoint(c *gin.Context) {
+          #{read}
+          if #{test} {
+            #{refusal}
+            return
+          }
+          c.Next()
+        }
+        func allowed(c *gin.Context) bool { return c.GetHeader("Authorization") != "" }
+        func routes(r *gin.Engine) {
+          r.GET("/private", checkpoint, h)
+        }
+        GO
+      lines = source.lines
+      endpoint = run_go_auth(lines, "/private", "GET", lines.index!(&.includes?("r.GET")) + 1)
+      endpoint.tags.map(&.name).should eq([kind])
+      endpoint.resolution.should be_nil
+    end
+  end
+
+  it "keeps a refusal in the other arm of a credential lookup" do
+    source = <<-GO
+      package main
+      func checkpoint(c *gin.Context) {
+        user, err := parseToken(c.Request)
+        if err == nil {
+          c.Next()
+          return
+        } else {
+          c.AbortWithStatus(401)
+        }
+      }
+      func routes(r *gin.Engine) {
+        r.GET("/private", checkpoint, h)
+      }
+      GO
+    lines = source.lines
+    run_go_auth(lines, "/private", "GET", lines.index!(&.includes?("r.GET")) + 1).tags.map(&.name).should eq(["auth"])
+  end
+end
+
+describe "GoAuthTagger read definitions versus name fallback" do
+  it "lets a typed method's caller-independent or credential-conditional body win over its name" do
+    dir = File.tempname("go_auth_read_body")
+    sources = {
+      "main.go" => <<-GO,
+        package main
+        func routes(r *gin.Engine) {
+          am := middleware.Gate{}
+          r.Use(am.AuthMcpEnable, am.AuthOptional, am.AuthDelegatedFlag)
+          r.GET("/open", h)
+        }
+        GO
+      "middleware/auth.go" => <<-GO,
+        package middleware
+        type Gate struct { site any }
+        func (am *Gate) AuthDelegatedFlag(c *gin.Context) {
+          am.flag(c)
+        }
+        func (am *Gate) flag(c *gin.Context) {
+          enabled := am.site.MCPEnabled(c)
+          if !enabled {
+            c.AbortWithStatus(403)
+          }
+        }
+        func (am *Gate) AuthMcpEnable(c *gin.Context) {
+          enabled, err := am.site.MCPEnabled(c)
+          if enabled {
+            c.Next()
+            return
+          }
+          c.AbortWithStatus(403)
+        }
+        func (am *Gate) AuthOptional(c *gin.Context) {
+          user, err := parseToken(c.Request)
+          if err == nil {
+            c.AbortWithStatus(401)
+          }
+          c.Next()
+        }
+        GO
+    }
+    CodeLocator.instance.clear_all
+    sources.each do |relative, source|
+      path = File.join(dir, relative)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, source)
+      CodeLocator.instance.register_path(path)
+    end
+    options = create_test_options
+    options["base"] = YAML::Any.new(dir)
+    details = Details.new(PathInfo.new(File.join(dir, "main.go"), 5))
+    details.technology = "go_gin"
+    endpoints = [Endpoint.new("/open", "GET", details)]
+    NoirTaggers.run_tagger(endpoints, options, "go_auth")
+    endpoints.first.tags.should be_empty
+    endpoints.first.resolution.should be_nil
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+end
+
+describe "GoAuthTagger permission query success" do
+  it "keeps a permission denial after a successful query" do
+    source = <<-GO
+      package main
+      func checkpoint(c *gin.Context) {
+        isMember, err := db.IsOrganizationMember(c, c.Doer.ID)
+        if err == nil {
+          if !isMember {
+            c.AbortWithStatus(403)
+          }
+        }
+      }
+      func routes(r *gin.Engine) {
+        r.GET("/private", checkpoint, h)
+      }
+      GO
+    lines = source.lines
+    run_go_auth(lines, "/private", "GET", lines.index!(&.includes?("r.GET")) + 1).tags.map(&.name).should eq(["authz"])
+  end
+end
+
+describe "GoAuthTagger caller checks beside path exemptions" do
+  it "keeps semantic session predicates without losing route exemptions" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func hasSession(r *http.Request) bool { return false }
+      func viewerAuthGate(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          if r.URL.Path == "/logo" || strings.HasPrefix(r.URL.Path, "/federation/") {
+            next.ServeHTTP(w, r)
+            return
+          }
+          if !hasSession(r) {
+            http.Error(w, "unauthorized", 401)
+            return
+          }
+          next.ServeHTTP(w, r)
+        })
+      }
+      func routes() {
+        http.Handle("/logo", viewerAuthGate(h))
+        http.Handle("/federation/inbox", viewerAuthGate(h))
+        http.Handle("/watch", viewerAuthGate(h))
+      }
+      GO
+    lines = source.lines
+    %w[/logo /federation/inbox /watch].each do |url|
+      route = "http.Handle(\"#{url}\""
+      endpoint = run_go_auth(lines, url, "GET", lines.index!(&.includes?(route)) + 1, "go_http")
+      endpoint.tags.map(&.name).should eq(url == "/watch" ? ["auth"] : [] of String)
+    end
+  end
+end

@@ -164,37 +164,37 @@ describe "GoAuthTagger matched definition paths" do
       source = [
         "package main",
         "func checkpoint(c *gin.Context) {",
-        "  c.AbortWithStatus(401)",
+        %(  if c.GetHeader("Authorization") == "" {), "  c.AbortWithStatus(401)", "  }",
         "}",
         head, declaration, %(r.GET("/x", checkpoint, h)), "}",
       ]
-      endpoint = run_go_auth(source, "/x", "GET", 7)
+      endpoint = run_go_auth(source, "/x", "GET", 9)
       endpoint.tags.map(&.name).should eq(["auth"])
       endpoint.resolution.should eq({"guard" => "heuristic"})
     end
   end
 
-  it "keeps an Echo handler mistaken for middleware heuristic" do
+  it "does not tag an Echo handler that refuses without a caller check" do
     lines = [
       "package main", "func login(c echo.Context) error {", "  return echo.ErrUnauthorized", "}",
       "func routes(e *echo.Echo) {", %(e.POST("/login", login, logging)), "}",
     ]
     endpoint = run_go_auth(lines, "/login", "POST", 6, "go_echo")
-    endpoint.tags.map(&.name).should eq(["auth"])
-    endpoint.resolution.should eq({"guard" => "heuristic"})
+    endpoint.tags.should be_empty
+    endpoint.resolution.should be_nil
   end
 
   it "keeps an unread factory flag heuristic" do
     lines = [
       "package main", "func checkpoint(required bool) gin.HandlerFunc {", "  return func(c *gin.Context) {",
-      "    if required {", "      c.AbortWithStatus(401)", "    }", "  }", "}",
+      "    if required {", %(      if c.GetHeader("Authorization") == "" {), "        c.AbortWithStatus(401)", "      }", "    }", "  }", "}",
       "func routes(r *gin.Engine) {", %(r.GET("/x", checkpoint(cfg.Required), h)), "}",
     ]
-    endpoint = run_go_auth(lines, "/x", "GET", 10)
+    endpoint = run_go_auth(lines, "/x", "GET", 12)
     endpoint.tags.map(&.name).should eq(["auth"])
     endpoint.resolution.should eq({"guard" => "heuristic"})
-    lines[9] = %(r.GET("/x", checkpoint(true), h))
-    run_go_auth(lines, "/x", "GET", 10).resolution.should be_nil
+    lines[11] = %(r.GET("/x", checkpoint(true), h))
+    run_go_auth(lines, "/x", "GET", 12).resolution.should be_nil
   end
 
   it "does not certify a refusal found in a package selected by basename" do
@@ -206,7 +206,10 @@ describe "GoAuthTagger matched definition paths" do
         import "example.com/app/b/response"
         func gate(next http.Handler) http.Handler {
             return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                response.Reject(w, r)
+                if r.Header.Get("Authorization") == "" {
+                    response.Reject(w, r)
+                    return
+                }
                 next.ServeHTTP(w, r)
             })
         }
@@ -227,7 +230,7 @@ describe "GoAuthTagger matched definition paths" do
     end
     options = create_test_options
     options["base"] = YAML::Any.new(dir)
-    details = Details.new(PathInfo.new(File.join(dir, "main.go"), 11))
+    details = Details.new(PathInfo.new(File.join(dir, "main.go"), 14))
     details.technology = "go_http"
     endpoints = [Endpoint.new("/x", "GET", details)]
     NoirTaggers.run_tagger(endpoints, options, "go_auth")
