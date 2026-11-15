@@ -1,0 +1,136 @@
+{
+  "repos": [
+    {
+      "name": "InvokeAI",
+      "url": "https://github.com/invoke-ai/InvokeAI",
+      "commit": "9264acf9e542d51a21467013029b755686dee375",
+      "technologies": [
+        "python_fastapi"
+      ],
+      "scope": "invokeai/app",
+      "specs": [
+        "invokeai/frontend/api/openapi.json"
+      ],
+      "note": "openapi-checks.yml regenerates the schema from FastAPI and diffs it. Only invokeai/app is scanned; frontend and other packages are excluded."
+    },
+    {
+      "name": "answer",
+      "url": "https://github.com/apache/answer",
+      "commit": "6744295fa888e0621fc9f9a8ace04f1a4daf8554",
+      "technologies": [
+        "go_gin"
+      ],
+      "scope": ".",
+      "specs": [
+        "docs/swagger.json"
+      ],
+      "note": "Makefile generate runs go generate; swag annotations live on the handlers for this Gin service. Known stale annotations: personal question page lacks its service prefix; activation uses plural users instead of user; notification config documents POST instead of GET."
+    },
+    {
+      "name": "auth",
+      "url": "https://github.com/supabase/auth",
+      "commit": "3e79d8513b67d7dc3f234153aacc074daf82db5f",
+      "technologies": [
+        "go_chi"
+      ],
+      "scope": ".",
+      "specs": [
+        "openapi.yaml"
+      ],
+      "note": "Maintained beside internal/api; the hosted prefix is declared at openapi.yaml:38 and absent from the root-local router (api.go:219-222,498,520). Reauthenticate has a stale documented verb.",
+      "spec_prefix": "/auth/v1"
+    },
+    {
+      "name": "dvws-node",
+      "url": "https://github.com/snoopysecurity/dvws-node",
+      "commit": "4221c04f132960a0ccca4bf5aa5f3a9f53172778",
+      "technologies": [
+        "js_express"
+      ],
+      "scope": ".",
+      "specs": [
+        "docs/openapi/openapi.json"
+      ],
+      "note": "scripts/generate-openapi.js generates this contract with swagger-autogen from src/routes; test/openapi.test.js checks the document."
+    },
+    {
+      "name": "eShop",
+      "url": "https://github.com/dotnet/eShop",
+      "commit": "913acea66708a59595351174cee9b29f37179d29",
+      "technologies": [
+        "cs_aspnet_core_minimal_api"
+      ],
+      "scope": "src/Catalog.API",
+      "specs": [
+        "src/Catalog.API/Catalog.API.json",
+        "src/Catalog.API/Catalog.API_v2.json"
+      ],
+      "note": "Catalog.API.csproj exports OpenAPI during build with Microsoft.Extensions.ApiDescription.Server. Both API versions are included; query-parameter version distinctions are outside endpoint scoring. Only Catalog.API source is scanned, not other services or shared default endpoints."
+    },
+    {
+      "name": "immich",
+      "url": "https://github.com/immich-app/immich",
+      "commit": "e5d6eb7be67834f59d90e4b7a86f5dec7ac9af86",
+      "technologies": [
+        "ts_nestjs"
+      ],
+      "scope": "server",
+      "specs": [
+        "open-api/immich-openapi-specs.json"
+      ],
+      "note": "Generated from server controllers by the OpenAPI tooling; .github/workflows/check-openapi.yml checks contract changes. Only server is scanned."
+    },
+    {
+      "name": "owncast",
+      "url": "https://github.com/owncast/owncast",
+      "commit": "c3a9ac1c46c043358fe7382a6d62d5227e4b2efe",
+      "technologies": [
+        "go_chi"
+      ],
+      "scope": ".",
+      "specs": [
+        "openapi.yaml"
+      ],
+      "note": "Makefile api-generate produces the checked-in chi server from this spec; /api is a real mount, not a prefix to strip."
+    },
+    {
+      "name": "podinfo",
+      "url": "https://github.com/stefanprodan/podinfo",
+      "commit": "fd3a834ed8d14b80ea334cf8a2fddd4597924da6",
+      "technologies": [
+        "go_mux"
+      ],
+      "scope": ".",
+      "specs": [
+        "pkg/api/http/docs/swagger.json"
+      ],
+      "note": "Makefile swagger regenerates this document from handler annotations; runtime path helpers remain part of the analyzer task. token/validate is annotated POST although registered GET."
+    },
+    {
+      "name": "pokeapi",
+      "url": "https://github.com/PokeAPI/pokeapi",
+      "commit": "8a92bfa7dab2f12b84b5d151562f9857c133ff30",
+      "technologies": [
+        "python_django"
+      ],
+      "scope": ".",
+      "specs": [
+        "openapi.yml"
+      ],
+      "note": "Makefile openapi-generate uses Django spectacular; describes the REST API, not the separate GraphQL service."
+    },
+    {
+      "name": "vikunja",
+      "url": "https://github.com/go-vikunja/vikunja",
+      "commit": "293264397571be437c9bc9a32b4c492bd566dbc2",
+      "technologies": [
+        "go_echo"
+      ],
+      "scope": "pkg",
+      "specs": [
+        "pkg/swagger/swagger.json"
+      ],
+      "note": "magefile.go Generate.SwaggerDocs runs swag; release automation regenerates and commits pkg/swagger. Only pkg is scanned; standalone example plugins and the frontend are outside this service scope. Known stale annotations: singular image instead of images in the Unsplash proxy; PUT rather than POST for label updates."
+    }
+  ]
+}

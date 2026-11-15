@@ -239,3 +239,7 @@ benchmark-full: build-release
     crystal run scripts/benchmark.cr -- --include=path,techs,callee --ai-context -T
 
 
+# Compare code analyzers with pinned repositories' own OpenAPI specs (network; on demand).
+[group('development')]
+scoreboard: build-release
+    scripts/compile_gate.sh crystal run scripts/scoreboard.cr -- --run-scoreboard

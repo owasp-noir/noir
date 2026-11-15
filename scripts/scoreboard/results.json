@@ -1,0 +1,374 @@
+{
+  "measured_on": "2026-11-15",
+  "analyzer_revision": "863ed43426e3d9ada373034088a3915100d142a9",
+  "technologies": [
+    {
+      "matched": 16,
+      "spec_only": 0,
+      "code_only": 0,
+      "recall": 1.0,
+      "agreement": 1.0,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "cs_aspnet_core_minimal_api",
+      "repositories": 1
+    },
+    {
+      "matched": 264,
+      "spec_only": 41,
+      "code_only": 249,
+      "recall": 0.8655737704918033,
+      "agreement": 0.5146198830409356,
+      "marked": 262,
+      "marked_share": 0.5107212475633528,
+      "claims": {
+        "handler:heuristic": {
+          "count": 21,
+          "share": 0.04093567251461988
+        },
+        "prefix:unresolved": {
+          "count": 241,
+          "share": 0.4697855750487329
+        }
+      },
+      "name": "go_chi",
+      "repositories": 2
+    },
+    {
+      "matched": 149,
+      "spec_only": 23,
+      "code_only": 115,
+      "recall": 0.8662790697674418,
+      "agreement": 0.5643939393939394,
+      "marked": 4,
+      "marked_share": 0.015151515151515152,
+      "claims": {
+        "prefix:unresolved": {
+          "count": 4,
+          "share": 0.015151515151515152
+        }
+      },
+      "name": "go_echo",
+      "repositories": 1
+    },
+    {
+      "matched": 196,
+      "spec_only": 3,
+      "code_only": 34,
+      "recall": 0.9849246231155779,
+      "agreement": 0.8521739130434782,
+      "marked": 228,
+      "marked_share": 0.991304347826087,
+      "claims": {
+        "handler:heuristic": {
+          "count": 6,
+          "share": 0.02608695652173913
+        },
+        "prefix:unresolved": {
+          "count": 228,
+          "share": 0.991304347826087
+        }
+      },
+      "name": "go_gin",
+      "repositories": 1
+    },
+    {
+      "matched": 26,
+      "spec_only": 1,
+      "code_only": 60,
+      "recall": 0.9629629629629629,
+      "agreement": 0.3023255813953488,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "go_mux",
+      "repositories": 1
+    },
+    {
+      "matched": 53,
+      "spec_only": 0,
+      "code_only": 11,
+      "recall": 1.0,
+      "agreement": 0.828125,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "js_express",
+      "repositories": 1
+    },
+    {
+      "matched": 102,
+      "spec_only": 0,
+      "code_only": 0,
+      "recall": 1.0,
+      "agreement": 1.0,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "python_django",
+      "repositories": 1
+    },
+    {
+      "matched": 264,
+      "spec_only": 1,
+      "code_only": 3,
+      "recall": 0.9962264150943396,
+      "agreement": 0.9887640449438202,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "python_fastapi",
+      "repositories": 1
+    },
+    {
+      "matched": 287,
+      "spec_only": 0,
+      "code_only": 17,
+      "recall": 1.0,
+      "agreement": 0.944078947368421,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "ts_nestjs",
+      "repositories": 1
+    }
+  ],
+  "repositories": [
+    {
+      "matched": 264,
+      "spec_only": 1,
+      "code_only": 3,
+      "recall": 0.9962264150943396,
+      "agreement": 0.9887640449438202,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "InvokeAI",
+      "url": "https://github.com/invoke-ai/InvokeAI",
+      "commit": "9264acf9e542d51a21467013029b755686dee375",
+      "technologies": [
+        "python_fastapi"
+      ],
+      "scope": "invokeai/app",
+      "specs": [
+        "invokeai/frontend/api/openapi.json"
+      ],
+      "technology": "python_fastapi"
+    },
+    {
+      "matched": 196,
+      "spec_only": 3,
+      "code_only": 34,
+      "recall": 0.9849246231155779,
+      "agreement": 0.8521739130434782,
+      "marked": 228,
+      "marked_share": 0.991304347826087,
+      "claims": {
+        "handler:heuristic": {
+          "count": 6,
+          "share": 0.02608695652173913
+        },
+        "prefix:unresolved": {
+          "count": 228,
+          "share": 0.991304347826087
+        }
+      },
+      "name": "answer",
+      "url": "https://github.com/apache/answer",
+      "commit": "6744295fa888e0621fc9f9a8ace04f1a4daf8554",
+      "technologies": [
+        "go_gin"
+      ],
+      "scope": ".",
+      "specs": [
+        "docs/swagger.json"
+      ],
+      "technology": "go_gin"
+    },
+    {
+      "matched": 23,
+      "spec_only": 41,
+      "code_only": 60,
+      "recall": 0.359375,
+      "agreement": 0.27710843373493976,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "auth",
+      "url": "https://github.com/supabase/auth",
+      "commit": "3e79d8513b67d7dc3f234153aacc074daf82db5f",
+      "technologies": [
+        "go_chi"
+      ],
+      "scope": ".",
+      "specs": [
+        "openapi.yaml"
+      ],
+      "spec_prefix": "/auth/v1",
+      "technology": "go_chi"
+    },
+    {
+      "matched": 53,
+      "spec_only": 0,
+      "code_only": 11,
+      "recall": 1.0,
+      "agreement": 0.828125,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "dvws-node",
+      "url": "https://github.com/snoopysecurity/dvws-node",
+      "commit": "4221c04f132960a0ccca4bf5aa5f3a9f53172778",
+      "technologies": [
+        "js_express"
+      ],
+      "scope": ".",
+      "specs": [
+        "docs/openapi/openapi.json"
+      ],
+      "technology": "js_express"
+    },
+    {
+      "matched": 16,
+      "spec_only": 0,
+      "code_only": 0,
+      "recall": 1.0,
+      "agreement": 1.0,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "eShop",
+      "url": "https://github.com/dotnet/eShop",
+      "commit": "913acea66708a59595351174cee9b29f37179d29",
+      "technologies": [
+        "cs_aspnet_core_minimal_api"
+      ],
+      "scope": "src/Catalog.API",
+      "specs": [
+        "src/Catalog.API/Catalog.API.json",
+        "src/Catalog.API/Catalog.API_v2.json"
+      ],
+      "technology": "cs_aspnet_core_minimal_api"
+    },
+    {
+      "matched": 287,
+      "spec_only": 0,
+      "code_only": 17,
+      "recall": 1.0,
+      "agreement": 0.944078947368421,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "immich",
+      "url": "https://github.com/immich-app/immich",
+      "commit": "e5d6eb7be67834f59d90e4b7a86f5dec7ac9af86",
+      "technologies": [
+        "ts_nestjs"
+      ],
+      "scope": "server",
+      "specs": [
+        "open-api/immich-openapi-specs.json"
+      ],
+      "technology": "ts_nestjs"
+    },
+    {
+      "matched": 241,
+      "spec_only": 0,
+      "code_only": 189,
+      "recall": 1.0,
+      "agreement": 0.5604651162790698,
+      "marked": 262,
+      "marked_share": 0.6093023255813953,
+      "claims": {
+        "handler:heuristic": {
+          "count": 21,
+          "share": 0.04883720930232558
+        },
+        "prefix:unresolved": {
+          "count": 241,
+          "share": 0.5604651162790698
+        }
+      },
+      "name": "owncast",
+      "url": "https://github.com/owncast/owncast",
+      "commit": "c3a9ac1c46c043358fe7382a6d62d5227e4b2efe",
+      "technologies": [
+        "go_chi"
+      ],
+      "scope": ".",
+      "specs": [
+        "openapi.yaml"
+      ],
+      "technology": "go_chi"
+    },
+    {
+      "matched": 26,
+      "spec_only": 1,
+      "code_only": 60,
+      "recall": 0.9629629629629629,
+      "agreement": 0.3023255813953488,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "podinfo",
+      "url": "https://github.com/stefanprodan/podinfo",
+      "commit": "fd3a834ed8d14b80ea334cf8a2fddd4597924da6",
+      "technologies": [
+        "go_mux"
+      ],
+      "scope": ".",
+      "specs": [
+        "pkg/api/http/docs/swagger.json"
+      ],
+      "technology": "go_mux"
+    },
+    {
+      "matched": 102,
+      "spec_only": 0,
+      "code_only": 0,
+      "recall": 1.0,
+      "agreement": 1.0,
+      "marked": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "pokeapi",
+      "url": "https://github.com/PokeAPI/pokeapi",
+      "commit": "8a92bfa7dab2f12b84b5d151562f9857c133ff30",
+      "technologies": [
+        "python_django"
+      ],
+      "scope": ".",
+      "specs": [
+        "openapi.yml"
+      ],
+      "technology": "python_django"
+    },
+    {
+      "matched": 149,
+      "spec_only": 23,
+      "code_only": 115,
+      "recall": 0.8662790697674418,
+      "agreement": 0.5643939393939394,
+      "marked": 4,
+      "marked_share": 0.015151515151515152,
+      "claims": {
+        "prefix:unresolved": {
+          "count": 4,
+          "share": 0.015151515151515152
+        }
+      },
+      "name": "vikunja",
+      "url": "https://github.com/go-vikunja/vikunja",
+      "commit": "293264397571be437c9bc9a32b4c492bd566dbc2",
+      "technologies": [
+        "go_echo"
+      ],
+      "scope": "pkg",
+      "specs": [
+        "pkg/swagger/swagger.json"
+      ],
+      "technology": "go_echo"
+    }
+  ]
+}
