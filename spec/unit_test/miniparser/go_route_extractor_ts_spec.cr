@@ -517,6 +517,26 @@ describe Noir::TreeSitterGoRouteExtractor do
       .map { |r| {r.path, r.prefix_unresolved?} }.sort_by!(&.[0]).should eq([{"/api/x", true}, {"/lit/y", false}])
   end
 
+  it "uses exported string values seeded into chi route extraction" do
+    source = <<-GO
+      package main
+      func routes(r chi.Router) {
+          r.Route(scim.BasePath, func(r chi.Router) {
+              r.Get("/ResourceTypes", h)
+          })
+          r.Get(scim.BasePath+"/Schemas", h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(
+      source,
+      external_string_values: {"scim.BasePath" => "/scim/v2"}
+    )
+    routes.map(&.path).sort!.should eq(["/scim/v2/ResourceTypes", "/scim/v2/Schemas"])
+    routes.each(&.prefix_unresolved?.should be_false)
+    routes.each(&.resolution.should be_nil)
+  end
+
   it "does not read a name bound to a path built here as a runtime base" do
     # gitea: `packageId` has a literal in it, so `/<version>` is not the
     # route; neither is `/x` for a name with two literal values.

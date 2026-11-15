@@ -12,8 +12,7 @@ module Analyzer::Go
     property handler_brace_count : Int32 = 0
   end
 
-  class Chi < Analyzer
-    include GoTestPath
+  class Chi < GoEngine
     analyzer_for "go_chi"
 
     # Import path -> package directory, from the tree's go.mod files.
@@ -23,6 +22,9 @@ module Analyzer::Go
     @import_aliases_cache = Hash(String, Hash(String, String)).new
     # Per-directory string constants, shared with the Mount expansion.
     @package_string_values = Hash(String, Hash(String, String)).new
+    # Project-wide exported string constants and wrappers, also used by
+    # mounted packages that do not import chi in their own files.
+    @external_string_seed = Hash(String, String).new
     # Where a named handler is looked up, shared with the Mount expansion.
     @named_scope : Noir::GoNamedHandler::Scope? = nil
     # Per-directory `{route helper name => declaring file}`, see
@@ -97,13 +99,10 @@ module Analyzer::Go
       end
 
       # Pre-pass for cross-file identifier-handler resolution (see Gin).
-      # Chi extends `Analyzer` directly (not `GoEngine`), so we use the
-      # module-level twins on `GoCalleeExtractor` instead of the engine
-      # instance methods. Mount-expanded routes don't pick up callees
-      # in this first cut — `analyze_router_function` runs its own
-      # isolated route walk and would need separate wiring. Tracking
-      # that as a follow-up; for now Mount endpoints keep an empty
-      # callees list.
+      # Mount-expanded routes don't pick up callees in this first cut —
+      # `analyze_router_function` runs its own isolated route walk and would
+      # need separate wiring. Tracking that as a follow-up; for now Mount
+      # endpoints keep an empty callees list.
       package_function_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents_cache)
       # Method-value handlers (`s.handleOIDCRedirect`, `router.Get(p,
       # h.Show)`) resolve to their method bodies so callees aren't empty
@@ -115,11 +114,14 @@ module Analyzer::Go
       # constant declared in a sibling file (`httpd.go`:
       # `const tokenPath = "/api/v2/token"`). Conflicting redefinitions
       # across files are dropped so an ambiguous name never resolves to
-      # the wrong path.
+      # the wrong path. Seed it with GoEngine's project-wide exported
+      # constants and string wrappers, just as Gin/Echo/Mux do.
+      string_seed = go_string_seed
+      @external_string_seed = string_seed
       package_string_values = Hash(String, Hash(String, String)).new
       chi_dirs.each do |dir|
         next unless files = package_files[dir]?
-        merged = Hash(String, String).new
+        merged = string_seed.dup
         ambiguous = Set(String).new
         files.each do |fp|
           content = file_contents_cache[fp]?
@@ -224,7 +226,7 @@ module Analyzer::Go
         ts_routes = if route_file
                       Noir::TreeSitterGoRouteExtractor
                         .extract_chi_routes(content, mounted_functions,
-                          package_string_values[dir]? || Hash(String, String).new)
+                          string_values_for(dir))
                     else
                       [] of Noir::TreeSitterGoRouteExtractor::Route
                     end
@@ -467,7 +469,7 @@ module Analyzer::Go
     # (a bare variable `r.Mount("/x", sub)`, or a prefix that cannot be
     # resolved to one string).
     private def parse_mount_target(line : String, string_values : Hash(String, String) = Hash(String, String).new) : MountTarget?
-      m = line.match(/\.Mount\(\s*(?:"([^"]*)"|([A-Za-z_]\w*))\s*,\s*(.*)$/)
+      m = line.match(/\.Mount\(\s*(?:"([^"]*)"|((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*))\s*,\s*(.*)$/)
       return unless m
       prefix = m[1]?
       if prefix.nil?
@@ -613,10 +615,8 @@ module Analyzer::Go
     end
 
     private def string_values_for(dir : String) : Hash(String, String)
-      @package_string_values[dir]? || EMPTY_STRING_VALUES
+      @package_string_values[dir]? || @external_string_seed
     end
-
-    EMPTY_STRING_VALUES = Hash(String, String).new
 
     # Nested `Mount` calls inside a mounted router are followed to this
     # depth; deeper trees are almost certainly a cycle through a symbol
@@ -771,27 +771,8 @@ module Analyzer::Go
       endpoints
     end
 
-    # Twin of `GoEngine#collect_go_modules`; chi extends `Analyzer`
-    # directly so it cannot inherit it. `{module path, directory}` per
-    # `go.mod` in the tree, deepest directory first so a nested module
-    # wins over the one that contains it.
-    private def collect_go_modules : Array(Tuple(String, String))
-      modules = [] of Tuple(String, String)
-      get_files_by_basename("go.mod").each do |path|
-        next if base_relative_path(path).includes?("/vendor/")
-        begin
-          content = read_file_content(path)
-        rescue IO::Error
-          next
-        end
-        match = content.match(/^\s*module\s+(\S+)/m)
-        next unless match
-        modules << {match[1], Noir::PathScope.expand(File.dirname(path))}
-      end
-      modules.sort_by! { |(_module_path, mod_dir)| -mod_dir.size }
-      modules
-    end
-
+    # Keep Chi's module-backed lookup: GoEngine's modless fallback could
+    # associate an unresolved package alias with an unrelated directory.
     private def import_path_for_dir(dir : String, modules : Array(Tuple(String, String))) : String?
       expanded_dir = Noir::PathScope.expand(dir)
       modules.each do |module_path, module_dir|
