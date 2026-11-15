@@ -14,6 +14,23 @@
       "note": "openapi-checks.yml regenerates the schema from FastAPI and diffs it. Only invokeai/app is scanned; frontend and other packages are excluded."
     },
     {
+      "name": "NodeBB",
+      "url": "https://github.com/NodeBB/NodeBB",
+      "commit": "5456eac373abbc93136fed7b02ce8f58060f14cc",
+      "technologies": [
+        "js_express"
+      ],
+      "scope": ".",
+      "specs": [
+        "public/openapi/read.yaml",
+        "public/openapi/write.yaml"
+      ],
+      "note": "test/api/routes.js:24-86 compares mounted Express routes against both committed contracts, with explicit exclusions at lines 62-81. Together they cover the forum read and write APIs; UI, federation and plugin routes remain in scope as undocumented routes. The real /api/v3 mount is retained. install/web.js:63-68 starts a separate setup server and is excluded.",
+      "exclude_paths": [
+        "./install"
+      ]
+    },
+    {
       "name": "answer",
       "url": "https://github.com/apache/answer",
       "commit": "6744295fa888e0621fc9f9a8ace04f1a4daf8554",
@@ -68,6 +85,36 @@
       "note": "Catalog.API.csproj exports OpenAPI during build with Microsoft.Extensions.ApiDescription.Server. Both API versions are included; query-parameter version distinctions are outside endpoint scoring. Only Catalog.API source is scanned, not other services or shared default endpoints."
     },
     {
+      "name": "flowable-engine",
+      "url": "https://github.com/flowable/flowable-engine",
+      "commit": "055f90ad53a581c76ec2a6f4973acd2498c443fd",
+      "technologies": [
+        "java_spring"
+      ],
+      "scope": "modules/flowable-rest/src/main",
+      "specs": [
+        "docs/public-api/references/swagger/process/flowable-swagger-process.yaml"
+      ],
+      "note": "Hand-written process-service controllers. docs/public-api/references/swagger/README.md:7-13 identifies the stable contract as generated from source annotations with manual corrections; docs/public-api/tools/flowable-oas-generator/pom.xml:51-84 selects this package. The application deployment prefix is declared by modules/flowable-app-rest/src/main/resources/flowable-default.properties:2,43; the scoped controller library registers local paths.",
+      "spec_prefix": "/flowable-rest/service"
+    },
+    {
+      "name": "gotify",
+      "url": "https://github.com/gotify/server",
+      "commit": "01086b95a8b69ee87383f6e8bcae601d8c33384b",
+      "technologies": [
+        "go_gin"
+      ],
+      "scope": ".",
+      "specs": [
+        "docs/spec.json"
+      ],
+      "note": "Makefile:41-50 regenerates docs/spec.json from source annotations and fails on a diff. Covers this notification service, including users, clients, applications, messages and plugins; UI and optional transport routes remain in scope. No prefix adjustment. plugin/example/echo/echo.go:74-77 defines an example plugin webhook, not a core service registration, and is excluded.",
+      "exclude_paths": [
+        "plugin/example"
+      ]
+    },
+    {
       "name": "immich",
       "url": "https://github.com/immich-app/immich",
       "commit": "e5d6eb7be67834f59d90e4b7a86f5dec7ac9af86",
@@ -79,6 +126,19 @@
         "open-api/immich-openapi-specs.json"
       ],
       "note": "Generated from server controllers by the OpenAPI tooling; .github/workflows/check-openapi.yml checks contract changes. Only server is scanned."
+    },
+    {
+      "name": "langflow",
+      "url": "https://github.com/langflow-ai/langflow",
+      "commit": "e8bbae8eeb8729abd650f07bfc55957cbdbc1636",
+      "technologies": [
+        "python_fastapi"
+      ],
+      "scope": "src/backend/base",
+      "specs": [
+        "docs/openapi/openapi.json"
+      ],
+      "note": "docs/openapi/generate_openapi.py:83-93 writes create_app().openapi(); lines 96-103 select this committed document. Pinned to the schema-generator introduction, before workflow routes moved into the separate lfx package, so src/backend/base contains all service routers (langflow/main.py:532-534). Component examples, frontend and tests are outside scope. No prefix adjustment."
     },
     {
       "name": "owncast",
@@ -118,6 +178,19 @@
         "openapi.yml"
       ],
       "note": "Makefile openapi-generate uses Django spectacular; describes the REST API, not the separate GraphQL service."
+    },
+    {
+      "name": "pretalx",
+      "url": "https://github.com/pretalx/pretalx",
+      "commit": "1510dea9aafd580d1b2d7b8466736a09cd0298ec",
+      "technologies": [
+        "python_django"
+      ],
+      "scope": "src/pretalx",
+      "specs": [
+        "doc/api/schema.yml"
+      ],
+      "note": "justfile:125-128 regenerates this committed schema through Django spectacular; src/pretalx/common/management/commands/spectacular.py:9-16 delegates to drf-spectacular. Covers the complete REST API (src/pretalx/urls.py:42 and api/urls.py); the scoped application also contains organiser, agenda and submission UI routes, which remain visible as code-only rows. No prefix adjustment."
     },
     {
       "name": "vikunja",
