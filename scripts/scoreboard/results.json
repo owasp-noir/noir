@@ -1,6 +1,6 @@
 {
   "measured_on": "2026-11-15",
-  "analyzer_revision": "c0a143d193d61e2893a1a93250af8aeb69600e64",
+  "analyzer_revision": "830b4cfce775d24812f4b0305df6fc24359dcdcb",
   "technologies": [
     {
       "matched": 16,
@@ -127,11 +127,11 @@
       "repositories": 2
     },
     {
-      "matched": 268,
-      "spec_only": 81,
-      "code_only": 194,
-      "recall": 0.7679083094555874,
-      "agreement": 0.5800865800865801,
+      "matched": 348,
+      "spec_only": 1,
+      "code_only": 114,
+      "recall": 0.997134670487106,
+      "agreement": 0.7532467532467533,
       "marked": 0,
       "marked_share": 0.0,
       "claims": {},
@@ -366,11 +366,11 @@
       "technology": "ts_nestjs"
     },
     {
-      "matched": 4,
-      "spec_only": 80,
-      "code_only": 191,
-      "recall": 0.047619047619047616,
-      "agreement": 0.020512820512820513,
+      "matched": 84,
+      "spec_only": 0,
+      "code_only": 111,
+      "recall": 1.0,
+      "agreement": 0.4307692307692308,
       "marked": 0,
       "marked_share": 0.0,
       "claims": {},

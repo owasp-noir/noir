@@ -8,7 +8,7 @@ weight = 2
 
 <!-- SCOREBOARD -->
 
-Measured: 2026-11-15. Analyzer source: `c0a143d193d61e2893a1a93250af8aeb69600e64`.
+Measured: 2026-11-15. Analyzer source: `830b4cfce775d24812f4b0305df6fc24359dcdcb`.
 
 저장소 하나에서 측정한 기술은 단일 데이터 포인트입니다.
 
@@ -22,7 +22,7 @@ Measured: 2026-11-15. Analyzer source: `c0a143d193d61e2893a1a93250af8aeb69600e64
 | java_spring | 1 | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
 | js_express | 2 | 303 | 128 | 366 | 70.3% | 45.3% | 9 (1.3%) |
 | python_django | 2 | 235 | 0 | 300 | 100.0% | 43.9% | 0 (0.0%) |
-| python_fastapi | 2 | 268 | 81 | 194 | 76.8% | 58.0% | 0 (0.0%) |
+| python_fastapi | 2 | 348 | 1 | 114 | 99.7% | 75.3% | 0 (0.0%) |
 | ts_nestjs | 1 | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
 
 | Repository | Matched | Spec-only | Code-only | Recall | Agreement | Marked |
@@ -36,7 +36,7 @@ Measured: 2026-11-15. Analyzer source: `c0a143d193d61e2893a1a93250af8aeb69600e64
 | flowable-engine | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
 | gotify | 42 | 0 | 10 | 100.0% | 80.8% | 0 (0.0%) |
 | immich | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
-| langflow | 4 | 80 | 191 | 4.8% | 2.1% | 0 (0.0%) |
+| langflow | 84 | 0 | 111 | 100.0% | 43.1% | 0 (0.0%) |
 | owncast | 241 | 0 | 189 | 100.0% | 56.0% | 262 (60.9%) |
 | podinfo | 26 | 1 | 60 | 96.3% | 30.2% | 0 (0.0%) |
 | pokeapi | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
@@ -115,21 +115,21 @@ Owncast는 다릅니다. `webserver/router/router.go:93`은 생성된 API를 `/a
 
 이 감사는 분석기 리비전 `8184cd4`에서 했습니다. 여기서 찾은 누락 중 두 가지는 그 뒤 고쳐졌습니다. FastAPI 행의 누락 25건은 모두 InvokeAI의 `/api` 접두사 손실([#3614](https://github.com/owasp-noir/noir/issues/3614))이었고, go_chi의 누락은 supabase/auth의 SCIM 접두사([#3616](https://github.com/owasp-noir/noir/issues/3616))였습니다. FastAPI에 남은 불일치 4건은 다시 감사하지 않았습니다. 나머지 끝 슬래시 차이는 보정하지 않습니다. Express 불일치 11개 행은 모두 감사했습니다.
 
-확장 감사: 2026-11-15, 분석기 리비전 `54ff7225277f691ac19816faad875c52979e39c0`. 새로 고정한 저장소 5개의 불일치 행 162개를 추가로 소스와 대조했습니다. 각 저장소의 양쪽을 별도로 표본 추출합니다. 한쪽이 25개 이하면 전부, 더 많으면 정렬된 목록에서 `floor(i * count / 25)` 위치의 25개를 확인합니다. 위의 과거 표는 유지하며 기존 코퍼스를 현재 리비전으로 다시 감사했다는 뜻이 아닙니다. 기존 저장소 10개의 모든 측정값 필드는 커밋된 기준 결과와 같습니다.
+확장 감사: 2026-11-15, 분석기 리비전 `54ff7225277f691ac19816faad875c52979e39c0`. 새로 고정한 저장소 5개의 불일치 행 137개를 추가로 소스와 대조했습니다. langflow 행은 2026-11-16에 `830b4cfce775d24812f4b0305df6fc24359dcdcb`에서 다시 감사했습니다. 각 저장소의 양쪽을 별도로 표본 추출합니다. 한쪽이 25개 이하면 전부, 더 많으면 정렬된 목록에서 `floor(i * count / 25)` 위치의 25개를 확인합니다. 위의 과거 표는 유지하며 기존 코퍼스를 현재 리비전으로 다시 감사했다는 뜻이 아닙니다. 기존 저장소 10개의 모든 측정값 필드는 커밋된 기준 결과와 같습니다.
 
 | Repository | Spec-only audited | Code-only audited | Analyzer miss | Analyzer false positive | Stale spec | Undocumented route | Prefix/method/slash | Other |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | flowable-engine | 2 | 25 | 0 | 0 | 0 | 24 | 0 | 3 |
 | NodeBB | 25 | 25 | 23 | 17 | 1 | 8 | 1 | 0 |
 | gotify | 0 | 10 | 0 | 0 | 0 | 10 | 0 | 0 |
-| langflow | 25 | 25 | 25 | 25 | 0 | 0 | 0 | 0 |
+| langflow | 0 | 25 | 0 | 0 | 0 | 24 | 0 | 1 |
 | pretalx | 0 | 25 | 0 | 0 | 0 | 25 | 0 | 0 |
 
 Flowable의 기타 3건은 명세의 리터럴 `users` 동작 2개와 표본에 든 `{family}` 컨트롤러 행 1개입니다. `ProcessInstanceIdentityLinkResource.java:49,73,98-100`은 경로를 등록하고 `users` 또는 `groups`인지 확인합니다. 리터럴과 파라미터의 특수화 차이입니다. 나머지 표본 동작은 실제 등록되어 있지만 계약에는 없습니다. Gotify 표본은 UI·문서, 명시적인 HEAD health, 조건부 MCP 경로입니다. Pretalx 표본은 REST 계약 밖의 주최자·일정·발표 제출 UI 경로입니다.
 
 NodeBB는 라우트 모듈마다 마운트 이름을 인자로 넘깁니다. `src/routes/index.js:236-254`는 기본값이 `admin`, `user`, `tags` 등인 플러그인 훅에서 이름을 받고, `src/routes/admin.js` 같은 모듈은 경로를 `/${name}/...`로 만듭니다. 명세는 기본 이름으로 적혀 있고 Noir는 `/api/{name}/...`와 `/{name}/...`를 출력하므로, 같은 라우트가 불일치 양쪽에 한 번씩 나타납니다. 표본의 누락 23건과 오탐 16건이 이 원인입니다. 추가 오탐 1건은 `index.js:136`의 미들웨어 전용 `router.all` 정규식입니다. `src/middleware/index.js:130-133`은 `next()`만 호출합니다. 오래된 명세 1건은 삭제된 읽기 API의 세션 삭제 경로이며, 대체 경로는 `src/routes/write/users.js:66`에 등록되어 있습니다. 접두사 차이 1건은 `/ping`으로, 소스가 설정 가능한 `relative_path`를 앞에 붙입니다(`src/webserver.js:152,191`).
 
-Langflow는 라우터를 패키지 `__init__.py`에서 다시 내보내기 때문에 `/api/v1`과 `/api/v2`를 잃습니다(`langflow/api/v1/__init__.py:1-24`, `api/v2/__init__.py:3-6`, `api/router.py:33-87`, `main.py:532`). [#3625](https://github.com/owasp-noir/noir/issues/3625)를 참고하세요. 예를 들어 `api/v1/users.py:49`는 `/users` 라우터에 `GET /whoami`를 등록하지만 Noir는 `/api/v1/users/whoami` 대신 `/users/whoami`를 출력합니다. 표본 50개 모두 이 원인에 해당합니다. `include_in_schema=False`로 명세에서 숨긴 핸들러도 코드 전용 행으로 남습니다. 분석기를 고칠 때까지 재현율 4.8%를 스코어보드에 그대로 둡니다.
+Langflow는 처음에 명세의 84개 동작 중 4개만 일치했습니다. 패키지 `__init__.py`에서 다시 내보낸 라우터가 `/api/v1`과 `/api/v2`를 잃었기 때문입니다([#3625](https://github.com/owasp-noir/noir/issues/3625)). 이를 고친 뒤에는 84개가 모두 일치합니다. 표본으로 본 코드 전용 25행 중 24행은 프로젝트가 `include_in_schema=False`로 명세에서 숨긴 라우트입니다. 라우터에 지정한 경우(`api/v1/deployments.py:36`, `models.py:24`, `knowledge_bases.py:35`)와 라우트에 지정한 경우가 있습니다. 나머지 1행은 `main.py:584`의 정적 파일 마운트입니다.
 
 <!-- /AUDIT -->
 
