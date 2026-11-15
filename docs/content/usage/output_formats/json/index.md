@@ -79,6 +79,8 @@ The FastAPI analyzer marks unread prefixes on `APIRouter(prefix=...)` and `inclu
 
 `spring_auth` applies the same claim to Java and Kotlin Spring endpoints: readable restrictive standard handler or class annotations stay unmarked, while URL-rule matches, opaque or composed annotations, interceptor/filter scopes, unread configurations and shape-matched handler refusals receive `guard: heuristic` because their semantics or route applicability are inferred.
 
+Express auth tags also use `guard: heuristic` when every guard relies on a name, shape or text-level scope inference; a guarded Express endpoint without this mark has at least one followed refusal, while endpoints without guard tags receive no guard mark.
+
 The YAML, JSONL and TOML outputs carry the same field, and the plain report prints it as a `resolution` row.
 
 A full report looks like this. It was produced with taggers enabled (`-T`), which is what fills the `tags` arrays.

@@ -103,14 +103,23 @@ class ExpressAuthTagger < FrameworkTagger
     ["js_express"]
   end
 
+  private record GuardEvidence, description : String, followed : Bool
+
+  @guard_followed = false
+  @last_refusal_followed = false
+
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Pre-scan: Find app.use() level auth middleware
     pre_scan_app_use_auth
-    # Endpoint is a struct: a cleared `handler` lives on the copy.
-    endpoints.each_with_index do |endpoint, idx|
-      endpoints[idx] = check_endpoint(endpoint)
+    endpoints.map! do |endpoint|
+      @guard_followed = false
+      endpoint = check_endpoint(endpoint)
+      if !@guard_followed && endpoint.tags.any? { |tag| tag.tagger == "express_auth" && tag.name.in?("auth", "authz") }
+        # ponytail: per endpoint, not per guard; add a field on ai_context.guards if readers need to distinguish individual guards.
+        endpoint.resolution = (endpoint.resolution || {} of String => String).merge({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+      end
+      endpoint
     end
-    endpoints
   end
 
   private def pre_scan_app_use_auth
@@ -157,7 +166,7 @@ class ExpressAuthTagger < FrameworkTagger
             prefixes.each do |prefix|
               @mounted_auth_rules << {
                 prefix:      prefix,
-                description: "#{guard} via #{via} on #{prefix}",
+                description: "#{guard.description} via #{via} on #{prefix}",
                 file:        expanded,
                 receiver:    receiver,
               }
@@ -173,7 +182,7 @@ class ExpressAuthTagger < FrameworkTagger
               file:        expanded,
               receiver:    receiver,
               line:        idx + 1,
-              description: "#{guard} via #{receiver}.use()",
+              description: "#{guard.description} via #{receiver}.use()",
             }
           end
         end
@@ -221,6 +230,8 @@ class ExpressAuthTagger < FrameworkTagger
 
   private def check_route(endpoint : Endpoint) : Endpoint
     receiver_description = nil
+    handler_inline = false
+    handler_direct = false
 
     # Check route definition line for auth patterns
     endpoint.details.code_paths.each do |path_info|
@@ -233,11 +244,18 @@ class ExpressAuthTagger < FrameworkTagger
       # argument may be the guard, so each is read on its own.
       route_lines = get_route_statement(lines, line_num - 1) # 0-indexed
       route_text = Noir::CComments.strip(route_lines.join("\n"), quotes: %("'`))
-      args = helper_call_args(route_text) || call_args(route_text)
+      helper_args = helper_call_args(route_text)
+      args = helper_args || call_args(route_text)
+      handler_direct ||= helper_args.nil? && !args.nil?
+      handler_inline ||= helper_args.nil? && args.try(&.last?).try(&.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE)) || false
+      tagged = false
       (args || [route_text]).each_with_index do |arg, idx|
         last = !args.nil? && idx == args.size - 1
-        description = guard_description(arg, path_info.path, handler_position: last) || next
-        endpoint.add_tag(Tag.new("auth", description, "express_auth"))
+        evidence = guard_description(arg, path_info.path, handler_position: last) || next
+        @guard_followed ||= evidence.followed && !args.nil? && helper_args.nil?
+        next if tagged
+        tagged = true
+        endpoint.add_tag(Tag.new("auth", evidence.description, "express_auth"))
         # `app.get('/api/Users', security.isAuthorized())`: the guard is the
         # only callable, so the analyzer reported it as the handler. It is
         # not one — the request falls through to the next match. A refusing
@@ -246,17 +264,27 @@ class ExpressAuthTagger < FrameworkTagger
         if args && idx == args.size - 1 && !arg.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE) && wrapper_guard(arg, path_info.path).nil?
           endpoint.handler = nil
         end
-        return endpoint
       end
+      return endpoint if tagged
 
       receiver_description ||= check_receiver_use_auth(path_info.path, lines, line_num - 1)
     end
 
     # Check app.use() level auth: the router this route was registered on
     # first, then a path-scoped mount.
-    description = receiver_description || check_mounted_use_auth(endpoint) || handler_caller_check(endpoint)
+    description = receiver_description || check_mounted_use_auth(endpoint)
     if description
       endpoint.add_tag(Tag.new("auth", description, "express_auth"))
+    elsif evidence = handler_caller_check(endpoint)
+      endpoint.add_tag(Tag.new("auth", evidence.description, "express_auth"))
+      handler = endpoint.handler
+      bound = handler && endpoint.details.code_paths.any? do |path|
+        source = read_file(path.path) || next false
+        target = read_file(handler.path || "") || next false
+        declaration = read_file_lines(handler.path || "").try { |lines| lines[(handler.line || 1) - 1]? } || ""
+        guard_definition_followed?(handler.name, path.path, source, target, declaration, handler.path || "")
+      end
+      @guard_followed ||= evidence.followed && handler_direct && (bound || handler_inline) && endpoint.resolution.try(&.["handler"]?) != Endpoint::RESOLUTION_HEURISTIC
     end
     endpoint
   end
@@ -265,11 +293,11 @@ class ExpressAuthTagger < FrameworkTagger
   # route, or nil. Passport needs its strategy string; the inline and named
   # markers are identifiers, so they match the code alone; anything else is
   # followed to its definition.
-  private def guard_description(arg : String, file : String, handler_position : Bool = false) : String?
+  private def guard_description(arg : String, file : String, handler_position : Bool = false) : GuardEvidence?
     if arg.matches?(PASSPORT_PATTERN)
       strategies = arg.scan(/passport\.authenticate\s*\(\s*['"]([^'"]+)['"]/).map(&.[1])
       strategy = strategies.empty? ? "unknown" : strategies.find { |name| !name.matches?(PASSPORT_LOGIN_STRATEGY) }
-      return strategy ? "Protected by Passport.js #{strategy} strategy" : nil
+      return strategy ? GuardEvidence.new("Protected by Passport.js #{strategy} strategy", false) : nil
     end
 
     code = code_only(arg)
@@ -277,28 +305,35 @@ class ExpressAuthTagger < FrameworkTagger
       # `credentialsRequired: false` is express-jwt's optional mode: the
       # request continues with no user, so the call is not a guard.
       return if credentials_optional?(code)
-      return "Protected by Express JWT middleware"
+      return GuardEvidence.new("Protected by Express JWT middleware", false)
     end
     alias_desc, jwt_handled = judge_jwt_alias(arg, file)
-    return alias_desc if jwt_handled
+    return alias_desc.try { |description| GuardEvidence.new(description, false) } if jwt_handled
     # `app.get("/x", basicAuth({ users }), h)`: the express-basic-auth
     # middleware mounted as built.
     if (factory = code.match(/\A\s*([A-Za-z_$][\w$]*)\s*\(/)) && basic_auth_factories(read_file(file) || "").includes?(factory[1])
-      return "Protected by Express #{factory[1]} (express-basic-auth) middleware"
+      return GuardEvidence.new("Protected by Express #{factory[1]} (express-basic-auth) middleware", false)
     end
     # `[...middlewares, middleware.assert.post]`: Express flattens an array
     # of handlers into the chain, so each element is a step of its own.
     if elements = array_elements(code)
+      first = nil.as(GuardEvidence?)
+      followed = false
       elements.each do |element|
-        found = guard_description(element.strip.lchop("...").strip, file)
-        return found if found
+        found = guard_description(element.strip.lchop("...").strip, file) || next
+        first ||= found
+        followed ||= found.followed
       end
-      return
+      return first.try { |found| GuardEvidence.new(found.description, followed) }
     end
     # `asyncHandler(adminOnly)`, `withAuth(list)`: the wrapper is judged by
     # its own definition, and what it wraps keeps its position's judgement.
     if wrapped = unwrapped_arg(arg, file)
-      return wrapper_guard(arg, file) || guard_description(wrapped, file, handler_position)
+      if found = wrapper_guard(arg, file)
+        return found
+      end
+      # A forwarding shape (or wrapper name) does not prove the inner step runs.
+      return guard_description(wrapped, file, handler_position).try { |inner| GuardEvidence.new(inner.description, false) }
     end
     # A name inside the handler closure is a call or a read, not a step.
     # It still stands in for a check `handler_caller_check` cannot read
@@ -306,12 +341,12 @@ class ExpressAuthTagger < FrameworkTagger
     # plain test whose branch refuses nobody (`if (config.debug &&
     # req.isAuthenticated()) log()`).
     if (named = name_guard(code)) && !(handler_position && arg.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE) && feature_tests_only?(code))
-      return named
+      return GuardEvidence.new(named, false)
     end
 
     if resolved = refusing_definition(arg, file, handler_position)
-      name, evidence = resolved
-      "Protected by Express #{name} (#{evidence}) middleware"
+      name, evidence, followed = resolved
+      GuardEvidence.new("Protected by Express #{name} (#{evidence}) middleware", followed)
     end
   end
 
@@ -368,14 +403,14 @@ class ExpressAuthTagger < FrameworkTagger
   # The guard a wrapper call (`withAuth(list)`, `asyncHandler(withAuth(list))`)
   # itself is: a wrapper whose definition refuses the caller before handing
   # the request on.
-  private def wrapper_guard(arg : String, file : String, depth : Int32 = 0) : String?
+  private def wrapper_guard(arg : String, file : String, depth : Int32 = 0) : GuardEvidence?
     return if depth > 3
     content = read_file(file) || return
     wrapped = Noir::JSHandlerResolver.unwrap(code_only(arg).strip, content, file, guards: true) || return
     if found = refusing_definition(wrapped[2], file, false)
-      return "Protected by Express #{found[0]} (#{found[1]}) wrapper"
+      return GuardEvidence.new("Protected by Express #{found[0]} (#{found[1]}) wrapper", false)
     end
-    wrapper_guard(wrapped[0], file, depth + 1)
+    wrapper_guard(wrapped[0], file, depth + 1).try { |inner| GuardEvidence.new(inner.description, false) }
   end
 
   # `arg` resolved to its definition (same file or a relative import) and
@@ -384,15 +419,87 @@ class ExpressAuthTagger < FrameworkTagger
   # — in the handler position — one that serves the request itself.
   # Judged once per step: a shared middleware array is spread into hundreds
   # of routes.
-  @refusals = Hash(Tuple(String, String, Bool, Int32, String?), {String, String}?).new
+  @refusals = Hash(Tuple(String, String, Bool, Int32, String?), {String, String, Bool}?).new
 
-  private def refusing_definition(arg : String, file : String, handler_position : Bool, depth : Int32 = 0) : {String, String}?
+  @unique_guard_bindings = Hash(String, Set(String)).new
+
+  # A single module binding is followed; nested or shadowed declarations
+  # stay matched until the resolver carries lexical scopes.
+  private def guard_binding_followed?(arg : String, file : String) : Bool
+    ref = arg.strip.match(Noir::JSHandlerResolver::REFERENCE_RE) || return false
+    names = @unique_guard_bindings.put_if_absent(file) do
+      source = read_file(file) || ""
+      counts = Hash(String, Int32).new(0)
+      module_names = Set(String).new
+      Noir::TreeSitter.parse_js_family(source, file) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          pattern = case Noir::TreeSitter.node_type(node)
+                    when "variable_declarator", "function_declaration", "function_expression", "class_declaration"
+                      Noir::TreeSitter.field(node, "name")
+                    when "assignment_expression", "augmented_assignment_expression", "for_in_statement"
+                      Noir::TreeSitter.field(node, "left")
+                    when "update_expression"
+                      Noir::TreeSitter.field(node, "argument")
+                    when "arrow_function", "catch_clause"
+                      Noir::TreeSitter.field(node, "parameter")
+                    when "formal_parameters", "import_clause"
+                      node
+                    end
+          next unless pattern
+          identifiers = Noir::TreeSitter.node_text(pattern, source).scan(/[A-Za-z_$][\w$]*/).map(&.[0])
+          identifiers.each { |name| counts[name] += 1 }
+          owner = node
+          while parent = Noir::TreeSitter.parent(owner)
+            kind = Noir::TreeSitter.node_type(parent)
+            if kind == "program"
+              identifiers.each { |name| module_names << name }
+              break
+            end
+            break unless kind.in?("lexical_declaration", "variable_declaration", "export_statement", "import_statement")
+            owner = parent
+          end
+        end
+      end
+      module_names.select { |name| counts[name] == 1 }.to_set
+    end
+    names.includes?(ref[1])
+  end
+
+  @guard_links = Hash({String, String, String}, Bool).new
+  @guard_exports = Hash(String, {String, Bool}).new
+
+  private def guard_definition_followed?(arg : String, file : String, source : String, target : String, declaration : String, target_file : String) : Bool
+    @guard_links.put_if_absent({arg, file, target_file}) do
+      next false unless guard_binding_followed?(arg, file)
+      ref = arg.strip.match(Noir::JSHandlerResolver::REFERENCE_RE) || next false
+      member = ref[2].split('.').map(&.strip).reject(&.empty?).last?
+      imported = Noir::JSHandlerResolver.imports_of(source, file)[ref[1]]?
+      # The resolver also falls back to a module's default export for a named
+      # member it cannot find; that is a match, not an export link.
+      if imported && member.nil? && imported[1].nil?
+        next false unless declaration.matches?(Noir::JSHandlerResolver::DEFAULT_EXPORT_RE)
+        next !declaration.matches?(/\bmodule\s*\.\s*exports\b/) || guard_binding_followed?("module", target_file)
+      end
+      wanted = member || imported.try(&.[1]) || ref[1]
+      name = Regex.escape(wanted)
+      next declaration.matches?(/(?<![\w$])#{name}(?![\w$])/) unless imported || member
+      next false if declaration.matches?(Noir::JSHandlerResolver::DEFAULT_EXPORT_RE)
+      next false unless guard_binding_followed?(wanted, target_file)
+      exports, module_written = @guard_exports.put_if_absent(target_file) do
+        {Noir::JSHandlerResolver.export_aliases(target), target.matches?(/\bmodule\s*\.\s*exports\s*=/)}
+      end
+      next false if module_written
+      declaration.matches?(/\bexport\s+(?:async\s+)?(?:function|const|let|var|class)\s+#{name}\b|(?:#{exports})\s*\.\s*#{name}\s*=/)
+    end
+  end
+
+  private def refusing_definition(arg : String, file : String, handler_position : Bool, depth : Int32 = 0) : {String, String, Bool}?
     key = {arg, file, handler_position, depth, @method}
     return @refusals[key] if @refusals.has_key?(key)
     @refusals[key] = judge_definition(arg, file, handler_position, depth)
   end
 
-  private def judge_definition(arg : String, file : String, handler_position : Bool, depth : Int32) : {String, String}?
+  private def judge_definition(arg : String, file : String, handler_position : Bool, depth : Int32) : {String, String, Bool}?
     content = read_file(file) || return
     handler = Noir::JSHandlerResolver.resolve(arg, content, file) || return
     path, line = handler.path, handler.line
@@ -402,26 +509,29 @@ class ExpressAuthTagger < FrameworkTagger
     # name is the express-basic-auth middleware itself.
     if (built = code_only(lines[line - 1]).match(/(?:=|\bexport\s+default)\s*([A-Za-z_$][\w$]*)\s*\(/)) &&
        basic_auth_factories(read_file(path) || "").includes?(built[1])
-      return {handler.name.gsub(/\s+/, ""), built[1]}
+      return {handler.name.gsub(/\s+/, ""), built[1], false}
     end
     if elements = middleware_array(lines, line - 1)
       return if depth >= MAX_ARRAY_DEPTH
       # `open.splice(0, 1)`: what the array holds at the route is not its literal.
       return if (read_file(path) || "").matches?(/(?<![\w$.])#{Regex.escape(handler.name.split('.').last)}\s*\.\s*(?:splice|push|pop|shift|unshift|length\s*=)/)
+      first = nil.as({String, String, Bool}?)
+      followed = false
       elements.each do |element|
         element = element.strip.lchop("...").strip
-        found = refusing_definition(element, path, false, depth + 1)
-        return {"#{handler.name.gsub(/\s+/, "")} > #{found[0]}", found[1]} if found
-        if named = name_guard(element)
-          return {"#{handler.name.gsub(/\s+/, "")} > #{element.gsub(/\s+/, "")}", named}
+        if found = refusing_definition(element, path, false, depth + 1)
+          first ||= {"#{handler.name.gsub(/\s+/, "")} > #{found[0]}", found[1], found[2]}
+          followed ||= found[2]
+        elsif named = name_guard(element)
+          first ||= {"#{handler.name.gsub(/\s+/, "")} > #{element.gsub(/\s+/, "")}", named, false}
         end
       end
-      return
+      return first.try { |found| {found[0], found[1], followed && guard_definition_followed?(arg, file, content, read_file(path) || "", lines[line - 1], path)} }
     end
     # `export default asyncHandler(handler)`: the definition is the wrapped one.
     if depth < MAX_ARRAY_DEPTH && (call = code_only(lines[line - 1]).match(WRAPPED_EXPORT))
       found = refusing_definition(call[1], path, handler_position, depth + 1) || return
-      return {handler.name.gsub(/\s+/, ""), found[1]}
+      return {handler.name.gsub(/\s+/, ""), found[1], false}
     end
     body = definition_extent(lines, line - 1)
     return if body.first?.try(&.matches?(ERROR_HANDLER_SIGNATURE))
@@ -430,12 +540,18 @@ class ExpressAuthTagger < FrameworkTagger
       found, note = found.partition(SETTING_NOTE)
       found.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(').sub(/\Athrownew\b/, "throw new") + note
     end
-    evidence ||= caller_stop(path, line) || delegated_stop(path, line) || return
+    first = caller_stop(path, line)
+    followed = !first.nil? && @last_refusal_followed
+    evidence ||= first
+    unless evidence
+      evidence = delegated_stop(path, line) || return
+      followed = @last_refusal_followed
+    end
     # In the handler position a definition that answers the request is the
     # handler; one that calls `next()` on success is middleware all the same
     # (`app.use('/private', auth)`).
     return if handler_position && !code.matches?(BARE_NEXT) && code.gsub(REFUSING_DEFINITION, "").matches?(HANDLER_RESPONSE)
-    {handler.name.gsub(/\s+/, ""), evidence}
+    {handler.name.gsub(/\s+/, ""), evidence, followed && !evidence.ends_with?(SETTING_NOTE) && guard_definition_followed?(arg, file, content, read_file(path) || "", lines[line - 1], path)}
   rescue
     nil
   end
@@ -499,6 +615,8 @@ class ExpressAuthTagger < FrameworkTagger
     helper_body.scan(/\breturn\b/) { |m| returns << m.begin(0) }
     return if returns.size < 2 || returns[0...-1].any? { |at| !helper_body[at..].matches?(DELEGATED_FALSY_RETURN) }
     refusal = anonymous_refusal(helper_body, text) || return
+    first = caller_stop(helper_path, helper_line)
+    @last_refusal_followed = !first.nil? && @last_refusal_followed && guard_definition_followed?(call[3], path, content, text, text.lines[helper_line - 1], helper_path)
     "#{call[3]}() #{refusal}"
   end
 
@@ -532,9 +650,14 @@ class ExpressAuthTagger < FrameworkTagger
     return if path.nil? || line.nil?
     text = read_file(path) || return
     body = code_only(Noir::JSRouteExtractor.definition_body(text, line))
-    return unless anonymous_refusal(body) || body.matches?(/\b(?:res|response)\s*\.\s*redirect\s*\(/)
+    refusal = anonymous_refusal(body, caller_checked: true)
+    redirects = body.matches?(/\b(?:res|response)\s*\.\s*redirect\s*\(/)
+    return unless refusal || redirects
+    @last_refusal_followed = !top_refusal(body, nil, nil).nil? if redirects && refusal.nil?
+    @last_refusal_followed = false if body.matches?(BARE_NEXT)
     # `showPublic` redirects one caller and renders the page for the rest.
     return if success_response?(body)
+    @last_refusal_followed &&= reach != :setting && first_refusal?(branch, call.begin(0)) && guard_definition_followed?(call[1].gsub(/\s+/, ""), file, content, text, text.lines[line - 1], path)
     "returns #{call[1].gsub(/\s+/, "")}#{SETTING_NOTE if reach == :setting}"
   end
 
@@ -610,21 +733,33 @@ class ExpressAuthTagger < FrameworkTagger
   # requires something to be present.
   # `source` is the file the code comes from, for telling a setting from a
   # request check (`refusal_reach`).
-  private def anonymous_refusal(code : String, source : String? = nil) : String?
+  FOLLOWED_RESPONSE = /\A(?:res|response)\s*\.\s*(?:sendStatus\s*\(\s*40[13]\b|status\s*\(\s*40[13]\s*\)\s*\.\s*(?:json|send|end|render)\s*\()/
+
+  private def followed_absence?(condition : String) : Bool
+    condition.strip.matches?(MISSING_CALLER_FACTORY) &&
+      condition.matches?(/\A\s*!\s*(?:req|request)(?:\s*\??\.\s*[A-Za-z_$][\w$]*)+(?:\s*\(\s*\))?\s*\z/)
+  end
+
+  private def anonymous_refusal(code : String, source : String? = nil, caller_checked : Bool = false) : String?
+    @last_refusal_followed = false
     by_setting = nil.as(String?)
-    hits = [] of Tuple(Int32, String)
+    hits = [] of Tuple(Int32, String, Bool)
     code.scan(REFUSING_DEFINITION) do |m|
       label = m[0]
       # `sendTextMessage(response, 401`: close the call it names.
       label += ")" * (label.count('(') - label.count(')')) if label.count('(') > label.count(')') && !label.ends_with?('(')
-      hits << {m.begin(0), label}
+      conditions = enclosing_conditions(code, m.begin(0))
+      followed = code[m.begin(0)..].matches?(FOLLOWED_RESPONSE) &&
+                 conditions.all? { |test| followed_absence?(test) || test.strip.matches?(METHOD_TEST) } &&
+                 (caller_checked || conditions.any? { |test| followed_absence?(test) }) && guard_prefix_read?(code[0...m.begin(0)])
+      hits << {m.begin(0), label, followed}
     end
-    hits.concat(basic_auth_runs(code, source)) if source
+    hits.concat(basic_auth_runs(code, source).map { |at, label| {at, label, false} }) if source
     # `if (!req.session.userId) return sendError(res, 403, …)`: a helper's
     # 403 counts when the branch it is in is about a missing caller.
     code.scan(HELPER_FORBIDDEN) do |m|
       if enclosing_conditions(code, m.begin(0)).any?(&.matches?(MISSING_CALLER))
-        hits << {m.begin(0), "#{m[0]})"}
+        hits << {m.begin(0), "#{m[0]})", false}
       end
     end
     # `if (!req.auth.isMaster) throw createSanitizedHttpError(403, …)`: an
@@ -637,13 +772,15 @@ class ExpressAuthTagger < FrameworkTagger
       refuses = enclosing_branches(code, at).any? do |condition, branch|
         condition.matches?(MISSING_CALLER_FACTORY) && !branch.matches?(/\bnext\s*\(\s*\)/) && factory_refused?(code[0...at], branch)
       end
-      hits << {at, "#{m[0]})"} if refuses
+      hits << {at, "#{m[0]})", false} if refuses
     end
-    hits.sort_by!(&.[0]).each do |at, label|
+    hits.sort_by!(&.[0]).each do |at, label, followed|
       return by_setting if code[0...at].matches?(ANONYMOUS_PASS_THROUGH)
       next if presence_gated?(code, at)
       case refusal_reach(code, at, source)
-      when :always  then return label
+      when :always
+        @last_refusal_followed = followed
+        return label
       when :setting then by_setting ||= "#{label}#{SETTING_NOTE}"
       end
     end
@@ -989,7 +1126,7 @@ class ExpressAuthTagger < FrameworkTagger
   # (!this.accountability?.user) throw …`). Nil when the check sits behind
   # an earlier return/await/response/next, inside a branch or `try`, tests
   # request data, or the service was not handed the caller.
-  private def handler_caller_check(endpoint : Endpoint) : String?
+  private def handler_caller_check(endpoint : Endpoint) : GuardEvidence?
     handler = endpoint.handler || return
     path = handler.path || return
     line = handler.line || return
@@ -1001,7 +1138,7 @@ class ExpressAuthTagger < FrameworkTagger
     # the route.
     judged = Noir::CComments.strip(definition, quotes: %("'`)).gsub(STRING_LITERAL) { |lit| lit.matches?(PATH_LITERAL) ? lit : %("") }
     if check = caller_absence_refusal(judged, Regex.escape(request), stop_file: path)
-      return "Protected by Express handler check #{check}"
+      return GuardEvidence.new("Protected by Express handler check #{check}", @last_refusal_followed)
     end
     bindings = Hash(String, Tuple(String, String)).new
     body.scan(SERVICE_NEW) do |m|
@@ -1023,7 +1160,7 @@ class ExpressAuthTagger < FrameworkTagger
       # `{ accountability: { user: 'system' } }`.
       passed = args.match(/(?<![\w$])#{Regex.escape(field)}\s*:\s*(?:#{Regex.escape(request)})\s*\??\.\s*([A-Za-z_$][\w$]*)/)
       break if passed.nil? || passed[1].matches?(DATA_ROOTS)
-      return "Protected by Express handler call #{klass}.#{m[2]} (#{check})"
+      return GuardEvidence.new("Protected by Express handler call #{klass}.#{m[2]} (#{check})", @last_refusal_followed && guard_binding_followed?(klass, path) && guard_binding_followed?(m[1], path))
     end
     nil
   rescue
@@ -1103,6 +1240,7 @@ class ExpressAuthTagger < FrameworkTagger
       end
       if tested
         refusal = branch_refusal(branch, source, stop_file) || next
+        @last_refusal_followed &&= !tested.includes?('(') && guard_prefix_read?(body[0...at])
         return "#{tested.gsub(/\s+/, "")} #{refusal}"
       end
       # `if (req.isAuthenticated()) { … } else { return errorForbidden(req, res) }`:
@@ -1112,6 +1250,7 @@ class ExpressAuthTagger < FrameworkTagger
       hit = condition.strip.match(/\A(?:#{receiver})((?:\s*\??\.\s*[A-Za-z_$][\w$]*)+)\s*(?:\(\s*\))?\z/) || next
       next unless caller_fields?(hit[1], receiver)
       refusal = else_refusal(body[block_end + 1..], source, stop_file) || next
+      @last_refusal_followed &&= !condition.includes?('(') && guard_prefix_read?(body[0...at])
       return "#{condition.strip.gsub(/\s+/, "")} else #{refusal}"
     end
     nil
@@ -1196,12 +1335,32 @@ class ExpressAuthTagger < FrameworkTagger
     fields.last.matches?(CALLER_FIELD) && (receiver == "this" || !fields.first.matches?(DATA_ROOTS))
   end
 
+  private def guard_prefix_read?(prefix : String) : Bool
+    !prefix.matches?(PATH_FIELD) && !prefix.matches?(/(?<![\w$])(?!(?:if|typeof)\b)[A-Za-z_$][\w$]*\s*\(|\+\+|--|(?<![=!<>])=(?![=>])/)
+  end
+
+  private def first_refusal?(code : String, at : Int32) : Bool
+    prefix = code[0...at].lstrip
+    prefix = prefix[1..] if prefix.starts_with?('{')
+    top_level?(prefix, prefix.size) && !prefix.sub(/\breturn\s*\z/, "").matches?(EARLIER_EXIT) &&
+      guard_prefix_read?(prefix) && enclosing_conditions(code, at).all?(&.strip.matches?(METHOD_TEST))
+  end
+
+  # An unread value can be falsy: Express's next(err) then passes on.
+  private def literal_refusal?(code : String, kind : String) : Bool
+    return code.matches?(/\Athrow\s+new\b/) if kind == "throws"
+    return code.matches?(/\Anext\s*\(\s*(?:new\b|\{)/) if kind == "next(err)"
+    true
+  end
+
   # How `branch` stops the caller that takes it, or nil.
   private def branch_refusal(branch : String, source : String?, stop_file : String?) : String?
+    @last_refusal_followed = false
     BRANCH_REFUSALS.each do |re, label|
       hit = branch.match(re) || next
       # `if (!req.user) { if (req.method !== 'GET') return res.sendStatus(401) }`
       reach = refusal_reach(branch, hit.begin(0), source) || next
+      @last_refusal_followed = reach == :always && first_refusal?(branch, hit.begin(0)) && literal_refusal?(branch[hit.begin(0)..], label)
       return reach == :setting ? "#{label}#{SETTING_NOTE}" : label
     end
     stop_file.try { |file| stop_refusal(branch, file) }
@@ -1223,6 +1382,7 @@ class ExpressAuthTagger < FrameworkTagger
       inner_close = Noir::JSLiteralScanner.find_matching_brace(inner, 0) || return
       return if inner[inner_close + 1..].matches?(/\A\s*else\b/)
       found = top_refusal(inner[0..inner_close], source, stop_file) || return
+      @last_refusal_followed = false
       return found.ends_with?(SETTING_NOTE) ? found : "#{found}#{SETTING_NOTE}"
     end
     return unless branch.starts_with?('{')
@@ -1235,13 +1395,17 @@ class ExpressAuthTagger < FrameworkTagger
   # return next(err)`), and nil when the block also answers the request
   # (`res.json(publicFeed)`).
   private def top_refusal(block : String, source : String?, stop_file : String?) : String?
+    @last_refusal_followed = false
     inner = block.strip
     inner = inner[1...-1] if inner.starts_with?('{') && inner.ends_with?('}')
     return if success_response?(inner)
     BRANCH_REFUSALS.each do |re, label|
       inner.scan(re) do |hit|
         at = hit.begin(0)
-        return label if top_level?(inner, at) && enclosing_conditions(inner, at).empty?
+        if first_refusal?(inner, at) && enclosing_conditions(inner, at).empty?
+          @last_refusal_followed = literal_refusal?(inner[at..], label)
+          return label
+        end
       end
     end
     file = stop_file || return
