@@ -15,6 +15,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/public/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/user/**").authenticated()
+                .requestMatchers("/api/closed/**").denyAll()
                 .anyRequest().authenticated()
             );
         return http.build();
