@@ -77,6 +77,8 @@ The FastAPI analyzer marks unread prefixes on `APIRouter(prefix=...)` and `inclu
 
 `guard: heuristic` means Go auth/authz tags say the endpoint is guarded, but every path to that conclusion used a name, shape or text-level scope match. A guarded Go endpoint without this mark has at least one followed guard, not necessarily every guard; an endpoint with no guard tag is left unmarked. This is a mark on the endpoint’s guarded status, not on each entry in `ai_context.guards`.
 
+`spring_auth` applies the same claim to Java and Kotlin Spring endpoints: readable restrictive standard handler or class annotations stay unmarked, while URL-rule matches, opaque or composed annotations, interceptor/filter scopes, unread configurations and shape-matched handler refusals receive `guard: heuristic` because their semantics or route applicability are inferred.
+
 The YAML, JSONL and TOML outputs carry the same field, and the plain report prints it as a `resolution` row.
 
 A full report looks like this. It was produced with taggers enabled (`-T`), which is what fills the `tags` arrays.
