@@ -8,7 +8,7 @@ This source-only measurement compares code analyzers with the OpenAPI contracts 
 
 <!-- SCOREBOARD -->
 
-Measured: 2026-11-15. Analyzer source: `c0a143d193d61e2893a1a93250af8aeb69600e64`.
+Measured: 2026-11-15. Analyzer source: `830b4cfce775d24812f4b0305df6fc24359dcdcb`.
 
 A technology measured on one repository is a single data point.
 
@@ -22,7 +22,7 @@ A technology measured on one repository is a single data point.
 | java_spring | 1 | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
 | js_express | 2 | 303 | 128 | 366 | 70.3% | 45.3% | 9 (1.3%) |
 | python_django | 2 | 235 | 0 | 300 | 100.0% | 43.9% | 0 (0.0%) |
-| python_fastapi | 2 | 268 | 81 | 194 | 76.8% | 58.0% | 0 (0.0%) |
+| python_fastapi | 2 | 348 | 1 | 114 | 99.7% | 75.3% | 0 (0.0%) |
 | ts_nestjs | 1 | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
 
 | Repository | Matched | Spec-only | Code-only | Recall | Agreement | Marked |
@@ -36,7 +36,7 @@ A technology measured on one repository is a single data point.
 | flowable-engine | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
 | gotify | 42 | 0 | 10 | 100.0% | 80.8% | 0 (0.0%) |
 | immich | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
-| langflow | 4 | 80 | 191 | 4.8% | 2.1% | 0 (0.0%) |
+| langflow | 84 | 0 | 111 | 100.0% | 43.1% | 0 (0.0%) |
 | owncast | 241 | 0 | 189 | 100.0% | 56.0% | 262 (60.9%) |
 | podinfo | 26 | 1 | 60 | 96.3% | 30.2% | 0 (0.0%) |
 | pokeapi | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
@@ -115,21 +115,21 @@ Audit date: 2026-11-15. 153 unmatched rows checked against the pinned sources.
 
 This audit was taken at analyzer revision `8184cd4`. Two of the misses it found have since been fixed: the FastAPI row's 25 misses were all InvokeAI's dropped `/api` prefix ([#3614](https://github.com/owasp-noir/noir/issues/3614)), and the go_chi miss was supabase/auth's SCIM prefix ([#3616](https://github.com/owasp-noir/noir/issues/3616)). FastAPI's remaining 4 unmatched rows have not been re-audited. Residual slash differences are left visible. All 11 unmatched Express rows were audited.
 
-Expansion audit: 2026-11-15, analyzer revision `54ff7225277f691ac19816faad875c52979e39c0`. Another 162 unmatched rows were checked against the five new pinned repositories. Each side is sampled separately: all rows if there are at most 25, otherwise 25 evenly spaced rows from the sorted list, at index `floor(i * count / 25)`. The historical table above is retained; it is not a current re-audit of the original corpus. All metric fields for the ten original repositories are unchanged from the committed baseline.
+Expansion audit: 2026-11-15, analyzer revision `54ff7225277f691ac19816faad875c52979e39c0`. Another 137 unmatched rows were checked against the five new pinned repositories; the langflow row was re-audited on 2026-11-16 at `830b4cfce775d24812f4b0305df6fc24359dcdcb`. Each side is sampled separately: all rows if there are at most 25, otherwise 25 evenly spaced rows from the sorted list, at index `floor(i * count / 25)`. The historical table above is retained; it is not a current re-audit of the original corpus. All metric fields for the ten original repositories are unchanged from the committed baseline.
 
 | Repository | Spec-only audited | Code-only audited | Analyzer miss | Analyzer false positive | Stale spec | Undocumented route | Prefix/method/slash | Other |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | flowable-engine | 2 | 25 | 0 | 0 | 0 | 24 | 0 | 3 |
 | NodeBB | 25 | 25 | 23 | 17 | 1 | 8 | 1 | 0 |
 | gotify | 0 | 10 | 0 | 0 | 0 | 10 | 0 | 0 |
-| langflow | 25 | 25 | 25 | 25 | 0 | 0 | 0 | 0 |
+| langflow | 0 | 25 | 0 | 0 | 0 | 24 | 0 | 1 |
 | pretalx | 0 | 25 | 0 | 0 | 0 | 25 | 0 | 0 |
 
 Flowable's three “other” rows are two documented literal `users` operations and one sampled controller row with `{family}`. `ProcessInstanceIdentityLinkResource.java:49,73,98-100` registers and validates `users` or `groups`; this is a literal-versus-parameter specialization. Its other sampled operations are real registrations absent from the contract. Gotify's sample contains UI/docs, explicit HEAD health and conditional MCP routes. Pretalx's sample contains organiser, agenda and submission UI routes outside its REST contract.
 
 NodeBB passes each route module its mount name as an argument. `src/routes/index.js:236-254` takes the names from a plugin hook whose defaults are `admin`, `user`, `tags` and so on, and modules such as `src/routes/admin.js` build their paths as `/${name}/...`. The spec documents the default names; Noir emits `/api/{name}/...` and `/{name}/...`, so one route shows up on both unmatched sides. This accounts for 23 sampled misses and 16 false positives. One further false positive is the middleware-only `router.all` regex at `index.js:136`; `src/middleware/index.js:130-133` only calls `next()`. The stale row documents the removed read-API session-delete path; `src/routes/write/users.js:66` registers its replacement. The prefix row is `/ping`, whose source prepends configurable `relative_path` (`src/webserver.js:152,191`).
 
-Langflow loses `/api/v1` and `/api/v2` because its routers are re-exported through package `__init__.py` files (`langflow/api/v1/__init__.py:1-24`, `api/v2/__init__.py:3-6`, `api/router.py:33-87`, `main.py:532`); see [#3625](https://github.com/owasp-noir/noir/issues/3625). For example, `api/v1/users.py:49` registers `GET /whoami` on `/users`, but Noir emits `/users/whoami` instead of `/api/v1/users/whoami`. All 50 sampled rows have that cause. Handlers hidden from the contract with `include_in_schema=False` are code-only rows as well. The 4.8% recall stays in the scoreboard until the analyzer is fixed.
+Langflow first matched 4 of its 84 documented operations: routers re-exported through package `__init__.py` files lost `/api/v1` and `/api/v2` ([#3625](https://github.com/owasp-noir/noir/issues/3625)). With that fixed, all 84 match. Of the 25 sampled code-only rows, 24 are routes the project hides from its contract with `include_in_schema=False`, on the router (`api/v1/deployments.py:36`, `models.py:24`, `knowledge_bases.py:35`) or on the route; the other is the static-file mount at `main.py:584`.
 
 <!-- /AUDIT -->
 
