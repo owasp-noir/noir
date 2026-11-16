@@ -34,7 +34,7 @@ class FlaskAuthTagger < FrameworkTagger
     {/\@authenticated/, "authenticated"},
   ]
 
-  ROUTE_DECORATOR = /^@[\w.]+\.(?:route|get|post|put|patch|delete)\s*\(/
+  ROUTE_DECORATOR = /^@([\w.]+)\.(?:route|get|post|put|patch|delete)\s*\(/
   CLASS_DEF       = /^class\s+(\w+)\s*(?:\((.*)\))?\s*:/
   # flask-restx `Resource.method_decorators`, Flask `View.decorators`.
   CLASS_DECORATORS = /^\s+(method_decorators|decorators)\s*(?::[^=]+)?=([^=].*)/
@@ -62,12 +62,55 @@ class FlaskAuthTagger < FrameworkTagger
     auth, authz = handler_guards(endpoint)
     auth ||= code_path_guard(endpoint)
     auth ||= body_guard(endpoint)
+    auth ||= before_request_guard(endpoint)
     endpoint.add_tag(Tag.new("auth", "Protected by #{auth}", "flask_auth")) if auth
     endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "flask_auth")) if authz
   end
 
-  # A handler that turns away a caller who is not logged in itself, before
-  # any path that answers the request method: Superset's `welcome` opens
+  # The handler's own refusal of a caller who is not logged in.
+  private def body_guard(endpoint : Endpoint) : String?
+    handler = endpoint.handler || return
+    file = handler.path || return
+    lines = read_file_lines(file) || return
+    def_idx = (handler.line || return) - 1
+    "handler refusing a caller who is not logged in" if refuses_anonymous?(file, lines, def_idx, endpoint.method.upcase)
+  end
+
+  # A `@<router>.before_request` hook in the route's file runs before every
+  # view of that app or blueprint, and what it returns answers the request
+  # in the view's place. The router is guarded when the hook is wrapped by
+  # an auth decorator (`@bp.before_request` over `@login_required`), or when
+  # its body refuses a caller who is not logged in the way `body_guard`
+  # reads a handler: a hook that returns early for some requests guards
+  # nothing.
+  # ponytail: same file and same router name only; a hook on a blueprint
+  # the route file imports, or on the app a blueprint is registered on, is
+  # not followed.
+  private def before_request_guard(endpoint : Endpoint) : String?
+    endpoint.details.code_paths.each do |path_info|
+      lines = read_file_lines(path_info.path) || next
+      route_line = lines[(path_info.line || next) - 1]? || next
+      router = route_line.strip.match(ROUTE_DECORATOR).try(&.[1]) || next
+      hook = "@#{router}.before_request"
+      lines.each_with_index do |text, idx|
+        next unless text.strip == hook
+        def_idx = idx + 1
+        while def_idx < lines.size && lines[def_idx].lstrip.starts_with?('@')
+          if desc = decorator_guard(lines[def_idx].strip, path_info.path)
+            return "#{desc} on #{router}.before_request"
+          end
+          def_idx += 1
+        end
+        if refuses_anonymous?(path_info.path, lines, def_idx, endpoint.method.upcase)
+          return "#{router}.before_request refusing a caller who is not logged in"
+        end
+      end
+    end
+    nil
+  end
+
+  # Whether the function at `def_idx` turns away a caller who is not logged
+  # in before any path that answers `method`: Superset's `welcome` opens
   # with `if not g.user or not get_user_id(): return redirect_to_login()`.
   # The `if` must hold only for an unidentified caller (`implies_identity?`
   # on its false branch) and its block must refuse: a login redirect, a 401,
@@ -75,14 +118,10 @@ class FlaskAuthTagger < FrameworkTagger
   # the first one that may answer first: a `return`, or a block holding a
   # `return` that is not a refusal (`if request.method == "GET": return
   # page()` leaves GET open, but not POST). A test on `request.method` is
-  # decided for this endpoint's method. `if not is_feature_enabled(...):
+  # decided for `method`. `if not is_feature_enabled(...):
   # abort(404)` reads no caller and answers nobody, so the walk goes on.
-  private def body_guard(endpoint : Endpoint) : String?
-    handler = endpoint.handler || return
-    file = handler.path || return
-    lines = read_file_lines(file) || return
-    def_idx = (handler.line || return) - 1
-    return unless 0 <= def_idx < lines.size
+  private def refuses_anonymous?(file : String, lines : Array(String), def_idx : Int32, method : String) : Bool
+    return false unless 0 <= def_idx < lines.size
     def_indent = lines[def_idx].size - lines[def_idx].lstrip.size
     idx = def_idx + 1
     # Past the signature, which may wrap.
@@ -97,11 +136,10 @@ class FlaskAuthTagger < FrameworkTagger
       break if indent <= def_indent
       body << {indent, line.strip}
     end
-    level = body.first?.try(&.[0]) || return
-    method = endpoint.method.upcase
+    level = body.first?.try(&.[0]) || return false
     body.each_with_index do |(indent, code), k|
       next unless indent == level
-      return if code.starts_with?("return")
+      return false if code.starts_with?("return")
       block = body[(k + 1)..].take_while { |entry| entry[0] > level }.map(&.[1])
       if if_match = code.match(/\A(?:if|elif)\s+(.+?):\s*(.*)\z/)
         inline = if_match[2]
@@ -110,14 +148,14 @@ class FlaskAuthTagger < FrameworkTagger
         next if cond == false # never taken for this method
         if cond.is_a?(String) && !block.empty? && block.first.matches?(BODY_REFUSAL) &&
            implies_identity?(cond, false, file, Hash(String, String).new, [] of String)
-          return "handler refusing a caller who is not logged in"
+          return true
         end
-        return if cond == true && block.any?(&.starts_with?("return"))
+        return false if cond == true && block.any?(&.starts_with?("return"))
       end
       # Any other way this statement may answer first.
-      return if block.any? { |statement| statement.starts_with?("return") && !statement.matches?(BODY_REFUSAL) }
+      return false if block.any? { |statement| statement.starts_with?("return") && !statement.matches?(BODY_REFUSAL) }
     end
-    nil
+    false
   end
 
   BODY_REFUSAL = /\A(?:return|raise|abort)\b.*(?:#{LOGIN_REDIRECT.source}|\bredirect_to_(?:log_?in|sign_?in)\b|\b40[13]\b|Unauthori[sz]ed|Forbidden|\.response_40[13]\s*\()/i

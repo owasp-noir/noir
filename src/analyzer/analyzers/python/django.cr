@@ -1511,7 +1511,10 @@ module Analyzer::Python
             if name.matches?(/^[A-Za-z_][A-Za-z0-9_]*$/)
               group_end = django_named_group_end(route, name_end + 1)
               if group_end
-                io << "{#{name}}"
+                # `(?P<path>.*)` matches across `/`: the rest of the path,
+                # not one segment.
+                rest = route[(name_end + 1)...group_end].matches?(/\A\.[*+]\??\z/)
+                io << (rest ? "{*#{name}}" : "{#{name}}")
                 index = group_end + 1
                 next
               end

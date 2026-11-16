@@ -47,6 +47,10 @@ class GoAuthTagger < FrameworkTagger
   # stays.
   HANDLER_ARG = /,\s*[\w.]+\s*\)((?:\s*\.\s*\w+\s*\([^()]*\))*)\s*;?\s*$/
 
+  # Echo takes the handler first (`e.GET("/x", h, mw...)`): the bare
+  # reference right after the path.
+  HANDLER_FIRST_ARG = /(""\s*),\s*[\w.]+/
+
   # A scope is only ever recorded for a line `resolve_use_scope` or
   # `resolve_group_middleware_scope` resolves: a `.Use(` / `.Pre(` call or a
   # `Group("/seg", mw...)` constructor — so a file with neither anywhere
@@ -198,10 +202,11 @@ class GoAuthTagger < FrameworkTagger
 
   # The group variable a registration line credits: `authV1` for both
   # `authV1.Use(auth)` and `authV1 := apiV1.Group("/", auth)`.
-  REGISTRATION_RECEIVER = /\A(\w+)\s*(?::?=\s*\w+\s*\.\s*(?:Group|Party)|\.\s*(?:Use|Pre))\s*\(/
+  REGISTRATION_RECEIVER = /\A(\w+)\s*(?::?=\s*(?:\w+\s*\.\s*)+(?:Group|Party)|\.\s*(?:Use|Pre))\s*\(/
 
-  # The variable a route line registers on: `authV1` for `authV1.POST(...)`.
-  ROUTE_RECEIVER = /\A\s*(\w+)\s*\.\s*\w+\s*\(/
+  # The variable a route line registers on: `authV1` for `authV1.POST(...)`,
+  # `api` for a field's `s.api.GET(...)`.
+  ROUTE_RECEIVER = /\A\s*(?:\w+\s*\.\s*)*(\w+)\s*\.\s*\w+\s*\(/
 
   # The routes a group's middleware reaches: those registered on `receiver`
   # (or a group derived from it, through `parents`) on `rows` of `file`.
@@ -870,8 +875,10 @@ class GoAuthTagger < FrameworkTagger
   # the path and the handler of the call named for `method` (`m.Post("/merge",
   # reqToken(), bind(...), h)`, a combo's `Delete(reqToken(), h)`), read
   # across continuation lines, plus a `.With(mw...)` or a chain head in
-  # front of it.
-  private def route_middleware_args(lines : Array(String), idx : Int32, method : String) : Array(String)
+  # front of it. With `handler_first` (Echo's `e.GET("/x", h, mw...)`) the
+  # middleware follows the handler, and a gin router in the same file still
+  # takes it in front, so only a sole handler is left out.
+  private def route_middleware_args(lines : Array(String), idx : Int32, method : String, handler_first : Bool = false) : Array(String)
     code = code_only(lines[idx])
     extra = idx + 1
     while code.count('(') > code.count(')') && !code.rstrip.ends_with?('{') && extra < lines.size && extra <= idx + 5
@@ -884,7 +891,7 @@ class GoAuthTagger < FrameworkTagger
     if call = code.scan(ROUTE_CALL).find { |match| match[1].upcase == method || MULTI_VERB_CALLS.includes?(match[1]) }
       route_args = call_args(code[call.end..])
       route_args = route_args[(route_args.index(&.starts_with?('"')) || 0)..].skip_while(&.starts_with?('"'))
-      args.concat(route_args[0...-1])
+      args.concat(handler_first && route_args.size > 1 ? route_args : route_args[0...-1])
       # The head of a chain the verb hangs off (`m.Combo("/x", reqToken()).
       # Get(h)`, on this line or the ones ending in `.` above) runs in front
       # of every verb in it.
@@ -1970,7 +1977,9 @@ class GoAuthTagger < FrameworkTagger
 
       # Strings blanked so a path (`"/oauth/authorize"`) is not read as
       # middleware, and the handler dropped so `AuthHandler` is not either.
-      route_line = code_only(lines[line_idx]).sub(HANDLER_ARG, ")\\1")
+      handler_first = endpoint.details.technology == "go_echo"
+      route_line = code_only(lines[line_idx])
+      route_line = handler_first ? route_line.sub(HANDLER_FIRST_ARG, "\\1") : route_line.sub(HANDLER_ARG, ")\\1")
 
       # Check for inline auth middleware in route definition
       INLINE_AUTH_MIDDLEWARE.each do |pattern|
@@ -2017,11 +2026,11 @@ class GoAuthTagger < FrameworkTagger
 
       # Read the definition of each middleware argument (everything between
       # the path and the handler).
-      route_middleware = route_middleware_args(lines, line_idx, endpoint.method)
-      route_middleware.each do |arg|
+      route_middleware = route_middleware_args(lines, line_idx, endpoint.method, handler_first)
+      route_middleware.each_with_index do |arg, i|
         evidence = guard_evidence(arg, path_info.path)
-        # This argument reader assumes the handler is last; Echo puts it first.
-        evidence = evidence.try { |found| GuardEvidence.new(found.tag, false) } if endpoint.details.technology == "go_echo"
+        # On Echo the first of them may be the handler itself.
+        evidence = evidence.try { |found| GuardEvidence.new(found.tag, false) } if handler_first && i.zero?
         add_direct_guard(endpoint, evidence)
       end
       router_wrap_guards(path_info.path, lines, line_idx, endpoint, route_middleware).each { |guard| add_direct_guard(endpoint, guard) }

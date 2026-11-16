@@ -250,6 +250,7 @@ module Analyzer::Go
         external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
 
+        mount_scopes = mount_scopes_for(content, dir)
         state = ChiRouteState.new
         last_endpoint = Endpoint.new("", "")
         in_mounted_func = false
@@ -306,8 +307,9 @@ module Analyzer::Go
                (target_dir = resolve_mount_dir(path, dir, target, file_contents_cache))
               endpoints = expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
                 package_files, file_contents_cache, file_lines_cache, [] of String, target[:then_method])
+              prefix = mount_join(mount_scopes[index]? || "", target[:prefix])
               endpoints.each do |ep|
-                ep.url = mount_join(target[:prefix], ep.url)
+                ep.url = mount_join(prefix, ep.url)
                 result << ep
               end
             end
@@ -499,19 +501,36 @@ module Analyzer::Go
     # The `.Mount(` call on `lines[index]` with its wrapped arguments joined
     # on (`r.Mount("/users",` + `usersResource{}.Routes())`), so the target
     # on a continuation line still resolves.
+    # A method called on a variable bound above in the function (`h :=
+    # tags.NewHandler(db)` then `r.Mount("/tags", h.Routes())`) is read on
+    # that binding.
     private def mount_call(lines : Array(String), index : Int32) : String
       line = lines[index]
       depth = line.count('(') - line.count(')')
-      return line if depth <= 0
-      String.build do |io|
-        io << line
-        (index + 1).upto(Math.min(index + 4, lines.size - 1)) do |j|
-          io << ' ' << lines[j].strip
-          depth += lines[j].count('(') - lines[j].count(')')
-          break if depth <= 0
-        end
+      call = if depth <= 0
+               line
+             else
+               String.build do |io|
+                 io << line
+                 (index + 1).upto(Math.min(index + 4, lines.size - 1)) do |j|
+                   io << ' ' << lines[j].strip
+                   depth += lines[j].count('(') - lines[j].count(')')
+                   break if depth <= 0
+                 end
+               end
+             end
+      target = call.match(MOUNT_VARIABLE_TARGET_RE) || return call
+      binding = /^\s*#{target[2]}\s*:=\s*(.+?)\s*$/
+      (index - 1).downto(0) do |row|
+        break if lines[row].starts_with?("func ")
+        bound = lines[row].match(binding) || next
+        value = bound[1].starts_with?('&') ? "(#{bound[1]})" : bound[1]
+        return "#{target[1]}#{value}#{target[3]}#{target.post_match}"
       end
+      call
     end
+
+    MOUNT_VARIABLE_TARGET_RE = /^(.*\.Mount\(\s*[^,]+,\s*)(\w+)(\s*\.\s*\w+\s*\()/
 
     alias MountTarget = NamedTuple(prefix: String, func_name: String, recv_type: String?, pkg_alias: String?, then_method: String?)
 
@@ -614,6 +633,12 @@ module Analyzer::Go
       url.starts_with?("/") ? "#{base}#{url}" : "#{base}/#{url}"
     end
 
+    # The `r.Route(...)` prefix around each `.Mount(` line of `content`.
+    private def mount_scopes_for(content : String, dir : String) : Hash(Int32, String)
+      return Hash(Int32, String).new unless content.includes?(".Mount(")
+      Noir::TreeSitterGoRouteExtractor.extract_chi_mount_scopes(content, string_values_for(dir))
+    end
+
     private def string_values_for(dir : String) : Hash(String, String)
       @package_string_values[dir]? || @external_string_seed
     end
@@ -691,6 +716,7 @@ module Analyzer::Go
             Noir::TreeSitterGoRouteExtractor.walk_chi_public(body, content, collected, string_values, helpers)
 
             lines = file_lines_cache[search_path]? || GoEngine.strip_comments(content).lines
+            mount_scopes = mount_scopes_for(content, dir)
             first_row = Noir::TreeSitter.node_start_row(body)
             last_row = Noir::TreeSitter.node_end_row(body)
             body_rows = {first_row, last_row}
@@ -705,7 +731,7 @@ module Analyzer::Go
               next unless target_dir
               expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
                 package_files, file_contents_cache, file_lines_cache, ancestors + [key], target[:then_method]).each do |ep|
-                ep.url = mount_join(target[:prefix], ep.url)
+                ep.url = mount_join(mount_join(mount_scopes[row - 1]? || "", target[:prefix]), ep.url)
                 nested << ep
               end
             end
