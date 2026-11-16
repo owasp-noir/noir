@@ -140,6 +140,69 @@ describe NoirAIContext::ServiceGraph do
     end
   end
 
+  it "does not interpret network-path URLs as local routes or dynamic queries as path templates" do
+    caller = service_endpoint("web", "/start", snippet: "fetch('//external.example/orders')")
+    NoirAIContext::ServiceGraph.apply([caller, service_endpoint("orders", "/external.example/orders")])
+    caller.calls.first.matches.should be_empty
+    caller = service_endpoint("web", "/start", snippet: "fetch('/orders/{id}?q=' + query)")
+    NoirAIContext::ServiceGraph.apply([caller, service_endpoint("orders", "/orders/<int:id>")])
+    caller.calls.first.matches.should be_empty
+  end
+
+  it "keeps JavaScript private fields from masking a real same-line call" do
+    sink = AIContextEntry.new("outbound_http", "fetch", source: "callee", path: "app.js", line: 10,
+      snippet: "10: const token = this.#token; fetch('/orders')")
+    NoirAIContext::OutboundRequest.targets(sink).compact_map(&.url).should eq(["/orders"])
+  end
+
+  it "reads static URLs containing the opposite quote delimiter" do
+    caller = service_endpoint("web", "/start", snippet: %q(fetch("/authors/O'Reilly")))
+    NoirAIContext::ServiceGraph.apply([caller, service_endpoint("authors", "/authors/{name}")])
+    caller.calls.first.url.should eq("/authors/O'Reilly")
+    caller.calls.first.matches.size.should eq(1)
+  end
+
+  it "does not treat regex syntax as an anchor for an all-path fallback" do
+    caller = service_endpoint("web", "/start", snippet: "fetch('/orders/42')")
+    routes = ["^/.*$", "^/.+$", "^/orders/.*$"].map_with_index do |url, index|
+      endpoint = service_endpoint("regex#{index}", url)
+      endpoint.kind = "regex"
+      endpoint
+    end
+    NoirAIContext::ServiceGraph.apply([caller] + routes)
+    caller.calls.first.matches.map(&.endpoint.project).should eq(["regex2"])
+    fallback = service_endpoint("fallback", "^/orders/.*$|^/.*$")
+    fallback.kind = "regex"
+    unrelated = service_endpoint("web", "/start", snippet: "fetch('/admin')")
+    NoirAIContext::ServiceGraph.apply([unrelated, fallback])
+    unrelated.calls.first.matches.should be_empty
+  end
+
+  it "keeps Python floor division from masking a real same-line call" do
+    sink = AIContextEntry.new("outbound_http", "requests.get", source: "callee", path: "views.py", line: 10,
+      snippet: "10: quotient = a // b; requests.get('/orders')")
+    NoirAIContext::OutboundRequest.targets(sink).compact_map(&.url).should eq(["/orders"])
+  end
+
+  it "preserves lexical context before the callee line and reads qualified browser fetch calls" do
+    sink = AIContextEntry.new("outbound_http", "fetch", source: "callee", path: "app.js", line: 10,
+      snippet: "9: /* comment | 10: fetch('/fake') */ fetch('/real')")
+    NoirAIContext::OutboundRequest.targets(sink).compact_map(&.url).should eq(["/real"])
+    ["globalThis", "window", "self"].each do |receiver|
+      sink = AIContextEntry.new("outbound_http", "fetch", source: "callee", path: "app.js", line: 10,
+        snippet: "10: #{receiver}.fetch('/orders')")
+      NoirAIContext::OutboundRequest.targets(sink).compact_map(&.url).should eq(["/orders"])
+    end
+  end
+
+  it "reads static WebClient URI targets already enriched by the context builder" do
+    sink = AIContextEntry.new("outbound_http", "client.get /orders", source: "callee", path: "Controller.java", line: 10,
+      snippet: "10: client.get() | 11: .uri(\"/orders\").retrieve()")
+    targets = NoirAIContext::OutboundRequest.targets(sink)
+    targets.compact_map(&.url).should eq(["/orders"])
+    targets.first.method.should eq("GET")
+  end
+
   it "roundtrips finite edges through JSON and YAML and follows cycles once" do
     one = service_endpoint("one", "/one", snippet: "fetch('/two')")
     two = service_endpoint("two", "/two", snippet: "fetch('/one')")
@@ -193,6 +256,21 @@ describe NoirAIContext::ServiceGraph do
       caller.calls.flat_map(&.matches).map(&.endpoint.project).should contain("orders")
       callee = runner.endpoints.find! { |endpoint| endpoint.url == "/orders/:id" }
       callee.called_by.map(&.endpoint.project).should contain("web")
+      options["url"] = YAML::Any.new("https://public.example/gateway")
+      prefixed = NoirRunner.new(options)
+      prefixed.detect
+      prefixed.analyze
+      caller = prefixed.endpoints.find!(&.url.ends_with?("/start"))
+      callee = prefixed.endpoints.find!(&.url.ends_with?("/orders/:id"))
+      caller.calls.flat_map(&.matches).map(&.endpoint.url).should contain(callee.url)
+      callee.called_by.map(&.endpoint.url).should contain(caller.url)
+      saved = Array(Endpoint).from_json(prefixed.endpoints.to_json)
+      rows = Noir::CLI::Inspect.service_trace_rows(Noir::CLI::Inspect.trace(saved, "GET", caller.url), saved, true)
+      rows.map(&.url).should contain(callee.url)
+      builder = OutputBuilderMermaid.new(create_test_options)
+      builder.io = IO::Memory.new
+      builder.print(saved)
+      builder.io.to_s.should contain("path_pattern")
     ensure
       CodeLocator.instance.reset_files
       FileUtils.rm_rf(root) if Dir.exists?(root)

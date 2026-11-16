@@ -131,6 +131,102 @@ end
       }).should eq(["/direct/item", "/root/item"])
     end
 
+    it "keeps an imported child's direct default mount beside its nested mount" do
+      blueprint_urls({{ framework }}, {
+        "app.py" => <<-PYTHON,
+          from FRAMEWORK import APPLICATION, Blueprint
+          from leaf import child
+          app = APPLICATION(__name__)
+          outer = Blueprint('outer', __name__, url_prefix='/outer')
+          outer.register_blueprint(child)
+          app.register_blueprint(outer)
+          app.register_blueprint(child)
+          PYTHON
+        "leaf.py" => <<-PYTHON,
+          from FRAMEWORK import Blueprint
+          child = Blueprint('child', __name__, url_prefix='/child')
+          @child.get('/item')
+          async def item(): pass
+          PYTHON
+      }).should eq(["/child/item", "/outer/child/item"])
+    end
+
+    it "resolves an imported parent alias before propagating its mounted prefix" do
+      blueprint_urls({{ framework }}, {
+        "app.py" => <<-PYTHON,
+          from FRAMEWORK import APPLICATION
+          from parent import outer as renamed
+          from leaf import child
+          app = APPLICATION(__name__)
+          renamed.register_blueprint(child, url_prefix='/child')
+          app.register_blueprint(renamed, url_prefix='/mounted')
+          PYTHON
+        "parent.py" => <<-PYTHON,
+          from FRAMEWORK import Blueprint
+          outer = Blueprint('outer', __name__, url_prefix='/outer')
+          PYTHON
+        "leaf.py" => <<-PYTHON,
+          from FRAMEWORK import Blueprint
+          child = Blueprint('child', __name__, url_prefix='/old')
+          @child.get('/item')
+          async def item(): pass
+          PYTHON
+      }).should eq(["/mounted/child/item"])
+    end
+
+    it "distinguishes an app and blueprint with the same name in different files of one base" do
+      blueprint_urls({{ framework }}, {
+        "a.py" => "from FRAMEWORK import APPLICATION\nshared = APPLICATION(__name__)\n",
+        "b.py" => <<-PYTHON,
+          from FRAMEWORK import APPLICATION, Blueprint
+          from leaf import child
+          app = APPLICATION(__name__)
+          shared = Blueprint('shared', __name__, url_prefix='/parent')
+          shared.register_blueprint(child)
+          app.register_blueprint(shared, url_prefix='/mounted')
+          PYTHON
+        "leaf.py" => <<-PYTHON,
+          from FRAMEWORK import Blueprint
+          child = Blueprint('child', __name__, url_prefix='/child')
+          @child.get('/item')
+          async def item(): pass
+          PYTHON
+      }).should eq(["/mounted/child/item"])
+    end
+
+    it "resolves local blueprint aliases and keyword or tab-separated registrations" do
+      ["renamed, url_prefix='/mounted'", "blueprint=renamed, url_prefix='/mounted'", "\trenamed, url_prefix='/mounted'"].each do |arguments|
+        source = <<-PYTHON
+          from FRAMEWORK import APPLICATION, Blueprint
+          app = APPLICATION(__name__)
+          bp = Blueprint('bp', __name__, url_prefix='/own')
+          renamed = bp
+          app.register_blueprint(#{arguments})
+          @bp.get('/item')
+          async def item(): pass
+          PYTHON
+        blueprint_urls({{ framework }}, {"app.py" => source}).should eq(["/mounted/item"])
+      end
+    end
+
+    it "resolves an imported alias in its declaring module" do
+      blueprint_urls({{ framework }}, {
+        "app.py" => <<-PYTHON,
+          from FRAMEWORK import APPLICATION
+          from views import alias
+          app = APPLICATION(__name__)
+          app.register_blueprint(alias, url_prefix='/mounted')
+          PYTHON
+        "views.py" => <<-PYTHON,
+          from FRAMEWORK import Blueprint
+          bp = Blueprint('bp', __name__, url_prefix='/own')
+          alias = bp
+          @bp.get('/item')
+          async def item(): pass
+          PYTHON
+      }).should eq(["/mounted/item"])
+    end
+
     it "scopes app and blueprint names to each scan base" do
       blueprint_urls({{ framework }}, {
         "a/app.py" => <<-PYTHON,

@@ -36,11 +36,28 @@ module Noir
             callee.path = callee.path.try { |path| relocate_path(path, pairs) }
             callee
           end
+          if handler = endpoint.handler
+            path = handler.path.try { |value| relocate_path(value, pairs) }
+            relocated = Handler.new(handler.name, path, handler.line)
+            relocated.dispatch_path = handler.dispatch_path.try { |value| relocate_path(value, pairs) }
+            endpoint.handler = relocated
+          end
           if context = endpoint.ai_context
             endpoint.ai_context = relocate_context(context, pairs)
           end
+          endpoint.calls = endpoint.calls.map do |call|
+            sink = call.sink
+            sink.path = sink.path.try { |path| relocate_path(path, pairs) }
+            ServiceCall.new(sink, call.url, call.method, call.matches.map { |edge| relocate_edge(edge, pairs) })
+          end
+          endpoint.called_by = endpoint.called_by.map { |edge| relocate_edge(edge, pairs) }
           endpoint
         end
+      end
+
+      private def relocate_edge(edge : ServiceEdge, pairs : Array({String, String})) : ServiceEdge
+        path = edge.path.try { |value| relocate_path(value, pairs) }
+        ServiceEdge.new(edge.endpoint, edge.matched_by, path, edge.line)
       end
 
       private def relocate_context(context : AIContext, pairs : Array({String, String})) : AIContext
