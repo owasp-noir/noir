@@ -80,6 +80,15 @@ describe "Ktor mount placement cases", tags: "functional" do
     ktor_mount_case("rg60").size.should eq(60)
   end
 
+  it "walks an expression-bodied route function like a block one" do
+    ktor_mount_case("expr").should eq({
+      "GET /api/status"           => false,
+      "GET /api/orders"           => true,
+      "GET /api/orders/{orderId}" => true,
+      "POST /api/orders"          => true,
+    })
+  end
+
   it "treats strategy = AuthenticationStrategy.Optional as optional in-file" do
     ktor_mount_case("g").should eq({"GET /m" => false})
   end
