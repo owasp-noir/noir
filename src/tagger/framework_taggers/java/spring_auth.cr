@@ -1555,7 +1555,7 @@ class SpringAuthTagger < FrameworkTagger
   private def servlet_filter_decision(endpoint : Endpoint, classpath : Set(String)?, app : String?) : Tuple(String, String, Int32)?
     url = normalize_security_path(endpoint.url)
     if app
-      return unless context = servlet_context_path(app)
+      return unless context = context_path(app, SERVLET_CONTEXT_PATH)
       unless context.empty?
         return unless url == context || url.starts_with?("#{context}/")
         url = normalize_security_path(url[context.size..])
@@ -1602,7 +1602,7 @@ class SpringAuthTagger < FrameworkTagger
     nil
   end
 
-  @context_paths = Hash(String, String?).new
+  @context_paths = Hash({String, String}, String?).new
 
   # Whether `app` component-scans `filter`: a filter of the app's own
   # module, or one in another module under a package the app's
@@ -1616,13 +1616,29 @@ class SpringAuthTagger < FrameworkTagger
     @scan_packages[app]?.try(&.any? { |package| filter.package_name == package || filter.package_name.starts_with?("#{package}.") }) || false
   end
 
-  # `server.servlet.context-path` of `app` ("" unset), nil when a profile,
-  # an import or a placeholder can set it.
-  private def servlet_context_path(app : String) : String?
-    @context_paths.put_if_absent(app) do
-      values, note = module_config_list(app, "server.servlet.context-path")
+  SERVLET_CONTEXT_PATH = "server.servlet.context-path"
+  # In the order the analyzer prefixes them onto the endpoint URL.
+  CONTEXT_PATH_KEYS = {"spring.webflux.base-path", SERVLET_CONTEXT_PATH}
+
+  # Context path `key` of `app` ("" unset), nil when a profile, an import
+  # or a placeholder can set it.
+  private def context_path(app : String, key : String) : String?
+    @context_paths.put_if_absent({app, key}) do
+      values, note = module_config_list(app, key)
       note ? nil : (values.try(&.first?).try { |value| normalize_security_path(value).rchop('/') } || "")
     end
+  end
+
+  # The endpoint URL below `app`'s context path: chain matchers and
+  # interceptor patterns are written relative to it.
+  private def path_within_app(url : String, app : String?) : String
+    return url unless app
+    CONTEXT_PATH_KEYS.each do |key|
+      context = context_path(app, key)
+      next if context.nil? || context.empty?
+      return url == context ? "/" : url[context.size..] if url == context || url.starts_with?("#{context}/")
+    end
+    url
   end
 
   # Servlet URL-pattern matching: `/x/*` prefix, `*.ext` extension, `/` and
@@ -2020,7 +2036,7 @@ class SpringAuthTagger < FrameworkTagger
   # `config_dir` holds the configuration lists are read from; `classpath`
   # (nil: unknown, every chain applies) the modules whose chains apply.
   private def security_decision(endpoint : Endpoint, config_dir : String?, classpath : Set(String)?, marker : String? = nil) : Tuple(String, String?, Int32?)?
-    url = endpoint.url
+    url = path_within_app(endpoint.url, config_dir)
     applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
     # A security configuration or switch outside any build unit (an example
     # under `docs/`) reaches only endpoints whose classpath is unknown.
@@ -2525,7 +2541,7 @@ class SpringAuthTagger < FrameworkTagger
 
   private def check_interceptor_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?
     return if @registered_interceptors.empty?
-    per_serving_classpath(endpoint, true) { |classpath, _| interceptor_decision(endpoint, classpath) }
+    per_serving_classpath(endpoint, true) { |classpath, app| interceptor_decision(endpoint, classpath, app) }
   end
 
   private def check_servlet_filter_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?
@@ -2533,8 +2549,8 @@ class SpringAuthTagger < FrameworkTagger
     per_serving_classpath(endpoint, true) { |classpath, app| servlet_filter_decision(endpoint, classpath, app) }
   end
 
-  private def interceptor_decision(endpoint : Endpoint, classpath : Set(String)?) : Tuple(String, String, Int32)?
-    url = endpoint.url
+  private def interceptor_decision(endpoint : Endpoint, classpath : Set(String)?, app : String?) : Tuple(String, String, Int32)?
+    url = path_within_app(endpoint.url, app)
     applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
 
     @registered_interceptors.each do |reg|
@@ -2553,7 +2569,7 @@ class SpringAuthTagger < FrameworkTagger
 
       matches_exclude = reg.exclude_patterns.any? { |pattern| matches_ant_pattern?(url, pattern) }
       next if matches_exclude
-      next if interceptor.open_paths.includes?(url)
+      next if interceptor.open_paths.includes?(url) || interceptor.open_paths.includes?(endpoint.url)
 
       return {"Protected by Spring HandlerInterceptor #{interceptor.name}", reg.file_path, reg.line}
     end

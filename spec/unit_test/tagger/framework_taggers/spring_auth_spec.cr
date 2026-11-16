@@ -4387,3 +4387,92 @@ describe "SpringAuthTagger (profile-bound and test chains)" do
     endpoint.tags.select(&.name.==("auth")).should be_empty
   end
 end
+
+describe "SpringAuthTagger (rules below the context path)" do
+  build = "plugins { id 'org.springframework.boot' version '3.2.0'; id 'java' }\n"
+  app = "@SpringBootApplication\npublic class App { public static void main(String[] a) { SpringApplication.run(App.class, a); } }\n"
+  controller = "src/main/java/app/AdminController.java"
+  auth_tags = ->(files : Hash(String, String), routes : Hash(String, String)) do
+    run_spring_endpoints_map({"build.gradle" => build, "src/main/java/app/App.java" => app, controller => REVIEW_JAVA_CONTROLLER}.merge(files), routes)
+      .transform_values { |endpoint| endpoint.tags.select(&.name.==("auth")).map(&.description) }
+  end
+
+  it "matches chain matchers against the URL below server.servlet.context-path" do
+    chain = <<-JAVA
+      @Configuration
+      public class SecurityConfig {
+          @Bean
+          public SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(auth -> auth
+                  .requestMatchers("/items/**").permitAll()
+                  .requestMatchers(HttpMethod.GET, "/admin/**").hasRole("ADMIN")
+                  .anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    tags = auth_tags.call({
+      "src/main/java/app/SecurityConfig.java"     => chain,
+      "src/main/resources/application.properties" => "server.servlet.context-path=/shop\n",
+    }, {"GET /shop/admin/users" => "#{controller}:4", "POST /shop/admin/users" => "#{controller}:6", "GET /shop/items" => "#{controller}:8"})
+
+    tags["GET /shop/items"].should be_empty
+    tags["GET /shop/admin/users"].should eq(["Protected by Spring Security hasRole via requestMatchers(\"/admin/**\")"])
+    tags["POST /shop/admin/users"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "matches Kotlin DSL rules against the URL below spring.webflux.base-path" do
+    chain = <<-KOTLIN
+      @Configuration
+      @EnableWebFluxSecurity
+      class SecurityConfig {
+          @Bean
+          fun chain(http: ServerHttpSecurity): SecurityWebFilterChain = http {
+              authorizeExchange {
+                  authorize("/items/**", permitAll)
+                  authorize(anyExchange, authenticated)
+              }
+          }
+      }
+      KOTLIN
+    tags = auth_tags.call({
+      "src/main/kotlin/app/SecurityConfig.kt"     => chain,
+      "src/main/resources/application.properties" => "spring.webflux.base-path=/blog\n",
+    }, {"GET /blog/admin/users" => "#{controller}:4", "GET /blog/items" => "#{controller}:8"})
+
+    tags["GET /blog/items"].should be_empty
+    tags["GET /blog/admin/users"].should eq(["Protected by Spring Security authenticated via authorize(anyExchange)"])
+  end
+
+  it "matches interceptor path patterns against the URL below the context path" do
+    interceptor = <<-JAVA
+      public class AuthInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+              if (request.getHeader("Authorization") == null) {
+                  response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
+                  return false;
+              }
+              return true;
+          }
+      }
+      JAVA
+    config = <<-JAVA
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new AuthInterceptor()).addPathPatterns("/admin/**");
+          }
+      }
+      JAVA
+    tags = auth_tags.call({
+      "src/main/java/app/AuthInterceptor.java"    => interceptor,
+      "src/main/java/app/WebConfig.java"          => config,
+      "src/main/resources/application.properties" => "server.servlet.context-path=/shop\n",
+    }, {"GET /shop/admin/users" => "#{controller}:4", "GET /shop/items" => "#{controller}:8"})
+
+    tags["GET /shop/admin/users"].should eq(["Protected by Spring HandlerInterceptor AuthInterceptor"])
+    tags["GET /shop/items"].should be_empty
+  end
+end

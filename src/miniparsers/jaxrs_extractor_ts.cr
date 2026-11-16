@@ -121,11 +121,16 @@ module Noir
       # The first handler parameter annotated `@Auth`, nil when none.
       getter auth_param : AuthParam?
 
-      def initialize(@verb, @path, @class_name, @method_name, @line,
+      def initialize(@verb, path : String, @class_name, @method_name, @line,
                      @parameter_format, @params, @callees, @file_path = nil, @protocol = "http",
                      @signature_line = nil, @auth_param = nil)
+        @path = path.gsub(REST_OF_PATH_VARIABLE) { "{*#{$1}}" }
       end
     end
+
+    # `{name: .+}` / `{name:.*}`: a JAX-RS template regex is not confined to
+    # one segment, so this variable takes the rest of the path.
+    REST_OF_PATH_VARIABLE = /\{\s*(\w[\w.-]*)\s*:\s*\.[*+]\s*\}/
 
     # A handler parameter annotated `@Auth`, as written: the annotation's
     # name (simple or qualified) and the parameter's declared type, plus the
@@ -180,12 +185,40 @@ module Noir
         next unless Noir::TreeSitter.node_type(decl) == "class_declaration"
         class_name = type_identifier_text(decl, source)
         collect_server_endpoint_route(decl, source, routes, constants, class_name)
-        next unless annotation_string_value(decl, "Path", source, constants, class_name)
+        root_path = annotation_string_value(decl, "Path", source, constants, class_name) ||
+                    inherited_root_path(decl, source, classes, constants, subresource_sources)
+        next unless root_path
         collect_class_routes(decl, source, dto_index, bean_index, routes, include_callees,
-          class_index: classes, constants: constants, subresource_sources: subresource_sources,
+          base_path: root_path, class_index: classes, constants: constants, subresource_sources: subresource_sources,
           custom_verb_annotations: custom_verb_annotations)
       end
       routes
+    end
+
+    # The `@Path` of the first interface `decl` implements that carries one:
+    # a class with no `@Path` of its own is the root resource of the API
+    # interface it implements (`class PetsApiImpl implements PetsApi`).
+    private def inherited_root_path(decl : LibTreeSitter::TSNode,
+                                    source : String,
+                                    class_index : Hash(String, LibTreeSitter::TSNode),
+                                    constants : Hash(String, String),
+                                    subresource_sources : Hash(String, SourceEntry)) : String?
+      implemented_interface_names(decl, source).each do |name|
+        if interface_decl = class_index[name]?
+          path = annotation_string_value(interface_decl, "Path", source, constants, name)
+        elsif entry = subresource_sources[name]?
+          interface_source = entry[1]
+          next unless interface_source.includes?("@Path")
+          path = nil
+          Noir::TreeSitter.parse_java(interface_source) do |root|
+            next unless interface_decl = collect_classes(root, interface_source)[name]?
+            interface_constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, interface_source)
+            path = annotation_string_value(interface_decl, "Path", interface_source, interface_constants, name)
+          end
+        end
+        return path if path
+      end
+      nil
     end
 
     private def collect_server_endpoint_route(decl : LibTreeSitter::TSNode,
@@ -431,9 +464,11 @@ module Noir
       return if implemented_names.empty?
 
       method_excludes = jaxrs_annotated_method_names(decl, source)
+      # A class with no `@Path` of its own already sits at the one it inherits.
+      own_path = !annotation_string_value(decl, "Path", source, constants, type_identifier_text(decl, source)).nil?
       implemented_names.each do |interface_name|
         if interface_decl = class_index[interface_name]?
-          interface_path = annotation_string_value(interface_decl, "Path", source, constants, interface_name) || ""
+          interface_path = own_path ? annotation_string_value(interface_decl, "Path", source, constants, interface_name) || "" : ""
           collect_class_routes(interface_decl, source, dto_index, bean_index, routes, include_callees,
             base_path: Noir::URLPath.join_trimmed(class_path, interface_path), inherited_consumes: class_consumes,
             class_index: class_index, constants: constants, subresource_sources: subresource_sources,
@@ -443,7 +478,7 @@ module Noir
           interface_source_path, interface_source, _ = source_entry
           collect_cross_file_interface(interface_name, interface_source_path, interface_source,
             class_path, class_consumes, dto_index, bean_index, routes, include_callees,
-            subresource_sources, visited, method_excludes, custom_verb_annotations, {decl, source, current_file})
+            subresource_sources, visited, method_excludes, custom_verb_annotations, {decl, source, current_file}, own_path)
         end
       end
     end
@@ -528,13 +563,14 @@ module Noir
                                              visited : Set(String),
                                              method_excludes : Set(String),
                                              custom_verb_annotations : Hash(String, String) = {} of String => String,
-                                             impl : Impl? = nil)
+                                             impl : Impl? = nil,
+                                             join_interface_path : Bool = true)
       Noir::TreeSitter.parse_java(interface_source) do |root|
         classes = collect_classes(root, interface_source)
         interface_decl = classes[interface_name]?
         next unless interface_decl
         constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, interface_source)
-        own_path = annotation_string_value(interface_decl, "Path", interface_source, constants, interface_name) || ""
+        own_path = join_interface_path ? annotation_string_value(interface_decl, "Path", interface_source, constants, interface_name) || "" : ""
         collect_class_routes(interface_decl, interface_source, dto_index, bean_index, routes, include_callees,
           base_path: Noir::URLPath.join_trimmed(class_path, own_path), inherited_consumes: class_consumes,
           class_index: classes, constants: constants, subresource_sources: subresource_sources,

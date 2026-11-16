@@ -130,8 +130,8 @@ module NoirAIContext
       "redirect",
       "Potential redirect sink inferred from code or callee name",
       74,
-      name_patterns: [/\bredirect\b/i, /\bredirect_to\b/i],
-      source_patterns: [/\bredirect(_to)?\s*\(/i, /\bres\.redirect\b/i, /Response\.Redirect/i]
+      name_patterns: [/\bredirect\b/i, /\bredirect_to\b/i, /(?:\w+\.)sendRedirect\b|\.sendRedirect\b/],
+      source_patterns: [/\bredirect(_to)?\s*\(/i, /\bres\.redirect\b/i, /Response\.Redirect/i, /(?:\breturn\b|=)\s*\(?\s*"redirect:[^"]*"/]
     ),
     PatternDefinition.new(
       "template_render",
