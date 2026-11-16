@@ -1791,6 +1791,83 @@ describe "DjangoAuthTagger" do
     end
   end
 
+  # A `get_permissions` override decides per action or verb in place of the
+  # class's `permission_classes`; `super().get_permissions()` hands back to
+  # them. A body it cannot read leaves the class-level verdict.
+  it "judges a DRF get_permissions override for the endpoint's action and verb" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_get_permissions")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    File.write(views, <<-PY)
+      class ArticleViewSet(viewsets.ModelViewSet):
+          permission_classes = [IsAuthenticated]
+
+          def get_permissions(self):
+              if self.action in ("list", "retrieve"):
+                  return [AllowAny()]
+              return super().get_permissions()
+
+          @action(detail=True, methods=["get"])
+          def history(self, request, pk=None):
+              return Response([])
+
+      class SignupViewSet(viewsets.ModelViewSet):
+          def get_permissions(self):
+              if self.action == "create":
+                  permission_classes = [AllowAny]
+              else:
+                  permission_classes = [IsAuthenticated]
+              return [permission() for permission in permission_classes]
+
+      class ReportView(APIView):
+          permission_classes = [AllowAny]
+
+          def get_permissions(self):
+              if self.request.method in SAFE_METHODS:
+                  return []
+              return [IsAuthenticated()]
+
+      class DynamicViewSet(viewsets.ModelViewSet):
+          permission_classes = [IsAuthenticated]
+
+          def get_permissions(self):
+              return [permission() for permission in self.permission_map.get(self.action, [AllowAny])]
+      PY
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, url : String, line : Int32) { Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      list = at.call("GET", "/articles/", 1)
+      retrieve = at.call("GET", "/articles/{pk}/", 1)
+      create = at.call("POST", "/articles/", 1)
+      history = at.call("GET", "/articles/{pk}/history/", 9)
+      signup = at.call("POST", "/signup/", 13)
+      signup_list = at.call("GET", "/signup/", 13)
+      report_read = at.call("GET", "/report/", 21)
+      report_write = at.call("POST", "/report/", 21)
+      dynamic = at.call("GET", "/dynamic/", 29)
+
+      DjangoAuthTagger.new(noir_options).perform([list, retrieve, create, history, signup, signup_list, report_read, report_write, dynamic])
+
+      list.tags.should be_empty
+      retrieve.tags.should be_empty
+      create.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      # A GET on a detail route, but the action is `history`, not `retrieve`.
+      history.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      signup.tags.should be_empty
+      signup_list.tags.map(&.description).should eq(["Protected by DRF get_permissions"])
+      report_read.tags.should be_empty
+      report_write.tags.map(&.description).should eq(["Protected by DRF get_permissions"])
+      dynamic.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "judges composed DRF permissions with grouping, helper refusals and non-Permission bases" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_drf_composed_perms")

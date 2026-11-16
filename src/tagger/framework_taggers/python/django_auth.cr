@@ -270,7 +270,7 @@ class DjangoAuthTagger < FrameworkTagger
         end
 
         # DRF permission_classes (view, action, or settings default)
-        description = check_drf_permissions(lines, line, endpoint.method, class_ctx.lines, class_line)
+        description = check_drf_permissions(lines, line, endpoint.method, endpoint.url, class_ctx.lines, class_line)
         if description
           endpoint.add_tag(Tag.new("auth", description, "django_auth")) unless description.empty?
           return
@@ -955,13 +955,15 @@ class DjangoAuthTagger < FrameworkTagger
   # The tag description; "" when the view is DRF but its permissions leave
   # this method open (so nothing else may tag it); nil when DRF has nothing
   # to say about the endpoint.
-  private def check_drf_permissions(lines : Array(String), endpoint_line : Int32, method : String,
+  private def check_drf_permissions(lines : Array(String), endpoint_line : Int32, method : String, url : String,
                                     class_lines : Array(String) = lines, class_line : Int32 = endpoint_line) : String?
     decorators = decorator_text(lines, endpoint_line)
     # `@action(..., permission_classes=[...])` / `@permission_classes([...])`
     own = bracketed_after(decorators, /permission_classes\s*[=(]/)
     decorator_own = !own.nil?
     drf = decorators.includes?("@api_view")
+    action = drf_action(lines, endpoint_line, method, url)
+    get_permissions = nil
     lines = class_lines
     @drf_view_attrs = nil
     if klass = enclosing_class(class_lines, class_line)
@@ -976,6 +978,7 @@ class DjangoAuthTagger < FrameworkTagger
         class_idx, class_indent = current
         next unless seen.add?(class_idx)
         header = class_header(lines, class_idx)
+        get_permissions ||= method_body(lines, class_idx, "get_permissions")
         unless decorator_own
           drf ||= header.matches?(DRF_VIEW_BASE)
           own ||= class_permission_classes(lines, class_idx, class_indent)
@@ -987,6 +990,12 @@ class DjangoAuthTagger < FrameworkTagger
         queue.concat bases
       end
       @drf_view_attrs = {attrs, complete && queue.empty?}
+    end
+
+    # A `get_permissions` override decides in place of `permission_classes`
+    # for the actions it answers itself.
+    if get_permissions && (listed = listed_permissions(get_permissions, action, method))
+      return drf_permission_desc(listed, method, "DRF get_permissions") || ""
     end
 
     if own
@@ -1001,6 +1010,106 @@ class DjangoAuthTagger < FrameworkTagger
     else
       ""
     end
+  end
+
+  DRF_WRITE_ACTIONS = {"POST" => "create", "PUT" => "update", "PATCH" => "partial_update", "DELETE" => "destroy"}
+
+  # The ViewSet action serving the endpoint: the method it points at, past
+  # its decorators (`@action def publish`, `def list`), else the one a
+  # router maps its verb to: GET is `retrieve` on a detail route and `list`
+  # on the collection.
+  private def drf_action(lines : Array(String), endpoint_line : Int32, method : String, url : String) : String
+    depth = 0
+    lines[(endpoint_line - 1)..]?.try &.each do |raw|
+      code = raw.lstrip
+      if depth == 0
+        if name = code.match(/\A(?:async\s+)?def\s+(\w+)/).try(&.[1])
+          return name
+        end
+        break unless code.starts_with?('@')
+      end
+      depth += code.count("([{") - code.count(")]}")
+    end
+    verb = method.upcase
+    return url.rstrip('/').ends_with?('}') ? "retrieve" : "list" if verb == "GET" || verb == "HEAD"
+    DRF_WRITE_ACTIONS[verb]? || ""
+  end
+
+  PERMISSION_BRANCH  = /\A(if|elif|else)\b\s*(.*?)\s*:\s*(.*)\z/
+  PERMISSION_TEST    = /\Aself\.(action|request\.method)\s*(==|!=|in|not\s+in)\s*(.+)\z/
+  PERMISSION_ASSIGN  = /\A(?:self\.)?permission_classes\s*=\s*([\[(].*[\])])\z/
+  PERMISSION_INHERIT = /\Areturn\s+(?:super\([^)]*\)\.get_permissions\(\)|\[\s*\w+\(\)\s+for\s+\w+\s+in\s+(?:self\.)?permission_classes\s*\])\z/
+  PERMISSION_RETURN  = /\Areturn\s+([\[(].*[\])])\z/
+
+  # The permission classes the `get_permissions` body returns for a request
+  # of `action` / `method`, as the text of the list. Read: an `if` / `elif`
+  # / `else` chain whose tests compare `self.action` or
+  # `self.request.method` with string literals (or `SAFE_METHODS`), a
+  # returned list of instances, and a `permission_classes = [...]`
+  # assignment the return then instantiates. Nil when the body hands over
+  # to the view's `permission_classes` (`super().get_permissions()`) or does
+  # anything else: the caller then judges the view as if it had no override.
+  private def listed_permissions(body : String, action : String, method : String) : String?
+    statements = [] of {Int32, String}
+    depth = 0
+    body.each_line do |raw|
+      code = Analyzer::Python::Helper.strip_python_comment(raw).rstrip
+      next if code.blank?
+      if depth > 0
+        statements[-1] = {statements[-1][0], "#{statements[-1][1]} #{code.strip}"}
+      else
+        statements << {code.size - code.lstrip.size, code.strip}
+      end
+      depth += code.count("([{") - code.count(")]}")
+    end
+    level = statements.first?.try(&.[0]) || return
+
+    assigned = nil
+    chain_open = false
+    statements.each_with_index do |(indent, code), index|
+      next unless indent == level
+      next if code.starts_with?('"') || code.starts_with?('\'')
+      executed = [code]
+      if branch = code.match(PERMISSION_BRANCH)
+        taken = case branch[1]
+                when "if"   then permission_test(branch[2], action, method)
+                when "elif" then chain_open ? permission_test(branch[2], action, method) : false
+                else             chain_open
+                end
+        return if taken.nil?
+        chain_open = !taken if branch[1] == "if" || taken
+        next unless taken
+        executed = statements[(index + 1)..].take_while { |entry| entry[0] > level }.map(&.[1])
+        executed.unshift(branch[3]) unless branch[3].empty?
+      end
+      executed.each do |statement|
+        if statement.matches?(PERMISSION_INHERIT)
+          return assigned
+        elsif listed = (statement.match(PERMISSION_ASSIGN) || statement.match(PERMISSION_RETURN)).try(&.[1].gsub(/\(\s*\)/, ""))
+          # Only class names and DRF's `|` `&` `~` composition: not a
+          # comprehension or a conditional expression.
+          return if !listed.matches?(/\A[\w.\s,|&~()\[\]]*\z/) || listed.matches?(/\b(?:for|if|else|lambda)\b/)
+          return listed if statement.starts_with?("return")
+          assigned = listed
+        else
+          return
+        end
+      end
+    end
+    nil
+  end
+
+  # Whether a `get_permissions` branch test holds for the request; nil when
+  # it is not one comparison of `self.action` / `self.request.method`.
+  private def permission_test(condition : String, action : String, method : String) : Bool?
+    test = condition.match(PERMISSION_TEST) || return
+    return if test[3].matches?(/\s(?:and|or)\s/)
+    verb = test[1] != "action"
+    values = test[3].scan(/['"]([^'"]*)['"]/).map(&.[1])
+    values = SAFE_METHODS if values.empty? && verb && test[3].matches?(/\A(?:\w+\.)?SAFE_METHODS\z/)
+    return if values.empty?
+    holds = values.includes?(verb ? method.upcase : action)
+    test[2] == "==" || test[2] == "in" ? holds : !holds
   end
 
   private def drf_permission_desc(perms : String, method : String, source : String) : String?
