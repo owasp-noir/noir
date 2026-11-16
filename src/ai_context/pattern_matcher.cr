@@ -60,6 +60,26 @@ module NoirAIContext
       )
     end
 
+    def detect_body_line_pattern(pattern : PatternDefinition,
+                                 code_line : String,
+                                 context_snippet : String?,
+                                 path : String,
+                                 line : Int32) : AIContextEntry?
+      return if suppress_pattern_detection?(pattern.kind, "", context_snippet || code_line)
+      return unless evidence_name = snippet_match_text(code_line, pattern.source_patterns)
+
+      AIContextEntry.new(
+        pattern.kind,
+        evidence_name,
+        source: "callee",
+        description: pattern.description,
+        path: path,
+        line: line,
+        confidence: pattern.confidence - 12,
+        snippet: context_snippet || code_line
+      )
+    end
+
     def matches_any?(name : String, patterns : Array(Regex)) : Bool
       patterns.any? { |pattern| name.matches?(pattern) }
     end

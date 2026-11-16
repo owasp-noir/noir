@@ -35,7 +35,7 @@ module NoirAIContext
   # `os.ReadFile` / `os.Open`, PHP `readfile` / `scandir`, `res.sendFile` /
   # `send_file` / `send_from_directory`, Express `res.download`,
   # `http.ServeFile`, gin's `c.SaveUploadedFile`.
-  FILE_IO_CALL = /\b(?:fs\.\w+|os\.(?:open|openfile|create|stat|lstat|remove|removeall)\b|(?:read|write|append)_?file(?:_?sync)?|(?:read|open|scan|list)_?dir(?:_?sync)?|create(?:read|write)stream|send_?file|send_from_directory|(?:res|response|reply)\.download|serve_?file|saveuploadedfile)\b/i
+  FILE_IO_CALL = /\b(?:fs\.(?:promises\.)?(?:read|write|append|open|close|stat|lstat|fstat|readdir|mkdir|rmdir|rm|unlink|rename|copy|cp|access|exists|create|realpath|readlink|symlink|chmod|chown|truncate|mkdtemp)\w*|os\.(?:open|openfile|create|stat|lstat|remove|removeall)\b|(?:read|write|append)_?file(?:_?sync)?|(?:read|open|scan|list)_?dir(?:_?sync)?|create(?:read|write)stream|send_?file|send_from_directory|(?:res|response|reply)\.download|serve_?file|saveuploadedfile)\b/i
 
   # What `f` in `f.read()` / `f.Write(b)` must be bound to for the call to
   # be file I/O: a call that opens a file (`open(p)`, `io.open`,
@@ -149,7 +149,7 @@ module NoirAIContext
       # A view helper renders under its own name: Flask `render_template`,
       # Django `render_to_string` / `TemplateResponse`, ASP.NET `View(model)`,
       # Laravel `view('x')`.
-      name_patterns: [/\brender\b/i, /\Arender_(?:template|to_string|to_response)\z/, /\Atemplate\z/i, /\btemplate\.(?:Must|New|Parse\w*|HTML|Execute\w*|process|merge|evaluate|render_async|stream|generate)\b/, /\bTemplateResponse\z/, /\A(?:(?:Partial)?View|view)\z/, /\bhtml\b(?!\.(?:un)?escape)/i, /\brespond\b/i],
+      name_patterns: [/\brender\b/i, /\Arender_(?:template|to_string|to_response)\z/, /\Atemplate\z/i, /\btemplate\.(?:Must|New|Parse\w*|HTML|Execute\w*|process|merge|evaluate|render_async|stream|generate)\b/, /\bTemplateResponse\z/, /\A(?:(?:Partial)?View|view)\z/, /(?:\A|[.:>])html\z/i, /\brespond\b/i],
       # Not Ruby `obj.respond_to?(:split)`, a method-existence check.
       source_patterns: [/\brender(_template)?\s*\(/i, /\breturn\s+render\b/i, /\brespond_to\b(?!\?)/i]
     ),

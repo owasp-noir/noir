@@ -5,6 +5,7 @@ require "../utils/js_literal_scanner"
 require "./patterns"
 require "./pattern_matcher"
 require "./source_reader"
+require "./transitive_sinks"
 
 module NoirAIContext
   # Builds an AIContext for each endpoint by running every populate
@@ -85,6 +86,7 @@ module NoirAIContext
       add_graphql_resolver_signal(context, endpoint)
       inert_helpers = add_callee_entries(context, endpoint)
       add_source_scan_entries(context, endpoint, inert_helpers)
+      add_transitive_callee_sinks(context, endpoint)
       add_credential_from_source_signal(context, endpoint, anchor)
       add_missing_guard_signal(context, endpoint, anchor, route_snippet)
       add_combination_signals(context, endpoint, anchor, route_snippet)
@@ -1499,20 +1501,8 @@ module NoirAIContext
           snippet: callee_snippet
         ))
 
-        if type = repository_call_type(callee.name, callee.path)
-          context.push_sink(repository_sink(callee.name, type, callee.path, callee.line, callee_snippet))
-        elsif handle_sink = file_handle_sink(callee, callee_snippet)
-          context.push_sink(handle_sink)
-        elsif (raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")) &&
-              !in_memory_send_file?(raw_sink, callee) && !ktor_data_respond?(raw_sink, callee, callee_snippet)
-          if helper = inert_project_helper(raw_sink, callee, endpoint, sink_patterns)
-            inert_helpers << helper
-          else
-            sink = normalize_mobile_sink(endpoint, raw_sink)
-            context.push_sink(enrich_callee_sink(sink, callee, callee_snippet))
-          end
-        elsif select_sink = built_select_sink(callee, callee_snippet)
-          context.push_sink(select_sink)
+        callee_sink(callee, callee_snippet, endpoint, sink_patterns, inert_helpers).try do |entry|
+          context.push_sink(entry)
         end
         unless context.sinks.any? { |entry| entry.kind == "sql" }
           helper_repository_sink(callee).try { |entry| context.push_sink(entry) }
@@ -1527,6 +1517,30 @@ module NoirAIContext
         end
       end
       inert_helpers
+    end
+
+    private def callee_sink(callee : Callee,
+                            callee_snippet : String?,
+                            endpoint : Endpoint,
+                            sink_patterns : Array(PatternDefinition),
+                            inert_helpers : Array(String)? = nil) : AIContextEntry?
+      if type = repository_call_type(callee.name, callee.path)
+        return repository_sink(callee.name, type, callee.path, callee.line, callee_snippet)
+      elsif handle_sink = file_handle_sink(callee, callee_snippet)
+        return handle_sink
+      elsif (raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")) &&
+            !in_memory_send_file?(raw_sink, callee) && !ktor_data_respond?(raw_sink, callee, callee_snippet)
+        if helper = inert_project_helper(raw_sink, callee, endpoint, sink_patterns)
+          inert_helpers << helper if inert_helpers
+          return
+        else
+          sink = normalize_mobile_sink(endpoint, raw_sink)
+          return enrich_callee_sink(sink, callee, callee_snippet)
+        end
+      elsif select_sink = built_select_sink(callee, callee_snippet)
+        return select_sink
+      end
+      nil
     end
 
     # A handler that calls `validateSession(req, res)` or
