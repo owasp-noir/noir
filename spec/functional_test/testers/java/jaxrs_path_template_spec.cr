@@ -2,6 +2,7 @@ require "../../func_spec.cr"
 
 # #3278: a method-level `@Path("/")` (or any trailing `/`) adds no segment.
 # #3298: `{client-uuid}` / `{role.name}` are real path params.
+# `{path: .+}` takes the rest of the path; any other regex stays one segment.
 expected_endpoints = [
   Endpoint.new("/items", "GET"),
   Endpoint.new("/items", "POST"),
@@ -14,6 +15,8 @@ expected_endpoints = [
   Endpoint.new("/clients/{clientId}/scopes", "GET", [
     Param.new("clientId", "", "path"),
   ]),
+  Endpoint.new("/files/{*path}", "GET", [Param.new("path", "", "path")]),
+  Endpoint.new("/files/by-id/{id}", "GET", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/java/jaxrs_path_template/", {

@@ -683,7 +683,7 @@ module Noir
         if name = function_name(node, source)
           file.functions << RouteFunction.new(name, start_byte(node), end_byte(node))
         end
-        if body = function_body_statements(node)
+        if body = function_body(node)
           walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resources, resource_query_params, file)
         end
         return
@@ -1172,12 +1172,11 @@ module Noir
       last_type == "Route" || last_type == "Routing"
     end
 
-    private def function_body_statements(func : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+    # The whole body, so an expression body (`fun Route.orders() = route("/orders") { }`)
+    # is walked like a block one.
+    private def function_body(func : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       Noir::TreeSitter.each_named_child(func) do |child|
-        next unless Noir::TreeSitter.node_type(child) == "function_body"
-        Noir::TreeSitter.each_named_child(child) do |sub|
-          return sub if Noir::TreeSitter.node_type(sub) == "statements"
-        end
+        return child if Noir::TreeSitter.node_type(child) == "function_body"
       end
       nil
     end

@@ -60,6 +60,8 @@ expected_endpoints = [
   Endpoint.new("/mn/status", "GET"),
   # SharedOrderController.java — @Controller from another file's constant.
   Endpoint.new("/shared-orders/{id}", "GET", [Param.new("id", "", "path")]),
+  # The reserved expansion `{+path}` may hold `/`: the rest of the path.
+  Endpoint.new("/shared-orders/{id}/files/{*path}", "GET", [Param.new("id", "", "path"), Param.new("path", "", "path")]),
   books_ws_endpoint,
   Endpoint.new("/books", "POST", [
     Param.new("title", "", "json"),

@@ -92,7 +92,7 @@ module Noir
         controller_paths.each do |class_path|
           method_paths.each do |method_path|
             full_path = Noir::URLPath.join_trimmed(class_path, method_path)
-            normalized_path = TreeSitterMicronautExtractor.strip_uri_template_query(full_path)
+            normalized_path = TreeSitterMicronautExtractor.uri_template_route_path(full_path)
             query_vars = TreeSitterMicronautExtractor.uri_template_query_vars(full_path)
             path_vars = TreeSitterMicronautExtractor.uri_template_path_vars(normalized_path)
             params = micronaut_params(member, source, consumes, dto_index, constants, query_vars, path_vars)
