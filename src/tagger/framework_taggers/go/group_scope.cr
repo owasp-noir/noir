@@ -53,12 +53,15 @@ module GoRouteGroupScope
   UNKNOWN_SCOPE = {kind: ScopeKind::Unknown, prefix: "/"}
 
   # `name := parent.Group("/seg")` — assignment group with a literal path.
-  ASSIGN_GROUP = /(\w+)\s*:?=\s*(\w+)\.(?:Group|Route|Party|PartyFunc)\s*\(\s*"([^"]*)"/
+  # A parent kept in a struct field (`users := s.api.Group("/users")`) is
+  # named by its last segment, as `s.api = r.Group(...)` and `s.api.Use(...)`
+  # are below.
+  ASSIGN_GROUP = /(\w+)\s*:?=\s*(?:\w+\.)*(\w+)\.(?:Group|Route|Party|PartyFunc)\s*\(\s*"([^"]*)"/
 
   # The same assignment shape with *any* first argument, literal or not. Used
   # to tell "this variable is a route group whose prefix we can't read" from
   # "this variable is not a route group at all".
-  ASSIGN_GROUP_ANY = /(\w+)\s*:?=\s*(\w+)\.(?:Group|Route|Party|PartyFunc)\s*\(/
+  ASSIGN_GROUP_ANY = /(\w+)\s*:?=\s*(?:\w+\.)*(\w+)\.(?:Group|Route|Party|PartyFunc)\s*\(/
 
   # `parent.Group("/seg", func(...)` / `.Route` / `.Party` closure group.
   CLOSURE_GROUP     = /(\w+)\.(?:Group|Route|Party|PartyFunc|Mount)\s*\(\s*"([^"]*)"\s*,\s*func/
@@ -71,7 +74,7 @@ module GoRouteGroupScope
   # constructor instead of a later `.Use`; gin, Iris (`Party`) and Fiber all
   # take it. The group is already in `Scopes#groups` by the time the line is
   # yielded, so the scope is a lookup.
-  GROUP_WITH_MIDDLEWARE = /\A(\w+)\s*:?=\s*\w+\.(?:Group|Party)\s*\(\s*"[^"]*"\s*,/
+  GROUP_WITH_MIDDLEWARE = /\A(\w+)\s*:?=\s*(?:\w+\.)+(?:Group|Party)\s*\(\s*"[^"]*"\s*,/
 
   # `r.Group("/api").Use(auth)` — the group is created and the middleware
   # registered in one chained expression, so it is neither an assignment nor a

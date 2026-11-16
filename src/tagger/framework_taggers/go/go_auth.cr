@@ -202,10 +202,11 @@ class GoAuthTagger < FrameworkTagger
 
   # The group variable a registration line credits: `authV1` for both
   # `authV1.Use(auth)` and `authV1 := apiV1.Group("/", auth)`.
-  REGISTRATION_RECEIVER = /\A(\w+)\s*(?::?=\s*\w+\s*\.\s*(?:Group|Party)|\.\s*(?:Use|Pre))\s*\(/
+  REGISTRATION_RECEIVER = /\A(\w+)\s*(?::?=\s*(?:\w+\s*\.\s*)+(?:Group|Party)|\.\s*(?:Use|Pre))\s*\(/
 
-  # The variable a route line registers on: `authV1` for `authV1.POST(...)`.
-  ROUTE_RECEIVER = /\A\s*(\w+)\s*\.\s*\w+\s*\(/
+  # The variable a route line registers on: `authV1` for `authV1.POST(...)`,
+  # `api` for a field's `s.api.GET(...)`.
+  ROUTE_RECEIVER = /\A\s*(?:\w+\s*\.\s*)*(\w+)\s*\.\s*\w+\s*\(/
 
   # The routes a group's middleware reaches: those registered on `receiver`
   # (or a group derived from it, through `parents`) on `rows` of `file`.
