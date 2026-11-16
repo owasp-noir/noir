@@ -2,6 +2,55 @@ require "spec"
 require "../../../src/miniparsers/adonisjs_extractor_ts"
 
 describe Noir::TreeSitterAdonisJsExtractor do
+  it "indexes multiline and same-line controller methods without reading examples or calls" do
+    source = <<-TS
+      const example = `
+      fake() { return request.input('fake') }
+      `
+      export default class NotesController {
+        async store<T>(
+          { request }: HttpContext
+        ): Promise<{ id: number }> {
+          search(request)
+          return { id: request.input('id') }
+        }
+        search() { return '검색 }' } compact() { return request.input('compact') }
+      }
+      TS
+
+    methods = Noir::TreeSitterAdonisJsExtractor.method_bodies(source, "notes_controller.ts")
+    methods.keys.sort!.should eq(%w[compact search store])
+    methods["store"].should contain("return { id: request.input('id') }")
+    methods["search"].should eq("{ return '검색 }' }")
+    methods["compact"].should eq("{ return request.input('compact') }")
+  end
+
+  it "does not index bodyless TypeScript overloads as actions" do
+    source = <<-TS
+      class NotesController {
+        show(id: string): string;
+        show(id: number): string;
+        show(id: string | number): string { return String(id) }
+      }
+      TS
+
+    Noir::TreeSitterAdonisJsExtractor.method_bodies(source, "notes.ts").should eq({
+      "show" => "{ return String(id) }",
+    })
+  end
+
+  it "does not let nested object methods shadow controller actions" do
+    source = <<-TS
+      class NotesController {
+        index() { const helper = { show() { return request.input('fake') } } }
+        show() { return request.input('real') }
+      }
+      TS
+
+    methods = Noir::TreeSitterAdonisJsExtractor.method_bodies(source, "notes.ts")
+    methods["show"].should eq("{ return request.input('real') }")
+  end
+
   it "extracts top-level verb routes" do
     source = <<-TS
       Route.get('/', 'HomeController.index')
