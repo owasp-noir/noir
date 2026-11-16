@@ -107,9 +107,9 @@ async def get_body(request: Request):
 
 @api.get("/raw_request")
 async def raw_request(request: Request):
-    q = request.query_params.get("q")
-    page = request.query_params["page"]
-    token = request.headers.get("x-token")
+    """Example: request.headers.get('docstring-header')"""; q = request.query_params.get("q")
+    page = request.query_params["page"]; example = 'request.query_params.get("fake-query")'
+    token = request.headers.get("x-token")  # request.cookies['comment-cookie']
     session = request.cookies.get("session")
     return {"q": q, "page": page, "token": token, "session": session}
 

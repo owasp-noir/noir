@@ -59,12 +59,14 @@ module Noir
     # decorations + blueprints (and to multiple framework analyzers).
     @@decoration_memo = Hash(UInt64, Array(Decoration)).new
     @@blueprint_memo = Hash(UInt64, Array(BlueprintDecl)).new
+    @@request_param_memo = Hash(UInt64, Array(Tuple(String, String))).new
     @@memo_mutex = Mutex.new
 
     ExtractionResultCache.register_clearer do
       @@memo_mutex.synchronize do
         @@decoration_memo.clear
         @@blueprint_memo.clear
+        @@request_param_memo.clear
       end
     end
 
@@ -230,6 +232,101 @@ module Noir
                  ""
                end
       "#{routers}|#{extras}"
+    end
+
+    REQUEST_PARAM_ATTRIBUTES = {"query_params" => "query", "headers" => "header", "cookies" => "cookie"}
+
+    # Request/dict reads are AST expressions: examples in strings and
+    # comments must not become parameters. Cache each handler's result.
+    def extract_request_params(source : String, name : String, *, dictionary : Bool = false) : Array(Tuple(String, String))
+      key = ExtractionResultCache.key(source, "request_params:#{dictionary}:#{name}")
+      ExtractionResultCache.fetch(@@request_param_memo, key, @@memo_mutex) do
+        json = [] of Tuple(String, String)
+        attributes = [] of Tuple(String, String)
+        dicts = Set(String).new
+        dicts << name if dictionary
+        Noir::TreeSitter.parse_python(source) do |root|
+          unless dictionary
+            Noir::TreeSitter.walk(root) do |node|
+              next unless Noir::TreeSitter.node_type(node) == "assignment"
+              left = Noir::TreeSitter.field(node, "left") || next
+              right = Noir::TreeSitter.field(node, "right") || next
+              next unless Noir::TreeSitter.node_type(left) == "identifier"
+              right = Noir::TreeSitter.first_named_child(right) || next if Noir::TreeSitter.node_type(right) == "await"
+              next unless Noir::TreeSitter.node_type(right) == "call"
+              function = Noir::TreeSitter.field(right, "function") || next
+              next unless Noir::TreeSitter.node_type(function) == "attribute"
+              receiver = Noir::TreeSitter.field(function, "object") || next
+              method = Noir::TreeSitter.field(function, "attribute") || next
+              if Noir::TreeSitter.node_text(receiver, source) == name && Noir::TreeSitter.node_text(method, source) == "json"
+                dicts << Noir::TreeSitter.node_text(left, source)
+              end
+            end
+          end
+
+          Noir::TreeSitter.walk(root) do |node|
+            method = ""
+            case Noir::TreeSitter.node_type(node)
+            when "subscript"
+              receiver = Noir::TreeSitter.field(node, "value")
+              argument = Noir::TreeSitter.field(node, "subscript")
+            when "call"
+              function = Noir::TreeSitter.field(node, "function") || next
+              next unless Noir::TreeSitter.node_type(function) == "attribute"
+              attr = Noir::TreeSitter.field(function, "attribute") || next
+              method = Noir::TreeSitter.node_text(attr, source)
+              next unless method.in?("get", "getlist")
+              receiver = Noir::TreeSitter.field(function, "object")
+              args = Noir::TreeSitter.field(node, "arguments") || next
+              argument = Noir::TreeSitter.first_named_arg(args)
+            else
+              next
+            end
+            next unless receiver && argument
+            type = request_param_type(receiver, source, name, dicts, dictionary) || next
+            param = request_param_key(argument, source) || next
+            next if type == "json" && method == "getlist"
+            (type == "json" ? json : attributes) << {param, type}
+          end
+        end
+        json.concat(attributes).uniq!
+      end
+    end
+
+    private def request_param_type(receiver : LibTreeSitter::TSNode, source : String, name : String,
+                                   dicts : Set(String), dictionary : Bool) : String?
+      receiver = Noir::TreeSitter.unwrap_expression(receiver)
+      if Noir::TreeSitter.node_type(receiver) == "identifier"
+        return "json" if dicts.includes?(Noir::TreeSitter.node_text(receiver, source))
+      elsif !dictionary && Noir::TreeSitter.node_type(receiver) == "attribute"
+        object = Noir::TreeSitter.field(receiver, "object") || return
+        attr = Noir::TreeSitter.field(receiver, "attribute") || return
+        if Noir::TreeSitter.node_text(object, source) == name
+          return REQUEST_PARAM_ATTRIBUTES[Noir::TreeSitter.node_text(attr, source)]?
+        end
+      end
+      nil
+    end
+
+    private def request_param_key(node : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "string"
+        visited = false
+        Noir::TreeSitter.each_named_child(node) do |child|
+          visited = true
+          return if Noir::TreeSitter.node_type(child) == "interpolation"
+        end
+        return unless visited
+        decode_string(node, source)
+      when "concatenated_string"
+        parts = [] of String
+        Noir::TreeSitter.each_named_child(node) { |child| parts << (request_param_key(child, source) || return) }
+        parts.join unless parts.empty?
+      when "parenthesized_expression"
+        Noir::TreeSitter.first_named_child(node).try do |child|
+          Noir::TreeSitter.descend { request_param_key(child, source) }
+        end
+      end
     end
 
     # A `<receiver>.<attribute>(...)` call: positional arguments (string
