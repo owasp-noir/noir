@@ -271,7 +271,7 @@ describe Noir::CLI::Inspect do
       matches.map(&.matched_by).should eq(["pattern", "wildcard"])
     end
 
-    it "treats FastRoute {name:.*} / {name:.+} as catch-alls and ranks constrained segments first" do
+    it "treats FastRoute {name:.*} / {name:.+} as catch-all routes and ranks constrained segments first" do
       routes = [
         endpoint("OPTIONS", "/{routes:.*}"),
         endpoint("OPTIONS", "/{routes:.+}"),

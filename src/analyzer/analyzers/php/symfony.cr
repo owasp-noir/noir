@@ -10,7 +10,7 @@ module Analyzer::Php
     include SymfonyRouteAttributes
 
     # A class declared in a controller file: its name, its `#[Route]` prefixes,
-    # its class-level route attribute (if any, used when it is invokable),
+    # its class-level route attribute (if any, used when it is invocable),
     # the guard its class-level security attributes impose, and its body.
     private record ClassInfo,
       name : String,
@@ -219,7 +219,7 @@ module Analyzer::Php
         emit_attribute_endpoints(endpoints, path, content, attr, route_paths, klass, action, import_prefixes, include_callee)
       end
 
-      # Class-level `#[Route]` on an invokable controller (`__invoke`): only
+      # Class-level `#[Route]` on an invocable controller (`__invoke`): only
       # registers a route when no method in the class carries its own route.
       classes.each do |klass|
         next if routed_classes.includes?(klass.body_start)

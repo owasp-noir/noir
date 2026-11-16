@@ -7,7 +7,7 @@ use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Attribute\Route;
 
 // A class route is only a prefix once a method carries a route of its own,
-// invokable or not.
+// invocable or not.
 #[Route('/site')]
 class PageController extends AbstractController
 {

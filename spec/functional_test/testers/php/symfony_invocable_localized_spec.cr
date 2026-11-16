@@ -15,13 +15,13 @@ expected_endpoints = [
   Endpoint.new("/site/page/{page}", "GET", [Param.new("page", "", "path")]),
 ]
 
-tester = FunctionalTester.new("fixtures/php/symfony_invokable_localized/", {
+tester = FunctionalTester.new("fixtures/php/symfony_invocable_localized/", {
   :techs     => 2,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints)
 tester.perform_tests
 
-describe "Symfony invokable and localized routes", tags: "functional" do
+describe "Symfony invocable and localized routes", tags: "functional" do
   it "names __invoke as the handler and keeps the class guard" do
     login = tester.app.endpoints.find! { |ep| ep.url == "/api/login" }
     login.handler.not_nil!.name.should eq("LoginController::__invoke")
