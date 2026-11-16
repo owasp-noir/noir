@@ -3,7 +3,7 @@ require "../../../models/detector"
 module Detector::Javascript
   class Elysia < Detector
     detector_for "js_elysia",
-      extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
+      extensions: %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx],
       basenames: %w[package.json]
 
     PACKAGE_MARKER = /"elysia"/
@@ -11,6 +11,7 @@ module Detector::Javascript
       "from 'elysia'", "from \"elysia\"",
       "require('elysia')", "require(\"elysia\")",
     )
+    SOURCE_EXTENSIONS = %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx]
 
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
@@ -23,10 +24,7 @@ module Detector::Javascript
       # Source-side markers — Elysia handlers always import from
       # `elysia`. Bun's TS-first toolchain means `.ts` is the
       # dominant extension; `.js` / `.mjs` are also valid.
-      return false unless filename.ends_with?(".ts") ||
-                          filename.ends_with?(".tsx") ||
-                          filename.ends_with?(".js") ||
-                          filename.ends_with?(".mjs")
+      return false unless SOURCE_EXTENSIONS.includes?(File.extname(filename))
 
       # Necessary condition for every marker below, which all spell `elysia`
       # literally; a memchr scan is far cheaper than the alternation regex.

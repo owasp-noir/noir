@@ -1,12 +1,11 @@
-require "../../../models/analyzer"
+require "../../engines/javascript_engine"
 require "../../../miniparsers/elysia_extractor_ts"
 require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
-  class Elysia < Analyzer
+  class Elysia < JavascriptEngine
     analyzer_for "js_elysia"
 
-    JS_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts"]
     # Precompiled once — a single PCRE2-JIT scan replaces four naive
     # String#includes? substring scans over the whole file content.
     # Regex.union auto-escapes each literal (including the parens in
@@ -15,11 +14,8 @@ module Analyzer::Javascript
     ELYSIA_MARKERS_RE = Regex.union("from 'elysia'", "from \"elysia\"", "require('elysia')", "require(\"elysia\")")
 
     def analyze
-      file_list = all_files()
-      file_list.each do |path|
-        next unless JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
-        next unless File.exists?(path)
-
+      include_callee = callees_needed?
+      per_file = ordered_scan_files(get_files_by_extensions(DEFAULT_EXTENSIONS)) do |path|
         content = read_file_content(path)
         next unless content.matches?(ELYSIA_MARKERS_RE)
         # `new Elysia().get(...).handle(new Request(...))` in a test is
@@ -27,13 +23,12 @@ module Analyzer::Javascript
         # server that also imports react or axios.
         next if Noir::JSRouteExtractor.test_file?(path, content)
 
-        include_callee = callees_needed?
-        Noir::TreeSitterElysiaExtractor.extract_routes(content, include_callee, path).each do |route|
-          @result << build_endpoint(route, path, include_callee)
+        Noir::TreeSitterElysiaExtractor.extract_routes(content, include_callee, path).map do |route|
+          build_endpoint(route, path, include_callee)
         end
       end
 
-      Fiber.yield
+      per_file.each { |endpoints| @result.concat(endpoints) }
       @result
     end
 
