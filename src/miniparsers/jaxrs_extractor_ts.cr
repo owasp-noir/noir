@@ -121,11 +121,16 @@ module Noir
       # The first handler parameter annotated `@Auth`, nil when none.
       getter auth_param : AuthParam?
 
-      def initialize(@verb, @path, @class_name, @method_name, @line,
+      def initialize(@verb, path : String, @class_name, @method_name, @line,
                      @parameter_format, @params, @callees, @file_path = nil, @protocol = "http",
                      @signature_line = nil, @auth_param = nil)
+        @path = path.gsub(REST_OF_PATH_VARIABLE) { "{*#{$1}}" }
       end
     end
+
+    # `{name: .+}` / `{name:.*}`: a JAX-RS template regex is not confined to
+    # one segment, so this variable takes the rest of the path.
+    REST_OF_PATH_VARIABLE = /\{\s*(\w[\w.-]*)\s*:\s*\.[*+]\s*\}/
 
     # A handler parameter annotated `@Auth`, as written: the annotation's
     # name (simple or qualified) and the parameter's declared type, plus the
