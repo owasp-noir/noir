@@ -59,6 +59,10 @@ class NextjsAuthTagger < FrameworkTagger
   ELSE_BRANCH = /\A\}?\s*else\b/
   # `export const GET = withSession(async ...)`. The wrapper is the guard.
   VERB_WRAPPER = /\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*=\s*([A-Za-z_$][\w$]*)\s*\(/
+  # The pages router serves the default export: `export default
+  # withAuth(handler)` wraps the handler declared above it.
+  DEFAULT_EXPORT_WRAPPER = /\A\s*export\s+default\s+([A-Za-z_$][\w$]*)\s*\(/
+  PAGES_API_PATH         = %r{(?:\A|/)pages/api/}
   # `throw new DubApiError({ code: "unauthorized" })`: the word lives in a
   # string, so this is matched on text that still has strings. The `{` sits
   # between `throw` and the word, and the object may wrap a line or two.
@@ -140,6 +144,9 @@ class NextjsAuthTagger < FrameworkTagger
     end
 
     wrapper = code_only(lines[line - 1]).match(VERB_WRAPPER).try(&.[1])
+    if wrapper.nil? && path.matches?(PAGES_API_PATH)
+      wrapper = lines.each.compact_map { |text| code_only(text).match(DEFAULT_EXPORT_WRAPPER).try(&.[1]) }.first?
+    end
     if wrapper && (kind = wrapper_refusal(path, wrapper))
       detail = kind == :throw ? "throws unauthorized" : "replies 401"
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js #{wrapper} wrapper (#{detail})", "nextjs_auth"))

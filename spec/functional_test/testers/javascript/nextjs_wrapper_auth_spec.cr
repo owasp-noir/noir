@@ -24,5 +24,9 @@ describe "Next.js auth wrapper higher-order functions", tags: "functional" do
     guards_of.call("/api/workspace").join(" ").should contain("withWorkspace")
     guards_of.call("/api/control").join(" ").should contain("401")
     guards_of.call("/api/open").should be_empty
+    # Pages router: `export default withAuth(handler)` wraps the handler
+    # declared above it.
+    guards_of.call("/api/orders").join(" ").should contain("withAuth")
+    guards_of.call("/api/status").should be_empty
   end
 end
