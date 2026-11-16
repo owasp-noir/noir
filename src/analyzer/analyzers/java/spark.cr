@@ -11,7 +11,6 @@ module Analyzer::Java
   class Spark < Analyzer
     analyzer_for "java_spark"
 
-    JAVA_EXTENSION = "java"
     # `spark.Spark` must not be the tail of a longer package such as
     # `org.apache.spark.SparkConf` (Apache Spark, the data engine).
     SPARK_MARKERS = /(?<![\w.])spark\.Spark\b|import static spark\.|import spark\./
@@ -45,30 +44,28 @@ module Analyzer::Java
       # `redirect` receiver so they survive the route/collection-call
       # disambiguation in the shared extractor.
       router_receivers: Set{"redirect"},
+      static_methods: {
+        "location"                   => "staticFiles",
+        "externalLocation"           => "staticFiles",
+        "staticFileLocation"         => nil,
+        "externalStaticFileLocation" => nil,
+      },
     )
 
     def analyze
       include_callee = callees_needed?
-      file_list = all_files()
-      file_list.each do |path|
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+      per_file = ordered_scan_files(get_files_by_extension(".java")) do |path|
         next if JavaEngine.test_path?(base_relative_path(path))
-        next unless File.exists?(path)
 
         content = read_file_content(path)
         next unless content.matches?(SPARK_MARKERS)
 
-        Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(content, CONFIG, include_callees: include_callee).each do |route|
-          @result << build_endpoint(route, path)
-        end
-
-        collect_static_file_endpoints(content).each do |entry|
-          endpoint_path, line = entry
-          @result << Endpoint.new(endpoint_path, "GET", Details.new(PathInfo.new(path, line)))
+        Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(content, CONFIG, include_callees: include_callee).map do |route|
+          build_endpoint(route, path)
         end
       end
 
-      Fiber.yield
+      per_file.each { |endpoints| @result.concat(endpoints) }
       @result
     end
 
@@ -94,38 +91,6 @@ module Analyzer::Java
       end
 
       endpoint
-    end
-
-    private def collect_static_file_endpoints(content : String) : Array(Tuple(String, Int32))
-      endpoints = [] of Tuple(String, Int32)
-      scan_static_file_call(content, "staticFiles.location", endpoints)
-      scan_static_file_call(content, "staticFiles.externalLocation", endpoints)
-      scan_static_file_call(content, "staticFileLocation", endpoints)
-      scan_static_file_call(content, "externalStaticFileLocation", endpoints)
-      endpoints.uniq
-    end
-
-    private def scan_static_file_call(content : String,
-                                      method_name : String,
-                                      endpoints : Array(Tuple(String, Int32)))
-      offset = 0
-      while marker = content.index(method_name, offset)
-        offset = marker + method_name.size
-        next unless static_file_call_name?(content, marker, method_name)
-
-        endpoints << {"/**", line_number_for_index(content, marker)}
-      end
-    end
-
-    private def static_file_call_name?(content : String, marker : Int32, method_name : String) : Bool
-      before = marker.zero? ? '\0' : content[marker - 1]
-      return false if before.ascii_alphanumeric? || before == '_'
-
-      after_idx = marker + method_name.size
-      while after_idx < content.size && content[after_idx].ascii_whitespace?
-        after_idx += 1
-      end
-      after_idx < content.size && content[after_idx] == '('
     end
   end
 end
