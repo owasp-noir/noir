@@ -501,19 +501,36 @@ module Analyzer::Go
     # The `.Mount(` call on `lines[index]` with its wrapped arguments joined
     # on (`r.Mount("/users",` + `usersResource{}.Routes())`), so the target
     # on a continuation line still resolves.
+    # A method called on a variable bound above in the function (`h :=
+    # tags.NewHandler(db)` then `r.Mount("/tags", h.Routes())`) is read on
+    # that binding.
     private def mount_call(lines : Array(String), index : Int32) : String
       line = lines[index]
       depth = line.count('(') - line.count(')')
-      return line if depth <= 0
-      String.build do |io|
-        io << line
-        (index + 1).upto(Math.min(index + 4, lines.size - 1)) do |j|
-          io << ' ' << lines[j].strip
-          depth += lines[j].count('(') - lines[j].count(')')
-          break if depth <= 0
-        end
+      call = if depth <= 0
+               line
+             else
+               String.build do |io|
+                 io << line
+                 (index + 1).upto(Math.min(index + 4, lines.size - 1)) do |j|
+                   io << ' ' << lines[j].strip
+                   depth += lines[j].count('(') - lines[j].count(')')
+                   break if depth <= 0
+                 end
+               end
+             end
+      target = call.match(MOUNT_VARIABLE_TARGET_RE) || return call
+      binding = /^\s*#{target[2]}\s*:=\s*(.+?)\s*$/
+      (index - 1).downto(0) do |row|
+        break if lines[row].starts_with?("func ")
+        bound = lines[row].match(binding) || next
+        value = bound[1].starts_with?('&') ? "(#{bound[1]})" : bound[1]
+        return "#{target[1]}#{value}#{target[3]}#{target.post_match}"
       end
+      call
     end
+
+    MOUNT_VARIABLE_TARGET_RE = /^(.*\.Mount\(\s*[^,]+,\s*)(\w+)(\s*\.\s*\w+\s*\()/
 
     alias MountTarget = NamedTuple(prefix: String, func_name: String, recv_type: String?, pkg_alias: String?, then_method: String?)
 
