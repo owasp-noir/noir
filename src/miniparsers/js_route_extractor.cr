@@ -75,7 +75,8 @@ module Noir
                             route_callees : Hash(String, Array(JSCalleeExtractor::Entry))? = nil,
                             unwrap_guards : Bool = false,
                             resolve_mount_prefixes : Bool = false,
-                            local_mounts : Hash(String, Array(String))? = nil) : Array(Endpoint)
+                            local_mounts : Hash(String, Array(String))? = nil,
+                            on_routes : Bool = false) : Array(Endpoint)
       return [] of Endpoint unless File.exists?(file_path)
 
       begin
@@ -88,7 +89,7 @@ module Noir
         # of these — UI components, fixtures, helpers, third-party JS
         # bundles — so a large frontend tree doesn't pay parser cost
         # for files that can't host an endpoint.
-        return [] of Endpoint unless route_call_candidate?(content)
+        return [] of Endpoint unless route_call_candidate?(content) || (on_routes && content.matches?(ON_ROUTE_CALL_PATTERN, options: Noir::TextFile::MATCH_OPTIONS))
         # Skip minified/bundled assets (webpack/rollup/esbuild output,
         # `*.min.js`, generated single-line blobs). They never define
         # hand-written routes, and tokenizing a multi-megabyte bundle is
@@ -122,7 +123,7 @@ module Noir
         constants = content.includes?("${") || content.includes?('+') ? file_string_constants(file_path, content) : nil
         mount_constants = resolve_mount_prefixes ? (constants || file_string_constants(file_path, content)) : nil
         mount_middleware = resolve_mount_prefixes ? ->(expression : String) { mount_middleware?(expression, content, file_path) } : nil
-        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants, mount_constants: mount_constants, resolve_mount_prefixes: resolve_mount_prefixes, mount_middleware: mount_middleware)
+        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants, mount_constants: mount_constants, resolve_mount_prefixes: resolve_mount_prefixes, mount_middleware: mount_middleware, on_routes: on_routes)
         route_patterns = parser.parse_routes
         # Helpers run after extraction and need the same relative local mounts.
         if resolve_mount_prefixes
@@ -476,6 +477,9 @@ module Noir
     # `.route(`, plus Express-style mounts `.use(` which feed into the
     # cross-file router prefix table). Matching is millions of times
     # cheaper than tokenizing the file.
+    # Hono's `app.on('GET', '/path', handler)`, read only for `on_routes`:
+    # `.on(` is every event listener in a JavaScript tree.
+    ON_ROUTE_CALL_PATTERN       = /\.(?:\s|\n|\r)*on(?:\s|\n|\r)*\(/
     BRACKET_ROUTE_CALL_PATTERN  = /\[\s*['"](?:get|post|put|delete|del|patch|options|head|all|query)['"]\s*\]\s*\(/i
     FLEXIBLE_ROUTE_CALL_PATTERN = /\.(?:\s|\n|\r)*(?:get|post|put|delete|del|patch|options|head|all|query|route|register|use)(?:\s|\n|\r)*[(<]/i
 
@@ -1266,8 +1270,37 @@ module Noir
       end
       arg, pos = spans[idx]
       leading = arg.size - arg.lstrip.size
-      {arg.strip, offsets.line(open_paren) + args_slice[0, pos + leading].count('\n'), idx, idx < spans.size - 1}
+      step = arg.strip
+      if property = options_handler(step)
+        step = property[0]
+        leading += property[1]
+      end
+      {step, offsets.line(open_paren) + args_slice[0, pos + leading].count('\n'), idx, idx < spans.size - 1}
     rescue
+      nil
+    end
+
+    OPTIONS_HANDLER_RE        = /\Ahandler\s*:\s*/
+    OPTIONS_HANDLER_METHOD_RE = /\A(async\s+)?handler\s*(?=\()/
+
+    # The handler an options object declares, as {source, char offset in
+    # `object`}: Fastify's full declaration `fastify.route({ method, url,
+    # handler: users.show })` and `fastify.get(url, { schema, handler })`.
+    # A method (`async handler(request, reply) {…}`) reads as the function
+    # expression it is.
+    def self.options_handler(object : String) : Tuple(String, Int32)?
+      return unless object.starts_with?('{')
+      close = JSLiteralScanner.find_matching_brace(object, 0) || return
+      Noir::TopLevelSplit.split_spans(object, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, 1, close).each do |entry, at|
+        entry = entry.strip
+        if entry == "handler"
+          return {entry, at}
+        elsif value = entry.match(OPTIONS_HANDLER_RE)
+          return {entry[value.end(0)..], at + value.end(0)}
+        elsif method = entry.match(OPTIONS_HANDLER_METHOD_RE)
+          return {"#{method[1]?}function #{entry[method.end(0)..]}", at}
+        end
+      end
       nil
     end
 
@@ -1669,10 +1702,19 @@ module Noir
       stop = Math.min(content.bytesize, from + 400)
       pos = from
       type_depth = 0 # braces of a return type (`Promise<{ a: A; b: B }>`)
+      paren_depth = 0
       while pos < stop
         case bytes[pos]
         when ';'.ord
           break if type_depth == 0
+        when '('.ord
+          paren_depth += 1
+        when ')'.ord
+          # The call a concise arrow was an argument of closes its line
+          # (`router.get('/', (req, res) => res.json(x))`): what follows is
+          # the next statement, semicolon or not.
+          paren_depth -= 1
+          break if paren_depth < 0 && content.byte_slice(pos + 1, (content.byte_index('\n', pos) || content.bytesize) - pos - 1).delete(')').blank?
         when '}'.ord
           type_depth -= 1
           break if type_depth < 0
@@ -2025,6 +2067,10 @@ module Noir
         # JSRoutePattern#start_pos), and its arguments carry no path.
         idx = start_byte
         found_declaration = "direct"
+      elsif start_byte && offsets.window(start_byte, 128).matches?(ON_ROUTE_AT_START_RE)
+        # Hono's `app.on('GET', '/x', handler)` names its verb in an argument.
+        idx = start_byte
+        found_declaration = "direct"
       elsif start_byte
         search_window = offsets.window(start_byte, 500)
         method_alternation = method_variations.map { |method| Regex.escape(method) }.join("|")
@@ -2157,6 +2203,8 @@ module Noir
       # (`setReturnToFromReferer(req)` reads the referer header).
       request_callee_reads(handler_body, content, file_path, -1, endpoint) if file_path
     end
+
+    ON_ROUTE_AT_START_RE = /\A[A-Za-z_$][\w$]*\s*\.\s*on\s*\(/
 
     # True when `start` is a chained `.verb(` call's verb: one of `methods`
     # preceded by a `.` and followed by `(`.

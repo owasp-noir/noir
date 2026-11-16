@@ -1496,6 +1496,25 @@ describe "NoirAIContext" do
     end
   end
 
+  it "reads every child_process spawner as a command_exec sink" do
+    {
+      "execFile"        => true,
+      "execSync"        => true,
+      "cp.execFileSync" => true,
+      "spawnSync"       => true,
+      "child.exec"      => true,
+      "regex.execAll"   => false,
+      "executeSync"     => false,
+    }.each do |name, expected|
+      endpoint = Endpoint.new("/convert", "POST")
+      endpoint.push_callee(Callee.new(name, "routes/convert.js", 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).includes?("command_exec").should eq(expected), name
+    end
+  end
+
   # #3255: a project helper named like a sink is judged by its body.
   it "does not read a project's own render helper returning a map as a template_render sink" do
     source = <<-KOTLIN

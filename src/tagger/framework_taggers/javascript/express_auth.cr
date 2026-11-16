@@ -493,6 +493,18 @@ class ExpressAuthTagger < FrameworkTagger
     end
   end
 
+  FACTORY_CALL = /\A\s*((?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*)\s*\(/
+
+  # `auth('manageUsers')` as `auth()`: the middleware a factory builds is
+  # judged by the factory's definition, whatever it was handed.
+  private def factory_call(arg : String) : String?
+    head = arg.match(FACTORY_CALL) || return
+    open = head.end(0) - 1
+    close = Noir::JSLiteralScanner.find_matching_paren(arg, open) || return
+    return if arg[open + 1...close].blank? || !arg[close + 1..].blank?
+    "#{head[1]}()"
+  end
+
   private def refusing_definition(arg : String, file : String, handler_position : Bool, depth : Int32 = 0) : {String, String, Bool}?
     key = {arg, file, handler_position, depth, @method}
     return @refusals[key] if @refusals.has_key?(key)
@@ -501,7 +513,8 @@ class ExpressAuthTagger < FrameworkTagger
 
   private def judge_definition(arg : String, file : String, handler_position : Bool, depth : Int32) : {String, String, Bool}?
     content = read_file(file) || return
-    handler = Noir::JSHandlerResolver.resolve(arg, content, file) || return
+    handler = Noir::JSHandlerResolver.resolve(arg, content, file) ||
+              factory_call(arg).try { |call| Noir::JSHandlerResolver.resolve(call, content, file) } || return
     path, line = handler.path, handler.line
     return if path.nil? || line.nil?
     lines = read_file_lines(path) || return
@@ -536,6 +549,9 @@ class ExpressAuthTagger < FrameworkTagger
     body = definition_extent(lines, line - 1)
     return if body.first?.try(&.matches?(ERROR_HANDLER_SIGNATURE))
     code = code_with_words(body.join("\n"))
+    # A router factory (`app.use('/things', makeRouter(db))`) is a mount: a
+    # refusal inside one of its routes guards that route, not the mount.
+    return if code.matches?(Noir::JSRouteExtractor::ROUTER_BODY_RE)
     evidence = (anonymous_refusal(code, read_file(path)) || identity_throw(code)).try do |found|
       found, note = found.partition(SETTING_NOTE)
       found.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(').sub(/\Athrownew\b/, "throw new") + note
@@ -1045,9 +1061,10 @@ class ExpressAuthTagger < FrameworkTagger
     # cannot tell app from sub-router, so decline rather than guess: a false
     # "protected" is the failure that gets an endpoint skipped in review.
     # A `x.route('/p')` chain link (`  .post(...)`) reports its own line, which
-    # names no receiver: the chain's `x.route(` line above does.
+    # names no receiver: the chain's `x.route(` line above does, or `x` alone
+    # on its line where Prettier broke the chain before `.route(`.
     line_idx = chain_start_line(lines, line_idx) if lines[line_idx].lstrip.starts_with?('.')
-    receiver = lines[line_idx].match(ROUTE_RECEIVER).try &.[1]
+    receiver = (lines[line_idx].match(ROUTE_RECEIVER) || lines[line_idx].match(BARE_RECEIVER)).try &.[1]
     return if receiver.nil?
 
     expanded = Noir::PathScope.expand(path)
@@ -1064,13 +1081,14 @@ class ExpressAuthTagger < FrameworkTagger
   end
 
   ROUTE_CHAIN_START  = /\b\w+\s*\.\s*route\s*\(/
+  BARE_RECEIVER      = /\A\s*([A-Za-z_$][\w$]*)\s*\z/
   MAX_CHAIN_LOOKBACK = 500
 
-  # The `x.route(` line a chain link at `line_idx` belongs to: walk up over
+  # The head line a chain link at `line_idx` belongs to: walk up over
   # earlier links and their (bracket-balanced) handler bodies to the first
   # line outside any bracket that does not continue the chain. Returns
-  # `line_idx` itself when that line is not an `x.route(` head (`app` alone
-  # on the line above `.get(`, say), so the receiver reads as unknown.
+  # `line_idx` itself when that line is neither an `x.route(` head nor a
+  # receiver alone on its line, so the receiver reads as unknown.
   private def chain_start_line(lines : Array(String), line_idx : Int32) : Int32
     depth = 0
     idx = line_idx - 1
@@ -1084,7 +1102,7 @@ class ExpressAuthTagger < FrameworkTagger
         end
       end
       if depth <= 0 && !line.lstrip.starts_with?('.')
-        return line.matches?(ROUTE_CHAIN_START) ? idx : line_idx
+        return line.matches?(ROUTE_CHAIN_START) || line.matches?(BARE_RECEIVER) ? idx : line_idx
       end
       idx -= 1
     end

@@ -1,0 +1,9 @@
+{
+  "name": "express-class-controller",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "express": "^4.19.2",
+    "express-async-handler": "^1.2.0"
+  }
+}

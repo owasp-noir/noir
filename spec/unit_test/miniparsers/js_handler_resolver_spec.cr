@@ -69,6 +69,54 @@ describe Noir::JSHandlerResolver do
     end
   end
 
+  it "resolves a method of a class instance built in the route file, bound or as a class field" do
+    with_app do |dir, _|
+      Dir.mkdir_p(File.join(dir, "controllers"))
+      controller = File.join(dir, "controllers", "user.controller.ts")
+      File.write(controller, <<-TS)
+        import { Request, Response } from 'express'
+
+        export class AuditController {
+          list (req, res) { res.json([]) }
+        }
+
+        export class UserController {
+          public async list (req: Request, res: Response): Promise<void> {
+            res.json([])
+          }
+
+          show = async (req: Request, res: Response) => {
+            res.json({})
+          }
+        }
+        TS
+      routes = <<-TS
+        import { Router } from 'express'
+        import { UserController } from '../controllers/user.controller'
+        class Local {
+          ping (req, res) { res.send('pong') }
+        }
+        const users = new UserController()
+        const local: Local = new Local()
+        const router = new Router()
+        TS
+      path = File.join(dir, "routes", "users.ts")
+      File.write(path, routes)
+
+      # `list` of UserController, not the AuditController method above it.
+      h = Noir::JSHandlerResolver.resolve("users.list.bind(users)", routes, path).not_nil!
+      {h.name, h.path, h.line}.should eq({"users.list", controller, 8})
+      h = Noir::JSHandlerResolver.resolve("asyncHandler(users.show)", routes, path).not_nil!
+      {h.name, h.path, h.line}.should eq({"users.show", controller, 12})
+      h = Noir::JSHandlerResolver.resolve("local.ping", routes, path).not_nil!
+      {h.path, h.line}.should eq({path, 4})
+      # Not in the class body (inherited, or assigned at run time): no guess.
+      Noir::JSHandlerResolver.resolve("users.destroy", routes, path).should be_nil
+      # `Router` comes from a package: nothing in the scan to point at.
+      Noir::JSHandlerResolver.resolve("router.routes()", routes, path).should be_nil
+    end
+  end
+
   it "returns nil for closures, calls with arguments, unknown members and package imports" do
     with_app do |dir, server|
       path = File.join(dir, "server.ts")

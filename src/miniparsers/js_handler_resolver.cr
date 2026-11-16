@@ -102,6 +102,8 @@ module Noir::JSHandlerResolver
       inner = unwrap(text, content, file_path, guards) || break
       text = inner[0]
     end
+    # `users.list.bind(users)` is `users.list` with its receiver pinned.
+    text = text.sub(BIND_CALL_RE, "")
     return unless m = text.match(REFERENCE_RE)
     base = m[1]
     members = m[2].split('.').map(&.strip).reject(&.empty?)
@@ -136,10 +138,47 @@ module Noir::JSHandlerResolver
       target = resolve_specifier(file_path, spec) || return
       return follow_members(text, target, members[1...-1], members.last)
     end
+    # `users.list` on a local `const users = new UserController()`.
+    if members.size == 1 && (klass = content.match(/\b(?:const|let|var)\s+#{Regex.escape(base)}\s*(?::[^=\n]+)?=\s*new\s+([A-Za-z_$][\w$]*)\b/).try(&.[1]))
+      return instance_member(text, klass, members[0], content, file_path)
+    end
     return if member # `security.isAuthorized` with `security` not imported here
     if line = definition_line(file_path, base, content, local: true)
       Handler.new(text, file_path, line)
     end
+  end
+
+  BIND_CALL_RE = /\s*\.\s*bind\s*\([^()]*\)\s*\z/
+
+  # `users.list` where `const users = new UserController()`: `list` in the
+  # body of that class, in this file or in the module the class was
+  # imported from. A default import names the class as it pleases, so the
+  # module's first class stands in when none has that name. Nil for a
+  # member the class body does not define (inherited, or assigned at run
+  # time).
+  private def instance_member(text : String, klass : String, member : String, content : String, file_path : String) : Handler?
+    spec = imports_of(content, file_path)[klass]?
+    target = spec ? resolve_specifier(file_path, spec[0]) || return : file_path
+    body = spec ? source(target) || return : content
+    line = class_member_line(body, spec.try(&.[1]) || klass, member)
+    line ||= class_member_line(body, nil, member) if spec && spec[1].nil?
+    line.try { |found| Handler.new(text, target, found) }
+  end
+
+  private def class_member_line(content : String, klass : String?, member : String) : Int32?
+    name = klass ? Regex.escape(klass) : "[A-Za-z_$][\\w$]*"
+    head = content.match(/^[ \t]*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+#{name}\b[^{]*\{/m) || return
+    open = head.end(0) - 1
+    close = JSLiteralScanner.find_matching_brace(content, open) || return
+    found = content[open..close].match(member_definition_re(Regex.escape(member))) || return
+    content[0, open + found.begin(0)].count('\n') + 1
+  end
+
+  # A method, as a class or an object literal spells it: `list(req, res) {`,
+  # `public async list(req: Request): Promise<void> {`, and the class field
+  # `list = async (req, res) => …`.
+  private def member_definition_re(escaped : String) : Regex
+    /^[ \t]*(?:export\s+)?(?:(?:public|private|protected|static|override|readonly|async)\s+)*#{escaped}\s*(?:\([^)]*\)\s*(?::[^{]*)?\{|(?::[^=\n]+)?=\s*(?:async\s+)?(?:function\b|\([^()]*(?:\([^()]*\)[^()]*)*\)\s*(?::[^=\n]*)?=>|[A-Za-z_$][\w$]*\s*=>))/m
   end
 
   # `last` in the module `target` reaches through `hops`, each a member that
@@ -570,7 +609,7 @@ module Noir::JSHandlerResolver
       # module, it defines nothing here.
       /^[ \t]*(?:export\s+)?(?:const|let|var)\s+#{escaped}\s*(?::|=(?!\s*require\s*\())/m,
       /^[ \t]*(?:export\s+)?class\s+#{escaped}\b/m,
-      /^[ \t]*(?:export\s+)?(?:async\s+)?#{escaped}\s*\([^)]*\)\s*(?::[^{]*)?\{/m,
+      member_definition_re(escaped),
       /^[ \t]*#{escaped}\s*:\s*(?:async\s+)?(?:function\b|\(|\[)/m,
       /^[ \t]*(?:module\.)?exports(?:\.#{escaped})?\s*=|^[ \t]*export\s+default\b/m,
     ]

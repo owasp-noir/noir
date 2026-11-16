@@ -150,7 +150,9 @@ module Analyzer::Javascript
       line : Int32,
       call_start : Int32,
       body_params : Array(Param),
-      callees : Array(Noir::JSCalleeExtractor::Entry)
+      callees : Array(Noir::JSCalleeExtractor::Entry),
+      # The config's `handler` as written, and the line it starts on.
+      handler : Tuple(String, Int32)?
 
     record FastifyQueryCall,
       receiver : String,
@@ -381,7 +383,10 @@ module Analyzer::Javascript
                     callees = Noir::JSCalleeExtractor.callees_for_handler_node(handler_node, source, path)
                   end
 
-                  route_configs << FastifyRouteConfig.new(methods, url, line, call_start, body_params, callees)
+                  handler_step = Noir::JSRouteExtractor.options_handler(config_text).try do |step, at|
+                    {step, Noir::TreeSitter.node_start_row(config_node) + 1 + config_text[0, at].count('\n')}
+                  end
+                  route_configs << FastifyRouteConfig.new(methods, url, line, call_start, body_params, callees, handler_step)
                 end
               end
             end
@@ -648,6 +653,13 @@ module Analyzer::Javascript
               endpoint.push_param(bp)
             end
             attach_js_callees(endpoint, rc.callees)
+            if step = rc.handler
+              handler = Noir::JSRouteExtractor.named_handler(step[0], content, path)
+              facts = handler ? Noir::JSRouteExtractor.handler_definition_facts(handler, include_callee) : nil
+              handler = nil unless Noir::JSRouteExtractor.serves?(facts)
+              endpoint.handler = handler || Noir::JSRouteExtractor.inline_handler(step[0], step[1], content, path)
+              Noir::JSRouteExtractor.apply_handler_facts(endpoint, facts)
+            end
 
             result << endpoint
           end

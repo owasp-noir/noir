@@ -508,7 +508,13 @@ module Noir::CLI::Inspect
       # Grouped, so each branch of an alternation is anchored.
       return Regex.new("\\A(?:#{URLPath.strip_regex_anchors(route).rchop('/')})/?\\z", options) rescue nil
     end
-    star_needs_one = ONE_OR_MORE_STAR_TECHS.includes?(endpoint.details.technology || "")
+    technology = endpoint.details.technology || ""
+    star_needs_one = ONE_OR_MORE_STAR_TECHS.includes?(technology)
+    # Hono's trailing `/*` also serves the path before it: `/static/*`
+    # answers `/static`. Express, Koa and Fastify need the slash.
+    if technology == "js_hono" && route.ends_with?("/*")
+      return Regex.new("\\A#{route_pattern(route.rchop("/*"), star_needs_one)}(?:/.*)?\\z", options) rescue nil
+    end
     Regex.new("\\A#{route_pattern(route, star_needs_one)}/?\\z", options) rescue nil
   end
 

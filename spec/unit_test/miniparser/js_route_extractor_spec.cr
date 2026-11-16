@@ -19,6 +19,21 @@ describe Noir::JSRouteExtractor do
     end
   end
 
+  describe "definition_body" do
+    it "keeps a concise arrow handler to its own line when no semicolon ends it" do
+      src = "router.get('/', (req, res) => res.json(db.things))\n\nrouter.post('/', (req, res, next) => {\n  if (!req.user) return res.status(401).end()\n  next()\n})\n"
+      Noir::JSRouteExtractor.definition_body(src, 1).should eq("router.get('/', (req, res) => res.json(db.things))")
+      Noir::JSRouteExtractor.definition_body(src, 3).should contain("res.status(401)")
+    end
+
+    it "still follows a curried arrow onto the next line, and a function after an arrow argument" do
+      src = "export const verify = (opts) =>\n  async (req, res, next) => {\n    next()\n  }\n"
+      Noir::JSRouteExtractor.definition_body(src, 1).strip.should eq("next()")
+      src = "app.use(wrap((x) => x), function (req, res) {\n  res.send(1)\n})\n"
+      Noir::JSRouteExtractor.definition_body(src, 1).strip.should eq("res.send(1)")
+    end
+  end
+
   describe "propagate_mount_prefixes" do
     it "expands a self-mount and an a -> b -> a cycle at most once" do
       edges = [

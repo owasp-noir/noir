@@ -101,8 +101,9 @@ module NoirAIContext
       # receivers (PHP's namespaced `\system`, Perl's `CORE::system`). A
       # namespace head (`System.IO.File.Exists`) or a property
       # (`platform.system`) runs nothing. .NET spawns through `Process.Start`,
-      # Elixir through `System.cmd`.
-      name_patterns: [/\bexec\b/i, /\A(?:(?:os|Kernel|std|posix|CORE)?(?:\.|::)|\\)?system\z/, /\bProcess\.Start\b/, /\bSystem\.cmd\b/, /#{TASK_SPAWN_RECEIVER.source}\bspawn\b/i, /\bpopen\b/i, /\bshell\b/i],
+      # Elixir through `System.cmd`. Node's `child_process` also spells
+      # `execFile`, `execSync`, `execFileSync` and `spawnSync`.
+      name_patterns: [/\bexec\b/i, /\b(?:exec(?:File)?|spawn)Sync\b|\bexecFile\b/, /\A(?:(?:os|Kernel|std|posix|CORE)?(?:\.|::)|\\)?system\z/, /\bProcess\.Start\b/, /\bSystem\.cmd\b/, /#{TASK_SPAWN_RECEIVER.source}\bspawn\b/i, /\bpopen\b/i, /\bshell\b/i],
       # `session.exec(` / `cursor.exec(` are queries, see SQL_RECEIVER_CALL.
       source_patterns: [/(?<!session\.|cursor\.|conn\.|pool\.|stmt\.|db\.|tx\.|sql\.)\bexec\s*\(/i, /\bsystem\s*\(/i, /\bProcess\.Start\s*\(/, /#{TASK_SPAWN_RECEIVER.source}\bspawn\s*\((?!\s*(?:async\b|move\b|\|\||fn\b))/i, /\bpopen\s*\(/i, /ProcessBuilder/i, /Runtime\.getRuntime/i, /subprocess\./i]
     ),
