@@ -85,10 +85,11 @@ describe Noir::TreeSitterPythonRouteExtractor do
   # nodes, turning `f"/api/{VERSION}/items"` into `"/api//items"`
   # (and after optimizer normalization, `"/api/items"`) — the
   # user's path template lost a segment without any indication.
-  # Preserve the interpolation source text as the `{expr}`
-  # placeholder so the downstream path-param extractor picks it
-  # up and the rendered URL faithfully reflects the route.
-  it "preserves f-string interpolation as {expr} placeholders" do
+  # A field naming a module-level string constant is that string;
+  # any other keeps its source text as the `{expr}` placeholder so
+  # the downstream path-param extractor picks it up and the
+  # rendered URL faithfully reflects the route.
+  it "reads an f-string field naming a module string and keeps any other as an {expr} placeholder" do
     source = <<-PY
       VERSION = "v2"
       @app.route(f"/api/{VERSION}/items")
@@ -100,8 +101,39 @@ describe Noir::TreeSitterPythonRouteExtractor do
 
     decos = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source)
     decos.map(&.path).should eq([
-      "/api/{VERSION}/items",
+      "/api/v2/items",
       "/users/{user_id}/posts/{post_id}",
+    ])
+  end
+
+  it "reads a path spelled as a module constant, a concatenation or adjacent literals" do
+    source = <<-PY
+      API = "/api"
+      USERS = API + "/users"
+      TWICE = "/a"
+      TWICE = "/b"
+
+      @app.route(USERS)
+      def users(): pass
+
+      @app.get(API + "/ping")
+      def ping(): pass
+
+      @app.post("/hooks" "/github")
+      def hook(): pass
+
+      @app.route(TWICE)
+      def rebound(): pass
+
+      @app.route(imported.PATH)
+      def unread(): pass
+      PY
+
+    decos = Noir::TreeSitterPythonRouteExtractor.extract_decorations(source)
+    decos.map { |d| {d.path, d.def_name} }.should eq([
+      {"/api/users", "users"},
+      {"/api/ping", "ping"},
+      {"/hooks/github", "hook"},
     ])
   end
 
