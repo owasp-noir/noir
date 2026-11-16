@@ -92,3 +92,37 @@ mindmap
       feed
         GET websocket
 {% end %}
+
+## Cross-project service graph
+
+With `--ai-context`, a monorepo scan links statically readable outbound HTTP
+calls to routes in other projects. If calls are present, Mermaid emits a
+`flowchart LR` grouped by project instead of a mindmap:
+
+```bash
+noir scan ./monorepo --ai-context -f mermaid
+noir trace "GET /checkout" ./monorepo
+```
+
+`trace` follows the same candidate edges breadth-first and visits cycles once.
+JSON/YAML endpoints contain `calls` (the original sink, URL, method and matching
+routes) and `called_by` (caller references and call-site locations). Empty
+`matches` means an unmatched call; a missing URL means it could not be read.
+Every candidate carries `matched_by`, such as `path_pattern`, `path_template`
+or `url_exact`. Several candidates remain visible when the service is ambiguous.
+Request-condition variants carry a stable `service_variant` identifier so their
+outgoing calls remain separate when a saved report is traced.
+
+These are static candidates, not runtime or data-flow proof. A path-only match
+does not identify a host. If both URLs specify an authority it must agree.
+Matching requires distinct nonempty `details.project` values, excludes client
+stubs and non-HTTP entry points, and does not use an unanchored catch-all alone
+as evidence. No call is made to the target service.
+
+Supported call shapes include `fetch`, `axios`, `requests`/`httpx`, Go's
+`http.Get`/`http.Post`, and literal-first HTTP client methods. Simple string
+concatenation and JavaScript template/Python f-string substitutions can supply
+whole path segments. Arbitrary expressions, options-object URLs, unknown base
+URLs and config/environment values stay unresolved. Fetch's method is known
+for its default call or a single literal `method` option; complex options keep
+an unknown method, so every compatible route method remains a candidate.

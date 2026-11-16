@@ -1,3 +1,4 @@
+require "../ai_context/service_graph"
 require "../models/output_builder"
 require "../models/endpoint"
 require "../models/passive_scan"
@@ -14,7 +15,48 @@ class OutputBuilderMermaid < OutputBuilder
   MAX_DEPTH = 64
 
   def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
-    build_mindmap(endpoints, passive_results)
+    if endpoints.any? { |endpoint| !endpoint.calls.empty? }
+      build_service_graph(endpoints, passive_results)
+    else
+      build_mindmap(endpoints, passive_results)
+    end
+  end
+
+  private def graph_label(text : String) : String
+    text.gsub(/[^\p{L}\p{N} \/:._{}-]/, "_")
+  end
+
+  private def build_service_graph(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
+    ob_puts "flowchart LR"
+    ids = endpoints.map_with_index { |endpoint, index| {NoirAIContext::ServiceGraph.reference(endpoint), "e#{index}"} }.to_h
+    endpoints.group_by(&.details.project).each_with_index do |(project, routes), index|
+      ob_puts "  subgraph p#{index}[\"#{graph_label(project.empty? ? "unknown project" : project)}\"]"
+      routes.each do |endpoint|
+        ob_puts "    #{ids[NoirAIContext::ServiceGraph.reference(endpoint)]}[\"#{graph_label("#{endpoint.method} #{endpoint.url}")}\"]"
+      end
+      ob_puts "  end"
+    end
+    unresolved = 0
+    endpoints.each do |endpoint|
+      from = ids[NoirAIContext::ServiceGraph.reference(endpoint)]
+      endpoint.calls.each do |call|
+        if call.matches.empty?
+          id = "u#{unresolved}"
+          unresolved += 1
+          label = "#{call.url ? "unmatched" : "unresolved"}: #{call.url || call.sink.name}"
+          ob_puts "  #{id}[\"#{graph_label(label)}\"]"
+          ob_puts "  #{from} -.-> #{id}"
+        else
+          call.matches.each do |edge|
+            next unless to = ids[edge.endpoint]?
+            ob_puts "  #{from} -. \"#{graph_label(edge.matched_by)}\" .-> #{to}"
+          end
+        end
+      end
+    end
+    passive_results.each_with_index do |finding, index|
+      ob_puts "  finding#{index}[\"#{graph_label("#{finding.id} #{finding.file_path}:#{finding.line_number}")}\"]"
+    end
   end
 
   private def build_mindmap(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
