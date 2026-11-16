@@ -109,4 +109,21 @@ describe Noir::PhpCalleeExtractor do
       {"UserService::create", 72},
     ])
   end
+
+  it "extracts chained method calls following an argumented call" do
+    body = <<-PHP
+      DB::table('orders')->whereRaw('id = ' . $order)->first();
+      DB::table('orders')
+          ->selectRaw('count(*) as total');
+      PHP
+
+    callees = Noir::PhpCalleeExtractor.callees_for_body(body, "OrderController.php", 20)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"DB::table", 20},
+      {"->whereRaw", 20},
+      {"->first", 20},
+      {"DB::table", 21},
+      {"->selectRaw", 22},
+    ])
+  end
 end

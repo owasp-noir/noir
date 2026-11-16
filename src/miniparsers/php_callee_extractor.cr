@@ -82,6 +82,17 @@ module Noir::PhpCalleeExtractor
           entries << {name, file_path, line_number}
         end
       end
+
+      if line.includes?("->")
+        line.scan(/(?:\A\s*|\)\s*)->\s*([A-Za-z_]\w*)\s*\(/) do |match|
+          method = match[1]
+          chained = "->#{method}"
+          next if skip_callee?(method)
+          next if entries.any? { |n, _, l| l == line_number && (n == chained || n.ends_with?(chained)) }
+
+          entries << {chained, file_path, line_number}
+        end
+      end
     end
 
     line.scan(BARE_CALL_REGEX) do |match|

@@ -1866,25 +1866,27 @@ module NoirAIContext
       @definition_headers[name] ||= /(?:\b(?:def|defp|fun|function|func|fn|sub)\s+(?:\([^)]*\)\s*)?(?:self\.)?|\b(?:const|let|var)\s+|\b(?:public|private|protected|internal|static)\s+(?:[\w<>\[\],.?]+\s+)*)#{Regex.escape(name)}\b(?!\s*\.)/
     end
 
-    # `User.select("#{params[:col]}")`, SQLAlchemy `select(text(request.args["c"]))`:
-    # a `select` whose argument is built at run time is SQL whatever the
-    # receiver. A fixed column list (`User.select(*attrs)`) stays out, and so
-    # do a lambda or block argument (LINQ `_items.Select(x => x.Name + "")`,
-    # Ruby `select(&:active?)`, JS `.select((x) => "#" + x)`) and a data
-    # frame's column pick (polars `df.select(f"col_{i}")`).
+    # `User.select("#{params[:col]}")`, `Report.where("title LIKE '%#{q}%'")`,
+    # `Report.all.order("created_at #{dir}")`, SQLAlchemy `select(text(...))`:
+    # a query-builder method whose first argument is built at run time is SQL
+    # whatever the receiver. Fixed column/hash arguments and bound placeholder
+    # calls (`Report.where("title LIKE ?", "%#{q}%")`) stay out, as do lambdas
+    # and data-frame column picks (`df.select(f"col_{i}")`).
     SELECT_BUILT_ARGUMENT  = /#\{|\$\{|\bf["']|["']\s*(?:\+|%|\.\s*\$)|\+\s*["']|\btext\s*\(|\bArel\.sql\b|\bSprintf\b|\.format\s*\(/
     SELECT_LAMBDA_ARGUMENT = /\A\s*(?:\(?[\w\s,]*\)?\s*=>|&:|\{\s*\||lambda\b|->|fn\b|function\b|\|)/
     DATA_FRAME_RECEIVER    = /(?:\A|\.)(?:\w*_?df|\w*[fF]rame|pl|pd)\.select\z/i
+    BUILT_QUERY_CALLEE     = /(?:\A|[.:>])select\z|(?:\.|->|::)(?:where(?:\.not)?|order|reorder|having|joins|group|pluck)\z/i
 
     private def built_select_sink(callee : Callee, snippet : String?) : AIContextEntry?
-      return unless callee.name.matches?(/(?:\A|[.:>])select\z/i)
+      return unless callee.name.matches?(BUILT_QUERY_CALLEE)
       return if callee.name.matches?(DATA_FRAME_RECEIVER)
       return unless (path = callee.path) && (line = callee.line)
       return unless text = @reader.lines_for(path)[line - 1, 4]?.try(&.join('\n'))
-      return unless call = text.match(/\bselect\s*\(/i)
+      method = callee.name.split(/\.|->|::/).last
+      return unless call = text.match(/\b#{Regex.escape(method)}\s*\(/i)
       open_idx = call.end - 1
       close_idx = Noir::JSLiteralScanner.find_matching_paren(text, open_idx) || text.size
-      argument = text[open_idx + 1...close_idx]
+      argument = first_call_argument(text[open_idx + 1...close_idx])
       return if argument.matches?(SELECT_LAMBDA_ARGUMENT)
       return unless argument.matches?(SELECT_BUILT_ARGUMENT)
 
@@ -1892,12 +1894,48 @@ module NoirAIContext
         "sql",
         callee.name,
         source: "callee",
-        description: "SQL select whose argument is built from run-time values",
+        description: "SQL query method whose argument is built from run-time values",
         path: path,
         line: line,
         confidence: 78,
         snippet: snippet
       )
+    end
+
+    # The first top-level argument of a call's parameter list, so bound-value
+    # arguments after a static placeholder (`where("x LIKE ?", "%#{q}%")`) are
+    # not mistaken for an interpolated SQL fragment.
+    private def first_call_argument(args : String) : String
+      quote : Char? = nil
+      escaped = false
+      paren_depth = 0
+      bracket_depth = 0
+      brace_depth = 0
+      args.each_char_with_index do |ch, idx|
+        if q = quote
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == q
+            quote = nil
+          end
+          next
+        end
+
+        case ch
+        when '"', '\'' then quote = ch
+        when '('       then paren_depth += 1
+        when ')'       then paren_depth -= 1 if paren_depth > 0
+        when '['       then bracket_depth += 1
+        when ']'       then bracket_depth -= 1 if bracket_depth > 0
+        when '{'       then brace_depth += 1
+        when '}'       then brace_depth -= 1 if brace_depth > 0
+        when ','
+          return args[0...idx] if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
+        end
+      end
+      args
     end
 
     # Whether the nearest binding of `name` at or above `line` takes its value

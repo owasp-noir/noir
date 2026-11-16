@@ -109,6 +109,9 @@ module Noir::RubyCalleeExtractor
       unless method_name?(node) || locals.includes?(Noir::TreeSitter.node_text(node, source))
         command_name(node, node, source, hits)
       end
+    when "subshell"
+      point = LibTreeSitter.ts_node_start_point(node)
+      hits << {point.row.to_i, 1, point.column.to_i, "Kernel.`"}
     end
     Noir::TreeSitter.each_named_child(node) { |child| collect(child, source, hits, locals) }
   end

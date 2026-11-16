@@ -146,4 +146,18 @@ describe Noir::RubyCalleeExtractor do
     by_method["index"].map { |name, _, line| {name, line} }.should eq([{"Post.where", 6}])
     by_method["helper"].map(&.[0]).should eq(["AuditLog.write", "x.y.z"])
   end
+
+  it "records backtick and %x subshell literals without reading backticks inside strings" do
+    body = <<-'RUBY'
+      `logger -t report #{params[:id]}`
+      output = %x(convert #{params[:src]} out.png)
+      notice = "Run `rake reports:refresh #{params[:q]}` to rebuild"
+      RUBY
+
+    callees = Noir::RubyCalleeExtractor.callees_for_body(body, "reports_controller.rb", 10)
+    callees.map { |name, _, line| {name, line} }.should eq([
+      {"Kernel.`", 10},
+      {"Kernel.`", 11},
+    ])
+  end
 end
