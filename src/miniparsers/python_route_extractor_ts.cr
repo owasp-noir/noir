@@ -390,8 +390,8 @@ module Noir
     end
 
     # The value of a string expression: a literal, an f-string, a name (plain
-    # or dotted) in `strings`, or those joined by `+` or adjacency. Nil when a part is not
-    # one of these.
+    # or dotted) in `strings`, or those joined by `+` or adjacency. Nil when
+    # a part is not one of these.
     private def static_string(node : LibTreeSitter::TSNode, source : String, strings : Hash(String, String)) : String?
       case Noir::TreeSitter.node_type(node)
       when "string"
