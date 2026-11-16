@@ -253,9 +253,10 @@ class PhpAuthTagger < FrameworkTagger
     idx = line_idx
 
     while idx < limit
-      break if depth <= 0 && lines[idx].strip.ends_with?(";")
+      stripped = lines[idx].strip
+      break if depth <= 0 && (stripped.ends_with?(";") || stripped.ends_with?(","))
       nxt = lines[idx + 1].strip
-      break if nxt.matches?(STATEMENT_BOUNDARY)
+      break if nxt.matches?(STATEMENT_BOUNDARY) || nxt.matches?(/\A(?:Route|Router)::/)
       idx += 1
       depth += bracket_depth(lines[idx])
     end
