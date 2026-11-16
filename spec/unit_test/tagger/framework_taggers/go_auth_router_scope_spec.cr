@@ -1396,3 +1396,54 @@ describe "GoAuthTagger (a middleware that only hands the request on)" do
     end
   end
 end
+
+# Echo takes the handler first and its middleware after it
+# (`e.GET("/x", h, mw...)`).
+describe "GoAuthTagger (echo per-route middleware)" do
+  echo_src = <<-GO
+    package main
+
+    import (
+    \t"net/http"
+
+    \t"github.com/labstack/echo/v4"
+    )
+
+    func requireLogin(next echo.HandlerFunc) echo.HandlerFunc {
+    \treturn func(c echo.Context) error {
+    \t\tif c.Request().Header.Get("Authorization") == "" {
+    \t\t\treturn c.NoContent(http.StatusUnauthorized)
+    \t\t}
+    \t\treturn next(c)
+    \t}
+    }
+
+    func logging(next echo.HandlerFunc) echo.HandlerFunc {
+    \treturn func(c echo.Context) error { return next(c) }
+    }
+
+    func main() {
+    \te := echo.New()
+    \te.GET("/reports/:id", getReport, requireLogin)
+    \te.GET("/audit", listAudit, logging, requireLogin)
+    \te.POST("/login", authHandler.Login, logging)
+    \te.GET("/open", listOpen, logging)
+    }
+    GO
+
+  it "reads the middleware that trails the handler" do
+    result = router_scope_scan({"go.mod" => "module e\n", "main.go" => echo_src},
+      [{"GET", "/reports/:id", "main.go", %("/reports/:id")}, {"GET", "/audit", "main.go", %("/audit")},
+       {"GET", "/open", "main.go", %("/open")}], "go_echo")
+    result["GET /reports/:id"].tags.map(&.description).should eq(["Protected by Go middleware requireLogin (verified from its body: refuses anonymous callers)"])
+    result["GET /reports/:id"].resolution.should be_nil
+    guarded?(result["GET /audit"]).should be_true
+    guarded?(result["GET /open"]).should be_false
+  end
+
+  it "does not read the handler's name as a guard" do
+    result = router_scope_scan({"go.mod" => "module e\n", "main.go" => echo_src},
+      [{"POST", "/login", "main.go", %("/login")}], "go_echo")
+    guarded?(result["POST /login"]).should be_false
+  end
+end
