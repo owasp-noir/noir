@@ -496,8 +496,11 @@ module Analyzer::Python
       if register_blueprint_match
         parent_name = register_blueprint_match[1]
         blueprint_name = register_blueprint_match[2]
-        url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
-        mount_prefixes = url_prefix_match ? [url_prefix_match[1]] : config_url_prefixes(original_line, fs.base_path)
+        # `url_prefix=API_PREFIX + "/users"` / `f"{API_PREFIX}/items"`: the
+        # string the expression evaluates to, else the literal it starts with.
+        mount_prefix = Noir::TreeSitterPythonRouteExtractor.call_url_prefix(original_line.strip, visible_strings(fs.path)) if original_line.includes?("url_prefix")
+        mount_prefix ||= original_line.match(/url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/).try(&.[1])
+        mount_prefixes = mount_prefix ? [mount_prefix] : config_url_prefixes(original_line, fs.base_path)
         state.blueprint_mounts[fs.path] ||= [] of Tuple(::String, ::String, ::String?)
         # Mounted on a blueprint rather than the app: a child declared in
         # another file is served under each of that blueprint's prefixes,

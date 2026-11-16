@@ -99,7 +99,7 @@ class FastAPIAuthTagger < FrameworkTagger
   end
 
   # `parent.include_router(target, ..., dependencies=[...])` in `file`.
-  private record IncludeCall, file : String, parent : String, target : String, dependencies : String?
+  private record IncludeCall, file : String, parent : String, target : String, dependencies : String?, line : Int32
   # `self.app.include_router(...)` is indexed too: its parent never
   # resolves, so that mount counts as one without a dependency.
   INCLUDE_ROUTER_CALL = /^\s*([\w.]+?)\s*\.\s*include_router\s*\(/
@@ -1346,15 +1346,17 @@ class FastAPIAuthTagger < FrameworkTagger
                parts.find { |part| !part.empty? && !part.includes?('=') }
       next unless target && target.matches?(/\A[\w.]+\z/)
       dependencies = parts.find(&.matches?(/\Adependencies\s*=/))
-      @include_calls << IncludeCall.new(path, parent, target, dependencies)
+      @include_calls << IncludeCall.new(path, parent, target, dependencies, idx)
     end
   end
 
   # The `dependencies=[...]` of every `include_router(...)` that mounts the
   # router `receiver` defined in `path`, directly or through the routers
-  # that include it in turn: FastAPI runs them for each included route. A
-  # router mounted more than once counts only when every mount path carries
-  # an auth dependency, since its routes are served under each.
+  # that include it in turn, and the `dependencies=[...]` each including
+  # router or app was built with (`FastAPI(dependencies=[...])`): FastAPI
+  # runs them for each included route. A router mounted more than once
+  # counts only when every mount path carries an auth dependency, since its
+  # routes are served under each.
   private def include_dependencies(path : String, receiver : String) : Array({String, String})
     key = {path, receiver}
     if cached = @include_scopes[key]?
@@ -1369,6 +1371,7 @@ class FastAPIAuthTagger < FrameworkTagger
     chains = (by_site[key]? || [] of IncludeCall).map do |call|
       chain = include_dependencies(call.file, call.parent).dup
       call.dependencies.try { |dependencies| chain.unshift({dependencies, call.file}) }
+      read_file_lines(call.file).try { |lines| chain.concat(router_statement(lines, call.parent, call.file, call.line)) }
       chain
     end
     soft = @soft_auth

@@ -601,4 +601,28 @@ describe "FlaskAuthTagger" do
     # The `elif` refuses, but the public branch above it is a way in.
     verdicts["/scores"].should eq(["Protected by public_or_members (a setting can make it public)"])
   end
+
+  # flask_before_request_guard/app.py: a `@<blueprint>.before_request` hook
+  # answers in place of every view of that blueprint.
+  it "reads a blueprint before_request hook as the guard of its routes" do
+    base = File.expand_path("../../../functional_test/fixtures/python/flask_before_request_guard", __DIR__)
+    app = "#{base}/app.py"
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(base)
+    endpoints = {37 => "/admin/stats", 42 => "/account/settings", 47 => "/docs/", 52 => "/late/x", 57 => "/public"}.map do |line, url|
+      details = Details.new(PathInfo.new(app, line))
+      details.technology = "python_flask"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+
+    verdicts = FlaskAuthTagger.new(noir_options).perform(endpoints).map { |ep| {ep.url, ep.tags.select(&.name.== "auth").map(&.description)} }.to_h
+    verdicts["/admin/stats"].should eq(["Protected by flask-login login_required on admin_bp.before_request"])
+    verdicts["/account/settings"].should eq(["Protected by account_bp.before_request refusing a caller who is not logged in"])
+    # The hook returns early for this view before it checks the caller.
+    verdicts["/docs/"].should be_empty
+    # `@login_required` above `@late_bp.before_request` wraps nothing Flask registers.
+    verdicts["/late/x"].should be_empty
+    # A route on the app is not behind a blueprint's hook.
+    verdicts["/public"].should be_empty
+  end
 end

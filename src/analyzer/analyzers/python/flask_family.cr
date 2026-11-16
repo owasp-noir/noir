@@ -294,6 +294,26 @@ module Analyzer::Python
         python_package_root(path), path, fetch_file_content(path))
     end
 
+    @visible_strings = Hash(::String, Hash(::String, ::String)).new
+
+    # The string constants `path` can name: its own module-level ones, the
+    # ones it imports by name from project modules (`from .config import
+    # API_PREFIX`), and `<module>.<NAME>` for a module it imports whole.
+    private def visible_strings(path : ::String) : Hash(::String, ::String)
+      @visible_strings[path] ||= begin
+        strings = Noir::TreeSitterPythonRouteExtractor.module_string_constants(fetch_file_content(path)).dup
+        imported_symbols(path).each do |local, (file, name)|
+          exported = Noir::TreeSitterPythonRouteExtractor.module_string_constants(fetch_file_content(file))
+          if name.empty?
+            exported.each { |constant, value| strings["#{local}.#{constant}"] = value }
+          elsif (value = exported[name]?) && !strings.has_key?(local)
+            strings[local] = value
+          end
+        end
+        strings
+      end
+    end
+
     # The directory absolute imports in `path` resolve against: the parent
     # of the outermost package (`__init__.py` directory) holding the file.
     private def python_package_root(path : ::String) : ::String
