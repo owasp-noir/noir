@@ -3,6 +3,7 @@ export default class NotesController {
   async store({ request }: HttpContext): Promise<{ id: number }> {
     // A call named like an action is not that action's body.
     search(request)
+    const example = "request.input('fake')"
     const { title, body, ...rest } = request.body()
     return request.only(['title', 'body'])
   }

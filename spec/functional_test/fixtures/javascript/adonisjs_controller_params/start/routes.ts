@@ -12,3 +12,10 @@ router
 router.delete('/notes/:id', [NotesController, 'destroy'])
 router.put('/notes/inline', [() => import('#controllers/notes_controller'), 'store'])
 router.get('/notes/compact', [NotesController, 'compact'])
+router.get('/notes/preview', [NotesController, 'store'])
+router.get('/inline-params', ({ request }) => {
+  const example = "request.input('fake-inline')"
+  let assigned;
+  ({ assigned } = request.body());
+  return request.input('real-inline')
+})
