@@ -357,54 +357,6 @@ module Analyzer::Python
       route_prefixes(registered, decl_path, decl_name, prefix)
     end
 
-    private def apply_nested_blueprint_prefixes(path_api_instances : Hash(::String, Hash(::String, ::String)),
-                                                own_api_instances : Hash(::String, Hash(::String, ::String)),
-                                                blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String?))),
-                                                registered : Hash(::String, Hash(::String, Array(::String))))
-      blueprint_mounts.each do |path, mounts|
-        api_instances = path_api_instances[path]?
-        next unless api_instances
-
-        own_prefixes = own_api_instances[path]? || api_instances
-        # Each pass recomputes every child's prefixes from the previous
-        # pass, so a parent resolved later leaves no stale prefix behind and
-        # a child registered twice keeps both. Bound the loop: an acyclic
-        # mount graph converges in at most `mounts.size` passes, while a
-        # circular mount (A registers B and B registers A) would grow the
-        # prefix every pass and never converge.
-        resolved = Hash(::String, Array(::String)).new
-        (mounts.size + 1).times do
-          pass = Hash(::String, Array(::String)).new
-          mounts.each do |mount|
-            parent_name, child_name, mount_prefix = mount
-            next unless api_instances.has_key?(child_name)
-
-            # A parent registered more than once from another file mounts
-            # the child under each of its registrations.
-            parent_prefixes = resolved[parent_name]? ||
-                              registered[path]?.try(&.[parent_name]?) ||
-                              [api_instances[parent_name]? || ""]
-            # A url_prefix given at registration replaces the child's own
-            # url_prefix; the own prefix applies only when it is omitted
-            # (nil). An explicit empty url_prefix still drops it.
-            child_prefix = mount_prefix || own_prefixes[child_name]? || ""
-            list = pass[child_name] ||= [] of ::String
-            parent_prefixes.each do |parent_prefix|
-              resolved_prefix = File.join(parent_prefix, child_prefix)
-              list << resolved_prefix unless list.includes?(resolved_prefix)
-            end
-          end
-          break if pass == resolved
-          resolved = pass
-        end
-
-        resolved.each do |child_name, prefixes|
-          api_instances[child_name] = prefixes.first
-          (registered[path] ||= Hash(::String, Array(::String)).new)[child_name] = prefixes
-        end
-      end
-    end
-
     # A child mounted on a blueprint of another file is served under each of
     # that blueprint's prefixes joined with the registration's url_prefix
     # (its own one when omitted), next to any mount on the app. Passes run
@@ -499,6 +451,271 @@ module Analyzer::Python
       end
 
       methods.uniq
+    end
+
+    REGISTER_BLUEPRINT_RE = /(#{PythonEngine::PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{PythonEngine::DOT_NATION})/
+
+    alias ScopedNameKey = Tuple(::String, ::String)
+
+    private record BlueprintScanState,
+      app_instances : Hash(ScopedNameKey, ::String),
+      blueprint_prefixes : Hash(ScopedNameKey, ::String),
+      path_api_instances : Hash(::String, Hash(::String, ::String)),
+      register_blueprint : Hash(::String, Hash(::String, Array(::String))),
+      blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String?))),
+      # Blueprint-parent edges, including same-file children, resolve together:
+      # {parent file, parent, child file, child, url_prefix}.
+      cross_file_mounts : Array(Tuple(::String, ::String, ::String, ::String, ::String?)),
+      # flask-restx namespaces are module-level singletons: the Api host
+      # file (`api/__init__.py`) wires `api.add_namespace(ns, "/x")` with
+      # the blueprint's `url_prefix` (`/api/v1`), but each namespace's
+      # ROUTES live in a different file (`api/v1/x.py`). `path_api_instances`
+      # is per-file, so the route file never saw the host-computed prefix
+      # and every `@ns.route` surfaced without `/api/v1`. This GLOBAL map
+      # (namespace var name -> fully-resolved prefix) bridges the two files.
+      namespace_prefixes : Hash(ScopedNameKey, ::String) do
+      def self.empty : BlueprintScanState
+        new(
+          app_instances: Hash(ScopedNameKey, ::String).new,
+          blueprint_prefixes: Hash(ScopedNameKey, ::String).new,
+          path_api_instances: Hash(::String, Hash(::String, ::String)).new,
+          register_blueprint: Hash(::String, Hash(::String, Array(::String))).new,
+          blueprint_mounts: Hash(::String, Array(Tuple(::String, ::String, ::String?))).new,
+          cross_file_mounts: [] of Tuple(::String, ::String, ::String, ::String, ::String?),
+          namespace_prefixes: Hash(ScopedNameKey, ::String).new,
+        )
+      end
+    end
+
+    private def indent_of(line : ::String) : Int32
+      line.size - line.lstrip.size
+    end
+
+    # Where the blueprint a `register_blueprint(<expr>)` names is declared.
+    # A blueprint built inside the function that registers it (`def
+    # load_blueprints(app): bp = Blueprint(...)`) is no module global, so it
+    # is declared where it is registered. A factory (`tags.construct_blueprint
+    # (datastore)`, or `bp = views.make_bp()` registered as `bp`) is the
+    # blueprint its `def` returns.
+    private def registered_blueprint_declaration(path : ::String, lines : Array(::String), api_instances : Hash(::String, ::String), name : ::String, line_index : Int32) : Tuple(::String, ::String)?
+      declaration = blueprint_declaration(path, name)
+      declaration ||= {path, name} if api_instances.has_key?(name)
+      unless declaration
+        if callee = assigned_call(lines, line_index, name)
+          declaration = blueprint_declaration(path, callee)
+          name = callee
+        end
+        declaration ||= {path, name} if !name.includes?('.') && find_function_def(lines, name)
+      end
+      declaration ? factory_blueprint(declaration) : nil
+    end
+
+    # The callee of the nearest `name = f(...)` above line `idx` in the
+    # same scope (`bp = alpha.make()` ... `bp = beta.make()`): no deeper
+    # than line `idx`, and not past the `def` holding it.
+    private def assigned_call(lines : Array(::String), idx : Int32, name : ::String) : ::String?
+      indent = indent_of(lines[idx])
+      assignment = /\A[ \t]*#{Regex.escape(name)}[ \t]*=[ \t]*(#{PythonEngine::DOT_NATION})[ \t]*\(/
+      (idx - 1).downto(0) do |j|
+        line = lines[j]
+        next if line.blank?
+        line_indent = indent_of(line)
+        next if line_indent > indent
+        return if line_indent < indent && line.lstrip.matches?(/\A(?:async[ \t]+)?def\b/)
+        # Out of the block holding the call: a deeper line above is in a
+        # nested `def` or a sibling block.
+        indent = line_indent if line_indent < indent
+        if m = line.match(assignment)
+          return m[1]
+        end
+      end
+    end
+
+    FACTORY_RETURN_RE = /^[ \t]+return[ \t]+([A-Za-z_]\w*)[ \t]*(?:#.*)?$/
+
+    # `{file, name}` of the blueprint `def name(...)` in `file` builds and
+    # returns, else `declaration` unchanged.
+    private def factory_blueprint(declaration : Tuple(::String, ::String)) : Tuple(::String, ::String)
+      path, name = declaration
+      lines = fetch_file_lines(path)
+      idx = find_function_def(lines, name) || return declaration
+      indent = indent_of(lines[idx])
+      body = [] of ::String
+      lines[(idx + 1)..].each do |line|
+        next if line.blank? || line.lstrip.starts_with?('#')
+        break if indent_of(line) <= indent
+        body << line
+      end
+      body.reverse_each do |line|
+        returned = line.match(FACTORY_RETURN_RE).try(&.[1]) || next
+        assigned = /^[ \t]+#{Regex.escape(returned)}[ \t]*=[ \t]*(?:(?:flask|quart)\.)?Blueprint[ \t]*\(/
+        next unless body.any?(&.matches?(assigned))
+        # Routes are keyed by file and name: two factories building the
+        # same local name in one file cannot be told apart, so neither
+        # takes the registration's prefix.
+        return declaration if lines.count(&.matches?(assigned)) > 1
+        return {path, returned}
+      end
+      declaration
+    end
+
+    # `url_prefix=app.config["X"]` / `app.config.get("X", "/d")`: the
+    # strings the project's config modules assign `X`, else the `.get`
+    # default. Which config class is live is read, not guessed from file
+    # order: the class `config.from_object(...)` names (or the base it
+    # inherits `X` from), else module-level settings and the base/default
+    # classes (`Config`, `BaseConfig`, `DefaultConfig`, one others inherit
+    # from). Values still in conflict each give a row.
+    CONFIG_URL_PREFIX_RE = /url_prefix\s*=\s*#{PythonEngine::DOT_NATION}\.config\s*(?:\[\s*['"](\w+)['"]\s*\]|\.get\s*\(\s*['"](\w+)['"]\s*(?:,\s*[rf]?['"]([^'"]*)['"])?)/
+    CONFIG_CLASS_RE      = /\Aclass\s+(\w+)\s*(?:\(([^)]*)\))?\s*:/
+    FROM_OBJECT_RE       = /\.from_object\(\s*(?:['"]([\w.]+)['"]|([\w.]+)\s*\))/
+
+    @config_string_values = Hash(::String, Array(::String)).new
+    @config_from_object_classes = Hash(::String, Array(::String)).new
+
+    private def config_url_prefixes(line : ::String, base_path : ::String) : Array(::String)
+      match = line.match(CONFIG_URL_PREFIX_RE) || return [] of ::String
+      key = match[1]? || match[2]
+      values = config_string_values(key, base_path)
+      values.empty? && (default = match[3]?) ? [default] : values
+    end
+
+    # Only the project's own config modules: a monorepo neighbour's
+    # same-named setting configures a different app.
+    private def config_string_values(key : ::String, base_path : ::String) : Array(::String)
+      @config_string_values["#{base_path}\0#{key}"] ||= begin
+        value_re = /\A[ \t]*#{key}[ \t]*(?::[^=\n]+)?=[ \t]*(?:[rR]?['"]([^'"\n]*)['"]|(?:os\.)?(?:environ\.get|getenv)\(\s*['"]\w+['"]\s*,\s*[rR]?['"]([^'"\n]*)['"]\s*\))[ \t]*(?:#.*)?\z/
+        module_values = [] of ::String
+        class_values = Hash(::String, ::String).new
+        class_bases = Hash(::String, Array(::String)).new
+        python_source_files.each do |path|
+          next unless path_under_root?(path, base_path)
+          stem = File.basename(path).downcase
+          next unless stem.includes?("config") || stem.includes?("setting") || path.includes?("/config")
+          source = fetch_file_content(path)
+          next unless source.includes?(key) || source.includes?("class ")
+          current = nil
+          fetch_file_lines(path).each do |l|
+            next if l.blank?
+            unless l[0].ascii_whitespace?
+              current = nil
+              if c = l.match(CONFIG_CLASS_RE)
+                current = c[1]
+                class_bases[current] = c[2]?.to_s.split(',').map(&.strip.split('.').last).reject(&.empty?)
+              end
+            end
+            next unless l.includes?(key)
+            v = l.match(value_re) || next
+            value = v[1]? || v[2]
+            if cls = current
+              class_values[cls] ||= value
+            elsif !l[0].ascii_whitespace?
+              module_values << value
+            end
+          end
+        end
+        chosen = from_object_classes(base_path).compact_map { |cls| config_class_value(cls, class_values, class_bases, 0) }
+        if chosen.empty?
+          inherited = class_bases.values.flatten.to_set
+          base_classes = class_values.keys.select { |cls| cls.matches?(/\A(?:Base|Default)?Config\z|\A(?:Base|Default)/) || inherited.includes?(cls) }
+          chosen = module_values + base_classes.map { |cls| class_values[cls] }
+        end
+        chosen = class_values.values if chosen.empty?
+        chosen.uniq
+      end
+    end
+
+    # `cls`'s own value, else the first one up its bases.
+    private def config_class_value(cls : ::String, values : Hash(::String, ::String),
+                                   bases : Hash(::String, Array(::String)), depth : Int32) : ::String?
+      return values[cls] if values.has_key?(cls)
+      return if depth > 8
+      bases[cls]?.try &.each do |base|
+        found = config_class_value(base, values, bases, depth + 1)
+        return found if found
+      end
+      nil
+    end
+
+    # Class names handed to `<x>.config.from_object(...)` anywhere in the
+    # project, as a dotted string or a name.
+    private def from_object_classes(base_path : ::String) : Array(::String)
+      @config_from_object_classes[base_path] ||= begin
+        names = [] of ::String
+        python_source_files.each do |path|
+          next unless path_under_root?(path, base_path)
+          source = fetch_file_content(path)
+          next unless source.includes?("from_object")
+          source.scan(FROM_OBJECT_RE) { |m| names << (m[1]? || m[2]).split('.').last }
+        end
+        names.uniq
+      end
+    end
+
+    private def record_family_blueprint_registration(path : ::String, base_path : ::String,
+                                                     lines : Array(::String), api_instances : Hash(::String, ::String),
+                                                     state : BlueprintScanState, line_index : Int32,
+                                                     original_line : ::String, line : ::String) : Nil
+      # `app.register_blueprint(\n    views.construct_blueprint(), url_prefix="/x"\n)`
+      if line.includes?(".register_blueprint(") && python_paren_delta(original_line) > 0
+        original_line = join_until_python_call_closes(lines, line_index, original_line)
+        line = original_line.gsub(" ", "")
+      end
+      register_blueprint_match = line.includes?(".register_blueprint(") ? line.match(REGISTER_BLUEPRINT_RE) : nil
+      if register_blueprint_match
+        parent_name = register_blueprint_match[1]
+        blueprint_name = register_blueprint_match[2]
+        # `url_prefix=API_PREFIX + "/users"` / `f"{API_PREFIX}/items"`: the
+        # string the expression evaluates to, else the literal it starts with.
+        mount_prefix = Noir::TreeSitterPythonRouteExtractor.call_url_prefix(original_line.strip, visible_strings(path)) if original_line.includes?("url_prefix")
+        mount_prefix ||= original_line.match(/url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/).try(&.[1])
+        mount_prefixes = mount_prefix ? [mount_prefix] : config_url_prefixes(original_line, base_path)
+        state.blueprint_mounts[path] ||= [] of Tuple(::String, ::String, ::String?)
+        # Mounted on a blueprint rather than the app: a child declared in
+        # another file is served under each of that blueprint's prefixes,
+        # which are only known once every file is read.
+        on_blueprint = state.blueprint_prefixes.has_key?({base_path, parent_name}) &&
+                       !state.app_instances.has_key?({base_path, parent_name})
+        declaration = registered_blueprint_declaration(path, lines, api_instances, blueprint_name, line_index) if on_blueprint || !mount_prefixes.empty?
+        if on_blueprint && declaration
+          (mount_prefixes.empty? ? [nil] : mount_prefixes).each do |mount|
+            state.cross_file_mounts << {path, parent_name, declaration[0], declaration[1], mount}
+          end
+        elsif mount_prefixes.empty?
+          state.blueprint_mounts[path] << {parent_name, blueprint_name, nil}
+        else
+          mount_prefixes.each do |blueprint_mount_prefix|
+            state.blueprint_mounts[path] << {parent_name, blueprint_name, blueprint_mount_prefix}
+            add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], blueprint_mount_prefix) if declaration
+          end
+        end
+      end
+    end
+
+    private def resolve_family_blueprint_prefixes(state : BlueprintScanState) : Nil
+      # Preserve constructor prefixes before applying registration overrides.
+      own_api_instances = clone_path_api_instances(state.path_api_instances)
+      state.register_blueprint.each do |path, blueprint_info|
+        blueprint_info.each do |blueprint_name, registered_prefixes|
+          if state.path_api_instances.has_key?(path)
+            api_instances = state.path_api_instances[path]
+            # Flask's `BlueprintSetupState` uses the registration's
+            # url_prefix in place of the blueprint's own one; it falls
+            # back to the own prefix only when url_prefix is omitted.
+            api_instances[blueprint_name] = registered_prefixes.first
+          end
+        end
+      end
+      # One graph propagates prefixes through alternating same-file and
+      # cross-file edges without retaining an earlier partial prefix.
+      mounts = state.cross_file_mounts.dup
+      state.blueprint_mounts.each do |path, entries|
+        entries.each do |parent, child, prefix|
+          next unless own_api_instances[path]?.try(&.has_key?(child))
+          mounts << {path, parent, path, child, prefix}
+        end
+      end
+      apply_cross_file_mounts(mounts, state.register_blueprint, state.path_api_instances, own_api_instances)
     end
   end
 end

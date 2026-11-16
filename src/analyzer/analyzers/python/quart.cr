@@ -36,7 +36,6 @@ module Analyzer::Python
     QUART_INSTANCE_RE       = /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:quart\.)?Quart\(/
     VIEW_ASSIGN_RE          = /(#{PYTHON_VAR_NAME_REGEX})=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
     ADD_URL_RULE_SCAN_RE    = /(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\s*\((.*)\)\s*$/m
-    REGISTER_BLUEPRINT_RE   = /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
     METHOD_VIEW_DIRECT_RE   = /view_func\s*=\s*(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/
     METHOD_VIEW_VAR_RE      = /view_func\s*=\s*(#{PYTHON_VAR_NAME_REGEX})/
     METHOD_VIEW_POS_VIEW_RE = /^\s*[rf]?['"][^'"]*['"]\s*,\s*[rf]?['"][^'"]*['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/
@@ -47,16 +46,13 @@ module Analyzer::Python
     @function_view_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, Array(::String)))).new
 
     def analyze
-      quart_instances = Hash(::String, ::String).new
-      quart_instances["app"] ||= "" # Common Quart instance name
-      blueprint_prefixes = Hash(::String, ::String).new
-      path_api_instances = Hash(::String, Hash(::String, ::String)).new
-      register_blueprint = Hash(::String, Hash(::String, Array(::String))).new
-      blueprint_mounts = Hash(::String, Array(Tuple(::String, ::String, ::String?))).new
-      cross_file_mounts = [] of Tuple(::String, ::String, ::String, ::String, ::String?)
+      state = BlueprintScanState.empty
+      path_api_instances = state.path_api_instances
+      register_blueprint = state.register_blueprint
 
       python_files = python_source_files
       base_paths.each do |current_base_path|
+        state.app_instances[{current_base_path, "app"}] ||= ""
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
           @logger.debug "Analyzing #{path}"
@@ -86,11 +82,12 @@ module Analyzer::Python
           end
 
           ts_blueprints.each do |bp|
-            blueprint_prefixes[bp.name] ||= bp.prefix
+            state.blueprint_prefixes[{current_base_path, bp.name}] ||= bp.prefix
             api_instances[bp.name] ||= bp.prefix
           end
 
           lines.each_with_index do |original_line, line_index|
+            next if original_line.lstrip.starts_with?("#")
             line = original_line.gsub(" ", "")
 
             # Identify Quart instance assignments: `app = Quart(__name__)`
@@ -98,7 +95,7 @@ module Analyzer::Python
             if quart_match
               quart_instance_name = quart_match[1]
               api_instances[quart_instance_name] ||= ""
-              quart_instances[quart_instance_name] ||= ""
+              state.app_instances[{current_base_path, quart_instance_name}] ||= ""
             end
 
             if view_assign_match = line.match(VIEW_ASSIGN_RE)
@@ -135,47 +132,13 @@ module Analyzer::Python
               end
             end
 
-            # Identify Blueprint registration:
-            #   `app.register_blueprint(bp, url_prefix="/api")`
-            register_blueprint_match = line.match REGISTER_BLUEPRINT_RE
-            if register_blueprint_match
-              parent_name = register_blueprint_match[1]
-              blueprint_name = register_blueprint_match[2]
-              url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
-              blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : nil
-              # Mounted on a blueprint rather than the app: a child declared
-              # in another file is resolved once every file is read.
-              on_blueprint = blueprint_prefixes.has_key?(parent_name) && !quart_instances.has_key?(parent_name)
-              declaration = blueprint_declaration(path, blueprint_name) if on_blueprint || url_prefix_match
-              if on_blueprint && declaration && declaration[0] != path
-                cross_file_mounts << {path, parent_name, declaration[0], declaration[1], blueprint_mount_prefix}
-              else
-                blueprint_mounts[path] ||= [] of Tuple(::String, ::String, ::String?)
-                blueprint_mounts[path] << {parent_name, blueprint_name, blueprint_mount_prefix}
-                add_registered_prefix(register_blueprint, declaration[0], declaration[1], url_prefix_match[1]) if url_prefix_match && declaration
-              end
-            end
+            record_family_blueprint_registration(path, current_base_path, lines, api_instances,
+              state, line_index, original_line, line)
           end
         end
       end
 
-      # Resolve url_prefix discovered at register_blueprint sites back to
-      # the file that declared the Blueprint.
-      own_api_instances = clone_path_api_instances(path_api_instances)
-      register_blueprint.each do |path, blueprint_info|
-        blueprint_info.each do |blueprint_name, registered_prefixes|
-          if path_api_instances.has_key?(path)
-            api_instances = path_api_instances[path]
-            if api_instances.has_key?(blueprint_name)
-              # The registration's url_prefix replaces the blueprint's
-              # own one (Quart reuses Flask's sansio Blueprint).
-              api_instances[blueprint_name] = registered_prefixes.first
-            end
-          end
-        end
-      end
-      apply_nested_blueprint_prefixes(path_api_instances, own_api_instances, blueprint_mounts, register_blueprint)
-      apply_cross_file_mounts(cross_file_mounts, register_blueprint, path_api_instances, own_api_instances)
+      resolve_family_blueprint_prefixes(state)
 
       # Iterate through the collected route decorations and extract endpoints
       @routes.each do |router_name, router_info_list|
