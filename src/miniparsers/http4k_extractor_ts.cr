@@ -4,6 +4,7 @@ require "../models/endpoint"
 require "./kotlin_callee_extractor"
 require "./kotlin_source_mask"
 require "./jvm_ts_helpers"
+require "./extraction_result_cache"
 
 module Noir
   # Tree-sitter-backed http4k extractor.
@@ -57,6 +58,13 @@ module Noir
       "HEAD", "OPTIONS", "TRACE", "CONNECT", "QUERY",
     }
 
+    @@string_constants = Hash(UInt64, Hash(String, String)).new
+    @@constants_mutex = Mutex.new
+
+    ExtractionResultCache.register_clearer do
+      @@constants_mutex.synchronize { @@string_constants.clear }
+    end
+
     struct Route
       getter verb : String
       getter path : String
@@ -106,6 +114,14 @@ module Noir
     end
 
     def extract_string_constants(source : String) : Hash(String, String)
+      return Hash(String, String).new unless source.includes?("val") && source.includes?('"')
+      key = ExtractionResultCache.key(source, "http4k_string_constants")
+      ExtractionResultCache.fetch(@@string_constants, key, @@constants_mutex) do
+        collect_string_constants(source)
+      end.dup
+    end
+
+    private def collect_string_constants(source : String) : Hash(String, String)
       constants = Hash(String, String).new
       package_name = ""
       current_type = ""
@@ -116,32 +132,36 @@ module Noir
       # above the live declaration wins the `||=` below and permanently
       # shadows it, so every route built from that constant reports a URL
       # that does not exist while the real one is lost.
-      Noir::KotlinSourceMask.code_only(source).each_line do |line|
+      visible_lines = Noir::KotlinSourceMask.visible(source).lines
+      Noir::KotlinSourceMask.code_only(source).each_line.with_index do |line, index|
+        code = visible_lines[index]
         if package_name.empty?
-          if match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)/)
+          if match = code.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)/)
             package_name = match[1]
           end
         end
 
-        if match = line.match(/^\s*(?:class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/)
+        if match = code.match(/^\s*(?:class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/)
           current_type = match[1]
           current_depth = 0
         end
 
-        if match = line.match(/\b(?:const\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"]*)"/)
-          name = match[1]
-          value = match[2]
-          constants[name] ||= value
-          unless current_type.empty?
-            constants["#{current_type}.#{name}"] ||= value
-            constants["#{package_name}.#{current_type}.#{name}"] ||= value unless package_name.empty?
+        code.scan(/\b(?:const\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String)?\s*=/) do |declaration|
+          if literal = line[declaration.end(0)..].match(/^\s*"([^"]*)"/)
+            name = declaration[1]
+            value = literal[1]
+            constants[name] ||= value
+            unless current_type.empty?
+              constants["#{current_type}.#{name}"] ||= value
+              constants["#{package_name}.#{current_type}.#{name}"] ||= value unless package_name.empty?
+            end
           end
         end
 
         unless current_type.empty?
-          current_depth += line.count("{")
-          current_depth -= line.count("}")
-          if current_depth <= 0 && line.includes?("}")
+          current_depth += code.count("{")
+          current_depth -= code.count("}")
+          if current_depth <= 0 && code.includes?("}")
             current_type = ""
             current_depth = 0
           end
