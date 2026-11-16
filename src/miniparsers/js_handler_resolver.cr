@@ -138,6 +138,7 @@ module Noir::JSHandlerResolver
       target = resolve_specifier(file_path, spec) || return
       return follow_members(text, target, members[1...-1], members.last)
     end
+    # `users.list` on a local `const users = new UserController()`.
     if members.size == 1 && (klass = content.match(/\b(?:const|let|var)\s+#{Regex.escape(base)}\s*(?::[^=\n]+)?=\s*new\s+([A-Za-z_$][\w$]*)\b/).try(&.[1]))
       return instance_member(text, klass, members[0], content, file_path)
     end

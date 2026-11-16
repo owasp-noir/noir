@@ -97,6 +97,8 @@ module Noir
     # import only a local base class).
     # `constants` seeds what the file's own declarations cannot give, such as
     # a constant imported from another module.
+    # `on_routes` reads Hono's `app.on(method, path, handler)` as a route;
+    # in any other framework's file `.on(` is an event listener.
     def initialize(@source : String, @this_receiver_ok : Bool = true, constants : Hash(String, String)? = nil,
                    @resolve_mount_prefixes : Bool = false, @mount_middleware : Proc(String, Bool)? = nil,
                    mount_constants : Hash(String, String)? = nil, @on_routes : Bool = false)
