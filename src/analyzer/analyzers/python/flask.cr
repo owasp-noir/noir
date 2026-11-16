@@ -11,17 +11,14 @@ module Analyzer::Python
     include FlaskFamily
     analyzer_for "python_flask"
 
-    alias ScopedNameKey = Tuple(::String, ::String)
-
     # Per-line route-discovery patterns. These interpolate only the
     # PYTHON_VAR_NAME_REGEX/DOT_NATION constants, so the inline literals
     # were recompiling identical PCRE2 patterns on every source line of
     # every file (`analyze` runs them per line). Compile once here; the
     # `.to_s` expansion of the interpolated constants is byte-identical
     # to the previous inline form, so matching behaviour is unchanged.
-    FLASK_INSTANCE_RE     = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask\.)?Flask\(/
-    INIT_APP_RE           = /(#{PYTHON_VAR_NAME_REGEX})\.init_app\((#{PYTHON_VAR_NAME_REGEX})/
-    REGISTER_BLUEPRINT_RE = /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
+    FLASK_INSTANCE_RE = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask\.)?Flask\(/
+    INIT_APP_RE       = /(#{PYTHON_VAR_NAME_REGEX})\.init_app\((#{PYTHON_VAR_NAME_REGEX})/
     # fastopenapi's `<router>.include_router(child, prefix="/x")`. The
     # receiver is often an expression (Dify's `cast(..., router)`), so only
     # the child is captured.
@@ -80,44 +77,8 @@ module Analyzer::Python
         /(#{api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
     end
 
-    # The cross-file state the phases of `analyze` share. Flask's maps
-    # accumulate across files (the file walk is deliberately sequential for
-    # that reason), so the phases are threaded with one value instead of a
-    # six-parameter list. The fields are only ever mutated in place, never
-    # reassigned, so the Hash instances behave exactly like the locals they
-    # replaced.
-    private record ScanState,
-      flask_instances : Hash(ScopedNameKey, ::String),
-      blueprint_prefixes : Hash(ScopedNameKey, ::String),
-      path_api_instances : Hash(::String, Hash(::String, ::String)),
-      register_blueprint : Hash(::String, Hash(::String, Array(::String))),
-      blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String?))),
-      # `parent_bp.register_blueprint(child, ...)` where `child` is declared
-      # in another file: {parent file, parent, child file, child, url_prefix}.
-      cross_file_mounts : Array(Tuple(::String, ::String, ::String, ::String, ::String?)),
-      # flask-restx namespaces are module-level singletons: the Api host
-      # file (`api/__init__.py`) wires `api.add_namespace(ns, "/x")` with
-      # the blueprint's `url_prefix` (`/api/v1`), but each namespace's
-      # ROUTES live in a different file (`api/v1/x.py`). `path_api_instances`
-      # is per-file, so the route file never saw the host-computed prefix
-      # and every `@ns.route` surfaced without `/api/v1`. This GLOBAL map
-      # (namespace var name -> fully-resolved prefix) bridges the two files.
-      namespace_prefixes : Hash(ScopedNameKey, ::String) do
-      def self.empty : ScanState
-        new(
-          flask_instances: Hash(ScopedNameKey, ::String).new,
-          blueprint_prefixes: Hash(ScopedNameKey, ::String).new,
-          path_api_instances: Hash(::String, Hash(::String, ::String)).new,
-          register_blueprint: Hash(::String, Hash(::String, Array(::String))).new,
-          blueprint_mounts: Hash(::String, Array(Tuple(::String, ::String, ::String?))).new,
-          cross_file_mounts: [] of Tuple(::String, ::String, ::String, ::String, ::String?),
-          namespace_prefixes: Hash(ScopedNameKey, ::String).new,
-        )
-      end
-    end
-
     def analyze
-      state = ScanState.empty
+      state = BlueprintScanState.empty
       fab = FabState.new
 
       # Sequential: blueprint/namespace maps accumulate across files.
@@ -126,7 +87,7 @@ module Analyzer::Python
       python_files = python_source_files
       prefetch_flask_parses(python_files)
       base_paths.each do |current_base_path|
-        state.flask_instances[{current_base_path, "app"}] ||= "" # Common flask instance name
+        state.app_instances[{current_base_path, "app"}] ||= "" # Common flask instance name
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
           @logger.debug "Analyzing #{path}"
@@ -183,7 +144,7 @@ module Analyzer::Python
     # Mutates the shared maps, which is why the caller walks the files
     # sequentially.
     private def analyze_flask_source(path : ::String, current_base_path : ::String,
-                                     file_content : ::String, state : ScanState) : Nil
+                                     file_content : ::String, state : BlueprintScanState) : Nil
       lines = fetch_file_lines(path)
       # `@expose` routes are resolved in a second pass (the class that
       # pins `route_base`/`resource_name` can live in any file); a source
@@ -248,13 +209,13 @@ module Analyzer::Python
     end
 
     # Identify Flask instance assignments
-    private def record_flask_instance(fs : SourceScan, state : ScanState, line_index : Int32,
+    private def record_flask_instance(fs : SourceScan, state : BlueprintScanState, line_index : Int32,
                                       original_line : ::String, line : ::String) : Nil
       flask_match = line.includes?("Flask(") ? line.match(FLASK_INSTANCE_RE) : nil
       if flask_match
         flask_instance_name = flask_match[1]
         fs.api_instances[flask_instance_name] ||= ""
-        state.flask_instances[{fs.base_path, flask_instance_name}] ||= ""
+        state.app_instances[{fs.base_path, flask_instance_name}] ||= ""
 
         effective_constructor = if python_paren_delta(original_line) > 0
                                   join_until_python_call_closes(fs.lines, line_index, original_line)
@@ -284,7 +245,7 @@ module Analyzer::Python
 
     # `Api(app|blueprint, prefix=...)` instantiations: bind the new Api
     # instance name to the prefix its host app/blueprint contributes.
-    private def record_api_instances(fs : SourceScan, state : ScanState, line_index : Int32,
+    private def record_api_instances(fs : SourceScan, state : BlueprintScanState, line_index : Int32,
                                      original_line : ::String, line : ::String) : Nil
       # `Api(...)` and `add_namespace(...)` calls routinely wrap
       # across lines (`X = Api(\n  blueprint,\n  ...\n)`), which
@@ -311,7 +272,7 @@ module Analyzer::Python
         api_kwarg_prefix = api_line.match(/[,(]prefix=[rf]?['"]([^'"]*)['"]/).try(&.[1]) || ""
 
         # Api from flask instance
-        state.flask_instances.each do |key, _prefix|
+        state.app_instances.each do |key, _prefix|
           next unless key[0] == fs.base_path
           _flask_instance_name = key[1]
           api_match = api_line.match api_from_instance_regex(_flask_instance_name)
@@ -338,7 +299,7 @@ module Analyzer::Python
     end
 
     # Api Namespace
-    private def record_api_namespaces(fs : SourceScan, state : ScanState, line_index : Int32,
+    private def record_api_namespaces(fs : SourceScan, state : BlueprintScanState, line_index : Int32,
                                       original_line : ::String, line : ::String) : Nil
       ns_line = if line.includes?(".add_namespace(") && python_paren_delta(original_line) > 0
                   join_until_python_call_closes(fs.lines, line_index, original_line).gsub(" ", "")
@@ -383,7 +344,7 @@ module Analyzer::Python
     # for each route, so each route is an `add_url_rule` on `bp` with the
     # call's other arguments. A helper whose definition is found and never
     # calls `add_url_rule` registers nothing.
-    private def emit_view_registration_routes(fs : SourceScan, state : ScanState, line_index : Int32,
+    private def emit_view_registration_routes(fs : SourceScan, state : BlueprintScanState, line_index : Int32,
                                               original_line : ::String, line : ::String) : Nil
       return unless fs.routes_keyword?
       return unless line.matches?(VIEW_REGISTRATION_HEAD_RE)
@@ -480,47 +441,11 @@ module Analyzer::Python
       false
     end
 
-    private def indent_of(line : ::String) : Int32
-      line.size - line.lstrip.size
-    end
-
     # Identify Blueprint registration
-    private def record_blueprint_registration(fs : SourceScan, state : ScanState, line_index : Int32,
+    private def record_blueprint_registration(fs : SourceScan, state : BlueprintScanState, line_index : Int32,
                                               original_line : ::String, line : ::String) : Nil
-      # `app.register_blueprint(\n    views.construct_blueprint(), url_prefix="/x"\n)`
-      if line.includes?(".register_blueprint(") && python_paren_delta(original_line) > 0
-        original_line = join_until_python_call_closes(fs.lines, line_index, original_line)
-        line = original_line.gsub(" ", "")
-      end
-      register_blueprint_match = line.includes?(".register_blueprint(") ? line.match(REGISTER_BLUEPRINT_RE) : nil
-      if register_blueprint_match
-        parent_name = register_blueprint_match[1]
-        blueprint_name = register_blueprint_match[2]
-        # `url_prefix=API_PREFIX + "/users"` / `f"{API_PREFIX}/items"`: the
-        # string the expression evaluates to, else the literal it starts with.
-        mount_prefix = Noir::TreeSitterPythonRouteExtractor.call_url_prefix(original_line.strip, visible_strings(fs.path)) if original_line.includes?("url_prefix")
-        mount_prefix ||= original_line.match(/url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/).try(&.[1])
-        mount_prefixes = mount_prefix ? [mount_prefix] : config_url_prefixes(original_line, fs.base_path)
-        state.blueprint_mounts[fs.path] ||= [] of Tuple(::String, ::String, ::String?)
-        # Mounted on a blueprint rather than the app: a child declared in
-        # another file is served under each of that blueprint's prefixes,
-        # which are only known once every file is read.
-        on_blueprint = state.blueprint_prefixes.has_key?({fs.base_path, parent_name}) &&
-                       !state.flask_instances.has_key?({fs.base_path, parent_name})
-        declaration = registered_blueprint_declaration(fs, blueprint_name, line_index) if on_blueprint || !mount_prefixes.empty?
-        if on_blueprint && declaration && declaration[0] != fs.path
-          (mount_prefixes.empty? ? [nil] : mount_prefixes).each do |mount|
-            state.cross_file_mounts << {fs.path, parent_name, declaration[0], declaration[1], mount}
-          end
-        elsif mount_prefixes.empty?
-          state.blueprint_mounts[fs.path] << {parent_name, blueprint_name, nil}
-        else
-          mount_prefixes.each do |blueprint_mount_prefix|
-            state.blueprint_mounts[fs.path] << {parent_name, blueprint_name, blueprint_mount_prefix}
-            add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], blueprint_mount_prefix) if declaration
-          end
-        end
-      end
+      record_family_blueprint_registration(fs.path, fs.base_path, fs.lines, fs.api_instances,
+        state, line_index, original_line, line)
 
       include_router_match = line.includes?(".include_router(") ? line.match(INCLUDE_ROUTER_RE) : nil
       if include_router_match
@@ -528,167 +453,6 @@ module Analyzer::Python
         if prefix_match && (declaration = blueprint_declaration(fs.path, include_router_match[1]))
           add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], prefix_match[1])
         end
-      end
-    end
-
-    # Where the blueprint a `register_blueprint(<expr>)` names is declared.
-    # A blueprint built inside the function that registers it (`def
-    # load_blueprints(app): bp = Blueprint(...)`) is no module global, so it
-    # is declared where it is registered. A factory (`tags.construct_blueprint
-    # (datastore)`, or `bp = views.make_bp()` registered as `bp`) is the
-    # blueprint its `def` returns.
-    private def registered_blueprint_declaration(fs : SourceScan, name : ::String, line_index : Int32) : Tuple(::String, ::String)?
-      declaration = blueprint_declaration(fs.path, name)
-      declaration ||= {fs.path, name} if fs.api_instances.has_key?(name)
-      unless declaration
-        if callee = assigned_call(fs.lines, line_index, name)
-          declaration = blueprint_declaration(fs.path, callee)
-          name = callee
-        end
-        declaration ||= {fs.path, name} if !name.includes?('.') && find_function_def(fs.lines, name)
-      end
-      declaration ? factory_blueprint(declaration) : nil
-    end
-
-    # The callee of the nearest `name = f(...)` above line `idx` in the
-    # same scope (`bp = alpha.make()` ... `bp = beta.make()`): no deeper
-    # than line `idx`, and not past the `def` holding it.
-    private def assigned_call(lines : Array(::String), idx : Int32, name : ::String) : ::String?
-      indent = indent_of(lines[idx])
-      assignment = /\A[ \t]*#{Regex.escape(name)}[ \t]*=[ \t]*(#{DOT_NATION})[ \t]*\(/
-      (idx - 1).downto(0) do |j|
-        line = lines[j]
-        next if line.blank?
-        line_indent = indent_of(line)
-        next if line_indent > indent
-        return if line_indent < indent && line.lstrip.matches?(/\A(?:async[ \t]+)?def\b/)
-        # Out of the block holding the call: a deeper line above is in a
-        # nested `def` or a sibling block.
-        indent = line_indent if line_indent < indent
-        if m = line.match(assignment)
-          return m[1]
-        end
-      end
-    end
-
-    FACTORY_RETURN_RE = /^[ \t]+return[ \t]+([A-Za-z_]\w*)[ \t]*(?:#.*)?$/
-
-    # `{file, name}` of the blueprint `def name(...)` in `file` builds and
-    # returns, else `declaration` unchanged.
-    private def factory_blueprint(declaration : Tuple(::String, ::String)) : Tuple(::String, ::String)
-      path, name = declaration
-      lines = fetch_file_lines(path)
-      idx = find_function_def(lines, name) || return declaration
-      indent = indent_of(lines[idx])
-      body = [] of ::String
-      lines[(idx + 1)..].each do |line|
-        next if line.blank? || line.lstrip.starts_with?('#')
-        break if indent_of(line) <= indent
-        body << line
-      end
-      body.reverse_each do |line|
-        returned = line.match(FACTORY_RETURN_RE).try(&.[1]) || next
-        assigned = /^[ \t]+#{Regex.escape(returned)}[ \t]*=[ \t]*(?:flask\.)?Blueprint[ \t]*\(/
-        next unless body.any?(&.matches?(assigned))
-        # Routes are keyed by file and name: two factories building the
-        # same local name in one file cannot be told apart, so neither
-        # takes the registration's prefix.
-        return declaration if lines.count(&.matches?(assigned)) > 1
-        return {path, returned}
-      end
-      declaration
-    end
-
-    # `url_prefix=app.config["X"]` / `app.config.get("X", "/d")`: the
-    # strings the project's config modules assign `X`, else the `.get`
-    # default. Which config class is live is read, not guessed from file
-    # order: the class `config.from_object(...)` names (or the base it
-    # inherits `X` from), else module-level settings and the base/default
-    # classes (`Config`, `BaseConfig`, `DefaultConfig`, one others inherit
-    # from). Values still in conflict each give a row.
-    CONFIG_URL_PREFIX_RE = /url_prefix\s*=\s*#{DOT_NATION}\.config\s*(?:\[\s*['"](\w+)['"]\s*\]|\.get\s*\(\s*['"](\w+)['"]\s*(?:,\s*[rf]?['"]([^'"]*)['"])?)/
-    CONFIG_CLASS_RE      = /\Aclass\s+(\w+)\s*(?:\(([^)]*)\))?\s*:/
-    FROM_OBJECT_RE       = /\.from_object\(\s*(?:['"]([\w.]+)['"]|([\w.]+)\s*\))/
-
-    @config_string_values = Hash(::String, Array(::String)).new
-    @config_from_object_classes = Hash(::String, Array(::String)).new
-
-    private def config_url_prefixes(line : ::String, base_path : ::String) : Array(::String)
-      match = line.match(CONFIG_URL_PREFIX_RE) || return [] of ::String
-      key = match[1]? || match[2]
-      values = config_string_values(key, base_path)
-      values.empty? && (default = match[3]?) ? [default] : values
-    end
-
-    # Only the project's own config modules: a monorepo neighbour's
-    # same-named setting configures a different app.
-    private def config_string_values(key : ::String, base_path : ::String) : Array(::String)
-      @config_string_values["#{base_path}\0#{key}"] ||= begin
-        value_re = /\A[ \t]*#{key}[ \t]*(?::[^=\n]+)?=[ \t]*(?:[rR]?['"]([^'"\n]*)['"]|(?:os\.)?(?:environ\.get|getenv)\(\s*['"]\w+['"]\s*,\s*[rR]?['"]([^'"\n]*)['"]\s*\))[ \t]*(?:#.*)?\z/
-        module_values = [] of ::String
-        class_values = Hash(::String, ::String).new
-        class_bases = Hash(::String, Array(::String)).new
-        python_source_files.each do |path|
-          next unless path_under_root?(path, base_path)
-          stem = File.basename(path).downcase
-          next unless stem.includes?("config") || stem.includes?("setting") || path.includes?("/config")
-          source = fetch_file_content(path)
-          next unless source.includes?(key) || source.includes?("class ")
-          current = nil
-          fetch_file_lines(path).each do |l|
-            next if l.blank?
-            unless l[0].ascii_whitespace?
-              current = nil
-              if c = l.match(CONFIG_CLASS_RE)
-                current = c[1]
-                class_bases[current] = c[2]?.to_s.split(',').map(&.strip.split('.').last).reject(&.empty?)
-              end
-            end
-            next unless l.includes?(key)
-            v = l.match(value_re) || next
-            value = v[1]? || v[2]
-            if cls = current
-              class_values[cls] ||= value
-            elsif !l[0].ascii_whitespace?
-              module_values << value
-            end
-          end
-        end
-        chosen = from_object_classes(base_path).compact_map { |cls| config_class_value(cls, class_values, class_bases, 0) }
-        if chosen.empty?
-          inherited = class_bases.values.flatten.to_set
-          base_classes = class_values.keys.select { |cls| cls.matches?(/\A(?:Base|Default)?Config\z|\A(?:Base|Default)/) || inherited.includes?(cls) }
-          chosen = module_values + base_classes.map { |cls| class_values[cls] }
-        end
-        chosen = class_values.values if chosen.empty?
-        chosen.uniq
-      end
-    end
-
-    # `cls`'s own value, else the first one up its bases.
-    private def config_class_value(cls : ::String, values : Hash(::String, ::String),
-                                   bases : Hash(::String, Array(::String)), depth : Int32) : ::String?
-      return values[cls] if values.has_key?(cls)
-      return if depth > 8
-      bases[cls]?.try &.each do |base|
-        found = config_class_value(base, values, bases, depth + 1)
-        return found if found
-      end
-      nil
-    end
-
-    # Class names handed to `<x>.config.from_object(...)` anywhere in the
-    # project, as a dotted string or a name.
-    private def from_object_classes(base_path : ::String) : Array(::String)
-      @config_from_object_classes[base_path] ||= begin
-        names = [] of ::String
-        python_source_files.each do |path|
-          next unless path_under_root?(path, base_path)
-          source = fetch_file_content(path)
-          next unless source.includes?("from_object")
-          source.scan(FROM_OBJECT_RE) { |m| names << (m[1]? || m[2]).split('.').last }
-        end
-        names.uniq
       end
     end
 
@@ -769,7 +533,7 @@ module Analyzer::Python
 
     # Identify add_url_rule() registrations for class-based views
     # Match the call generically, then extract rule/view_func from any argument position
-    private def scan_add_url_rule_registrations(fs : SourceScan, state : ScanState, line_index : Int32,
+    private def scan_add_url_rule_registrations(fs : SourceScan, state : BlueprintScanState, line_index : Int32,
                                                 original_line : ::String, line : ::String) : Nil
       has_add_url_rule = line.includes?(".add_url_rule(")
       effective_add_url_rule = if has_add_url_rule && python_paren_delta(original_line) > 0
@@ -788,7 +552,7 @@ module Analyzer::Python
 
     # One `add_url_rule(...)` call: either a class-based view (recorded for
     # the `@class_views` pass) or a plain function view (emitted here).
-    private def handle_add_url_rule_match(fs : SourceScan, state : ScanState, line_index : Int32,
+    private def handle_add_url_rule_match(fs : SourceScan, state : BlueprintScanState, line_index : Int32,
                                           match_data : Regex::MatchData, effective_add_url_rule : ::String) : Nil
       return if match_data.size.zero?
       router_name = match_data[1]
@@ -932,7 +696,7 @@ module Analyzer::Python
     # `.as_view(...)` shapes; bare function refs fell
     # through. Resolve the function body when it is in
     # this file so params/callees match decorator routes.
-    private def emit_add_url_rule_function_view(fs : SourceScan, state : ScanState, line_index : Int32,
+    private def emit_add_url_rule_function_view(fs : SourceScan, state : BlueprintScanState, line_index : Int32,
                                                 router_name : ::String, route_path : ::String,
                                                 args_str : ::String) : Nil
       fn_name = extract_add_url_rule_function_name(args_str)
@@ -990,7 +754,7 @@ module Analyzer::Python
     # Function views registered with `add_url_rule`, served under their
     # router's prefixes once every `register_blueprint(url_prefix=...)` (which
     # can follow the rule, or sit in another file) has been read.
-    private def emit_function_view_endpoints(state : ScanState) : Nil
+    private def emit_function_view_endpoints(state : BlueprintScanState) : Nil
       @function_views.each do |endpoint, router_name, path|
         router_prefixes(state.path_api_instances, state.register_blueprint, path, router_name).each do |prefix|
           full_path = "#{prefix}#{endpoint.url}"
@@ -1063,27 +827,13 @@ module Analyzer::Python
     # then resolve blueprints mounted on other blueprints. Runs after the
     # whole walk because the registering file may be scanned before the
     # file that declares the blueprint.
-    private def resolve_blueprint_prefixes(state : ScanState) : Nil
-      # Update the API instances with the blueprint prefixes
-      own_api_instances = clone_path_api_instances(state.path_api_instances)
-      state.register_blueprint.each do |path, blueprint_info|
-        blueprint_info.each do |blueprint_name, registered_prefixes|
-          if state.path_api_instances.has_key?(path)
-            api_instances = state.path_api_instances[path]
-            # Flask's `BlueprintSetupState` uses the registration's
-            # url_prefix in place of the blueprint's own one; it falls
-            # back to the own prefix only when url_prefix is omitted.
-            api_instances[blueprint_name] = registered_prefixes.first
-          end
-        end
-      end
-      apply_nested_blueprint_prefixes(state.path_api_instances, own_api_instances, state.blueprint_mounts, state.register_blueprint)
-      apply_cross_file_mounts(state.cross_file_mounts, state.register_blueprint, state.path_api_instances, own_api_instances)
+    private def resolve_blueprint_prefixes(state : BlueprintScanState) : Nil
+      resolve_family_blueprint_prefixes(state)
     end
 
     # Emit endpoints for the `@<router>.route(...)`-style decorators
     # collected into `@routes` during the file walk.
-    private def emit_route_endpoints(state : ScanState) : Nil
+    private def emit_route_endpoints(state : BlueprintScanState) : Nil
       # Iterate through the routes and extract endpoints
       @routes.each do |router_name, router_info_list|
         router_info_list.each do |router_info|
@@ -1210,7 +960,7 @@ module Analyzer::Python
 
     # Emit endpoints for the class-based views registered into
     # `@class_views` by `add_url_rule(...)` / `add_resource(...)`.
-    private def emit_class_view_endpoints(state : ScanState) : Nil
+    private def emit_class_view_endpoints(state : BlueprintScanState) : Nil
       # Process class-based views from add_url_rule() / add_resource()
       # registrations. The import-map fallback below resolves the same
       # file repeatedly (e.g. redash registers 60+ resources from one
