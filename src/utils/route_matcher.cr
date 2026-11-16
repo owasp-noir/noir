@@ -408,7 +408,7 @@ module Noir::RouteMatcher
   end
 
   # Two route templates can agree without choosing a value for a typed
-  # parameter. Catch-alls and optional groups are deliberately not equated.
+  # parameter. Catch-all routes and optional groups are deliberately not equated.
   def template_shape(url : String) : String?
     parts = [] of String
     scan_placeholders(normalize(url)) do |kind, text|

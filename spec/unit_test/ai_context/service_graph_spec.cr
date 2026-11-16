@@ -68,7 +68,7 @@ describe NoirAIContext::ServiceGraph do
     no_project.calls.first.matches.should be_empty
   end
 
-  it "matches concatenated and interpolated path segments without guessing partial segments or catch-alls" do
+  it "matches concatenated and interpolated path segments without guessing partial segments or catch-all routes" do
     ["fetch('/orders/' + id)", "fetch(`/orders/${id}`)", "requests.get(f'/orders/{id}')"].each do |snippet|
       caller = service_endpoint("web", "/start", snippet: snippet)
       NoirAIContext::ServiceGraph.apply([caller, service_endpoint("orders", "/orders/<int:pk>"), service_endpoint("fallback", "/*")])
