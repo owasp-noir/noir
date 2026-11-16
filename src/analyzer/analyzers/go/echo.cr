@@ -21,7 +21,9 @@ module Analyzer::Go
       # O(1) lookup into `package_function_bodies` rather than re-
       # walking every sibling source file.
       package_function_bodies = collect_package_function_bodies(file_contents)
+      package_method_bodies = collect_package_controller_method_bodies(file_contents)
       import_path_function_bodies = collect_import_path_function_bodies(package_function_bodies)
+      import_path_method_bodies = collect_import_path_method_bodies(package_method_bodies)
       # `RegisterUsers(e.Group("/api/v1"))` + `func RegisterUsers(g *echo.Group)`:
       # the prefix lives at the call site (see `resolve_router_builder_prefixes`).
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
@@ -72,13 +74,16 @@ module Analyzer::Go
         route_rows = Set(Int32).new
         routes_by_line.each_key { |row| route_rows << row }
         external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
+        external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(
           callees_needed?,
           content,
           path,
           route_rows,
           external_fns,
-          imported_functions: import_path_function_bodies
+          external_methods,
+          imported_functions: import_path_function_bodies,
+          imported_methods: import_path_method_bodies
         )
 
         # `e.Static("/url", "./dir")` — same shape as Gin/Fiber/etc.

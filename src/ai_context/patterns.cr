@@ -15,8 +15,10 @@ module NoirAIContext
   # `select ... from` source pattern. `select` is the same: on a query
   # builder (`knex.select`, sqlx `db.Select`, jOOQ `dsl.select`) it runs
   # SQL, while `_keys.Select(...)` is LINQ and `items.select { }` Ruby's
-  # Enumerable.
-  SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource|dsl|qb|\w*queryBuilder)(?:\.|->|::)(?:query|execute|exec|select)\b/i
+  # Enumerable. Go's database/sql spells the same calls `QueryRow`,
+  # `QueryContext`, `ExecContext`; GORM and knex run a raw statement
+  # through `Raw` / `raw`.
+  SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource|dsl|qb|\w*queryBuilder)(?:\.|->|::)(?:query(?:row)?(?:context)?|exec(?:context)?|execute|select|raw)\b/i
 
   # The JVM receiver names no rule above can see (`this.owners.save`),
   # read off the declaration instead: a type named `*Repository` / `*Dao`,
@@ -155,7 +157,7 @@ module NoirAIContext
         /\b(?:reqwest|hyper|hyper_util|ureq|surf|isahc|attohttpc|awc)::[A-Za-z_][A-Za-z0-9_:!]*/i,
         # Go's net/http is also the server package: a body limiter, an
         # error writer or a status constant makes no outbound request.
-        /\bhttp\b(?!\.(?:MaxBytesReader|Error|NotFound|SetCookie|Handle|HandleFunc|FileServer|StripPrefix|ListenAndServe|Status[A-Z]|Method[A-Z]|TimeoutHandler|DetectContentType|Cookie\b|Header\b|Request\b|ResponseWriter|Server\b|NewServeMux|ServeFile|ServeContent))/i,
+        /\bhttp\b(?!\.(?:MaxBytesReader|Error|NotFound|SetCookie|Handle|HandleFunc|FileServer|StripPrefix|Dir\b|FS\b|ListenAndServe|Status[A-Z]|Method[A-Z]|TimeoutHandler|DetectContentType|Cookie\b|Header\b|Request\b|ResponseWriter|Server\b|NewServeMux|ServeFile|ServeContent))/i,
         /\bfetch\b/i,
         /\bclient\b/i,
         /\baxios\b/i,

@@ -1222,6 +1222,10 @@ module Noir
       # gf's `group.Bind(ctrl)`: reported as a `BIND` pseudo-route whose
       # path is the active group prefix (see `extract_gf_bind_sites`).
       getter controller_bind_method : String?
+      # chi's `r.Mount("/admin", adminRouter())`: reported the same way, so
+      # the caller knows the prefix the mount sits under (see
+      # `extract_chi_mount_scopes`).
+      getter mount_method : String?
 
       def initialize(@prefix_method = "Route",
                      @middleware_method = "Group",
@@ -1229,7 +1233,8 @@ module Noir
                      @bind_methods = [] of String,
                      @bind_method_verb = "ALL",
                      @net_http_methods = false,
-                     @controller_bind_method = nil)
+                     @controller_bind_method = nil,
+                     @mount_method = nil)
       end
     end
 

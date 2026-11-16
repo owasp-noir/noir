@@ -90,6 +90,13 @@ describe "GoAuthTagger router handler wrappers" do
     mixed.call(25, "/g/solo").should eq(["Protected by Go middleware ginWrap (verified from its body: refuses anonymous callers)"])
   end
 
+  it "reads Echo's trailing route middleware" do
+    guards.call("echo_wrap_auth_mixed", "main.go", 14, "/e/switch", "GET", "go_echo").should eq(["Protected by Go middleware authSwitch (verified from its body: refuses anonymous callers)"])
+    guards.call("echo_wrap_auth_mixed", "main.go", 15, "/e/csrfsess", "GET", "go_echo").should eq(["Protected by Go middleware authSessCSRF (verified from its body: refuses anonymous callers)"])
+    # Still a guard when the gin route is attributed to Echo by its file.
+    guards.call("echo_wrap_auth_mixed", "main.go", 26, "/g/csrfsess", "GET", "go_echo").should eq(["Protected by Go middleware ginCSRFSess (verified from its body: refuses anonymous callers)"])
+  end
+
   it "keeps a group guard that skips public paths through a switch case" do
     guards.call("echo_wrap_auth_mixed", "main.go", 17, "/e/grp/inside", "GET", "go_echo").should eq(["Protected by Go middleware authSwitch (verified from its body: refuses anonymous callers)"])
   end
