@@ -13,4 +13,13 @@ describe "Detect JS Elysia" do
   it "detects elysia package.json dependency" do
     instance.detect("package.json", "{\"dependencies\": {\"elysia\": \"^1.0.0\"}}").should be_true
   end
+
+  it "detects every supported JavaScript and TypeScript source extension" do
+    %w[.js .mjs .cjs .jsx .ts .mts .cts .tsx].each do |extension|
+      path = "app#{extension}"
+      instance.applicable?(path).should be_true
+      instance.detect(path, "import { Elysia } from 'elysia'").should be_true
+    end
+    instance.detect("notes.txt", "import { Elysia } from 'elysia'").should be_false
+  end
 end
