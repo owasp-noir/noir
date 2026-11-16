@@ -1,11 +1,25 @@
 require "json"
 require "yaml"
+require "./service_call"
 
 struct Endpoint
   include JSON::Serializable
   include YAML::Serializable
   property url, method, params, protocol, kind, details, tags, callees, internal
   property ai_context : AIContext?
+
+  # Distinguishes request-condition variants in serialized service references.
+  @[JSON::Field(ignore_serialize: service_variant.nil?)]
+  @[YAML::Field(ignore_serialize: service_variant.nil?)]
+  property service_variant : String?
+
+  @[JSON::Field(ignore_serialize: calls.empty?)]
+  @[YAML::Field(ignore_serialize: calls.empty?)]
+  property calls : Array(ServiceCall) = [] of ServiceCall
+
+  @[JSON::Field(ignore_serialize: called_by.empty?)]
+  @[YAML::Field(ignore_serialize: called_by.empty?)]
+  property called_by : Array(ServiceEdge) = [] of ServiceEdge
 
   # Non-HTTP mobile deep-link protocols. These endpoints are app URLs you
   # open (myapp://, intent://, verified https app links) or ContentResolver

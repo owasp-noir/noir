@@ -68,11 +68,7 @@ module Noir::CLI::TraceCommand
     # trace defaults to the full record: the point of the verb is everything
     # Noir knows about the one route. `-f text` keeps the compact line.
     full = common.full || common.format != "text"
-    rows = matches.map do |match|
-      row = Inspect::Row.build(match.endpoint, full)
-      row.matched_by = match.matched_by
-      row
-    end
+    rows = Inspect.service_trace_rows(matches, endpoints, full)
     status = Inspect.emit(rows, common)
     unless common.count
       candidates = Inspect.wildcard_only_candidates(endpoints, matches, target.path)
@@ -96,7 +92,11 @@ module Noir::CLI::TraceCommand
 
       Maps a concrete request path to its declared route: `/api/users/42`
       matches `/api/users/{id}`, `:id`, `<int:pk>`, `[id]`, `*`. Prints the full
-      endpoint record (handler, params, guards, sinks, callees, ...). On a miss,
+      endpoint record (handler, params, guards, sinks, callees, ...). Follows
+      cross-project outbound HTTP candidates breadth-first, with `service_call`
+      evidence and match basis. Cycles are visited once. Path-only links are
+      candidates, not proof of which host a service uses. Unresolved calls stay
+      in the endpoint's `calls` list. On a miss,
       prints the nearest routes as candidates and exits 1. Pattern matches are
       ordered most-specific first (`matched_by`: exact, pattern, wildcard, or
       prefix for a proxy prefix location or a Go ServeMux `/x/` subtree; `exact_ci`,

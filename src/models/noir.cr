@@ -7,6 +7,7 @@ require "../output_builder/*"
 require "../optimizer/llm_optimizer.cr"
 require "../llm/cache.cr"
 require "../ai_context/augmentor.cr"
+require "../ai_context/service_graph"
 require "../mobile/linker.cr"
 require "./analyzer_failure.cr"
 require "./skipped_files.cr"
@@ -264,6 +265,7 @@ class NoirRunner
         @logger.success "Building aggregated AI context."
         NoirAIContext.apply(@endpoints)
         apply_ai_context_feature_filter
+        NoirAIContext::ServiceGraph.apply(@endpoints)
       end
     end
 
