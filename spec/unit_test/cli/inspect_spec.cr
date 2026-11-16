@@ -1168,6 +1168,19 @@ describe "trace and query route matching (#3277)" do
     trace.call(routes, "GET", "/sp").should eq([{"/sp/{*rest}", "wildcard"}])
   end
 
+  it "lets Hono's trailing /* serve the path before it, and holds Express and Fastify to the slash" do
+    hono = endpoint("GET", "/static/*", tech: "js_hono")
+    express = endpoint("GET", "/files/*", tech: "js_express")
+    fastify = endpoint("GET", "/assets/*", tech: "js_fastify")
+    routes = [hono, express, fastify]
+    trace.call(routes, "GET", "/static").should eq([{"/static/*", "wildcard"}])
+    trace.call(routes, "GET", "/static/css/app.css").should eq([{"/static/*", "wildcard"}])
+    trace.call(routes, "GET", "/staticx").should be_empty
+    trace.call(routes, "GET", "/files").should be_empty
+    trace.call(routes, "GET", "/files/a/b").should eq([{"/files/*", "wildcard"}])
+    trace.call(routes, "GET", "/assets").should be_empty
+  end
+
   it "reads every catch-all spelling as the rest of the path" do
     routes = [
       endpoint("GET", "/plugins/{name}/assets/{*resource}"),
