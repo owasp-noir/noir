@@ -76,6 +76,8 @@ module Noir
       # last dotted segment, so both `redirect.get(...)` and
       # `Spark.redirect.get(...)` resolve to `redirect`.
       getter router_receivers : Set(String)
+      # Required receiver member, or nil for legacy setters on any receiver.
+      getter static_methods : Hash(String, String?)
 
       def initialize(@verb_methods,
                      @nest_methods,
@@ -89,7 +91,8 @@ module Noir
                      @body_methods = Set(String).new,
                      @body_typed_methods = Set(String).new,
                      @websocket_methods = Set(String).new,
-                     @router_receivers = Set(String).new)
+                     @router_receivers = Set(String).new,
+                     @static_methods = Hash(String, String?).new)
       end
     end
 
@@ -122,8 +125,30 @@ module Noir
         method_bodies = method_body_index(root, source)
         handler_vars = handler_variable_index(root, source, method_bodies)
         walk(root, source, "", config, routes, constants, method_bodies, handler_vars, 0, include_callees)
+        routes.concat(static_routes(root, source, config.static_methods)) unless config.static_methods.empty?
       end
       routes
+    end
+
+    private def static_routes(root : LibTreeSitter::TSNode, source : String, selectors : Hash(String, String?)) : Array(Route)
+      found = Hash(String, Array(Route)).new
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "method_invocation"
+        name = method_invocation_method_name(node, source)
+        next unless selectors.has_key?(name)
+        if selector = selectors[name]
+          receiver = Noir::TreeSitter.field(node, "object") || next
+          receiver = Noir::TreeSitter.unwrap_expression(receiver)
+          member = Noir::TreeSitter.field(receiver, "field")
+          member ||= receiver if Noir::TreeSitter.node_type(receiver) == "identifier"
+          next unless member && Noir::TreeSitter.node_text(member, source) == selector
+        end
+        route = Route.new("GET", "/**", Noir::TreeSitter.call_name_row(node), nil, false,
+          [] of String, [] of String, [] of String, [] of String, [] of Tuple(String, Int32))
+        (found[name] ||= [] of Route) << route
+      end
+      # Keep static endpoints after verb routes, in configured method order.
+      selectors.keys.flat_map { |name| found[name]? || [] of Route }
     end
 
     # ---- traversal ---------------------------------------------------
