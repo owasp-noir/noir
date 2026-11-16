@@ -31,10 +31,13 @@ module Analyzer::Javascript
         imports = controller_imports(content)
         Noir::TreeSitterAdonisJsExtractor.extract_routes(content, include_callee, path).each do |route|
           endpoint = build_endpoint(route, path, include_callee)
-          handler = route.handler_source || route.controller.try do |controller, action|
-            action_body(path, controller, action, imports)
+          params = route.controller.try do |controller, action|
+            action_params(path, controller, action, imports)
+          end || route.request_params
+          params.each do |name, type|
+            location = type == "merged" ? (endpoint.method.in?("GET", "HEAD") ? "query" : "json") : type
+            endpoint.push_param(Param.new(name, "", location))
           end
-          handler.try { |body| push_request_params(endpoint, body) }
           @result << endpoint
         end
       end
@@ -64,7 +67,7 @@ module Analyzer::Javascript
     CONTROLLER_IMPORT_RE  = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(\s*\)\s*=>\s*import\s*\(\s*['"]([^'"]+)['"]\s*\)|\bimport\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"]/
     CONTROLLER_EXTENSIONS = [".ts", ".js"]
     ADONIS_ROOT_MARKERS   = ["adonisrc.ts", "adonisrc.js", "package.json"]
-    @controller_methods = Hash(String, Hash(String, String)).new
+    @controller_methods = Hash(String, Hash(String, Array(Tuple(String, String)))).new
     @controller_files = Hash(Tuple(String, String), String?).new
 
     private def controller_imports(content : String) : Hash(String, String)
@@ -73,16 +76,15 @@ module Analyzer::Javascript
       imports
     end
 
-    # The body of `action` on the controller the route file imports.
+    # Request inputs of `action` on the controller the route file imports.
     # `#controllers/notes_controller` is `app/controllers/notes_controller`
     # under that file's app (the closest `package.json` / `adonisrc`),
     # so a same-named controller in another app is not the one.
-    private def action_body(route_file : String, controller : String, action : String, imports : Hash(String, String)) : String?
+    private def action_params(route_file : String, controller : String, action : String, imports : Hash(String, String)) : Array(Tuple(String, String))?
       spec = imports[controller]? || controller
       key = {route_file, spec}
       file = @controller_files.fetch(key) { @controller_files[key] = controller_file(route_file, spec) } || return
-      methods = @controller_methods[file] ||= Noir::TreeSitterAdonisJsExtractor.method_bodies(
-        Noir::JSRouteExtractor.strip_js_comments(read_file_content(file)), file)
+      methods = @controller_methods[file] ||= Noir::TreeSitterAdonisJsExtractor.method_params(read_file_content(file), file)
       methods[action]?
     rescue IO::Error
       nil
@@ -157,35 +159,6 @@ module Analyzer::Javascript
         end
       end
       nil
-    end
-
-    REQUEST_INPUT_RE  = /\brequest\s*\.\s*input\s*\(\s*['"]([^'"]+)['"]/
-    REQUEST_ONLY_RE   = /\brequest\s*\.\s*only\s*\(\s*\[([^\]]*)\]/
-    REQUEST_QS_RE     = /\brequest\s*\.\s*qs\s*\(\s*\)\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*['"]([^'"]+)['"]\s*\])/
-    REQUEST_BODY_RE   = /\brequest\s*\.\s*body\s*\(\s*\)\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*['"]([^'"]+)['"]\s*\])/
-    DESTRUCTURED_RE   = /\{([^{}]*)\}\s*=\s*request\s*\.\s*(qs|body|all)\s*\(\s*\)/
-    REQUEST_HEADER_RE = /\brequest\s*\.\s*header\s*\(\s*['"]([^'"]+)['"]/
-    REQUEST_COOKIE_RE = /\brequest\s*\.\s*(?:plainCookie|encryptedCookie|cookie)\s*\(\s*['"]([^'"]+)['"]/
-
-    # `request.input('x')` / `request.only([...])` read the merged body and
-    # query string: the query on a GET, the body otherwise.
-    private def push_request_params(endpoint : Endpoint, body : String)
-      merged = endpoint.method.in?("GET", "HEAD") ? "query" : "json"
-      push = ->(name : String, type : String) { endpoint.push_param(Param.new(name, "", type)) unless name.empty? }
-      body.scan(REQUEST_INPUT_RE) { |m| push.call(m[1], merged) }
-      body.scan(REQUEST_ONLY_RE) { |m| m[1].scan(/['"]([^'"]+)['"]/) { |n| push.call(n[1], merged) } }
-      body.scan(REQUEST_QS_RE) { |m| push.call(m[1]? || m[2], "query") }
-      body.scan(REQUEST_BODY_RE) { |m| push.call(m[1]? || m[2], "json") }
-      body.scan(DESTRUCTURED_RE) do |m|
-        type = m[2] == "qs" ? "query" : (m[2] == "body" ? "json" : merged)
-        m[1].split(',').each do |item|
-          name = item.split(/[:=]/).first.strip
-          next if name.empty? || name.starts_with?("...")
-          push.call(name, type)
-        end
-      end
-      body.scan(REQUEST_HEADER_RE) { |m| push.call(m[1], "header") }
-      body.scan(REQUEST_COOKIE_RE) { |m| push.call(m[1], "cookie") }
     end
 
     private def attach_route_callees(endpoint : Endpoint, callees : Array(Noir::JSCalleeExtractor::Entry), path : String)

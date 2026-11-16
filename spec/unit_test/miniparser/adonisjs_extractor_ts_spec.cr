@@ -18,24 +18,24 @@ describe Noir::TreeSitterAdonisJsExtractor do
       }
       TS
 
-    methods = Noir::TreeSitterAdonisJsExtractor.method_bodies(source, "notes_controller.ts")
+    methods = Noir::TreeSitterAdonisJsExtractor.method_params(source, "notes_controller.ts")
     methods.keys.sort!.should eq(%w[compact search store])
-    methods["store"].should contain("return { id: request.input('id') }")
-    methods["search"].should eq("{ return '검색 }' }")
-    methods["compact"].should eq("{ return request.input('compact') }")
+    methods["store"].should eq([{"id", "merged"}])
+    methods["search"].should be_empty
+    methods["compact"].should eq([{"compact", "merged"}])
   end
 
   it "does not index bodyless TypeScript overloads as actions" do
     source = <<-TS
       class NotesController {
-        show(id: string): string;
-        show(id: number): string;
-        show(id: string | number): string { return String(id) }
+        show(request: Request): string;
+        show(request: Request, id: number): string;
+        show(request: Request, id?: number): string { return request.input('id') }
       }
       TS
 
-    Noir::TreeSitterAdonisJsExtractor.method_bodies(source, "notes.ts").should eq({
-      "show" => "{ return String(id) }",
+    Noir::TreeSitterAdonisJsExtractor.method_params(source, "notes.ts").should eq({
+      "show" => [{"id", "merged"}],
     })
   end
 
@@ -47,8 +47,55 @@ describe Noir::TreeSitterAdonisJsExtractor do
       }
       TS
 
-    methods = Noir::TreeSitterAdonisJsExtractor.method_bodies(source, "notes.ts")
-    methods["show"].should eq("{ return request.input('real') }")
+    methods = Noir::TreeSitterAdonisJsExtractor.method_params(source, "notes.ts")
+    methods["show"].should eq([{"real", "merged"}])
+  end
+
+  it "reads actual inline request calls, template expressions and destructured wire names" do
+    source = <<-TS
+      router.post('/inputs', ({ request }) => {
+        const example = "request.input('fake')"
+        const text = `request.input('fake-template') ${request.input('live-template')}`
+        // request.header('comment')
+        const ctx = { request }
+        const q = ctx.request.input('q')
+        notrequest.input('unrelated')
+        request.only(['allowed', `literal-only`])
+        request.qs()['search']
+        request.body().payload
+        const { title: renamed, count = 1, 'wire-name': wire, ...rest } = request.body()
+        const { filter } = ctx.request.qs()
+        const { fallback } = request.all()
+        request.header('x-token')
+        request.cookie('session')
+        request.plainCookie('plain')
+        request.encryptedCookie('encrypted')
+        request.input(`key-${q}`)
+      })
+      TS
+
+    params = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "routes.ts").first.request_params
+    params.should eq([
+      {"live-template", "merged"}, {"q", "merged"},
+      {"allowed", "merged"}, {"literal-only", "merged"},
+      {"search", "query"}, {"payload", "json"},
+      {"title", "json"}, {"count", "json"}, {"wire-name", "json"},
+      {"filter", "query"}, {"fallback", "merged"},
+      {"x-token", "header"}, {"session", "cookie"}, {"plain", "cookie"}, {"encrypted", "cookie"},
+    ])
+  end
+
+  it "reads destructuring assignments as well as declarations" do
+    source = <<-TS
+      router.post('/assignment', (ctx) => {
+        const { request } = ctx
+        let title, q;
+        ({ title } = request.body());
+        ({ q } = ctx.request.qs());
+      })
+      TS
+    params = Noir::TreeSitterAdonisJsExtractor.extract_routes(source, path: "routes.ts").first.request_params
+    params.should eq([{"title", "json"}, {"q", "query"}])
   end
 
   it "extracts top-level verb routes" do

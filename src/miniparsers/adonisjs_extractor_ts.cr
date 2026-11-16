@@ -113,10 +113,9 @@ module Noir
       getter path : String
       getter line : Int32
       getter callees : Array(JSCalleeExtractor::Entry)
-      # `{controller, action}` the route names (`[NotesController, 'store']`,
-      # `'NotesController.store'`), or the text of an inline handler.
+      # `{controller, action}` named by a route, or inputs of its inline handler.
       property controller : Tuple(String, String)? = nil
-      property handler_source : String? = nil
+      property request_params = [] of Tuple(String, String)
 
       def initialize(@verb, @path, @line, @callees = [] of JSCalleeExtractor::Entry)
       end
@@ -130,27 +129,108 @@ module Noir
       routes
     end
 
-    # Index controller actions once; route-by-route regex searches grow
-    # quadratically when a large controller serves many routes.
-    def method_bodies(source : String, path : String = "") : Hash(String, String)
-      methods = {} of String => String
+    # Index inputs once so routes sharing an action do not rescan its body.
+    def method_params(source : String, path : String = "") : Hash(String, Array(Tuple(String, String)))
+      methods = {} of String => Array(Tuple(String, String))
       Noir::TreeSitter.parse_js_family(source, path) do |root|
-        collect_method_bodies(root, source, methods)
+        collect_method_params(root, source, methods)
       end
       methods
     end
 
-    private def collect_method_bodies(node : LibTreeSitter::TSNode, source : String, methods : Hash(String, String))
+    private def collect_method_params(node : LibTreeSitter::TSNode, source : String, methods : Hash(String, Array(Tuple(String, String))))
       if Noir::TreeSitter.node_type(node) == "class_body"
         Noir::TreeSitter.each_named_child(node) do |member|
           next unless Noir::TreeSitter.node_type(member) == "method_definition"
           name = Noir::TreeSitter.field(member, "name") || next
           body = Noir::TreeSitter.field(member, "body") || next
-          methods[Noir::TreeSitter.node_text(name, source)] ||= Noir::TreeSitter.node_text(body, source)
+          methods[Noir::TreeSitter.node_text(name, source)] ||= request_params(body, source)
         end
       else
-        Noir::TreeSitter.each_named_child(node) { |child| collect_method_bodies(child, source, methods) }
+        Noir::TreeSitter.each_named_child(node) { |child| collect_method_params(child, source, methods) }
       end
+    end
+
+    REQUEST_PARAM_GROUPS = [:input, :only, :qs, :body, :destructured, :header, :cookie]
+    REQUEST_INPUT_TYPES  = {"input" => {:input, "merged"}, "header" => {:header, "header"},
+                            "cookie" => {:cookie, "cookie"}, "plainCookie" => {:cookie, "cookie"}, "encryptedCookie" => {:cookie, "cookie"}}
+    REQUEST_DICTIONARIES = {"qs" => "query", "body" => "json", "all" => "merged"}
+
+    private def request_params(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(String, String))
+      reads = Hash(Symbol, Array(Tuple(String, String))).new { |hash, key| hash[key] = [] of Tuple(String, String) }
+      Noir::TreeSitter.walk(root) do |node|
+        case Noir::TreeSitter.node_type(node)
+        when "call_expression"
+          method = request_method(node, source) || next
+          arg = argument_at(node, 0) || next
+          if input = REQUEST_INPUT_TYPES[method]?
+            key = request_key(arg, source) || next
+            reads[input[0]] << {key, input[1]} unless key.empty?
+          elsif method == "only" && Noir::TreeSitter.node_type(arg) == "array"
+            Noir::TreeSitter.each_named_arg(arg) do |element|
+              key = request_key(element, source) || next
+              reads[:only] << {key, "merged"} unless key.empty?
+            end
+          end
+        when "member_expression", "subscript_expression"
+          object = Noir::TreeSitter.field(node, "object") || next
+          method = request_method(object, source) || next
+          next unless method.in?("qs", "body")
+          property = Noir::TreeSitter.field(node, "property") || Noir::TreeSitter.field(node, "index") || next
+          key = Noir::TreeSitter.node_type(property) == "property_identifier" ? Noir::TreeSitter.node_text(property, source) : request_key(property, source)
+          next if key.nil? || key.empty?
+          reads[method == "qs" ? :qs : :body] << {key, REQUEST_DICTIONARIES[method]}
+        when "variable_declarator", "assignment_expression"
+          value = Noir::TreeSitter.field(node, "value") || Noir::TreeSitter.field(node, "right") || next
+          method = request_method(value, source) || next
+          type = REQUEST_DICTIONARIES[method]? || next
+          pattern = Noir::TreeSitter.field(node, "name") || Noir::TreeSitter.field(node, "left") || next
+          next unless Noir::TreeSitter.node_type(pattern) == "object_pattern"
+          Noir::TreeSitter.each_named_child(pattern) do |binding|
+            key = case Noir::TreeSitter.node_type(binding)
+                  when "shorthand_property_identifier_pattern"
+                    Noir::TreeSitter.node_text(binding, source)
+                  when "pair_pattern"
+                    Noir::TreeSitter.field(binding, "key").try do |name|
+                      Noir::TreeSitter.node_type(name) == "property_identifier" ? Noir::TreeSitter.node_text(name, source) : request_key(name, source)
+                    end
+                  when "object_assignment_pattern"
+                    Noir::TreeSitter.field(binding, "left").try { |name| Noir::TreeSitter.node_text(name, source) }
+                  end
+            reads[:destructured] << {key, type} if key && !key.empty?
+          end
+        end
+      end
+      # Preserve the adapter's parameter-category order.
+      REQUEST_PARAM_GROUPS.compact_map { |group| reads[group]? }.flatten.uniq!
+    end
+
+    private def request_method(call : LibTreeSitter::TSNode, source : String) : String?
+      call = Noir::TreeSitter.unwrap_expression(call)
+      return unless Noir::TreeSitter.node_type(call) == "call_expression"
+      function = Noir::TreeSitter.field(call, "function") || return
+      return unless Noir::TreeSitter.node_type(function) == "member_expression"
+      object = Noir::TreeSitter.field(function, "object") || return
+      object = Noir::TreeSitter.unwrap_expression(object)
+      receiver = case Noir::TreeSitter.node_type(object)
+                 when "identifier" then Noir::TreeSitter.node_text(object, source)
+                 when "member_expression"
+                   Noir::TreeSitter.field(object, "property").try { |property| Noir::TreeSitter.node_text(property, source) }
+                 end
+      return unless receiver == "request"
+      Noir::TreeSitter.field(function, "property").try { |property| Noir::TreeSitter.node_text(property, source) }
+    end
+
+    private def request_key(node : LibTreeSitter::TSNode, source : String) : String?
+      node = Noir::TreeSitter.unwrap_expression(node)
+      return unless STRING_LITERAL_TYPES.includes?(Noir::TreeSitter.node_type(node))
+      visited = false
+      Noir::TreeSitter.each_named_child(node) do |child|
+        visited = true
+        return if Noir::TreeSitter.node_type(child) == "template_substitution"
+      end
+      return unless visited
+      decode_string(node, source)
     end
 
     # ---- traversal --------------------------------------------------
@@ -261,7 +341,7 @@ module Noir
       callees = include_callees ? route_callees(call, source, line) : [] of JSCalleeExtractor::Entry
       route = Route.new(verb, full, line, callees)
       route.controller = controller_reference(call, source)
-      route.handler_source = function_argument(call).try { |fn| Noir::TreeSitter.node_text(fn, source) }
+      route.request_params = function_argument(call).try { |fn| request_params(fn, source) } || [] of Tuple(String, String)
       routes << route
     end
 

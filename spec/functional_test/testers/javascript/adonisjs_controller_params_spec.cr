@@ -9,6 +9,8 @@ expected_endpoints = [
   # Inline `[() => import('#controllers/...'), 'store']`, same action body.
   Endpoint.new("/notes/inline", "PUT", [Param.new("title", "", "json"), Param.new("body", "", "json")]),
   Endpoint.new("/notes/compact", "GET", [Param.new("compact", "", "query")]),
+  Endpoint.new("/notes/preview", "GET", [Param.new("title", "", "query"), Param.new("body", "", "query")]),
+  Endpoint.new("/inline-params", "GET", [Param.new("real-inline", "", "query"), Param.new("assigned", "", "json")]),
 ]
 
 FunctionalTester.new("fixtures/javascript/adonisjs_controller_params/", {
