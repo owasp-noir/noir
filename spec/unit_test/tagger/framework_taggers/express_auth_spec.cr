@@ -296,6 +296,84 @@ describe "ExpressAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  # `auth('manageUsers')`: the middleware a factory builds refuses or not by
+  # the factory's definition, whatever arguments the route hands it.
+  it "judges a middleware factory called with arguments by its definition" do
+    tmpdir = File.tempname("express_factory_args")
+    Dir.mkdir_p(File.join(tmpdir, "middleware"))
+    File.write(File.join(tmpdir, "middleware", "auth.js"), [
+      "const auth = (...requiredRights) => async (req, res, next) => {",
+      "  if (!req.headers.authorization) return res.status(401).json({ message: 'Please authenticate' });",
+      "  next();",
+      "};",
+      "module.exports = auth;",
+    ].join("\n"))
+    File.write(File.join(tmpdir, "middleware", "audit.js"), [
+      "module.exports = (action) => (req, res, next) => {",
+      "  console.log(action, req.ip);",
+      "  next();",
+      "};",
+    ].join("\n"))
+    File.write(File.join(tmpdir, "middleware", "validate.js"), [
+      "module.exports = (name) => (req, res, next) => {",
+      "  if (!req.body[name]) return res.status(400).json({ message: 'invalid' });",
+      "  next();",
+      "};",
+    ].join("\n"))
+    File.write(File.join(tmpdir, "things.js"), [
+      "const express = require('express');",
+      "module.exports = function makeRouter(db) {",
+      "  const router = express.Router();",
+      "  router.get('/', (req, res) => res.json(db.things));",
+      "  router.post('/', (req, res, next) => {",
+      "    if (!req.user) return res.status(401).json({ error: 'login required' });",
+      "    next();",
+      "  }, (req, res) => res.status(201).json({}));",
+      "  return router;",
+      "};",
+    ].join("\n"))
+    app_js = File.join(tmpdir, "app.js")
+    File.write(app_js, [
+      "const express = require('express');",                                   # 1
+      "const auth = require('./middleware/auth');",                            # 2
+      "const audit = require('./middleware/audit');",                          # 3
+      "const validate = require('./middleware/validate');",                    # 4
+      "const makeRouter = require('./things');",                               # 5
+      "const app = express();",                                                # 6
+      "app.get('/reports', auth('viewReports'), (req, res) => res.json([]));", # 7
+      "app.get('/audit', audit('list'), (req, res) => res.json([]));",         # 8
+      "app.post('/open', validate('name'), (req, res) => res.json({}));",      # 9
+      "app.use('/things', makeRouter({}));",                                   # 10
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    locator = CodeLocator.instance
+    Dir.glob("#{tmpdir}/**/*").each do |file|
+      locator.register_path(file) unless File.directory?(file)
+    end
+
+    routes = [{"GET", "/reports", app_js, 7}, {"GET", "/audit", app_js, 8}, {"POST", "/open", app_js, 9},
+              {"GET", "/things/", File.join(tmpdir, "things.js"), 4}]
+    endpoints = routes.map do |method, url, path, line|
+      details = Details.new(PathInfo.new(path, line))
+      details.technology = "js_express"
+      Endpoint.new(url, method, [] of Param, details)
+    end
+    ExpressAuthTagger.new(noir_options).perform(endpoints)
+
+    endpoints[0].tags.map(&.name).should eq(["auth"])
+    endpoints[0].tags[0].description.should contain("auth")
+    # A factory that only logs, and one that refuses the payload, guard nothing.
+    endpoints[1].tags.should be_empty
+    endpoints[2].tags.should be_empty
+    # A router factory mounted with arguments is a mount: its login-required
+    # route does not guard the routes beside it.
+    endpoints[3].tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
   it "does not attribute the next route's middleware to the route above it" do
     tmpdir = File.tempname("express_adjacent")
     Dir.mkdir_p(tmpdir)

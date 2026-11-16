@@ -493,6 +493,18 @@ class ExpressAuthTagger < FrameworkTagger
     end
   end
 
+  FACTORY_CALL = /\A\s*((?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*)\s*\(/
+
+  # `auth('manageUsers')` as `auth()`: the middleware a factory builds is
+  # judged by the factory's definition, whatever it was handed.
+  private def factory_call(arg : String) : String?
+    head = arg.match(FACTORY_CALL) || return
+    open = head.end(0) - 1
+    close = Noir::JSLiteralScanner.find_matching_paren(arg, open) || return
+    return if arg[open + 1...close].blank? || !arg[close + 1..].blank?
+    "#{head[1]}()"
+  end
+
   private def refusing_definition(arg : String, file : String, handler_position : Bool, depth : Int32 = 0) : {String, String, Bool}?
     key = {arg, file, handler_position, depth, @method}
     return @refusals[key] if @refusals.has_key?(key)
@@ -501,7 +513,8 @@ class ExpressAuthTagger < FrameworkTagger
 
   private def judge_definition(arg : String, file : String, handler_position : Bool, depth : Int32) : {String, String, Bool}?
     content = read_file(file) || return
-    handler = Noir::JSHandlerResolver.resolve(arg, content, file) || return
+    handler = Noir::JSHandlerResolver.resolve(arg, content, file) ||
+              factory_call(arg).try { |call| Noir::JSHandlerResolver.resolve(call, content, file) } || return
     path, line = handler.path, handler.line
     return if path.nil? || line.nil?
     lines = read_file_lines(path) || return
@@ -536,6 +549,9 @@ class ExpressAuthTagger < FrameworkTagger
     body = definition_extent(lines, line - 1)
     return if body.first?.try(&.matches?(ERROR_HANDLER_SIGNATURE))
     code = code_with_words(body.join("\n"))
+    # A router factory (`app.use('/things', makeRouter(db))`) is a mount: a
+    # refusal inside one of its routes guards that route, not the mount.
+    return if code.matches?(Noir::JSRouteExtractor::ROUTER_BODY_RE)
     evidence = (anonymous_refusal(code, read_file(path)) || identity_throw(code)).try do |found|
       found, note = found.partition(SETTING_NOTE)
       found.gsub(/\bnew\s+/, "new ").gsub(/(?<!\bnew)\s+/, "").chomp('(').sub(/\Athrownew\b/, "throw new") + note
