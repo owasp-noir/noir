@@ -5,6 +5,16 @@ module NoirAIContext
     MAX_TRANSITIVE_DEPTH  =  3
     MAX_HELPER_BODY_LINES = 80
 
+    # Keep lookup keys POSIX-normalized across platforms so Windows `Path#normalize`
+    # backslashes match `/` joins and module suffix checks.
+    private def posix_norm(path : String) : String
+      Path.posix(path.tr("\\", "/")).normalize.to_s
+    end
+
+    private def posix_dirname(path : String) : String
+      Path.posix(path.tr("\\", "/")).normalize.dirname
+    end
+
     JS_TS_EXTS = %w[.ts .tsx .mts .cts .js .jsx .mjs .cjs]
     PY_EXTS    = %w[.py]
     GO_EXTS    = %w[.go]
@@ -617,7 +627,7 @@ module NoirAIContext
 
       map = {} of String => String
       CodeLocator.instance.files_by_extension(".py").each do |path|
-        map[Path.new(path).normalize.to_s] = path
+        map[posix_norm(path)] = path
       end
       @py_files_by_norm = map
     end
@@ -763,15 +773,15 @@ module NoirAIContext
       return if files.empty?
 
       if relative_dots > 0
-        dir = Path.new(caller_path).normalize.dirname
-        (relative_dots - 1).times { dir = File.dirname(dir) }
+        dir = posix_dirname(caller_path)
+        (relative_dots - 1).times { dir = posix_dirname(dir) }
         subpath = module_name.tr(".", "/")
         candidates = if subpath.empty?
-                       [Path.new(dir, "__init__.py").normalize.to_s]
+                       [Path.posix(dir, "__init__.py").normalize.to_s]
                      else
                        [
-                         Path.new(dir, "#{subpath}.py").normalize.to_s,
-                         Path.new(dir, subpath, "__init__.py").normalize.to_s,
+                         Path.posix(dir, "#{subpath}.py").normalize.to_s,
+                         Path.posix(dir, subpath, "__init__.py").normalize.to_s,
                        ]
                      end
         matches = candidates.compact_map { |cand| files[cand]? }.uniq!
@@ -958,7 +968,7 @@ module NoirAIContext
       grouped = {} of String => Array(String)
       CodeLocator.instance.files_by_extension(".go").each do |path|
         next if path.ends_with?("_test.go")
-        dir = Path.new(path).normalize.dirname
+        dir = posix_dirname(path)
         (grouped[dir] ||= [] of String) << path
       end
       @go_files_by_dir = grouped
@@ -971,7 +981,7 @@ module NoirAIContext
 
       mods = [] of Tuple(String, String)
       CodeLocator.instance.files_by_basename("go.mod").each do |path|
-        root_dir = Path.new(path).normalize.dirname
+        root_dir = posix_dirname(path)
         @reader.lines_for(path).each do |line|
           if m = line.match(/\A\s*module\s+(\S+)/)
             mods << {root_dir, m[1]}
@@ -1043,15 +1053,15 @@ module NoirAIContext
       dirs = go_files_by_dir
       return if dirs.empty?
 
-      norm_caller = Path.new(caller_path).normalize.to_s
+      norm_caller = posix_norm(caller_path)
       go_modules.each do |root_dir, mod_path|
         if import_path == mod_path
           return root_dir if dirs.has_key?(root_dir)
         elsif import_path.starts_with?("#{mod_path}/")
           rel = import_path[(mod_path.size + 1)..]
-          cand = Path.new(root_dir, rel).normalize.to_s
+          cand = Path.posix(root_dir, rel).normalize.to_s
           if dirs.has_key?(cand)
-            return cand if root_dir == "." || norm_caller.starts_with?("#{root_dir}/") || norm_caller == root_dir
+            return cand if root_dir == "." || root_dir == "/" || norm_caller.starts_with?("#{root_dir}/") || norm_caller == root_dir
           end
         end
       end
@@ -1134,7 +1144,7 @@ module NoirAIContext
       parts = name.split('.')
       return if parts.empty?
 
-      caller_dir = Path.new(caller_path).normalize.dirname
+      caller_dir = posix_dirname(caller_path)
       caller_pkg = go_package_index(caller_dir)
       file_idx = go_file_index(caller_path)
 
@@ -1290,7 +1300,7 @@ module NoirAIContext
       map = {} of String => String
       JS_TS_EXTS.each do |ext|
         CodeLocator.instance.files_by_extension(ext).each do |path|
-          map[Path.new(path).normalize.to_s] = path
+          map[posix_norm(path)] = path
         end
       end
       @js_files_by_norm = map
@@ -1571,8 +1581,8 @@ module NoirAIContext
       return if files.empty?
 
       if specifier.starts_with?("./") || specifier.starts_with?("../")
-        caller_dir = Path.new(caller_path).normalize.dirname
-        base = Path.new(caller_dir, specifier).normalize.to_s
+        caller_dir = posix_dirname(caller_path)
+        base = Path.posix(caller_dir, specifier).normalize.to_s
         return match_js_candidates(files, base)
       end
 

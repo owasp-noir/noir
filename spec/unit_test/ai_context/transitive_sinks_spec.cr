@@ -155,4 +155,44 @@ describe "NoirAIContext transitive callee sink resolution" do
       (results[2].ai_context.try(&.sinks) || [] of AIContextEntry).should be_empty
     end
   end
+
+  it "resolves Go module imports when CodeLocator paths use backslash separators" do
+    go_mod = "module example.com/winapp\n\ngo 1.22\n"
+    handler_go = <<-GO
+      package handler
+
+      import "example.com/winapp/service"
+
+      func Export(cmd string) {
+          service.Run(cmd)
+      }
+      GO
+    service_go = <<-GO
+      package service
+
+      import "os/exec"
+
+      func Run(cmd string) {
+          exec.Command("sh", "-c", cmd).Run()
+      }
+      GO
+
+    CodeLocator.instance.clear_all
+    begin
+      CodeLocator.instance.register_file("winapp/go.mod", go_mod)
+      CodeLocator.instance.register_file("winapp\\handler\\user.go", handler_go)
+      CodeLocator.instance.register_file("winapp\\service\\user.go", service_go)
+
+      ep = Endpoint.new("/export", "POST")
+      ep.push_callee(Callee.new("service.Run", "winapp\\handler\\user.go", 6))
+
+      results = NoirAIContext.apply([ep])
+      sinks = results[0].ai_context.not_nil!.sinks
+      sinks.map(&.kind).should eq(["command_exec"])
+      sinks[0].path.should eq("winapp\\service\\user.go")
+      sinks[0].line.should eq(6)
+    ensure
+      CodeLocator.instance.clear_all
+    end
+  end
 end
