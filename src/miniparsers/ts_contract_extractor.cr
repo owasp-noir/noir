@@ -309,10 +309,38 @@ module Noir
     # is written: handed inline to `app.openapi(...)` or kept as a constant
     # (often in a separate `*.routes.ts` that the app imports).
     def hono_openapi(source : String, path : String = "") : Array(Route)
-      extract(source, path) { |node, ctx| hono_openapi_routes(node, ctx) }
+      routes = [] of Route
+      return routes if source.empty?
+
+      TreeSitter.parse_js_family(source, path) do |root|
+        ctx = Context.new(source)
+        each_top_level(root, ctx) { |name, node| ctx.decls[name] = node if name }
+        apps = Set(String).new
+        TreeSitter.walk(root) do |node|
+          next unless TreeSitter.node_type(node) == "variable_declarator"
+          name = TreeSitter.field(node, "name") || next
+          value = TreeSitter.field(node, "value") || next
+          if TreeSitter.node_type(name) == "identifier" && hono_constructor?(value, ctx)
+            apps << text(name, ctx)
+          end
+        end
+        routes = hono_openapi_routes(root, ctx, apps)
+      end
+      routes
     end
 
-    private def hono_openapi_routes(node : LibTreeSitter::TSNode, ctx : Context) : Array(Route)
+    private def hono_openapi_routes(node : LibTreeSitter::TSNode, ctx : Context, apps : Set(String)) : Array(Route)
+      docs = [] of Route
+      if TreeSitter.node_type(node) == "call_expression" && call_property(node, ctx).in?("doc", "doc31")
+        function = TreeSitter.field(node, "function")
+        receiver = function.try { |fn| TreeSitter.field(fn, "object") }.try { |obj| TreeSitter.unwrap_expression(obj) }
+        if receiver && ((TreeSitter.node_type(receiver) == "identifier" && apps.includes?(text(receiver, ctx))) || hono_constructor?(receiver, ctx))
+          if (arg = first_arg(node)) && (path = string_value(TreeSitter.unwrap_expression(arg), ctx))
+            docs << Route.new("GET", path, TreeSitter.node_start_row(node) + 1)
+          end
+        end
+      end
+
       if create_route_call?(node, ctx) && (obj = first_arg(node)) && TreeSitter.node_type(obj) == "object"
         method = object_string(obj, "method", ctx)
         path = object_string(obj, "path", ctx)
@@ -331,7 +359,23 @@ module Noir
           return [route]
         end
       end
-      descend(node) { |child| hono_openapi_routes(child, ctx) }
+      docs.concat(descend(node) { |child| hono_openapi_routes(child, ctx, apps) })
+    end
+
+    private def hono_constructor?(node : LibTreeSitter::TSNode, ctx : Context) : Bool
+      node = TreeSitter.unwrap_expression(node)
+      if TreeSitter.node_type(node) == "new_expression"
+        constructor = TreeSitter.field(node, "constructor")
+        return !!constructor && text(constructor, ctx).in?("Hono", "OpenAPIHono")
+      end
+      if TreeSitter.node_type(node) == "call_expression"
+        function = TreeSitter.field(node, "function") || return false
+        if TreeSitter.node_type(function) == "member_expression"
+          receiver = TreeSitter.field(function, "object") || return false
+          return TreeSitter.descend { hono_constructor?(receiver, ctx) } || false
+        end
+      end
+      false
     end
 
     private def create_route_call?(node : LibTreeSitter::TSNode, ctx : Context) : Bool
