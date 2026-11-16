@@ -122,9 +122,10 @@ module Noir
                                  pathless : Bool = false,
                                  bare_routers : Array(String)? = nil,
                                  rule_wrappers : Bool = false) : Array(Decoration)
+      strings = module_strings(root, source)
       Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "decorated_definition"
-        collect_decorations(node, source, router_names, extra_attributes, results, bare_route, pathless, bare_routers, rule_wrappers)
+        collect_decorations(node, source, router_names, extra_attributes, results, bare_route, pathless, bare_routers, rule_wrappers, strings)
       end
       results
     end
@@ -146,6 +147,7 @@ module Noir
                                 module_names : Array(String),
                                 results : Array(BlueprintDecl) = [] of BlueprintDecl) : Array(BlueprintDecl)
       allowed = module_names.to_set
+      strings = module_strings(root, source)
       Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "assignment"
         name_node = Noir::TreeSitter.field(node, "left")
@@ -176,7 +178,7 @@ module Noir
         end
 
         name = Noir::TreeSitter.node_text(name_node, source)
-        prefix = extract_url_prefix(call_node, source)
+        prefix = extract_url_prefix(call_node, source, strings) || ""
         results << BlueprintDecl.new(name, prefix, Noir::TreeSitter.node_start_row(name_node))
       end
       results
@@ -323,22 +325,96 @@ module Noir
       rows
     end
 
+    # The string constants `source` binds at module level, by name.
+    def module_string_constants(source : String) : Hash(String, String)
+      strings = NO_STRINGS
+      Noir::TreeSitter.parse_python(source) { |root| strings = module_strings(root, source) }
+      strings
+    end
+
+    # The `url_prefix=` of the call statement `call_source`, evaluated with
+    # the names in `strings`; nil when the call has none or it cannot be read.
+    def call_url_prefix(call_source : String, strings : Hash(String, String)) : String?
+      prefix = nil
+      Noir::TreeSitter.parse_python(call_source) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          prefix ||= extract_url_prefix(node, call_source, strings) if Noir::TreeSitter.node_type(node) == "call"
+        end
+      end
+      prefix
+    end
+
     # Walk the `call` node's arguments and return the string value of
-    # the `url_prefix` keyword if present, `""` otherwise.
-    private def extract_url_prefix(call_node : LibTreeSitter::TSNode, source : String) : String
+    # the `url_prefix` keyword; nil when it is absent or not a string
+    # expression `static_string` reads.
+    private def extract_url_prefix(call_node : LibTreeSitter::TSNode, source : String, strings : Hash(String, String)) : String?
       args = Noir::TreeSitter.field(call_node, "arguments")
-      return "" unless args
+      return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "keyword_argument"
         key = Noir::TreeSitter.field(arg, "name")
         val = Noir::TreeSitter.field(arg, "value")
         next unless key && val
         next unless Noir::TreeSitter.node_text(key, source) == "url_prefix"
-        if Noir::TreeSitter.node_type(val) == "string"
-          return decode_string(val, source)
+        return static_string(val, source, strings)
+      end
+      nil
+    end
+
+    NO_STRINGS = {} of String => String
+
+    # Module-level `NAME = <string expression>` bindings, read top down so a
+    # constant can build on an earlier one (`USERS = API + "/users"`). A name
+    # bound twice is left out: which value is live is not known.
+    private def module_strings(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+      strings = {} of String => String
+      return strings unless source.includes?('=')
+      seen = Set(String).new
+      Noir::TreeSitter.each_named_child(root) do |statement|
+        next unless Noir::TreeSitter.node_type(statement) == "expression_statement"
+        assignment = Noir::TreeSitter.first_named_child(statement)
+        next unless assignment && Noir::TreeSitter.node_type(assignment) == "assignment"
+        left = Noir::TreeSitter.field(assignment, "left")
+        right = Noir::TreeSitter.field(assignment, "right")
+        next unless left && right && Noir::TreeSitter.node_type(left) == "identifier"
+        name = Noir::TreeSitter.node_text(left, source)
+        unless seen.add?(name)
+          strings.delete(name)
+          next
+        end
+        if value = static_string(right, source, strings)
+          strings[name] = value
         end
       end
-      ""
+      strings
+    end
+
+    # The value of a string expression: a literal, an f-string, a name (plain
+    # or dotted) in `strings`, or those joined by `+` or adjacency. Nil when a part is not
+    # one of these.
+    private def static_string(node : LibTreeSitter::TSNode, source : String, strings : Hash(String, String)) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "string"
+        decode_string(node, source, strings)
+      when "identifier", "attribute"
+        strings[Noir::TreeSitter.node_text(node, source)]?
+      when "parenthesized_expression"
+        Noir::TreeSitter.first_named_child(node).try { |inner| static_string(inner, source, strings) }
+      when "concatenated_string"
+        parts = [] of String
+        Noir::TreeSitter.each_named_child(node) do |part|
+          parts << (static_string(part, source, strings) || return)
+        end
+        parts.join
+      when "binary_operator"
+        operator = Noir::TreeSitter.field(node, "operator")
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        return unless operator && left && right && Noir::TreeSitter.node_text(operator, source) == "+"
+        head = static_string(left, source, strings) || return
+        tail = static_string(right, source, strings) || return
+        head + tail
+      end
     end
 
     # ---- private helpers --------------------------------------------------
@@ -351,7 +427,8 @@ module Noir
                                     bare_route : Bool = false,
                                     pathless : Bool = false,
                                     bare_routers : Array(String)? = nil,
-                                    rule_wrappers : Bool = false)
+                                    rule_wrappers : Bool = false,
+                                    strings : Hash(String, String) = NO_STRINGS)
       # A decorated_definition has one or more `decorator` named children
       # followed by a `function_definition` / `class_definition` in the
       # `definition` field.
@@ -376,7 +453,7 @@ module Noir
           end
           next
         end
-        if deco = decode_route_call(call, source, router_names, extra_attributes, bare_route, pathless, bare_routers, rule_wrappers)
+        if deco = decode_route_call(call, source, router_names, extra_attributes, bare_route, pathless, bare_routers, rule_wrappers, strings)
           router_name, attribute_name, paths, methods, keywords, rule_wrapper = deco
           sink << Decoration.new(
             router_name,
@@ -424,7 +501,8 @@ module Noir
                                   bare_route : Bool = false,
                                   pathless : Bool = false,
                                   bare_routers : Array(String)? = nil,
-                                  rule_wrappers : Bool = false) : Tuple(String, String, Array(String), Array(String), Hash(String, String), String)?
+                                  rule_wrappers : Bool = false,
+                                  strings : Hash(String, String) = NO_STRINGS) : Tuple(String, String, Array(String), Array(String), Hash(String, String), String)?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
 
@@ -481,8 +559,10 @@ module Noir
       wrapped = nil
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
-        when "string"
-          positional_strings << decode_string(arg, source)
+        when "string", "identifier", "concatenated_string", "binary_operator"
+          # A path spelled as a module constant (`@bp.route(DOWNLOAD_PATH)`)
+          # or built from one is the string it evaluates to.
+          static_string(arg, source, strings).try { |value| positional_strings << value }
         when "call"
           # `route(org_scoped_rule("/login"))`: a one-string call as the
           # leading positional argument.
@@ -491,7 +571,7 @@ module Noir
           # `@http.route(["/shop", "/shop/page/<int:page>"])` — one handler,
           # several paths. Only the first list counts.
           if list_paths.empty?
-            list_paths = decode_path_list(arg, source)
+            list_paths = decode_path_list(arg, source, strings)
             # A positional verb list (`route(PATH, ["GET", "POST"])` in
             # Bottle, Sanic and Lambda Powertools) is the methods.
             positional_methods = decode_method_list(arg, source) if list_paths.empty?
@@ -504,20 +584,20 @@ module Noir
           keywords[key] = Noir::TreeSitter.node_type(value) == "string" ? decode_string(value, source) : Noir::TreeSitter.node_text(value, source)
           # Odoo's `route=` keyword takes a path or a list of paths.
           if key == "route" && list_paths.empty? && Noir::TreeSitter.node_type(value) == "list"
-            list_paths = decode_path_list(value, source)
+            list_paths = decode_path_list(value, source, strings)
           end
           # `methods=` (Flask / Sanic) / `method=` (Bottle).
           # `decode_method_list` handles a list or a bare string.
           if key == "methods" || key == "method"
             methods = decode_method_list(value, source)
           elsif (key == "path" || key == "rule" || key == "uri" || key == "route") && path.empty? &&
-                Noir::TreeSitter.node_type(value) == "string"
+                (keyword_path = static_string(value, source, strings))
             # `path=`/`rule=`/`uri=` keyword forms — FastAPI's
             # `@app.get(path="/x")`, Bottle's `@app.route(path="/x")`,
             # Sanic / aiohttp variants. Only accept the keyword if no
             # positional path has been seen, so a stray `path=` kwarg
             # later in the call can't overwrite a real positional.
-            path = decode_string(value, source)
+            path = keyword_path
           end
         end
       end
@@ -586,7 +666,8 @@ module Noir
     # We concatenate every `string_content` child — handles implicit
     # concatenation inside one literal (`"foo" "bar"` is a separate story
     # at the argument level, not here).
-    private def decode_string(string_node : LibTreeSitter::TSNode, source : String) : String
+    private def decode_string(string_node : LibTreeSitter::TSNode, source : String,
+                              strings : Hash(String, String) = NO_STRINGS) : String
       # Walk the string's children. A regular Python string has one
       # `string_content` child; an f-string interleaves
       # `string_content` with `interpolation` nodes. Pre-fix, the
@@ -608,9 +689,11 @@ module Noir
             io << Noir::TreeSitter.node_text(child, source)
           when "interpolation"
             # Source text of an interpolation includes the braces
-            # (`{VERSION}` / `{user.id}`) — write it back verbatim
+            # (`{VERSION}` / `{user.id}`). A field naming a module
+            # string is that string; any other is written back verbatim
             # so the placeholder shape is preserved.
-            io << Noir::TreeSitter.node_text(child, source)
+            field = Noir::TreeSitter.node_text(child, source)
+            io << (strings[field[1...-1].strip]? || field)
           end
         end
       end
@@ -620,10 +703,11 @@ module Noir
     # String elements of a list of paths. Bottle and Sanic take a list of
     # verbs positionally (`@app.route(PATH, ["GET", "POST"])`); a list whose
     # first element is a bare verb is that, not paths.
-    private def decode_path_list(list : LibTreeSitter::TSNode, source : String) : Array(String)
+    private def decode_path_list(list : LibTreeSitter::TSNode, source : String,
+                                 strings : Hash(String, String) = NO_STRINGS) : Array(String)
       paths = [] of String
       Noir::TreeSitter.each_named_child(list) do |elem|
-        paths << decode_string(elem, source) if Noir::TreeSitter.node_type(elem) == "string"
+        static_string(elem, source, strings).try { |value| paths << value }
       end
       return [] of String if (first = paths.first?) && bare_http_method?(first)
       paths
