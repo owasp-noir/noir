@@ -20,6 +20,104 @@ describe "KtorAuthTagger" do
     CodeLocator.instance.clear_all
   end
 
+  it "keeps long authenticate scopes intact around braces in strings and comments" do
+    ["}", "{", "중괄호 }"].each do |marker|
+      tmpdir = File.tempname("ktor_literal_braces")
+      Dir.mkdir_p(tmpdir)
+      app = File.join(tmpdir, "Application.kt")
+      source = <<-KT
+        fun Application.module() {
+          routing {
+            route("/api") {
+              authenticate("jwt") {
+                val marker = #{marker.inspect}
+                /* } { } */
+                #{"// padding\n" * 35}
+                get("/private") { call.respondText("ok") }
+              }
+              get("/public") { call.respondText("ok") }
+            }
+          }
+        }
+        KT
+      File.write(app, source)
+      CodeLocator.instance.register_path(app)
+      options = create_test_options
+      options["base"] = YAML::Any.new(tmpdir)
+      endpoints = ["private", "public"].map do |name|
+        line = source.lines.index!(&.includes?("get(\"/#{name}\")")) + 1
+        Endpoint.new("/api/#{name}", "GET", [] of Param, Details.new(PathInfo.new(app, line)))
+      end
+
+      KtorAuthTagger.new(options).perform(endpoints)
+      endpoints[0].tags.map(&.name).should eq(["auth"])
+      endpoints[0].tags[0].description.should contain("jwt")
+      endpoints[1].tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir) if tmpdir
+    end
+  end
+
+  it "ignores authenticate and principal examples in raw strings and block comments" do
+    tmpdir = File.tempname("ktor_auth_examples")
+    Dir.mkdir_p(tmpdir)
+    app = File.join(tmpdir, "Application.kt")
+    source = <<-KT
+      fun Application.module() {
+        routing {
+          route("/api") {
+            val example = """
+            authenticate("fake") {
+            """
+            /* authenticate("comment") { */
+            get("/public") {
+              val docs = """
+              call.principal<User>()
+              """
+              // call.authentication
+              call.respondText("ok")
+            }
+          }
+        }
+      }
+      KT
+    File.write(app, source)
+    CodeLocator.instance.register_path(app)
+    options = create_test_options
+    options["base"] = YAML::Any.new(tmpdir)
+    line = source.lines.index!(&.includes?("get(\"/public\")")) + 1
+    endpoint = Endpoint.new("/api/public", "GET", [] of Param, Details.new(PathInfo.new(app, line)))
+
+    KtorAuthTagger.new(options).perform([endpoint])
+    endpoint.tags.should be_empty
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
+  it "keeps principal checks executed inside string interpolation" do
+    tmpdir = File.tempname("ktor_auth_template")
+    Dir.mkdir_p(tmpdir)
+    app = File.join(tmpdir, "Application.kt")
+    File.write(app, <<-KT)
+      fun Application.module() {
+        routing {
+          get("/profile") {
+            call.respondText("User ${call.principal<UserIdPrincipal>() ?: throw UnauthorizedResponse()}")
+          }
+        }
+      }
+      KT
+    CodeLocator.instance.register_path(app)
+    options = create_test_options
+    options["base"] = YAML::Any.new(tmpdir)
+    endpoint = Endpoint.new("/profile", "GET", [] of Param, Details.new(PathInfo.new(app, 3)))
+
+    KtorAuthTagger.new(options).perform([endpoint])
+    endpoint.tags.map(&.name).should eq(["auth"])
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
   it "detects authenticate block wrapping route" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)

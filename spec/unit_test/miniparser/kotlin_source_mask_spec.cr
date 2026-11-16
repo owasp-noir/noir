@@ -2,6 +2,16 @@ require "spec"
 require "../../../src/miniparsers/kotlin_source_mask"
 
 describe Noir::KotlinSourceMask do
+  it "can retain executable template expressions without exposing literal contents" do
+    source = %(val text = "가짜 call.authentication ${call.principal<User>() ?: error("}")}")
+    visible = Noir::KotlinSourceMask.visible(source, include_template_code: true)
+    visible.size.should eq(source.size)
+    visible.should contain("call.principal<User>() ?: error(")
+    visible.should_not contain("call.authentication")
+    visible.count('{').should eq(visible.count('}'))
+    Noir::KotlinSourceMask.visible(source).should_not contain("call.principal")
+  end
+
   it "preserves the character count of a non-ASCII comment" do
     # One space per *character*, not per byte. `String#[]` and
     # `MatchData#begin/#end` are char-indexed, so a byte-per-space mask

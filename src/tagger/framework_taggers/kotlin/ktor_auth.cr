@@ -26,7 +26,7 @@ class KtorAuthTagger < FrameworkTagger
   ]
 
   # `route("/api") {` — a nested URL-prefix block.
-  ROUTE_BLOCK = /route\s*\(\s*"([^"]+)"/
+  ROUTE_BLOCK = /\broute\s*\(/
 
   # The start of a route handler (`get("/x") {`, `post {`). Used as a
   # boundary so a handler-body scan stops before the next route.
@@ -42,6 +42,7 @@ class KtorAuthTagger < FrameworkTagger
     @helpers = Hash({String, String}, Symbol).new
     @error_statuses = Hash(String, Set(String)).new
     @status_packages = Hash(String, Set(String)).new
+    @visible_lines = Hash(String, Array(String)).new
   end
 
   def self.target_techs : Array(String)
@@ -82,16 +83,17 @@ class KtorAuthTagger < FrameworkTagger
     route_frames = [] of Int32
     auth_frames = [] of NamedTuple(threshold: Int32, start_line: Int32, description: String)
     depth = 0
+    code_lines = visible_lines(file)
 
     content.split("\n").each_with_index do |line, idx|
       line_num = idx + 1
-      stripped = line.strip
+      stripped = code_lines[idx].strip
 
       route_frames << depth if stripped.matches?(ROUTE_BLOCK)
 
       if !route_frames.empty? && AUTHENTICATE_BLOCK_PATTERNS.any? { |pattern, _desc| stripped.matches?(pattern) } &&
          !stripped.matches?(OPTIONAL_AUTHENTICATE)
-        auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
+        auth_match = line.match(/authenticate\s*\(\s*"([^"]+)"/)
         auth_name = auth_match ? auth_match[1] : "default"
         auth_frames << {
           threshold:   depth,
@@ -100,7 +102,7 @@ class KtorAuthTagger < FrameworkTagger
         }
       end
 
-      depth += line.count('{') - line.count('}')
+      depth += stripped.count('{') - stripped.count('}')
 
       while !route_frames.empty? && depth <= route_frames.last
         route_frames.pop
@@ -115,6 +117,11 @@ class KtorAuthTagger < FrameworkTagger
     while frame = auth_frames.pop?
       close_auth_frame(file, frame, Int32::MAX)
     end
+  end
+
+  private def visible_lines(file : String) : Array(String)
+    key = Noir::PathScope.expand(file)
+    @visible_lines[key] ||= Noir::KotlinSourceMask.visible(read_file(key) || "", include_template_code: true).split('\n')
   end
 
   private def close_auth_frame(file : String,
@@ -138,16 +145,17 @@ class KtorAuthTagger < FrameworkTagger
       # read would crash the lines[idx] walks below with IndexError.
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
+      code_lines = visible_lines(path_info.path)
 
       # Check for authenticate block wrapping this route
-      description = check_enclosing_authenticate(lines, line_idx)
+      description = check_enclosing_authenticate(lines, code_lines, line_idx)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ktor_auth"))
         return
       end
 
       # Check route handler body for principal/session access
-      description = check_route_auth(lines, line_idx, path_info.path)
+      description = check_route_auth(lines, code_lines, line_idx, path_info.path)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ktor_auth"))
         return
@@ -161,21 +169,21 @@ class KtorAuthTagger < FrameworkTagger
     end
   end
 
-  private def check_enclosing_authenticate(lines : Array(String), route_line : Int32) : String?
+  private def check_enclosing_authenticate(lines : Array(String), code_lines : Array(String), route_line : Int32) : String?
     # Walk backwards to find an enclosing authenticate {} block
     # 30-line window: Ktor authenticate blocks can wrap multiple route definitions
     idx = route_line - 1
     brace_depth = 0
 
     while idx >= 0 && idx >= route_line - 30
-      current = lines[idx]
+      current = code_lines[idx]
       stripped = current.strip
 
       # Check pattern BEFORE counting braces on this line
       # brace_depth <= 0 means we haven't left the enclosing scope (handles nested route blocks)
       AUTHENTICATE_BLOCK_PATTERNS.each do |pattern, _desc|
         if stripped.matches?(pattern) && brace_depth <= 0 && !stripped.matches?(OPTIONAL_AUTHENTICATE)
-          auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
+          auth_match = lines[idx].match(/authenticate\s*\(\s*"([^"]+)"/)
           if auth_match
             return "Ktor authenticate(\"#{auth_match[1]}\") block"
           end
@@ -206,7 +214,7 @@ class KtorAuthTagger < FrameworkTagger
   # straight into the next route's body: a public route inherited its
   # neighbour's `call.principal<…>()`. Seed the depth from the route line
   # instead, and scan that line too so a one-line handler is read at all.
-  private def check_route_auth(lines : Array(String), route_line : Int32, file : String) : String?
+  private def check_route_auth(lines : Array(String), code_lines : Array(String), route_line : Int32, file : String) : String?
     idx = route_line
     end_idx = [route_line + 15, lines.size - 1].min
     brace_depth = 0
@@ -216,22 +224,21 @@ class KtorAuthTagger < FrameworkTagger
 
     while idx <= end_idx
       current = lines[idx]
-      stripped = current.strip
+      stripped = code_lines[idx].strip
 
       # The next route declaration ends this handler no matter what the
       # braces looked like.
       break if idx > route_line && stripped.matches?(ROUTE_HANDLER)
 
-      visible = Noir::CComments.strip(stripped).strip
-      saw_session = true if visible.matches?(/sessions\.get</)
+      saw_session = true if stripped.matches?(/sessions\.get</)
       ROUTE_AUTH_PATTERNS.each do |pattern, desc|
         next if desc == "Ktor session check"
         return desc if stripped.matches?(pattern)
       end
 
       handler << current
-      brace_depth += current.count('{') - current.count('}')
-      entered = true if current.includes?('{')
+      brace_depth += stripped.count('{') - stripped.count('}')
+      entered = true if stripped.includes?('{')
       break if entered && brace_depth <= 0
 
       idx += 1
