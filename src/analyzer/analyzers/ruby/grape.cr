@@ -27,7 +27,7 @@ module Analyzer::Ruby
 
     # A route or prefix statement whose options continue on the next line
     # (`namespace 'conans/:name',` / `requirements: {...} do`).
-    GRAPE_CONTINUED_DSL = /^(?:resource|resources|namespace|group|segment|route_param|#{GRAPE_VERBS.join('|')})\b/
+    GRAPE_CONTINUED_DSL = /^(?:resource|resources|namespace|group|segment|route_param|route|#{GRAPE_VERBS.join('|')})\b/
     MAX_CONTINUATION    = 8
 
     GRAPE_PREFIX_LITERAL = /^(?:resource|resources|namespace|group|segment)\s+['":]([\w\/\-:]+)[\'""]?(?:\s*,[^#]*?)?\s*do\b/
@@ -37,7 +37,7 @@ module Analyzer::Ruby
     GRAPE_PREFIX_EXPR   = /^(?:resource|resources|namespace|group|segment)\s+([a-z_]\w*)(?:\.\w+[!?]?)*(?:\s*,[^#]*?)?\s*do\b/
     GRAPE_INCLUDE       = /^include\s+((?:::)?[A-Z][\w:]*)\s*$/
     GRAPE_CONCERN_EXT   = /^\s*extend\s+(?:::)?ActiveSupport::Concern\b/
-    GRAPE_CONCERN_ROUTE = /^\s*(?:resources?|namespace|group|segment|route_param|#{GRAPE_VERBS.join('|')})\b[^\n]*\bdo\b/m
+    GRAPE_CONCERN_ROUTE = /^\s*(?:resources?|namespace|group|segment|route_param|route|#{GRAPE_VERBS.join('|')})\b[^\n]*\bdo\b/m
     GRAPE_MODULE_DEF    = /^\s*module\s+([A-Z][\w:]*)/
 
     # `%w[a b].each do |x|`, `[:a, :b].each do |x|` and
@@ -315,7 +315,7 @@ module Analyzer::Ruby
       block_kinds = [] of Symbol
       pending_params = [] of String
       params_block_depth = 0
-      last_endpoint : Endpoint? = nil
+      last_endpoints = [] of Endpoint
       lines = content.lines
       # Statements as {text, source line index}; loop unrolling repeats lines.
       stmts = expand_grape_loops(lines.map_with_index { |text, i| {text, i} })
@@ -404,81 +404,75 @@ module Analyzer::Ruby
         end
 
         verb_handled = false
-        GRAPE_VERBS.each do |verb|
-          # Cheap prefix gate before the (precompiled) anchored regexes:
-          # skips the regex work entirely for the vast majority of lines
-          # that don't open with a verb keyword.
-          next unless stripped.starts_with?(verb)
-          next if stripped.size > verb.size && (stripped[verb.size].alphanumeric? || stripped[verb.size] == '_')
+        if route_spec = parse_grape_route_call(stripped)
+          route_methods, route_paths = route_spec
+          last_endpoints = emit_grape_endpoints(
+            path, lines, index, do_index, include_callee,
+            mount_prefix, class_prefix, version_prefix, prefix_segments,
+            include_sites, pending_params, route_methods, route_paths
+          )
+          pending_params.clear
+          block_kinds << :other unless stripped.match(/\bend\b/)
+          verb_handled = true
+        end
 
-          if m = stripped.match(GRAPE_VERB_WITH_PATH[verb])
-            raw_match = (m[1]? || "").to_s
-            raw_path = grape_literal_or_param_path(raw_match)
-            ep_path = build_path(mount_prefix, class_prefix, version_prefix, prefix_segments, raw_path)
-            details = Details.new(PathInfo.new(path, index + 1))
-            include_sites.each { |site| details.add_path(site) }
-            endpoint = Endpoint.new(ep_path, verb.upcase, details)
+        unless verb_handled
+          GRAPE_VERBS.each do |verb|
+            # Cheap prefix gate before the (precompiled) anchored regexes:
+            # skips the regex work entirely for the vast majority of lines
+            # that don't open with a verb keyword.
+            next unless stripped.starts_with?(verb)
+            next if stripped.size > verb.size && (stripped[verb.size].alphanumeric? || stripped[verb.size] == '_')
 
-            extract_path_params(ep_path).each do |param_name|
-              endpoint.push_param(Param.new(param_name, "", "path"))
+            if m = stripped.match(GRAPE_VERB_WITH_PATH[verb])
+              raw_match = (m[1]? || "").to_s
+              raw_path = grape_literal_or_param_path(raw_match)
+              last_endpoints = emit_grape_endpoints(
+                path, lines, index, do_index, include_callee,
+                mount_prefix, class_prefix, version_prefix, prefix_segments,
+                include_sites, pending_params, [verb.upcase], [raw_path]
+              )
+              pending_params.clear
+              block_kinds << :other unless stripped.match(/\bend\b/)
+              verb_handled = true
+              break
             end
 
-            pending_params.each do |param_name|
-              next if raw_path.includes?(":#{param_name}")
-              endpoint.push_param(Param.new(param_name, "", declared_param_type(verb)))
+            if m = stripped.match(GRAPE_VERB_BARE_DO[verb])
+              last_endpoints = emit_grape_endpoints(
+                path, lines, index, do_index, include_callee,
+                mount_prefix, class_prefix, version_prefix, prefix_segments,
+                include_sites, pending_params, [verb.upcase], [""]
+              )
+              pending_params.clear
+              block_kinds << :other unless stripped.match(/\bend\b/)
+              verb_handled = true
+              break
             end
-            pending_params.clear
-
-            attach_do_block_callees(endpoint, lines, do_index, path) if include_callee
-            @result << endpoint
-            last_endpoint = endpoint
-            block_kinds << :other unless stripped.match(/\bend\b/)
-            verb_handled = true
-            break
-          end
-
-          if m = stripped.match(GRAPE_VERB_BARE_DO[verb])
-            ep_path = build_path(mount_prefix, class_prefix, version_prefix, prefix_segments, "")
-            details = Details.new(PathInfo.new(path, index + 1))
-            include_sites.each { |site| details.add_path(site) }
-            endpoint = Endpoint.new(ep_path, verb.upcase, details)
-
-            extract_path_params(ep_path).each do |param_name|
-              endpoint.push_param(Param.new(param_name, "", "path"))
-            end
-
-            pending_params.each do |param_name|
-              endpoint.push_param(Param.new(param_name, "", declared_param_type(verb)))
-            end
-            pending_params.clear
-
-            attach_do_block_callees(endpoint, lines, do_index, path) if include_callee
-            @result << endpoint
-            last_endpoint = endpoint
-            block_kinds << :other unless stripped.match(/\bend\b/)
-            verb_handled = true
-            break
           end
         end
 
         next if verb_handled
 
-        if le = last_endpoint
+        unless last_endpoints.empty?
           # Require a symbol (`:name`) or string (`'name'`/`"name"`) key.
           # The old `['"]?:?` made both optional, so a bare-variable
           # subscript like `headers[key]` (where `key` is a local) was
           # mis-captured as a literal header named `key`.
           line.scan(/\bparams\[\s*(?::([\w-]+)|['"]([\w-]+)['"])\s*\]/) do |match|
             name = (match[1]? || match[2]?).to_s
-            push_grape_param(le, Param.new(name, "", "query")) unless name.empty?
+            next if name.empty?
+            last_endpoints.each { |le| push_grape_param(le, Param.new(name, "", "query")) }
           end
           line.scan(/\bheaders\[\s*(?::([\w-]+)|['"]([\w-]+)['"])\s*\]/) do |match|
             name = (match[1]? || match[2]?).to_s
-            push_grape_param(le, Param.new(name, "", "header")) unless name.empty?
+            next if name.empty?
+            last_endpoints.each { |le| push_grape_param(le, Param.new(name, "", "header")) }
           end
           line.scan(/\bcookies\[\s*(?::([\w-]+)|['"]([\w-]+)['"])\s*\]/) do |match|
             name = (match[1]? || match[2]?).to_s
-            push_grape_param(le, Param.new(name, "", "cookie")) unless name.empty?
+            next if name.empty?
+            last_endpoints.each { |le| push_grape_param(le, Param.new(name, "", "cookie")) }
           end
         end
 
@@ -493,6 +487,133 @@ module Analyzer::Ruby
           end
         end
       end
+    end
+
+    private def emit_grape_endpoints(path : String, lines : Array(String), index : Int32, do_index : Int32,
+                                     include_callee : Bool, mount_prefix : String, class_prefix : String,
+                                     version_prefix : String, prefix_segments : Array(String),
+                                     include_sites : Array(PathInfo), pending_params : Array(String),
+                                     methods : Array(String), raw_paths : Array(String)) : Array(Endpoint)
+      emitted = [] of Endpoint
+      raw_paths.each do |raw_path|
+        ep_path = build_path(mount_prefix, class_prefix, version_prefix, prefix_segments, raw_path)
+        path_params = extract_path_params(ep_path)
+
+        methods.each do |http_method|
+          details = Details.new(PathInfo.new(path, index + 1))
+          include_sites.each { |site| details.add_path(site) }
+          endpoint = Endpoint.new(ep_path, http_method, details)
+
+          path_params.each do |param_name|
+            endpoint.push_param(Param.new(param_name, "", "path"))
+          end
+
+          pending_params.each do |param_name|
+            next if raw_path.includes?(":#{param_name}")
+            endpoint.push_param(Param.new(param_name, "", declared_param_type(http_method.downcase)))
+          end
+
+          attach_do_block_callees(endpoint, lines, do_index, path) if include_callee
+          @result << endpoint
+          emitted << endpoint
+        end
+      end
+      emitted
+    end
+
+    # Parse Grape's `route <methods>[, <path>][, opts...] do`: accepts `:any`,
+    # a single verb symbol/string, `%w[...]`/`%i[...]`, or `["PUT", "PATCH"]`.
+    private def parse_grape_route_call(stripped : String) : Tuple(Array(String), Array(String))?
+      return unless m = stripped.match(/\Aroute(?:\s+|\s*\()(.+?)\s*\bdo\b/)
+      args_text = m[1].strip
+      args_text = args_text[0...-1].strip if stripped.starts_with?("route(") && args_text.ends_with?(')')
+      args = split_grape_top_level_args(args_text)
+      return if args.empty?
+
+      methods = parse_grape_route_methods(args[0])
+      return if methods.empty?
+
+      raw_paths = [""]
+      if path_arg = args[1]?
+        unless path_arg.matches?(/\A(?:\w+:|['":]\w+['"]?\s*=>)/)
+          parsed = parse_grape_route_paths(path_arg)
+          raw_paths = parsed unless parsed.empty?
+        end
+      end
+      {methods, raw_paths}
+    end
+
+    private def split_grape_top_level_args(text : String) : Array(String)
+      parts = [] of String
+      quote : Char? = nil
+      escaped = false
+      depth = 0
+      start = 0
+
+      text.each_char_with_index do |ch, i|
+        if q = quote
+          if escaped
+            escaped = false
+          elsif ch == '\\'
+            escaped = true
+          elsif ch == q
+            quote = nil
+          end
+          next
+        end
+
+        case ch
+        when '"', '\''     then quote = ch
+        when '(', '[', '{' then depth += 1
+        when ')', ']', '}' then depth -= 1 if depth > 0
+        when ','
+          if depth == 0
+            part = text[start...i].strip
+            parts << part unless part.empty?
+            start = i + 1
+          end
+        end
+      end
+
+      tail = text[start..].strip
+      parts << tail unless tail.empty?
+      parts
+    end
+
+    private def parse_grape_route_methods(expr : String) : Array(String)
+      token = expr.strip
+      if token.starts_with?('%') && token.size >= 4
+        return token[3...-1].split(/\s+/).reject(&.empty?).map { |m| normalize_grape_route_method(m) }.uniq!
+      end
+      if token.starts_with?('[') && token.ends_with?(']')
+        return token[1...-1].split(',').compact_map do |item|
+          item = item.strip
+          next if item.empty?
+          normalize_grape_route_method(item)
+        end.uniq!
+      end
+      norm = normalize_grape_route_method(token)
+      norm.empty? ? [] of String : [norm]
+    end
+
+    private def normalize_grape_route_method(raw : String) : String
+      cleaned = raw.strip.gsub(/['"]/, "").lchop(':').upcase
+      cleaned == "*" ? "ANY" : cleaned
+    end
+
+    private def parse_grape_route_paths(expr : String) : Array(String)
+      token = expr.strip
+      if token.starts_with?('%') && token.size >= 4
+        return token[3...-1].split(/\s+/).reject(&.empty?).map { |p| grape_literal_or_param_path(p) }
+      end
+      if token.starts_with?('[') && token.ends_with?(']')
+        return token[1...-1].split(',').compact_map do |item|
+          item = item.strip
+          next if item.empty?
+          grape_literal_or_param_path(item)
+        end
+      end
+      [grape_literal_or_param_path(token)]
     end
 
     # Grape accepts the route path as a bare Ruby symbol (`get :status`,
@@ -634,6 +755,9 @@ module Analyzer::Ruby
         names << m[1] if m.size > 1
       end
       raw.scan(/\{([a-zA-Z_][\w]*)\}/) do |m|
+        names << m[1] if m.size > 1 && !names.includes?(m[1])
+      end
+      raw.scan(/\*([a-zA-Z_][\w]*)/) do |m|
         names << m[1] if m.size > 1 && !names.includes?(m[1])
       end
       names
