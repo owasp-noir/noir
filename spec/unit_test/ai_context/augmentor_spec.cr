@@ -1768,6 +1768,11 @@ describe "NoirAIContext" do
       {line: %(const opts = items.map(i => i.id).select((x) => "#" + x);), name: "items.map().select", sql: false},
       # A data frame's column pick.
       {line: %(return str(df.select(f"col_{i}"))), name: "df.select", sql: false},
+      # ActiveRecord query methods: built first arg is SQL, bound placeholder is not.
+      {line: %(@reports = Report.where("title LIKE '%\#{params[:q]}%'")), name: "Report.where", sql: true},
+      {line: %(@reports = Report.all.order("created_at \#{params[:dir]}")), name: "Report.all.order", sql: true},
+      {line: %(@reports = Report.where("title LIKE ?", "%\#{params[:q]}%")), name: "Report.where", sql: false},
+      {line: %(User.where(role: params[:role])), name: "User.where", sql: false},
     ].each do |entry|
       line, name, expected = entry[:line], entry[:name], entry[:sql]
       with_temp_ai_context_source("#{line}\n", ".rb") do |path|
@@ -1805,6 +1810,28 @@ describe "NoirAIContext" do
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
 
       context.sinks.map(&.kind).should_not contain("sql")
+    end
+  end
+
+  it "does not treat Rails user&.authenticate(password) as a route auth guard" do
+    source = <<-RUBY
+      class SessionsController < ApplicationController
+        skip_before_action :authenticate_token!, only: :create
+        def create
+          render json: { token: user.token } if user&.authenticate(params[:password])
+        end
+      end
+      RUBY
+
+    with_temp_ai_context_source(source, ".rb") do |path|
+      endpoint = Endpoint.new("/api/v1/session", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 3))
+      details.technology = "ruby_rails"
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should_not contain("auth_guard")
     end
   end
 

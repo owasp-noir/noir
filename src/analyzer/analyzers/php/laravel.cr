@@ -259,7 +259,7 @@ module Analyzer::Php
         path_match = attribute_content.match(/['"]([^'"]+)['"]/)
         next unless path_match
 
-        route_path = path_match[1]
+        route_path = strip_binding_fields(path_match[1])
         params = extract_brace_path_params(route_path)
         details = Details.new(PathInfo.new(path))
 
@@ -547,6 +547,7 @@ module Analyzer::Php
                                    methods : Array(String),
                                    full_path : String) : Int32
       full_path = "/" if full_path.empty? # `Route::get('', …)` outside any prefix
+      full_path = strip_binding_fields(full_path)
       offsets = ctx.offsets
       action_pos = offsets.end(route_match)
       route_line = ctx.base_line + offsets.line(offsets.begin(route_match)) - 1
@@ -614,6 +615,14 @@ module Analyzer::Php
       constraints
     end
 
+    # `{post:slug}` names the Eloquent column a model is bound by; the URL
+    # segment is still `{post}` (or `{post?}` when optional), and any
+    # `->where()` constraint is applied on top of that name afterwards.
+    private def strip_binding_fields(path : String) : String
+      return path unless path.includes?(':')
+      path.gsub(/\{(\w+):\w+(\??)\}/, "{\\1\\2}")
+    end
+
     # `{name}` -> `{name:regex}`. Laravel (via Symfony) drops a leading `^`
     # and trailing `$` from the requirement; a pattern the placeholder syntax
     # cannot carry is left off.
@@ -635,6 +644,7 @@ module Analyzer::Php
                                   route_match : Regex::MatchData,
                                   full_path : String,
                                   methods : Array(String)) : Int32
+      full_path = strip_binding_fields(full_path)
       route_line = ctx.base_line + ctx.offsets.line(ctx.offsets.begin(route_match)) - 1
       match_end = ctx.offsets.end(route_match)
       statement = ctx.offsets.slice(ctx.offsets.begin(route_match), ctx.lexer.statement_end(match_end))
@@ -1371,7 +1381,7 @@ module Analyzer::Php
 
       templates.each do |route_info|
         action = route_info.action
-        path = route_info.path
+        path = strip_binding_fields(route_info.path)
         method = route_info.method
         next unless actions.includes?(action)
 

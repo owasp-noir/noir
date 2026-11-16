@@ -9,9 +9,17 @@ module Analyzer::Php
 
     include SymfonyRouteAttributes
 
-    # A class declared in a controller file: its name, its `#[Route]` prefix,
+    # A class declared in a controller file: its name, its `#[Route]` prefixes,
+    # its class-level route attribute (if any, used when it is invocable),
     # the guard its class-level security attributes impose, and its body.
-    private record ClassInfo, name : String, prefix : String, guard : String?, body_start : Int32, body_end : Int32
+    private record ClassInfo,
+      name : String,
+      prefixes : Array(Tuple(String?, String)),
+      guard : String?,
+      body_start : Int32,
+      body_end : Int32,
+      route_attr : RouteAttr?,
+      invoke_start : Int32?
 
     # What a controller method contributes to the routes it serves.
     private record Action, handler : Handler, params : Array(Param), guard : String?, body : Tuple(String, Int32)?
@@ -197,24 +205,55 @@ module Analyzer::Php
       attrs = route_attributes(content, parser)
       classes = extract_classes(content, parser, attrs)
       import_prefixes = import_prefixes_for(path)
+      routed_classes = Set(Int32).new
 
       attrs.each do |attr|
         next if route_applies_to_class?(content, attr)
-        next unless route_path = extract_symfony_route_path(attr.args)
+        route_paths = extract_symfony_route_localized_paths(attr.args)
+        next if route_paths.empty?
         next if docblock_orphaned?(content, attr)
 
-        methods = extract_methods_from_symfony_context(attr.args)
-        methods = ["GET"] if methods.empty?
-
         klass = classes.find { |c| attr.start >= c.body_start && attr.start < c.body_end }
+        routed_classes << klass.body_start if klass
         action = (sig = content.match(SIGNATURE_RE, attr.stop)) ? action_at(path, content, lexer, sig, klass) : nil
-        method_body = action.try(&.body)
-        body_params = action.try(&.params) || [] of Param
-        route_line = line_number_for_index(content, attr.start)
-        class_path = build_full_path(klass.try(&.prefix) || "", route_path)
+        emit_attribute_endpoints(endpoints, path, content, attr, route_paths, klass, action, import_prefixes, include_callee)
+      end
 
+      # Class-level `#[Route]` on an invocable controller (`__invoke`): only
+      # registers a route when no method in the class carries its own route.
+      classes.each do |klass|
+        next if routed_classes.includes?(klass.body_start)
+        next unless (attr = klass.route_attr) && (invoke_start = klass.invoke_start)
+        next if docblock_orphaned?(content, attr)
+        route_paths = klass.prefixes
+        next if route_paths.empty?
+        next unless sig = content.match(SIGNATURE_RE, invoke_start)
+
+        action = action_at(path, content, lexer, sig, klass)
+        emit_attribute_endpoints(endpoints, path, content, attr, route_paths, nil, action, import_prefixes, include_callee)
+      end
+
+      endpoints
+    end
+
+    private def emit_attribute_endpoints(endpoints : Array(Endpoint),
+                                         path : String,
+                                         content : String,
+                                         attr : RouteAttr,
+                                         route_paths : Array(Tuple(String?, String)),
+                                         klass : ClassInfo?,
+                                         action : Action?,
+                                         import_prefixes : Array(String),
+                                         include_callee : Bool)
+      methods = extract_methods_from_symfony_context(attr.args)
+      methods = ["GET"] if methods.empty?
+      method_body = action.try(&.body)
+      body_params = action.try(&.params) || [] of Param
+      route_line = line_number_for_index(content, attr.start)
+
+      combine_symfony_paths(klass.try(&.prefixes), route_paths).each do |class_path|
         import_prefixes.each do |import_prefix|
-          full_path = build_full_path(import_prefix, class_path).presence || "/"
+          full_path = normalize_symfony_placeholders(build_full_path(import_prefix, class_path).presence || "/")
           params = dedup_params(extract_brace_path_params(full_path) + body_params)
 
           methods.each do |method|
@@ -226,11 +265,30 @@ module Analyzer::Php
           end
         end
       end
-
-      endpoints
     end
 
-    # Every named class in the file, with its route prefix and class-level
+    private def combine_symfony_paths(class_prefixes : Array(Tuple(String?, String))?,
+                                      route_paths : Array(Tuple(String?, String))) : Array(String)
+      return route_paths.map(&.[1]) if class_prefixes.nil? || class_prefixes.empty?
+      combined = [] of String
+      class_prefixes.each do |c_locale, c_path|
+        route_paths.each do |r_locale, r_path|
+          next if c_locale && r_locale && c_locale != r_locale
+          combined << build_full_path(c_path, r_path)
+        end
+      end
+      combined
+    end
+
+    # Rewrite Symfony inline requirements (`{page<\d+>}`, `{page<\d+>?1}`,
+    # `{!id}`) to `{page}` / `{page?}` / `{id}` so path params extract cleanly
+    # and `noir trace` matches concrete values.
+    private def normalize_symfony_placeholders(path : String) : String
+      return path unless path.includes?('{')
+      path.gsub(/\{!?([A-Za-z_]\w*)(?:<[^>]*>)?(\?[^}]*)?\}/) { $2? ? "{#{$1}?}" : "{#{$1}}" }
+    end
+
+    # Every named class in the file, with its route prefixes and class-level
     # guard: the `#[Route]` the parser attached to it, or the `@Route`
     # annotation right before it.
     private def extract_classes(content : String, parser : Noir::PhpBlockParser, attrs : Array(RouteAttr)) : Array(ClassInfo)
@@ -244,9 +302,10 @@ module Analyzer::Php
         attr ||= attrs.reverse_each.find { |a| a.on_class.nil? && a.stop <= class_start }.try do |a|
           a if (decl = next_declaration(content, a.stop)) && decl.begin(0) == class_start
         end
-        prefix = attr.try { |a| extract_symfony_route_path(a.args) } || ""
+        prefixes = attr ? extract_symfony_route_localized_paths(attr.args) : [] of Tuple(String?, String)
         guard = security_attribute_guard(content[member_prelude_start(content, parser.lexer, class_start)...class_start])
-        classes << ClassInfo.new(name, prefix, guard, node.body.begin, node.body.end)
+        invoke_start = node.children.find { |child| child.kind.method? && child.name == "__invoke" }.try(&.start)
+        classes << ClassInfo.new(name, prefixes, guard, node.body.begin, node.body.end, attr, invoke_start)
       end
       classes
     end
@@ -591,6 +650,7 @@ module Analyzer::Php
             route_path = route_h[YAML::Any.new("path")]?.try(&.as_s?)
             next unless route_path
 
+            route_path = normalize_symfony_placeholders(route_path)
             methods = extract_yaml_methods(route_h[YAML::Any.new("methods")]?)
             methods = ["GET"] if methods.empty?
 

@@ -1,4 +1,5 @@
 require "../../func_spec.cr"
+require "../../../../src/cli/inspect"
 
 # Laravel route shapes from #3302:
 #   * `Route::resource('articles', 'ArticleController')` resolves its string
@@ -49,6 +50,26 @@ describe "Laravel route shapes", tags: "functional" do
       find.call(verb, "/old")
     end
     endpoints.select { |ep| ep.url == "/welcome" }.map(&.method).should eq(["GET"])
+  end
+
+  # `{post:slug}` names the column a model is bound by; the URL segment is
+  # still one placeholder, which a `->where()` constraint may then narrow.
+  it "keeps a scoped binding field out of the URL so the route traces" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new(fixture)])
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+    endpoints = app.endpoints
+    trace = ->(path : String) { Noir::CLI::Inspect.trace(endpoints, "GET", path).map(&.endpoint.url) }
+
+    trace.call("/posts/hello-world").should eq(["/posts/{post}"])
+    trace.call("/teams/acme/members/7").should eq(["/teams/{team}/members/{member?}"])
+    trace.call("/teams/acme/members").should eq(["/teams/{team}/members/{member?}"])
+    trace.call("/archive/2024").should eq(["/archive/{year:[0-9]+}"])
+    endpoints.find! { |ep| ep.url == "/posts/{post}" }.params.map(&.name).should eq(["post"])
   end
 
   it "matches a long call argument in a concatenated path without exhausting the regex stack" do

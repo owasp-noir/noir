@@ -239,8 +239,31 @@ module Analyzer::Php
 
     protected def extract_brace_path_params(route_path : String) : Array(Param)
       params = [] of Param
-      route_path.scan(/\{(\w+)\??\}/).each do |match|
-        params << Param.new(match[1], "", "path")
+      return params unless route_path.includes?('{')
+
+      depth = 0
+      start = -1
+      escaped = false
+      route_path.each_char_with_index do |ch, i|
+        if escaped
+          escaped = false
+          next
+        end
+        if ch == '\\'
+          escaped = true
+          next
+        end
+        if ch == '{'
+          start = i + 1 if depth == 0
+          depth += 1
+        elsif ch == '}' && depth > 0
+          depth -= 1
+          if depth == 0 && start >= 0
+            name = route_path[start...i].split(':', 2)[0].rstrip('?')
+            params << Param.new(name, "", "path") if name.matches?(/\A[A-Za-z_]\w*\z/)
+            start = -1
+          end
+        end
       end
       params
     end

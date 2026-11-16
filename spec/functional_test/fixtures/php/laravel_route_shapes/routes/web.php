@@ -13,3 +13,8 @@ Route::post(
 Route::permanentRedirect('/.well-known/carddav', '/dav');
 Route::redirect('/old', '/new');
 Route::view('/welcome', 'welcome');
+Route::get('/posts/{post:slug}', fn () => 'ok');
+Route::prefix('teams/{team:slug}')->group(function () {
+    Route::get('/members/{member:uuid?}', fn () => 'ok');
+});
+Route::get('/archive/{year}', fn () => 'ok')->whereNumber('year');

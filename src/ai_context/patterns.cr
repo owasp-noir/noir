@@ -18,7 +18,8 @@ module NoirAIContext
   # Enumerable. Go's database/sql spells the same calls `QueryRow`,
   # `QueryContext`, `ExecContext`; GORM and knex run a raw statement
   # through `Raw` / `raw`.
-  SQL_RECEIVER_CALL = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource|dsl|qb|\w*queryBuilder)(?:\.|->|::)(?:query(?:row)?(?:context)?|exec(?:context)?|execute|select|raw)\b/i
+  SQL_RECEIVER_CALL    = /\b(?:\w*db|db\w*|database|\w*conn(?:ection)?|con|cursor|cur|_?cr|pool|session|tx|transaction|stmt|statement|knex|sequelize|pg\w*|mysqli?|sqlite3?|pdo|sqlx?|repo|queryRunner|manager|jdbcTemplate|entityManager|dataSource|dsl|qb|\w*queryBuilder)(?:\.|->|::)(?:query(?:row)?(?:context)?|exec(?:context)?|execute|select|raw)\b/i
+  SQL_BUILDER_RAW_CALL = /(?:\.|->|::)(?:select|where|orWhere|having|orHaving|orderBy|groupBy)Raw\b/
 
   # The JVM receiver names no rule above can see (`this.owners.save`),
   # read off the declaration instead: a type named `*Repository` / `*Dao`,
@@ -89,8 +90,8 @@ module NoirAIContext
       "sql",
       "Potential SQL/data-store sink inferred from code or callee name",
       78,
-      name_patterns: [/raw_?sql/i, /find_?by_?sql/i, SQL_RECEIVER_CALL],
-      source_patterns: [/find_by_sql/i, /\braw(sql|_sql)\b/i, /\bselect\b.+\bfrom\b/i, /\bexecute(?:Query|Sql)\b/i, SQL_RECEIVER_CALL]
+      name_patterns: [/raw_?sql/i, /find_?by_?sql/i, SQL_RECEIVER_CALL, SQL_BUILDER_RAW_CALL],
+      source_patterns: [/find_by_sql/i, /\braw(sql|_sql)\b/i, /\bselect\b.+\bfrom\b/i, /\bexecute(?:Query|Sql)\b/i, SQL_RECEIVER_CALL, /(?:\.|->|::)(?:select|where|orWhere|having|orHaving|orderBy|groupBy)Raw\s*\(/]
     ),
     PatternDefinition.new(
       "command_exec",
@@ -102,10 +103,12 @@ module NoirAIContext
       # namespace head (`System.IO.File.Exists`) or a property
       # (`platform.system`) runs nothing. .NET spawns through `Process.Start`,
       # Elixir through `System.cmd`. Node's `child_process` also spells
-      # `execFile`, `execSync`, `execFileSync` and `spawnSync`.
-      name_patterns: [/\bexec\b/i, /\b(?:exec(?:File)?|spawn)Sync\b|\bexecFile\b/, /\A(?:(?:os|Kernel|std|posix|CORE)?(?:\.|::)|\\)?system\z/, /\bProcess\.Start\b/, /\bSystem\.cmd\b/, /#{TASK_SPAWN_RECEIVER.source}\bspawn\b/i, /\bpopen\b/i, /\bshell\b/i],
+      # `execFile`, `execSync`, `execFileSync` and `spawnSync`. PHP also
+      # runs commands via `shell_exec`, `passthru` and `proc_open`, and
+      # Ruby subshell literals (`` `...` ``, `%x(...)`) emit `Kernel.\``.
+      name_patterns: [/\bexec\b/i, /\b(?:exec(?:File)?|spawn)Sync\b|\bexecFile\b/, /\b(?:shell_exec|passthru|proc_open)\b/, /\AKernel\.`\z/, /\A(?:(?:os|Kernel|std|posix|CORE)?(?:\.|::)|\\)?system\z/, /\bProcess\.Start\b/, /\bSystem\.cmd\b/, /#{TASK_SPAWN_RECEIVER.source}\bspawn\b/i, /\bpopen\b/i, /\bshell\b/i],
       # `session.exec(` / `cursor.exec(` are queries, see SQL_RECEIVER_CALL.
-      source_patterns: [/(?<!session\.|cursor\.|conn\.|pool\.|stmt\.|db\.|tx\.|sql\.)\bexec\s*\(/i, /\bsystem\s*\(/i, /\bProcess\.Start\s*\(/, /#{TASK_SPAWN_RECEIVER.source}\bspawn\s*\((?!\s*(?:async\b|move\b|\|\||fn\b))/i, /\bpopen\s*\(/i, /ProcessBuilder/i, /Runtime\.getRuntime/i, /subprocess\./i]
+      source_patterns: [/(?<!session\.|cursor\.|conn\.|pool\.|stmt\.|db\.|tx\.|sql\.)\bexec\s*\(/i, /\b(?:shell_exec|passthru|proc_open)\s*\(/, /%x\s*[\(\[\{]/, /\bsystem\s*\(/i, /\bProcess\.Start\s*\(/, /#{TASK_SPAWN_RECEIVER.source}\bspawn\s*\((?!\s*(?:async\b|move\b|\|\||fn\b))/i, /\bpopen\s*\(/i, /ProcessBuilder/i, /Runtime\.getRuntime/i, /subprocess\./i]
     ),
     PatternDefinition.new(
       "file_io",
@@ -565,8 +568,9 @@ module NoirAIContext
         /passport\.authenticate/i,
         /expressjwt/i,
         # `authenticate(`, `authenticate_user!`, `authenticateUser`; not a
-        # handler *named* `authenticatedUsers`.
-        /\bauthenticate(?:_\w+|[A-Z]\w*)?!?\b/,
+        # handler *named* `authenticatedUsers` and not a model password check
+        # like Rails `user&.authenticate(params[:password])`.
+        /(?<!\.)\bauthenticate\b|\bauthenticate(?:_\w+|[A-Z]\w*|!)/,
         /\bverifyToken\b/i,
         /\brequireAuth\b/i,
         /\blogin_required\b/i,
