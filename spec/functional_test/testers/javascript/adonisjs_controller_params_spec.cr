@@ -8,6 +8,7 @@ expected_endpoints = [
   Endpoint.new("/notes/:id", "DELETE", [Param.new("id", "", "path")]),
   # Inline `[() => import('#controllers/...'), 'store']`, same action body.
   Endpoint.new("/notes/inline", "PUT", [Param.new("title", "", "json"), Param.new("body", "", "json")]),
+  Endpoint.new("/notes/compact", "GET", [Param.new("compact", "", "query")]),
 ]
 
 FunctionalTester.new("fixtures/javascript/adonisjs_controller_params/", {

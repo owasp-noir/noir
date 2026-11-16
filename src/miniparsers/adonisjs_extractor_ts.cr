@@ -1,5 +1,4 @@
 require "../utils/url_path"
-require "../utils/js_literal_scanner"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./js_callee_extractor"
@@ -131,30 +130,27 @@ module Noir
       routes
     end
 
-    # Statements that share a method's `name(` shape. A call to one of
-    # these is not a controller action.
-    METHOD_KEYWORDS = Set{
-      "if", "for", "while", "switch", "catch", "function", "return",
-      "with", "do", "else", "try", "new", "await", "import", "class",
-    }
-    # `async store({ request }: HttpContext): Promise<{ id: number }> {`.
-    # The `{` of `Promise<{...}>` is not the body. A bare `store(data)`
-    # call is not a method either: it has no body brace after the params.
-    METHOD_DECL_RE = /^[ \t]*(?:(?:public|private|protected|static|async|override|readonly|abstract|declare)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^\n{}]*>\s*)?\(/m
-
-    # The `{...}` body of `action` in a controller module, or nil when
-    # the name is only a call. `source` is comment-stripped.
-    def method_body(source : String, action : String) : String?
-      source.scan(METHOD_DECL_RE) do |m|
-        next unless m[1] == action
-        next if METHOD_KEYWORDS.includes?(m[1])
-        open = source.index('(', m.end(0) - 1) || next
-        close = JSLiteralScanner.find_matching_paren(source, open) || next
-        brace = method_body_brace(source, close) || next
-        stop = JSLiteralScanner.find_matching_brace(source, brace) || next
-        return source[brace..stop]
+    # Index controller actions once; route-by-route regex searches grow
+    # quadratically when a large controller serves many routes.
+    def method_bodies(source : String, path : String = "") : Hash(String, String)
+      methods = {} of String => String
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
+        collect_method_bodies(root, source, methods)
       end
-      nil
+      methods
+    end
+
+    private def collect_method_bodies(node : LibTreeSitter::TSNode, source : String, methods : Hash(String, String))
+      if Noir::TreeSitter.node_type(node) == "class_body"
+        Noir::TreeSitter.each_named_child(node) do |member|
+          next unless Noir::TreeSitter.node_type(member) == "method_definition"
+          name = Noir::TreeSitter.field(member, "name") || next
+          body = Noir::TreeSitter.field(member, "body") || next
+          methods[Noir::TreeSitter.node_text(name, source)] ||= Noir::TreeSitter.node_text(body, source)
+        end
+      else
+        Noir::TreeSitter.each_named_child(node) { |child| collect_method_bodies(child, source, methods) }
+      end
     end
 
     # ---- traversal --------------------------------------------------
@@ -452,89 +448,6 @@ module Noir
       arg = argument_at(call, target_index) || return
       type = Noir::TreeSitter.node_type(arg)
       STRING_LITERAL_TYPES.includes?(type) ? decode_string(arg, source) : nil
-    end
-
-    # `{` that opens `action`'s body, past a return type. Nil for a call
-    # (`store(data);`) that never opens a body.
-    private def method_body_brace(source : String, close_paren : Int32) : Int32?
-      i = skip_ws(source, close_paren + 1) || return
-      char = source[i]
-      return if char == ';' || char == ',' || char == '.'
-      return i if char == '{'
-      return unless char == ':'
-      i = skip_ws(source, i + 1) || return
-      skip_return_type_to_body(source, i)
-    end
-
-    # `Promise<{ id: number }>` keeps its `{` inside the angle brackets.
-    # An object return type (`: { id: number } {`) is the brace whose
-    # match is followed by the real body.
-    private def skip_return_type_to_body(source : String, i : Int32) : Int32?
-      angle = 0
-      paren = 0
-      bracket = 0
-      brace = 0
-      while i < source.size
-        char = source[i]
-        if char == '"' || char == '\'' || char == '`'
-          i = skip_js_string(source, i) || return
-          next
-        end
-        case char
-        when '<'
-          angle += 1
-        when '>'
-          angle -= 1 if angle > 0
-        when '('
-          paren += 1
-        when ')'
-          return if paren == 0 && angle == 0 && bracket == 0 && brace == 0
-          paren -= 1 if paren > 0
-        when '['
-          bracket += 1
-        when ']'
-          bracket -= 1 if bracket > 0
-        when '{'
-          if angle == 0 && paren == 0 && bracket == 0 && brace == 0
-            stop = JSLiteralScanner.find_matching_brace(source, i) || return
-            nxt = skip_ws(source, stop + 1)
-            return nxt if nxt && source[nxt] == '{'
-            return i
-          end
-          brace += 1
-        when '}'
-          brace -= 1 if brace > 0
-        when ';'
-          return if angle == 0 && paren == 0 && bracket == 0 && brace == 0
-        end
-        i += 1
-      end
-      nil
-    end
-
-    private def skip_ws(source : String, i : Int32) : Int32?
-      while i < source.size
-        char = source[i]
-        break unless char == ' ' || char == '\t' || char == '\n' || char == '\r'
-        i += 1
-      end
-      i < source.size ? i : nil
-    end
-
-    private def skip_js_string(source : String, i : Int32) : Int32?
-      quote = source[i]
-      i += 1
-      while i < source.size
-        char = source[i]
-        if char == '\\'
-          i += 2
-          next
-        end
-        return i + 1 if char == quote
-        return if quote != '`' && char == '\n'
-        i += 1
-      end
-      nil
     end
 
     private def function_argument(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?

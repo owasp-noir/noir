@@ -11,5 +11,5 @@ export default class NotesController {
     const page = request.qs().page
     return { q, page }
   }
-  async destroy({ params }: HttpContext) { return params.id }
+  async destroy({ params }: HttpContext) { return params.id } async compact({ request }: HttpContext) { return request.input('compact') }
 }

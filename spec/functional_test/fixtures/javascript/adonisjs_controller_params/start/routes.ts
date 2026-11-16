@@ -11,3 +11,4 @@ router
   .use(middleware.auth())
 router.delete('/notes/:id', [NotesController, 'destroy'])
 router.put('/notes/inline', [() => import('#controllers/notes_controller'), 'store'])
+router.get('/notes/compact', [NotesController, 'compact'])

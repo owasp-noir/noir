@@ -64,8 +64,8 @@ module Analyzer::Javascript
     CONTROLLER_IMPORT_RE  = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(\s*\)\s*=>\s*import\s*\(\s*['"]([^'"]+)['"]\s*\)|\bimport\s+([A-Za-z_$][\w$]*)\s+from\s+['"]([^'"]+)['"]/
     CONTROLLER_EXTENSIONS = [".ts", ".js"]
     ADONIS_ROOT_MARKERS   = ["adonisrc.ts", "adonisrc.js", "package.json"]
-    # Comment-stripped controller source, once per file per scan.
-    @controller_sources = Hash(String, String).new
+    @controller_methods = Hash(String, Hash(String, String)).new
+    @controller_files = Hash(Tuple(String, String), String?).new
 
     private def controller_imports(content : String) : Hash(String, String)
       imports = Hash(String, String).new
@@ -79,14 +79,13 @@ module Analyzer::Javascript
     # so a same-named controller in another app is not the one.
     private def action_body(route_file : String, controller : String, action : String, imports : Hash(String, String)) : String?
       spec = imports[controller]? || controller
-      file = controller_file(route_file, spec) || return
-      Noir::TreeSitterAdonisJsExtractor.method_body(controller_source(file), action)
+      key = {route_file, spec}
+      file = @controller_files.fetch(key) { @controller_files[key] = controller_file(route_file, spec) } || return
+      methods = @controller_methods[file] ||= Noir::TreeSitterAdonisJsExtractor.method_bodies(
+        Noir::JSRouteExtractor.strip_js_comments(read_file_content(file)), file)
+      methods[action]?
     rescue IO::Error
       nil
-    end
-
-    private def controller_source(file : String) : String
-      @controller_sources[file] ||= Noir::JSRouteExtractor.strip_js_comments(read_file_content(file))
     end
 
     # Closest Adonis app root above `path`: a directory with `package.json`
