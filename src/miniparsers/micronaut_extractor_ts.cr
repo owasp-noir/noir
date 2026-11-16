@@ -301,7 +301,7 @@ module Noir
         controller_paths.each do |class_path|
           method_paths.each do |method_path|
             full_path = Noir::URLPath.join_trimmed(class_path, method_path)
-            normalized_path = strip_uri_template_query(full_path)
+            normalized_path = uri_template_route_path(full_path)
             query_vars = uri_template_query_vars(full_path)
             path_vars = uri_template_path_vars(normalized_path)
             params = collect_method_params(member, source, method_consumes, dto_index, constants, class_name, query_vars.to_set, path_vars.to_set)
@@ -366,7 +366,7 @@ module Noir
         interface_paths.each do |interface_path|
           method_paths.each do |method_path|
             full_path = Noir::URLPath.join_trimmed(interface_path, method_path)
-            normalized_path = strip_uri_template_query(full_path)
+            normalized_path = uri_template_route_path(full_path)
             query_vars = uri_template_query_vars(full_path)
             path_vars = uri_template_path_vars(normalized_path)
             params = collect_method_params(member, source, method_consumes, dto_index, constants, interface_name, query_vars.to_set, path_vars.to_set)
@@ -558,8 +558,11 @@ module Noir
 
     # Micronaut joins class + method paths with a single `/`. Empty
     # method path → just the class prefix (no trailing slash).
-    def strip_uri_template_query(path : String) : String
-      normalized = path.gsub(/\{\?[^}]*\}/, "")
+    # The route path of a URI template: the `{?query,vars}` expansion is not
+    # part of it, and the reserved expansion `{+path}` (which may hold `/`)
+    # is the rest of the path.
+    def uri_template_route_path(path : String) : String
+      normalized = path.gsub(/\{\?[^}]*\}/, "").gsub(/\{\+\s*([^}:*]+?)\s*\}/) { "{*#{$1}}" }
       normalized.empty? ? "/" : normalized
     end
 
@@ -584,7 +587,7 @@ module Noir
     end
 
     private def normalize_uri_template_var(raw : String) : String
-      name = raw.strip
+      name = raw.strip.lstrip("*+")
       name = name.rstrip('*')
       if colon = name.index(':')
         name = name[...colon]
