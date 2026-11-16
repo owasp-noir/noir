@@ -1,5 +1,6 @@
 require "../../engines/python_engine"
 require "../../../utils/top_level_split"
+require "../../../miniparsers/python_route_extractor_ts"
 require "./python_helper"
 
 module Analyzer::Python
@@ -61,9 +62,6 @@ module Analyzer::Python
 
     @fastapi_import_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
     @fastapi_project_roots = [] of ::String
-
-    REQUEST_ATTR_TYPES = {"query_params" => "query", "headers" => "header", "cookies" => "cookie"}
-    @request_attr_regex_cache = Hash(::String, Regex).new
 
     def analyze
       include_router_map = Hash(::String, Hash(::String, Router)).new
@@ -2006,35 +2004,9 @@ module Analyzer::Python
 
     # Finds parameters in dictionary structures
     def find_dictionary_params(source : ::String, param : FunctionParameter) : Array(Param)
-      new_params = [] of Param
-      json_variable_names = [] of ::String
-      # Comments out: `# request.query_params.get("old")` is not a read.
-      codelines = source.split("\n").map { |line| strip_python_comment(line) }
-      source = codelines.join('\n')
-      if param.type == "Request"
-        # Parse JSON variable names
-        codelines.each do |codeline|
-          next unless codeline.includes?(param.name) && codeline.includes?("json")
-          match = codeline.match /(#{PYTHON_VAR_NAME_REGEX})\s*(?::\s*#{PYTHON_VAR_NAME_REGEX})?\s*=\s*(await\s*){0,1}#{param.name}.json\(\)/
-          json_variable_names << match[1] if !match.nil? && !json_variable_names.includes?(match[1])
-        end
-
-        new_params = find_json_params(codelines, json_variable_names)
-
-        # Starlette `Request` accessors read in the handler body:
-        # `request.query_params.get("q")`, `request.headers["x-token"]`, ...
-        attr_re = @request_attr_regex_cache[param.name] ||=
-          /(?<![\w.])#{Regex.escape(param.name)}\.(query_params|headers|cookies)(?:\[\s*['"]([^'"]+)['"]\s*\]|\.get(?:list)?\(\s*['"]([^'"]+)['"])/
-        source.scan(attr_re) do |m|
-          found = Param.new((m[2]? || m[3]).to_s, "", REQUEST_ATTR_TYPES[m[1]])
-          new_params << found unless new_params.any? { |p| p.name == found.name && p.param_type == found.param_type }
-        end
-      elsif param.type == "dict"
-        json_variable_names << param.name
-        new_params = find_json_params(codelines, json_variable_names)
-      end
-
-      new_params
+      return [] of Param unless param.type.in?("Request", "dict")
+      Noir::TreeSitterPythonRouteExtractor.extract_request_params(source, param.name,
+        dictionary: param.type == "dict").map { |name, type| Param.new(name, "", type) }
     end
 
     # Like `coalesce_decorator_call`, but for the programmatic

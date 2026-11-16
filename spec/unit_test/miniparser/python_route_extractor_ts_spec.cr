@@ -2,6 +2,82 @@ require "spec"
 require "../../../src/miniparsers/python_route_extractor_ts"
 
 describe Noir::TreeSitterPythonRouteExtractor do
+  it "extracts only executed request reads, including multiline calls and interpolation" do
+    source = <<-PY
+      async def handle(request):
+          """request.headers.get('docstring')"""
+          example = 'request.query_params.get("fake")'
+          # request.cookies['comment']
+          other_request.query_params.get('other')
+          q = request.query_params.get(
+              "real"
+          )
+          header = request.headers['x-' 'token']
+          cookie = f"session {request.cookies.get('session')}"
+          dynamic = request.query_params.get(f"key-{q}")
+          return q, header, cookie
+      PY
+
+    Noir::TreeSitterPythonRouteExtractor.extract_request_params(source, "request").should eq([
+      {"real", "query"}, {"x-token", "header"}, {"session", "cookie"},
+    ])
+  end
+
+  it "follows JSON assignments and keeps dictionary parameters separate" do
+    source = <<-PY
+      async def handle(request, payload):
+          example = "body = await request.json()"
+          body: dict = await request.json()
+          a = body['first']; b = body.get('second')
+          c = payload.get('direct')
+          q = request.query_params.getlist('q')
+          return a, b, c, q
+      PY
+
+    Noir::TreeSitterPythonRouteExtractor.extract_request_params(source, "request").should eq([
+      {"first", "json"}, {"second", "json"}, {"q", "query"},
+    ])
+    Noir::TreeSitterPythonRouteExtractor.extract_request_params(source, "payload", dictionary: true).should eq([
+      {"direct", "json"},
+    ])
+    Noir::TreeSitterPythonRouteExtractor.extract_request_params(source, "missing").should be_empty
+  end
+
+  it "separates request names from dictionary mode in memo keys" do
+    source = <<-PY
+      async def handle(false, true):
+          return false.get('body'), true.query_params.get('query')
+      PY
+    Noir::TreeSitterPythonRouteExtractor.extract_request_params(source, "false", dictionary: true).should eq([
+      {"body", "json"},
+    ])
+    Noir::TreeSitterPythonRouteExtractor.extract_request_params(source, "true").should eq([
+      {"query", "query"},
+    ])
+  end
+
+  it "bounds nested parentheses when reading request keys" do
+    depth = Noir::TreeSitter::MAX_AST_DEPTH + 10
+    source = "request.query_params.get(#{"(" * depth}'q'#{")" * depth})"
+    Noir::TreeSitterPythonRouteExtractor.extract_request_params(source, "request").should be_empty
+  end
+
+  it "does not invent empty request keys at the traversal depth boundary" do
+    (-4..0).each do |offset|
+      depth = Noir::TreeSitter::MAX_AST_DEPTH + offset
+      {"'q'" => "q", "'q' 'r'" => "qr"}.each do |literal, expected|
+        source = "request.query_params.get(#{"(" * depth}#{literal}#{")" * depth})"
+        Noir::TreeSitterPythonRouteExtractor.extract_request_params(source, "request").each do |name, type|
+          name.should eq(expected)
+          type.should eq("query")
+        end
+      end
+    end
+    Noir::TreeSitterPythonRouteExtractor.extract_request_params("request.query_params.get('' '')", "request").should eq([
+      {"", "query"},
+    ])
+  end
+
   it "extracts every route in the bundled Flask fixture" do
     path = File.expand_path("../../../functional_test/fixtures/python/flask/app.py", __FILE__)
     source = File.read(path)
