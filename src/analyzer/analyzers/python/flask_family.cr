@@ -269,8 +269,13 @@ module Analyzer::Python
     # declared, as {file, declared name}. The call site routinely spells it
     # differently from the declaration (`users_bp` for `bp as users_bp`,
     # `posts.bp`, `auth_blueprint`), and routes are keyed on the declared one.
-    private def blueprint_declaration(path : ::String, expr : ::String) : Tuple(::String, ::String)?
+    private def blueprint_declaration(path : ::String, expr : ::String, seen = Set(Tuple(::String, ::String)).new) : Tuple(::String, ::String)?
+      return unless seen.add?({path, expr})
       gv = get_parser(path).@global_variables[expr]?
+      if gv && gv.value.matches?(/\A#{PythonEngine::DOT_NATION}\z/) && gv.value != expr
+        declaration = blueprint_declaration(gv.path, gv.value, seen)
+        return declaration if declaration
+      end
       return {gv.path, gv.name} if gv && gv.type == "Blueprint"
       imported_declaration(path, expr)
     end
@@ -453,7 +458,7 @@ module Analyzer::Python
       methods.uniq
     end
 
-    REGISTER_BLUEPRINT_RE = /(#{PythonEngine::PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{PythonEngine::DOT_NATION})/
+    REGISTER_BLUEPRINT_RE = /(#{PythonEngine::DOT_NATION})\.register_blueprint\(\s*(?:blueprint\s*=\s*)?(#{PythonEngine::DOT_NATION})/
 
     alias ScopedNameKey = Tuple(::String, ::String)
 
@@ -462,7 +467,6 @@ module Analyzer::Python
       blueprint_prefixes : Hash(ScopedNameKey, ::String),
       path_api_instances : Hash(::String, Hash(::String, ::String)),
       register_blueprint : Hash(::String, Hash(::String, Array(::String))),
-      blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String?))),
       # Blueprint-parent edges, including same-file children, resolve together:
       # {parent file, parent, child file, child, url_prefix}.
       cross_file_mounts : Array(Tuple(::String, ::String, ::String, ::String, ::String?)),
@@ -480,7 +484,6 @@ module Analyzer::Python
           blueprint_prefixes: Hash(ScopedNameKey, ::String).new,
           path_api_instances: Hash(::String, Hash(::String, ::String)).new,
           register_blueprint: Hash(::String, Hash(::String, Array(::String))).new,
-          blueprint_mounts: Hash(::String, Array(Tuple(::String, ::String, ::String?))).new,
           cross_file_mounts: [] of Tuple(::String, ::String, ::String, ::String, ::String?),
           namespace_prefixes: Hash(ScopedNameKey, ::String).new,
         )
@@ -670,24 +673,12 @@ module Analyzer::Python
         mount_prefix = Noir::TreeSitterPythonRouteExtractor.call_url_prefix(original_line.strip, visible_strings(path)) if original_line.includes?("url_prefix")
         mount_prefix ||= original_line.match(/url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/).try(&.[1])
         mount_prefixes = mount_prefix ? [mount_prefix] : config_url_prefixes(original_line, base_path)
-        state.blueprint_mounts[path] ||= [] of Tuple(::String, ::String, ::String?)
-        # Mounted on a blueprint rather than the app: a child declared in
-        # another file is served under each of that blueprint's prefixes,
-        # which are only known once every file is read.
-        on_blueprint = state.blueprint_prefixes.has_key?({base_path, parent_name}) &&
-                       !state.app_instances.has_key?({base_path, parent_name})
-        declaration = registered_blueprint_declaration(path, lines, api_instances, blueprint_name, line_index) if on_blueprint || !mount_prefixes.empty?
-        if on_blueprint && declaration
-          (mount_prefixes.empty? ? [nil] : mount_prefixes).each do |mount|
-            state.cross_file_mounts << {path, parent_name, declaration[0], declaration[1], mount}
-          end
-        elsif mount_prefixes.empty?
-          state.blueprint_mounts[path] << {parent_name, blueprint_name, nil}
-        else
-          mount_prefixes.each do |blueprint_mount_prefix|
-            state.blueprint_mounts[path] << {parent_name, blueprint_name, blueprint_mount_prefix}
-            add_registered_prefix(state.register_blueprint, declaration[0], declaration[1], blueprint_mount_prefix) if declaration
-          end
+        # Keep declarations, not call-site spellings. Classify the parent only
+        # after every file's Blueprint declarations have been discovered.
+        parent = registered_blueprint_declaration(path, lines, api_instances, parent_name, line_index) || {path, parent_name}
+        child = registered_blueprint_declaration(path, lines, api_instances, blueprint_name, line_index) || {path, blueprint_name}
+        (mount_prefixes.empty? ? [nil] : mount_prefixes).each do |mount|
+          state.cross_file_mounts << {parent[0], parent[1], child[0], child[1], mount}
         end
       end
     end
@@ -695,6 +686,22 @@ module Analyzer::Python
     private def resolve_family_blueprint_prefixes(state : BlueprintScanState) : Nil
       # Preserve constructor prefixes before applying registration overrides.
       own_api_instances = clone_path_api_instances(state.path_api_instances)
+      declarations = Set(ScopedNameKey).new
+      state.path_api_instances.each_key do |path|
+        _, blueprints = Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(fetch_file_content(path), ["flask", "quart"])
+        blueprints.each { |blueprint| declarations << {path, blueprint.name} }
+      end
+      mounts = [] of Tuple(::String, ::String, ::String, ::String, ::String?)
+      state.cross_file_mounts.each do |parent_path, parent, child_path, child, mount|
+        if declarations.includes?({parent_path, parent})
+          mounts << {parent_path, parent, child_path, child, mount}
+        else
+          # An omitted prefix is still a direct registration and must survive
+          # alongside registrations through other blueprints.
+          prefix = mount || own_api_instances[child_path]?.try(&.[child]?) || ""
+          add_registered_prefix(state.register_blueprint, child_path, child, prefix)
+        end
+      end
       state.register_blueprint.each do |path, blueprint_info|
         blueprint_info.each do |blueprint_name, registered_prefixes|
           if state.path_api_instances.has_key?(path)
@@ -704,15 +711,6 @@ module Analyzer::Python
             # back to the own prefix only when url_prefix is omitted.
             api_instances[blueprint_name] = registered_prefixes.first
           end
-        end
-      end
-      # One graph propagates prefixes through alternating same-file and
-      # cross-file edges without retaining an earlier partial prefix.
-      mounts = state.cross_file_mounts.dup
-      state.blueprint_mounts.each do |path, entries|
-        entries.each do |parent, child, prefix|
-          next unless own_api_instances[path]?.try(&.has_key?(child))
-          mounts << {path, parent, path, child, prefix}
         end
       end
       apply_cross_file_mounts(mounts, state.register_blueprint, state.path_api_instances, own_api_instances)

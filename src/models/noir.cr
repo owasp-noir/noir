@@ -232,7 +232,7 @@ class NoirRunner
 
     # Taggers and the AI-context builder match route text; see
     # `with_route_paths`.
-    with_route_paths do
+    with_route_paths do |canonical_urls|
       # Run tagger
       if any_to_bool(@options["all_taggers"])
         @logger.success "Running all taggers."
@@ -265,7 +265,7 @@ class NoirRunner
         @logger.success "Building aggregated AI context."
         NoirAIContext.apply(@endpoints)
         apply_ai_context_feature_filter
-        NoirAIContext::ServiceGraph.apply(@endpoints)
+        NoirAIContext::ServiceGraph.apply(@endpoints, canonical_urls)
       end
     end
 
@@ -292,7 +292,7 @@ class NoirRunner
   # the block, then put the URL back.
   private def with_route_paths(&)
     target = @options["url"]?.to_s
-    return yield if target.empty?
+    return yield nil if target.empty?
 
     originals = @endpoints.map(&.url)
     @endpoints.each_with_index do |endpoint, idx|
@@ -307,7 +307,7 @@ class NoirRunner
     end
 
     begin
-      yield
+      yield originals
     ensure
       @endpoints.each_with_index do |endpoint, idx|
         next unless original = originals[idx]?

@@ -15,12 +15,21 @@ module NoirAIContext::ServiceGraph
     Digest::SHA256.hexdigest(conditions.to_json)
   end
 
-  def apply(endpoints : Array(Endpoint)) : Array(Endpoint)
+  def apply(endpoints : Array(Endpoint), canonical_urls : Array(String)? = nil) : Array(Endpoint)
     endpoints.each_with_index do |endpoint, index|
       endpoint.service_variant ||= variant(endpoint)
       endpoint.calls.clear
       endpoint.called_by.clear
       endpoints[index] = endpoint
+    end
+    # Match source route paths, but store the URLs the report will expose
+    # after NoirRunner restores a configured -u prefix.
+    references = Hash(ServiceEndpoint, ServiceEndpoint).new
+    if canonical_urls
+      endpoints.each_with_index do |endpoint, index|
+        original = reference(endpoint)
+        references[original] = ServiceEndpoint.new(original.project, original.method, canonical_urls[index], original.variant)
+      end
     end
     served = endpoints.select { |endpoint| !endpoint.details.project.empty? && !endpoint.internal && !endpoint.non_http? }
     cache = Hash({String, String, String?, Bool}, Array(Noir::RouteMatcher::Match)).new
@@ -54,14 +63,24 @@ module NoirAIContext::ServiceGraph
               found
             end
             matches.each do |match|
+              if match.endpoint.regex_path?
+                # Regex punctuation is not a literal path anchor. Require a
+                # complete literal leading segment before trusting a regex.
+                route = Noir::URLPath.strip_regex_anchors(Noir::RouteMatcher.request_path(match.endpoint.url).gsub("\\/", "/"))
+                anchor = route.match(%r{\A(/[\p{L}\p{N}_-]+)(?:/|\z)}) || next
+                wanted = Noir::RouteMatcher.request_target(url)
+                next unless wanted == anchor[1] || wanted.starts_with?("#{anchor[1]}/")
+              end
               # An all-path fallback alone is no evidence of a service target.
               if Noir::RouteMatcher.specificity(match.endpoint.url)[0] > 0
                 next unless Noir::RouteMatcher.literal_anchor?(match.endpoint.url)
               end
               basis = absolute?(url) && absolute?(match.endpoint.url) ? "url" : "path"
               basis += "_#{target.template ? "template" : match.matched_by}"
-              edges << ServiceEdge.new(reference(match.endpoint), basis, sink.path, sink.line)
-              match.endpoint.called_by << ServiceEdge.new(reference(caller), basis, sink.path, sink.line)
+              callee_ref = reference(match.endpoint)
+              caller_ref = reference(caller)
+              edges << ServiceEdge.new(references[callee_ref]? || callee_ref, basis, sink.path, sink.line)
+              match.endpoint.called_by << ServiceEdge.new(references[caller_ref]? || caller_ref, basis, sink.path, sink.line)
             end
           end
           caller.calls << ServiceCall.new(sink, url, target.method, edges)

@@ -186,6 +186,8 @@ describe Noir::GitSnapshot do
   it "relocates callee and AI-context paths as well" do
     snapshot = Noir::GitSnapshot::Snapshot.new(root: "/tmp/snap", commit: "abc", bases: ["/tmp/snap/tree/app"])
     endpoint = Endpoint.new("/a", "GET")
+    endpoint.handler = Handler.new("handle", "/tmp/snap/tree/app/handlers.rb", 12)
+    endpoint.handler.not_nil!.dispatch_path = "/tmp/snap/tree/app/controller.rb"
     endpoint.push_callee(Callee.new("User.find", "/tmp/snap/tree/app/models/user.rb", 7))
     endpoint.push_callee(Callee.new("helper"))
     context = AIContext.new
@@ -196,5 +198,27 @@ describe Noir::GitSnapshot do
 
     relocated.callees.map(&.path).should eq(["app/models/user.rb", nil])
     relocated.ai_context.not_nil!.sinks.first.path.should eq("app/run.rb")
+    relocated.handler.not_nil!.path.should eq("app/handlers.rb")
+    relocated.handler.not_nil!.dispatch_path.should eq("app/controller.rb")
+    endpoint.handler.not_nil!.path.should eq("/tmp/snap/tree/app/handlers.rb")
+  end
+end
+
+describe "git snapshot service evidence" do
+  it "relocates all service call evidence without changing external paths" do
+    endpoint = Endpoint.new("/start", "GET")
+    target = ServiceEndpoint.new("orders", "GET", "/orders")
+    sink = AIContextEntry.new("outbound_http", "fetch", path: "/snapshot/tree/web/app.js", line: 10)
+    edge = ServiceEdge.new(target, "path_exact", "/snapshot/tree/web/app.js", 10)
+    endpoint.calls << ServiceCall.new(sink, "/orders", "GET", [edge])
+    endpoint.called_by << edge
+    endpoint.called_by << ServiceEdge.new(target, "path_exact", "/external/helper.js", 11)
+    snapshot = Noir::GitSnapshot::Snapshot.new("/snapshot", "HEAD", ["/snapshot/tree"])
+    relocated = snapshot.relocate([endpoint], ["/repo"]).first
+    relocated.calls.first.sink.path.should eq("/repo/web/app.js")
+    relocated.calls.first.matches.first.path.should eq("/repo/web/app.js")
+    relocated.called_by.first.path.should eq("/repo/web/app.js")
+    relocated.called_by.last.path.should eq("/external/helper.js")
+    relocated.calls.first.matches.first.endpoint.url.should eq("/orders")
   end
 end

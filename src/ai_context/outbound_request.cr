@@ -8,8 +8,8 @@ module NoirAIContext::OutboundRequest
 
   # Only recognized HTTP APIs, with their URL as the first argument. A
   # variable-only URL, options-object request or computed call stays unresolved.
-  CALL   = /(?<![\w.])(?:fetch|axios|(?:requests|httpx|axios|http|client|[A-Za-z_]\w*Client)\.(?:get|post|put|patch|delete|head|options|Get|Post)|[A-Za-z_]\w*\.(?:getForObject|postForObject|exchange)|(?:reqwest|ureq|surf)::(?:get|post|put|patch|delete))\s*\(/
-  STRING = /\A(?:[rf]?(['"])([^'"\n\\]*)\1|`([^`\n\\]*)`)/
+  CALL   = /(?<![\w.])(?:[A-Za-z_]\w*\.(?:get|post|put|patch|delete|head|options)\s*\(\s*\)\s*\.\s*uri|(?:globalThis|window|self)\.fetch|fetch|axios|(?:requests|httpx|axios|http|client|[A-Za-z_]\w*Client)\.(?:get|post|put|patch|delete|head|options|Get|Post)|[A-Za-z_]\w*\.(?:getForObject|postForObject|exchange)|(?:reqwest|ureq|surf)::(?:get|post|put|patch|delete))\s*\(/
+  STRING = /\A(?:[rf]?"([^"\n\\]*)"|[rf]?'([^'\n\\]*)'|`([^`\n\\]*)`)/
   NAME   = /\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*/
   METHOD = /\A,\s*\{\s*method\s*:\s*['"]([A-Za-z]+)['"]\s*\}\s*\)/
 
@@ -17,16 +17,23 @@ module NoirAIContext::OutboundRequest
     source = sink.snippet || ""
     # Callee snippets include neighboring lines. Start at the actual call;
     # route-source sinks instead describe the whole handler.
-    if sink.source == "callee" && (line = sink.line) && (start = source.index(/(?:\A| \| )#{line}:\s*/))
-      source = source[start..]
+    line_start = 0
+    if sink.source == "callee" && (line = sink.line) && (header = source.match(/(?:\A| \| )#{line}:\s*/))
+      line_start = source[0, header.end(0)].gsub(/(?:\A| \| )\d+:\s*/, "\n").size
     end
-    source = source.gsub(/(?:\A| \| )\d+:\s*/, "\n").lstrip
+    source = source.gsub(/(?:\A| \| )\d+:\s*/, "\n")
     targets = [] of Target
-    calls = code_mask(source).scan(CALL)
+    hash_comments = !sink.path.try { |path| File.extname(path).downcase.in?(".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts") }
+    slash_comments = !sink.path.try { |path| File.extname(path).downcase.in?(".py", ".rb", ".cr", ".ex", ".exs", ".pl", ".pm") }
+    calls = code_mask(source, hash_comments, slash_comments).scan(CALL)
     if sink.source == "callee"
-      line_end = source.index('\n') || source.size
+      line_end = source.index('\n', line_start) || source.size
       name = sink.name.split(' ', 2)[0]
-      calls = calls.select { |call| call.begin(0) < line_end && call[0].starts_with?(name) }
+      calls = calls.select do |call|
+        spelling = call[0].rstrip.rchop('(').strip
+        call.begin(0) >= line_start && call.begin(0) < line_end &&
+          (spelling.starts_with?(name) || spelling.rpartition('.')[2] == name)
+      end
     end
     calls.each do |match|
       targets << Target.new(nil, nil)
@@ -35,7 +42,11 @@ module NoirAIContext::OutboundRequest
       tail = rest[consumed..].lstrip
       next unless tail.starts_with?(',') || tail.starts_with?(')')
       call = match[0].rstrip.rchop('(').strip
-      verb = call.split(/[.:]/).last.downcase
+      verb = if chain = call.match(/\.(get|post|put|patch|delete|head|options)\s*\(\s*\)/i)
+               chain[1].downcase
+             else
+               call.split(/[.:]/).last.downcase
+             end
       method = case verb
                when "get", "getforobject"                       then "GET"
                when "post", "postforobject"                     then "POST"
@@ -53,7 +64,7 @@ module NoirAIContext::OutboundRequest
   end
 
   # Mask literals/comments for discovery; read arguments from the original.
-  private def code_mask(source : String) : String
+  private def code_mask(source : String, hash_comments : Bool, slash_comments : Bool) : String
     chars = source.chars
     quote = ""
     comment = :none
@@ -87,10 +98,10 @@ module NoirAIContext::OutboundRequest
             next
           end
           io << (char == '\n' ? '\n' : ' ')
-        elsif char == '#' || pair == "//"
+        elsif (hash_comments && char == '#') || (slash_comments && pair == "//")
           comment = :line
           io << ' '
-        elsif pair == "/*"
+        elsif slash_comments && pair == "/*"
           comment = :block
           io << "  "
           index += 2
@@ -117,16 +128,18 @@ module NoirAIContext::OutboundRequest
     template = false
     loop do
       if literal = rest.match(STRING)
-        text = literal[2]? || literal[3].to_s
+        text = literal[1]? || literal[2]? || literal[3].to_s
         interpolation = literal[0].starts_with?('`') ? /\$\{[^{}]+\}/ : /\{[A-Za-z_]\w*\}/
         if literal[0].starts_with?('`') || literal[0].starts_with?('f')
-          template ||= text.matches?(interpolation)
+          unless parts.join.matches?(/[?#]/)
+            template ||= text.split(/[?#]/, 2)[0].matches?(interpolation)
+          end
           text = text.gsub(interpolation, "{value}")
         end
         parts << text
         rest = rest[literal[0].size..].lstrip
       elsif name = rest.match(NAME)
-        template = true
+        template = true unless parts.join.matches?(/[?#]/)
         parts << "{value}"
         rest = rest[name[0].size..].lstrip
       else
@@ -136,6 +149,7 @@ module NoirAIContext::OutboundRequest
       rest = rest[1..].lstrip
     end
     url = parts.join
+    return if url.starts_with?("//")
     return unless url.starts_with?('/') || url.starts_with?("http://") || url.starts_with?("https://")
     # Unknown values embedded in a literal segment or authority do not have
     # the one-segment semantics used by the route matcher.
