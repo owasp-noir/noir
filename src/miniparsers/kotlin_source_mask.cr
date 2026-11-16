@@ -28,8 +28,10 @@ module Noir
     # structural work — brace counting, delimiter matching, deciding
     # whether a call site is real code — where a `{` or a `(` inside a
     # string or a comment must not count.
-    def visible(source : String) : String
-      mask(source, mask_strings: true)
+    # Auth evidence can opt into executable `${...}` expressions while
+    # keeping the surrounding literal text hidden.
+    def visible(source : String, *, include_template_code : Bool = false) : String
+      mask(source, mask_strings: true, include_template_code: include_template_code)
     end
 
     SLASH        = '/'.ord.to_u8
@@ -54,7 +56,7 @@ module Noir
       io.write_byte(byte == NEWLINE ? NEWLINE : SPACE)
     end
 
-    private def mask(source : String, mask_strings : Bool) : String
+    private def mask(source : String, mask_strings : Bool, include_template_code : Bool = false) : String
       bytes = source.to_slice
       mode = :code
       quote = 0_u8
@@ -162,7 +164,7 @@ module Noir
                 template_depths[-1] += 1 if byte == OPEN_BRACE
                 template_depths[-1] -= 1 if byte == CLOSE_BRACE
               end
-              if mask_strings && !templates.empty?
+              if mask_strings && !templates.empty? && !include_template_code
                 blank(io, byte)
               else
                 io.write_byte(byte)
