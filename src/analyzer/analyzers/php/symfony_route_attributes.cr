@@ -83,18 +83,57 @@ module Analyzer::Php::SymfonyRouteAttributes
     m[1]?.try(&.gsub("\\'", "'").gsub("\\\\", "\\")) || m[2]?
   end
 
-  # The path a route attribute/annotation declares: its `path` (or the
+  # The path(s) a route attribute/annotation declares: its `path` (or the
   # annotation's `value`) argument, else its first positional argument,
-  # when that is a string literal. A route of named arguments that are all
-  # Symfony Route options and no path (`#[Route(methods: ['POST'], name:
-  # 'x')]`) routes its class prefix itself, so "". A path given by a
-  # constant or an expression (`self::LIST`) is nil: unknown, not "".
-  private def extract_symfony_route_path(args : String) : String?
+  # when that is a string literal or a localized map (`['en' => '/a',
+  # 'nl' => '/b']`). A route of named arguments that are all Symfony Route
+  # options and no path (`#[Route(methods: ['POST'], name: 'x')]`) routes
+  # its class prefix itself, so "". A path given by a constant or an
+  # expression (`self::LIST`) is empty: unknown, not "".
+  private def extract_symfony_route_localized_paths(args : String) : Array(Tuple(String?, String))
     named, positional = attribute_args(args)
     if expr = named["path"]? || named["value"]? || positional.first?
-      return php_literal(expr)
+      if lit = php_literal(expr)
+        return [{nil.as(String?), lit}]
+      end
+      return extract_localized_map(expr)
     end
-    "" if named.each_key.all? { |key| SYMFONY_ROUTE_KEYS.includes?(key) }
+    named.each_key.all? { |key| SYMFONY_ROUTE_KEYS.includes?(key) } ? [{nil.as(String?), ""}] : [] of Tuple(String?, String)
+  end
+
+  private def extract_symfony_route_paths(args : String) : Array(String)
+    extract_symfony_route_localized_paths(args).map(&.[1])
+  end
+
+  private def extract_symfony_route_path(args : String) : String?
+    extract_symfony_route_paths(args).first?
+  end
+
+  # Parses `['en' => '/about-us', 'nl' => '/over-ons']`, `array(...)`, or
+  # `@Route({"en": "/about-us"})` into `{locale, path}` pairs.
+  private def extract_localized_map(expr : String) : Array(Tuple(String?, String))
+    stripped = expr.strip
+    inner = if stripped.starts_with?('[') && stripped.ends_with?(']')
+              stripped[1...-1]
+            elsif stripped.starts_with?('{') && stripped.ends_with?('}')
+              stripped[1...-1]
+            elsif m = stripped.match(/\Aarray\s*\((.*)\)\z/mi)
+              m[1]
+            end
+    return [] of Tuple(String?, String) unless inner
+
+    paths = [] of Tuple(String?, String)
+    split_php_args(inner).each do |entry|
+      if m = entry.match(/\A(.+?)\s*(?:=>|:|=)\s*(.+)\z/m)
+        locale = php_literal(m[1].strip)
+        if value = php_literal(m[2].strip)
+          paths << {locale, value}
+        end
+      elsif value = php_literal(entry)
+        paths << {nil.as(String?), value}
+      end
+    end
+    paths
   end
 
   # The verbs of the `methods` argument: a list (`['GET']`, `{"GET"}`), a
