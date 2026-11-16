@@ -267,13 +267,18 @@ describe "ExpressAuthTagger" do
       "app",                                          # 10
       "  .get('/open', (req, res) => res.json({}));", # 11
       "app.use('/api', router);",                     # 12
+      "router",                                       # 13
+      "  .route('/:id')",                             # 14
+      "  .get((req, res) => res.json({}))",           # 15
+      "  .delete((req, res) => res.json({}));",       # 16
     ].join("\n"))
 
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(tmpdir)
     CodeLocator.instance.register_path(app_js)
 
-    endpoints = [{"GET", "/api/secure", 6}, {"POST", "/api/secure", 9}, {"GET", "/open", 11}].map do |method, url, line|
+    routes = [{"GET", "/api/secure", 6}, {"POST", "/api/secure", 9}, {"GET", "/open", 11}, {"GET", "/api/:id", 15}, {"DELETE", "/api/:id", 16}]
+    endpoints = routes.map do |method, url, line|
       details = Details.new(PathInfo.new(app_js, line))
       details.technology = "js_express"
       Endpoint.new(url, method, [] of Param, details)
@@ -282,8 +287,11 @@ describe "ExpressAuthTagger" do
 
     endpoints[0].tags.map(&.name).should eq(["auth"])
     endpoints[1].tags.map(&.name).should eq(["auth"])
-    # `app` alone on the line above is not a route() head: receiver unknown.
+    # `app` alone on the line above is the receiver, and it has no use(auth).
     endpoints[2].tags.should be_empty
+    # Prettier breaks a long chain before `.route(`: `router` alone is the head.
+    endpoints[3].tags.map(&.name).should eq(["auth"])
+    endpoints[4].tags.map(&.name).should eq(["auth"])
 
     FileUtils.rm_rf(tmpdir)
   end

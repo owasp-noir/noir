@@ -1045,9 +1045,10 @@ class ExpressAuthTagger < FrameworkTagger
     # cannot tell app from sub-router, so decline rather than guess: a false
     # "protected" is the failure that gets an endpoint skipped in review.
     # A `x.route('/p')` chain link (`  .post(...)`) reports its own line, which
-    # names no receiver: the chain's `x.route(` line above does.
+    # names no receiver: the chain's `x.route(` line above does, or `x` alone
+    # on its line where Prettier broke the chain before `.route(`.
     line_idx = chain_start_line(lines, line_idx) if lines[line_idx].lstrip.starts_with?('.')
-    receiver = lines[line_idx].match(ROUTE_RECEIVER).try &.[1]
+    receiver = (lines[line_idx].match(ROUTE_RECEIVER) || lines[line_idx].match(BARE_RECEIVER)).try &.[1]
     return if receiver.nil?
 
     expanded = Noir::PathScope.expand(path)
@@ -1064,13 +1065,14 @@ class ExpressAuthTagger < FrameworkTagger
   end
 
   ROUTE_CHAIN_START  = /\b\w+\s*\.\s*route\s*\(/
+  BARE_RECEIVER      = /\A\s*([A-Za-z_$][\w$]*)\s*\z/
   MAX_CHAIN_LOOKBACK = 500
 
-  # The `x.route(` line a chain link at `line_idx` belongs to: walk up over
+  # The head line a chain link at `line_idx` belongs to: walk up over
   # earlier links and their (bracket-balanced) handler bodies to the first
   # line outside any bracket that does not continue the chain. Returns
-  # `line_idx` itself when that line is not an `x.route(` head (`app` alone
-  # on the line above `.get(`, say), so the receiver reads as unknown.
+  # `line_idx` itself when that line is neither an `x.route(` head nor a
+  # receiver alone on its line, so the receiver reads as unknown.
   private def chain_start_line(lines : Array(String), line_idx : Int32) : Int32
     depth = 0
     idx = line_idx - 1
@@ -1084,7 +1086,7 @@ class ExpressAuthTagger < FrameworkTagger
         end
       end
       if depth <= 0 && !line.lstrip.starts_with?('.')
-        return line.matches?(ROUTE_CHAIN_START) ? idx : line_idx
+        return line.matches?(ROUTE_CHAIN_START) || line.matches?(BARE_RECEIVER) ? idx : line_idx
       end
       idx -= 1
     end
