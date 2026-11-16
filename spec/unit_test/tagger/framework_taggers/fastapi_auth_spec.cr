@@ -479,6 +479,34 @@ describe "FastAPIAuthTagger" do
     verdicts["/members/feed"].should be_empty
   end
 
+  # fastapi_parent_router_deps/app: FastAPI runs the `dependencies=[...]` an
+  # including router or app was built with for every route it includes. A
+  # router also included by an open parent stays open.
+  it "applies the including router's own dependencies to the included routes" do
+    base = File.expand_path("../../../functional_test/fixtures/python/fastapi_parent_router_deps", __DIR__)
+    views = "#{base}/app/views.py"
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(base)
+    endpoints = {9 => "/staff/reports", 14 => "/status", 19 => "/jobs", 24 => "/shared"}.map do |line, url|
+      Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(views, line)))
+    end
+
+    CodeLocator.instance.clear_all
+    Dir.glob("#{base}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+    begin
+      endpoints = FastAPIAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    verdicts = endpoints.map { |ep| {ep.url, ep.tags.map(&.description)} }.to_h
+    verdicts["/staff/reports"].should eq(["Protected by FastAPI Depends(require_staff)"])
+    verdicts["/status"].should be_empty
+    # `FastAPI(dependencies=[...])` built inside a factory function.
+    verdicts["/jobs"].should eq(["Protected by FastAPI Depends(verify_api_key)"])
+    verdicts["/shared"].should be_empty
+  end
+
   # fastapi_factory_deps/app.py: a dependency defined inside `create_app()`
   # and a module-level `internal = Depends(require_internal)` listed as
   # `dependencies=[internal]` refuse like the direct forms (#3263).
