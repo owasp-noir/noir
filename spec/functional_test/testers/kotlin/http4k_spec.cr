@@ -1,6 +1,7 @@
 require "../../func_spec.cr"
 
 expected_endpoints = [
+  Endpoint.new("/constant-health", "GET"),
   Endpoint.new("/hello", "GET", [
     Param.new("name", "", "query"),
   ]),

@@ -2,6 +2,55 @@ require "spec"
 require "../../../src/miniparsers/http4k_extractor_ts"
 
 describe Noir::TreeSitterHttp4kExtractor do
+  it "keeps qualified constants after braces and declaration examples in strings" do
+    source = <<-KT
+      package com.example
+      import org.http4k.routing.routes
+      import org.http4k.routing.bind
+      import org.http4k.core.Method.GET
+      object Paths {
+          val example = """
+          const val REAL = "/fake"
+          object Fake {
+          """
+          const val BRACE = "조건 }"
+          /* } */ const val REAL = "/real"
+      }
+      val app = routes(Paths.REAL bind GET to handler)
+      KT
+
+    constants = Noir::TreeSitterHttp4kExtractor.extract_string_constants(source)
+    constants["Paths.REAL"].should eq("/real")
+    constants["com.example.Paths.REAL"].should eq("/real")
+    Noir::TreeSitterHttp4kExtractor.extract_routes(source).map(&.path).should eq(["/real"])
+  end
+
+  it "does not read a declaration inside a string ahead of a live same-line declaration" do
+    source = <<-KT
+      package com.example
+      object Paths {
+          log("val PATH = fake"); const val PATH = "/real"
+      }
+      KT
+    Noir::TreeSitterHttp4kExtractor.extract_string_constants(source)["Paths.PATH"].should eq("/real")
+  end
+
+  it "keeps cached constant tables private and separates source contents" do
+    source = %(object Paths { const val API = "/api" })
+    Noir::TreeSitterHttp4kExtractor.extract_string_constants(source)["Paths.API"] = "/changed"
+    Noir::TreeSitterHttp4kExtractor.extract_string_constants(source)["Paths.API"].should eq("/api")
+    Noir::TreeSitterHttp4kExtractor.extract_string_constants(source.sub("/api", "/other"))["Paths.API"].should eq("/other")
+    Noir::ExtractionResultCache.clear_all
+    Noir::TreeSitterHttp4kExtractor.extract_string_constants(source)["Paths.API"].should eq("/api")
+  end
+
+  it "finds string constants after non-string declarations on the same line" do
+    source = %(object Paths { val ignored = 1; const val API = "/api"; const val HEALTH = "/health" })
+    constants = Noir::TreeSitterHttp4kExtractor.extract_string_constants(source)
+    constants["Paths.API"].should eq("/api")
+    constants["Paths.HEALTH"].should eq("/health")
+  end
+
   it "resolves constant and templated route paths" do
     source = <<-KT
       package com.example
