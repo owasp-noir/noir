@@ -39,7 +39,7 @@ module Analyzer::Javascript
           recorded << "#{endpoint.method} #{endpoint.url}"
         end
 
-        # This walk is its own regex, so it repeats the extractor's gates:
+        # The OpenAPI pass repeats the shared extractor's gates:
         # a `*.test.ts` or a minified bundle must not pay it or emit its
         # routes.
         if content.includes?("@hono/zod-openapi") &&
@@ -72,26 +72,8 @@ module Analyzer::Javascript
     # ponytail: a `createRoute` in a `*.routes.ts` takes that file's prefixes,
     # not those of the router that registers it; follow `.openapi(` imports
     # if those prefixes turn out to differ in practice.
-    # `db.doc('users/1')` (Firestore and friends) is the same call shape on
-    # a different receiver. Only an app built with `new OpenAPIHono` / `new Hono`.
-    OPENAPI_RECEIVER_RE = /(?<![\w$])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+(?:OpenAPIHono|Hono)\b/
-    DOC_ROUTE_RE        = /(?<![\w$])([A-Za-z_$][\w$]*)\s*\.\s*doc(?:31)?\s*\(\s*['"]([^'"]+)['"]/
-    DOC_CHAIN_RE        = /(?<![\w$])new\s+(?:OpenAPIHono|Hono)\s*(?:<[^;\n]*>)?\s*\(\s*\)\s*\.\s*doc(?:31)?\s*\(\s*['"]([^'"]+)['"]/
-
     private def extract_openapi_routes(path : String, content : String, result : Array(Endpoint), recorded : Set(String))
-      routes = content.includes?("createRoute") ? Noir::TSContractExtractor.hono_openapi(content, path) : [] of Noir::TSContractExtractor::Route
-      offsets = nil.as(Noir::JSRouteExtractor::ByteOffsets?)
-      receivers = Set(String).new
-      content.scan(OPENAPI_RECEIVER_RE) { |m| receivers << m[1] }
-      content.scan(DOC_ROUTE_RE) do |m|
-        next unless receivers.includes?(m[1])
-        line = (offsets ||= Noir::JSRouteExtractor::ByteOffsets.new(content)).line(m.byte_begin(0))
-        routes << Noir::TSContractExtractor::Route.new("GET", m[2], line)
-      end
-      content.scan(DOC_CHAIN_RE) do |m|
-        line = (offsets ||= Noir::JSRouteExtractor::ByteOffsets.new(content)).line(m.byte_begin(0))
-        routes << Noir::TSContractExtractor::Route.new("GET", m[1], line)
-      end
+      routes = Noir::TSContractExtractor.hono_openapi(content, path)
       return if routes.empty?
 
       mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))

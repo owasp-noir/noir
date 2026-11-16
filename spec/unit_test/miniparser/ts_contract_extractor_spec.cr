@@ -2,6 +2,41 @@ require "../../spec_helper"
 require "../../../src/miniparsers/ts_contract_extractor"
 
 describe Noir::TSContractExtractor do
+  it "reads Hono documentation calls without promoting strings, comments or other receivers" do
+    source = <<-TS
+      const app = new OpenAPIHono()
+      const example = "app.doc('/fake')"
+      const factory = `const fake = new OpenAPIHono(); fake.doc('/fake-app')`
+      // app.doc('/comment')
+      app.doc('/openapi.json', {})
+      app.doc31(`/openapi31.json`, {})
+      db.doc('users/1')
+      const direct = new OpenAPIHono<Env>()
+        .doc('/direct', {})
+        .doc31('/direct31', {})
+      TS
+
+    routes = Noir::TSContractExtractor.hono_openapi(source, "app.ts")
+    routes.map { |r| {r.method, r.path} }.sort!.should eq([
+      {"GET", "/direct"}, {"GET", "/direct31"}, {"GET", "/openapi.json"}, {"GET", "/openapi31.json"},
+    ])
+    routes.find! { |r| r.path == "/openapi.json" }.line.should eq(5)
+  end
+
+  it "reads documentation in app factories alongside createRoute contracts" do
+    source = <<-TS
+      const route = createRoute({ method: 'get', path: '/items' })
+      function factory() {
+        const app = new OpenAPIHono().basePath('/api')
+        app.openapi(route, handler)
+        app.doc('/doc', {})
+        return app
+      }
+      TS
+
+    Noir::TSContractExtractor.hono_openapi(source, "app.ts").map(&.path).should eq(["/items", "/doc"])
+  end
+
   it "looks through as / satisfies in a ts-rest contract" do
     source = <<-TS
       const BASE: string = '/v1'

@@ -8,6 +8,8 @@ const getTask = createRoute({
 });
 
 const app = new OpenAPIHono();
+const example = "app.doc('/fake')";
+const factoryExample = `const fake = new OpenAPIHono(); fake.doc('/fake-app')`;
 app.openapi(getTask, (c) => c.json({ id: c.req.valid("param").id }));
 app.openapi(
   createRoute({ method: "post", path: "/tasks", request: { body: { content: { "application/json": { schema: z.object({ name: z.string() }) } } } }, responses: { 200: { description: "ok" } } }),
