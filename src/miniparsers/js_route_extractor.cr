@@ -1266,8 +1266,37 @@ module Noir
       end
       arg, pos = spans[idx]
       leading = arg.size - arg.lstrip.size
-      {arg.strip, offsets.line(open_paren) + args_slice[0, pos + leading].count('\n'), idx, idx < spans.size - 1}
+      step = arg.strip
+      if property = options_handler(step)
+        step = property[0]
+        leading += property[1]
+      end
+      {step, offsets.line(open_paren) + args_slice[0, pos + leading].count('\n'), idx, idx < spans.size - 1}
     rescue
+      nil
+    end
+
+    OPTIONS_HANDLER_RE        = /\Ahandler\s*:\s*/
+    OPTIONS_HANDLER_METHOD_RE = /\A(async\s+)?handler\s*(?=\()/
+
+    # The handler an options object declares, as {source, char offset in
+    # `object`}: Fastify's full declaration `fastify.route({ method, url,
+    # handler: users.show })` and `fastify.get(url, { schema, handler })`.
+    # A method (`async handler(request, reply) {…}`) reads as the function
+    # expression it is.
+    def self.options_handler(object : String) : Tuple(String, Int32)?
+      return unless object.starts_with?('{')
+      close = JSLiteralScanner.find_matching_brace(object, 0) || return
+      Noir::TopLevelSplit.split_spans(object, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, 1, close).each do |entry, at|
+        entry = entry.strip
+        if entry == "handler"
+          return {entry, at}
+        elsif value = entry.match(OPTIONS_HANDLER_RE)
+          return {entry[value.end(0)..], at + value.end(0)}
+        elsif method = entry.match(OPTIONS_HANDLER_METHOD_RE)
+          return {"#{method[1]?}function #{entry[method.end(0)..]}", at}
+        end
+      end
       nil
     end
 
