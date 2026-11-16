@@ -250,6 +250,7 @@ module Analyzer::Go
         external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
 
+        mount_scopes = mount_scopes_for(content, dir)
         state = ChiRouteState.new
         last_endpoint = Endpoint.new("", "")
         in_mounted_func = false
@@ -306,8 +307,9 @@ module Analyzer::Go
                (target_dir = resolve_mount_dir(path, dir, target, file_contents_cache))
               endpoints = expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
                 package_files, file_contents_cache, file_lines_cache, [] of String, target[:then_method])
+              prefix = mount_join(mount_scopes[index]? || "", target[:prefix])
               endpoints.each do |ep|
-                ep.url = mount_join(target[:prefix], ep.url)
+                ep.url = mount_join(prefix, ep.url)
                 result << ep
               end
             end
@@ -614,6 +616,12 @@ module Analyzer::Go
       url.starts_with?("/") ? "#{base}#{url}" : "#{base}/#{url}"
     end
 
+    # The `r.Route(...)` prefix around each `.Mount(` line of `content`.
+    private def mount_scopes_for(content : String, dir : String) : Hash(Int32, String)
+      return Hash(Int32, String).new unless content.includes?(".Mount(")
+      Noir::TreeSitterGoRouteExtractor.extract_chi_mount_scopes(content, string_values_for(dir))
+    end
+
     private def string_values_for(dir : String) : Hash(String, String)
       @package_string_values[dir]? || @external_string_seed
     end
@@ -691,6 +699,7 @@ module Analyzer::Go
             Noir::TreeSitterGoRouteExtractor.walk_chi_public(body, content, collected, string_values, helpers)
 
             lines = file_lines_cache[search_path]? || GoEngine.strip_comments(content).lines
+            mount_scopes = mount_scopes_for(content, dir)
             first_row = Noir::TreeSitter.node_start_row(body)
             last_row = Noir::TreeSitter.node_end_row(body)
             body_rows = {first_row, last_row}
@@ -705,7 +714,7 @@ module Analyzer::Go
               next unless target_dir
               expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
                 package_files, file_contents_cache, file_lines_cache, ancestors + [key], target[:then_method]).each do |ep|
-                ep.url = mount_join(target[:prefix], ep.url)
+                ep.url = mount_join(mount_join(mount_scopes[row - 1]? || "", target[:prefix]), ep.url)
                 nested << ep
               end
             end

@@ -13,6 +13,15 @@ module Noir
       extract_scoped_routes(source, ScopedConfig.new(net_http_methods: true), skip_functions, external_string_values)
     end
 
+    # The prefix each `r.Mount(...)` call of `source` sits under, by its
+    # 0-based row: the `r.Route("/api/v1", func(r chi.Router) {...})`
+    # closures around it. The mount's own path is not part of it.
+    def extract_chi_mount_scopes(source : String,
+                                 external_string_values : Hash(String, String) = Hash(String, String).new) : Hash(Int32, String)
+      config = ScopedConfig.new(net_http_methods: true, mount_method: "Mount")
+      extract_scoped_routes(source, config, Set(String).new, external_string_values).select(&.verb.==("BIND")).to_h { |site| {site.line, site.path} }
+    end
+
     # Exposes the closure-scoped walker against an arbitrary node
     # (typically a function body captured elsewhere). Uses chi defaults
     # incl. the net/http registrations (MethodFunc/HandleFunc/Handle) so a
@@ -582,6 +591,7 @@ module Noir
       if name == config.controller_bind_method && !chi_first_string_arg(call, source, string_values)
         return ChiCall::BindController
       end
+      return ChiCall::BindController if name == config.mount_method
 
       case name
       when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "ALL",
