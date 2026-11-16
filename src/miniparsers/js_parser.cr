@@ -99,7 +99,7 @@ module Noir
     # a constant imported from another module.
     def initialize(@source : String, @this_receiver_ok : Bool = true, constants : Hash(String, String)? = nil,
                    @resolve_mount_prefixes : Bool = false, @mount_middleware : Proc(String, Bool)? = nil,
-                   mount_constants : Hash(String, String)? = nil)
+                   mount_constants : Hash(String, String)? = nil, @on_routes : Bool = false)
       source = @source
       lexer = JSLexer.new(source)
       @tokens = drop_type_arguments(lexer.tokenize)
@@ -1297,6 +1297,29 @@ module Noir
           next
         end
 
+        # Pattern 1c: identifier . on ( 'METHOD' | [ 'M1', 'M2' ] , 'path' | [ paths ] , handler ) (Hono)
+        if @on_routes &&
+           @tokens[idx].type == :identifier &&
+           @tokens[idx + 1].type == :dot &&
+           @tokens[idx + 2].value == "on" &&
+           @tokens[idx + 3].type == :lparen
+          router_var = @tokens[idx].value
+          methods = on_route_methods(idx + 4)
+          path_idx = next_top_level_arg_index(idx + 4)
+          if path_idx && !methods.empty? && !router_var.matches?(EVENT_EMITTER_RECEIVER) && route_handler_arg?(idx + 3)
+            paths = route_path_entries_from_args(path_idx, receiver: router_var)
+            start_pos = @tokens[idx].position
+            each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
+              methods.each do |method|
+                results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
+              end
+            end
+          end
+
+          idx += 1
+          next
+        end
+
         # Pattern 2: identifier . route ( 'path' | `tpl` | ident | [ ] ) . http_method ... (chained)
         if @tokens[idx].type == :identifier &&
            @tokens[idx + 1].type == :dot &&
@@ -1361,6 +1384,25 @@ module Noir
       end
 
       results
+    end
+
+    # An event emitter's `.on('get', '/room/1', cb)` has the shape of Hono's
+    # `app.on('GET', '/path', handler)`.
+    EVENT_EMITTER_RECEIVER = /\A(?:ee|io|ws|process|events?|\w*(?:[Ee]mitter|[Ss]ocket|[Ss]tream))\z/
+
+    # The verbs of `app.on('GET', …)` / `app.on(['GET', 'POST'], …)`, read
+    # from the first argument at `arg_idx`.
+    private def on_route_methods(arg_idx : Int32) : Array(String)
+      methods = [] of String
+      list = @tokens[arg_idx]?.try(&.type) == :lbracket
+      idx = list ? arg_idx + 1 : arg_idx
+      while (token = @tokens[idx]?) && token.type == :string
+        method = token.value.upcase
+        methods << method if http_method_name?(method) && !methods.includes?(method)
+        break unless list && @tokens[idx + 1]?.try(&.type) == :comma
+        idx += 2
+      end
+      methods
     end
 
     private def parse_express_route : Array(JSRoutePattern)

@@ -201,10 +201,10 @@ module Noir::JSCalleeExtractor
     if Noir::TreeSitter.node_type(node) == "call_expression"
       route_info = route_info_for_call(node, source)
       if route_info
-        method, path, handler = route_info
+        routes, handler = route_info
         callees = callees_in_handler(handler, source, file_path, definitions)
         route_call_lines(node).each do |line|
-          by_route[route_key(method, path, line)] = callees
+          routes.each { |method, path| by_route[route_key(method, path, line)] = callees }
         end
       end
     end
@@ -214,7 +214,8 @@ module Noir::JSCalleeExtractor
     end
   end
 
-  private def route_info_for_call(call : LibTreeSitter::TSNode, source : String) : Tuple(String, String, LibTreeSitter::TSNode)?
+  # The {method, path} pairs a call registers, and the handler they share.
+  private def route_info_for_call(call : LibTreeSitter::TSNode, source : String) : Tuple(Array(Tuple(String, String)), LibTreeSitter::TSNode)?
     method = call_method_name(call, source)
     return unless HTTP_VERB_METHODS.has_key?(method) || method == "on"
 
@@ -238,28 +239,37 @@ module Noir::JSCalleeExtractor
     end
     return unless path && handler
 
-    {HTTP_VERB_METHODS[method], path, handler}
+    {[{HTTP_VERB_METHODS[method], path}], handler}
   end
 
-  private def on_route_info(args : LibTreeSitter::TSNode, source : String) : Tuple(String, String, LibTreeSitter::TSNode)?
-    strings = [] of String
+  # Hono's `app.on(method, path, handler)`; either of the first two may be
+  # an array (`app.on(['GET', 'POST'], ['/a', '/b'], handler)`).
+  private def on_route_info(args : LibTreeSitter::TSNode, source : String) : Tuple(Array(Tuple(String, String)), LibTreeSitter::TSNode)?
+    lists = [] of Array(String)
     handler : LibTreeSitter::TSNode? = nil
 
     Noir::TreeSitter.each_named_child(args) do |arg|
       arg = Noir::TreeSitter.unwrap_expression(arg)
       case Noir::TreeSitter.node_type(arg)
       when "string", "template_string"
-        strings << decode_string(arg, source)
+        lists << [decode_string(arg, source)]
+      when "array"
+        items = [] of String
+        Noir::TreeSitter.each_named_child(arg) do |item|
+          item = Noir::TreeSitter.unwrap_expression(item)
+          items << decode_string(item, source) if {"string", "template_string"}.includes?(Noir::TreeSitter.node_type(item))
+        end
+        lists << items
       when "arrow_function", "function_expression"
         handler ||= arg
       end
     end
 
-    return unless strings.size >= 2 && handler
-    method = strings[0].upcase
-    return unless HTTP_VERB_METHODS.has_value?(method)
+    return unless lists.size >= 2 && handler
+    methods = lists[0].map(&.upcase).select { |method| HTTP_VERB_METHODS.has_value?(method) }
+    return if methods.empty?
 
-    {method, strings[1], handler}
+    {methods.flat_map { |method| lists[1].map { |path| {method, path} } }, handler}
   end
 
   private def callees_in_handler(handler : LibTreeSitter::TSNode,
