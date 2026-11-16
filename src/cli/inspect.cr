@@ -480,10 +480,10 @@ module Noir::CLI::Inspect
   # `{*path}` (Spring, ASP.NET, Next.js and Starlette's `{p:path}` as the
   # optimizer writes them) and `{path...}` (Ktor, Go) match the rest
   # (Express's bare `*` is a catch-all, not one segment).
-  REST_PLACEHOLDER = /\A(?:<path:[^>]*>|\*\*|\{\*(?:[^{}]|\{[^{}]*\})*\}|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\{[^}]*\.\.\.\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*[*+]|\*)/
+  REST_PLACEHOLDER = /\A(?:<path:[^>]*>|\*\*|\{\*(?:[^{}]|\{[^{}]*\})*\}|\{[^}]*\*\}|\{\.\.\.[^}]*\}|\{[^}]*\.\.\.\}|\{[A-Za-z_]\w*:(?:\.\*|\.\+)\}|\[\[\.\.\.[^\]]*\]\]|\[\.\.\.[^\]]*\]|\*[A-Za-z_]\w*|:[A-Za-z_]\w*[*+]|\*)/
   # The rest placeholders that also take zero segments, so `/files/:path*`
   # serves `/files` too.
-  ZERO_OR_MORE = /\A(?:\*\*|\{\*(?:[^{}]|\{[^{}]*\})*\}|\{[^}]*(?:\*|\.\.\.)\}|:\w+\*|\[\[)/
+  ZERO_OR_MORE = /\A(?:\*\*|\{\*(?:[^{}]|\{[^{}]*\})*\}|\{[^}]*(?:\*|\.\.\.)\}|\{[A-Za-z_]\w*:\.\*\}|:\w+\*|\[\[)/
   # Where `{*name}` needs at least one segment: Next.js `[...slug]` (its
   # optional `[[...slug]]` is written as a second, bare route), axum and a
   # gRPC-transcoding `{name=**}`. Spring, ASP.NET, Armeria, salvo's
@@ -567,6 +567,9 @@ module Noir::CLI::Inspect
   # The regex of a `{*name:regex(..)}` / `{**name:regex(..)}` catch-all,
   # anchors stripped, or nil when it has none or does not compile.
   private def self.rest_constraint(text : String) : String?
+    if m = text.match(/\A\{[A-Za-z_]\w*:(\.\*|\.\+)\}\z/)
+      return m[1]
+    end
     body = text.match(/\A\{\*{1,2}\w+:regex\((.*)\)\}\z/m).try(&.[1]) || return
     # .NET character-class subtraction (`[a-z-[aeiou]]`) has no PCRE form: no
     # constraint rather than a wrong one.
@@ -684,18 +687,21 @@ module Noir::CLI::Inspect
   # Among routes with a catch-all the literal text comes first:
   # `/media/:id/*any` is more specific than `/*unmatched_route`, though it
   # has one more param.
-  def self.specificity(url : String) : {Int32, Int32, Int32}
+  def self.specificity(url : String) : {Int32, Int32, Int32, Int32}
     rest = 0
     one = 0
     literal = 0
+    constrained = 0
     scan_placeholders(strip_trailing_slash(request_path(url))) do |kind, text|
       case kind
-      when :rest           then rest += 1
-      when :one, :optional then one += 1
-      else                      literal += text.size
+      when :rest then rest += 1
+      when :one, :optional
+        one += 1
+        constrained += 1 if kind == :one && typed_segment(text) != "[^/]+"
+      else literal += text.size
       end
     end
-    rest > 0 ? {rest, -literal, one} : {rest, one, -literal}
+    rest > 0 ? {rest, -literal, one, -constrained} : {rest, one, -literal, -constrained}
   end
 
   private def self.strip_trailing_slash(path : String) : String
@@ -789,6 +795,7 @@ module Noir::CLI::Inspect
   end
 
   RAILS_FORMAT_SUFFIX = /\.[A-Za-z0-9]+\z/
+  FORMAT_SUFFIX_TECHS = Set{"ruby_rails", "ruby_grape"}
 
   # Routes matching a concrete request, exact matches first. A PHP front
   # controller also answers its routes under another spelling: `/index.php/x`
@@ -810,8 +817,8 @@ module Noir::CLI::Inspect
     matches = trace_path(endpoints, method, path)
     wanted = strip_trailing_slash(request_target(path))
     if matches.none?(&.matched_by.in?("exact", "pattern", "exact_ci", "pattern_ci")) && (bare = wanted.sub(RAILS_FORMAT_SUFFIX, "")) != wanted && !bare.empty?
-      rails = endpoints.select { |endpoint| endpoint.details.technology == "ruby_rails" }
-      matches = trace_path(rails, method, bare).select(&.matched_by.in?("exact", "pattern", "exact_ci", "pattern_ci")) + matches unless rails.empty?
+      formatted = endpoints.select { |endpoint| FORMAT_SUFFIX_TECHS.includes?(endpoint.details.technology || "") }
+      matches = trace_path(formatted, method, bare).select(&.matched_by.in?("exact", "pattern", "exact_ci", "pattern_ci")) + matches unless formatted.empty?
     end
     return matches unless matches.empty?
     alias_path = if wanted.starts_with?("/index.php/")
@@ -828,8 +835,8 @@ module Noir::CLI::Inspect
     unslashed = request_target(path)
     wanted = strip_trailing_slash(unslashed)
     exact = [] of Match
-    pattern = [] of {Match, {Int32, Int32, Int32}}
-    folded = [] of {Match, {Int32, Int32, Int32}}
+    pattern = [] of {Match, {Int32, Int32, Int32, Int32}}
+    folded = [] of {Match, {Int32, Int32, Int32, Int32}}
     endpoints.each do |endpoint|
       next unless method_serves?(endpoint.method, method)
       route = normalize(request_path(endpoint.url))

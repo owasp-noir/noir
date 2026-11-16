@@ -19,7 +19,7 @@ end
 # routes, whether or not the file names `Slim\`.
 describe "Slim route pattern shape" do
   it "keeps real patterns in a file that names Slim" do
-    slim_routes(<<-PHP).should eq(["GET /ok", "GET /users", "GET /users/[/{id}]", "POST /users/{id}"])
+    slim_routes(<<-PHP).should eq(["GET /ok", "GET /users", "GET /users", "GET /users/{id}", "POST /users/{id}"])
       <?php
       use Slim\\Factory\\AppFactory;
       $app->get('/ok', fn ($req, $res) => $res);

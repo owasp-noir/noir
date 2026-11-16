@@ -152,14 +152,15 @@ module Noir
       path.starts_with?("/") ? path : "/#{path}"
     end
 
-    # Routers whose `{name:regex}` constraint picks the route: chi and
-    # gorilla/mux route `/{type:issues}` and `/{type:pulls}` to different
+    # Routers whose `{name:regex}` constraint picks the route: chi,
+    # gorilla/mux and Slim (FastRoute) route `/{type:issues}` /
+    # `/{id:[0-9]+}` and `/{type:pulls}` / `/{name}` to different
     # handlers, and Laravel's `->where()` (written into the URL by its
     # analyzer) does the same; so the optimizer keeps the constraint for them
     # instead of collapsing both to `/{type}`. Elsewhere `{name:x}` is
     # usually a type converter (Iris `uint64`, ASP.NET `int`) and is
     # stripped as before; Starlette's `path` becomes the rest-of-path `{*p}`.
-    REGEX_PLACEHOLDER_TECHS = Set{"go_chi", "go_mux", "php_laravel"}
+    REGEX_PLACEHOLDER_TECHS = Set{"go_chi", "go_mux", "php_laravel", "php_slim"}
 
     # Such a `{name:regex}` placeholder, the regex allowed one level of its
     # own braces (`{sha:[a-f0-9]{7,64}}`); `$1` is the name. Path templates

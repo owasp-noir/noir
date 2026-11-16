@@ -271,6 +271,29 @@ describe Noir::CLI::Inspect do
       matches.map(&.matched_by).should eq(["pattern", "wildcard"])
     end
 
+    it "treats FastRoute {name:.*} / {name:.+} as catch-alls and ranks constrained segments first" do
+      routes = [
+        endpoint("OPTIONS", "/{routes:.*}"),
+        endpoint("OPTIONS", "/{routes:.+}"),
+        endpoint("GET", "/users/{name}"),
+        endpoint("GET", "/users/{id:[0-9]+}"),
+      ]
+      Noir::CLI::Inspect.trace(routes, "OPTIONS", "/").map(&.endpoint.url).should eq(["/{routes:.*}"])
+      star_matches = Noir::CLI::Inspect.trace(routes, "OPTIONS", "/a/b")
+      star_matches.map(&.matched_by).should eq(["wildcard", "wildcard"])
+      Noir::CLI::Inspect.trace(routes, "GET", "/users/42").map(&.endpoint.url).should eq(["/users/{id:[0-9]+}", "/users/{name}"])
+      Noir::CLI::Inspect.trace(routes, "GET", "/users/bob").map(&.endpoint.url).should eq(["/users/{name}"])
+    end
+
+    it "strips .format suffixes for Grape routes as well as Rails" do
+      grape = Endpoint.new("/api/v1/users", "GET")
+      details = grape.details
+      details.technology = "ruby_grape"
+      grape.details = details
+      fallback = Endpoint.new("/api/*path", "ANY")
+      Noir::CLI::Inspect.trace([grape, fallback], "GET", "/api/v1/users.json").map(&.endpoint.url).should eq(["/api/v1/users", "/api/*path"])
+    end
+
     it "offers the nearest routes as candidates on a miss, forgiving case and typos" do
       rows = Noir::CLI::Inspect.candidates(endpoints, "/users/42/extra")
       rows.first(2).map(&.url).sort!.should eq(["/users/:id", "/users/{id}"])

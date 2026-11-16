@@ -133,17 +133,20 @@ module Analyzer::Php
         verb = m[2].upcase
         methods = verb == "ANY" ? ANY_VERBS : [verb]
         route_path = m[3]
-        full_path = build_full_path(prefix, route_path)
 
         handler_body, next_pos, body_start_line = extract_handler_body_with_end(offsets, after_args, base_line)
-        params = extract_brace_path_params(full_path)
-        params.concat(extract_handler_params(handler_body)) if handler_body
-        params = dedup_params(params)
+        handler_params = handler_body ? extract_handler_params(handler_body) : [] of Param
 
-        methods.each do |method|
-          endpoint = Endpoint.new(full_path, method, params, details.dup)
-          attach_handler_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
-          endpoints << endpoint
+        expand_slim_paths(prefix, route_path).each do |full_path|
+          params = extract_brace_path_params(full_path)
+          params.concat(handler_params)
+          params = dedup_params(params)
+
+          methods.each do |method|
+            endpoint = Endpoint.new(full_path, method, params.dup, details.dup)
+            attach_handler_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+            endpoints << endpoint
+          end
         end
         pos = next_pos
       end
@@ -163,20 +166,93 @@ module Analyzer::Php
         next if methods.empty?
 
         route_path = m[3]
-        full_path = build_full_path(prefix, route_path)
         handler_params = handler_body ? extract_handler_params(handler_body) : [] of Param
 
-        methods.each do |http_method|
+        expand_slim_paths(prefix, route_path).each do |full_path|
           params = extract_brace_path_params(full_path)
           params.concat(handler_params)
           params = dedup_params(params)
-          endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-          attach_handler_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
-          endpoints << endpoint
+
+          methods.each do |http_method|
+            endpoint = Endpoint.new(full_path, http_method, params.dup, details.dup)
+            attach_handler_callees(endpoint, handler_body, file_path, body_start_line) if include_callee
+            endpoints << endpoint
+          end
         end
       end
 
       endpoints
+    end
+
+    MAX_OPTIONAL_VARIANTS = 16
+
+    # Expand FastRoute optional `[...]` segments on both group prefix and
+    # route path before joining so `[/{id:\d+}]` under `/books` produces
+    # `/books` and `/books/{id:\d+}` without introducing `/[/`.
+    private def expand_slim_paths(prefix : String, route_path : String) : Array(String)
+      prefixes = expand_fastroute_optionals(prefix)
+      paths = expand_fastroute_optionals(route_path)
+      expanded = [] of String
+      prefixes.each do |pref|
+        paths.each do |part|
+          joined = build_full_path(pref, part)
+          joined = "/" if joined.empty?
+          expanded << joined unless expanded.includes?(joined)
+        end
+      end
+      expanded
+    end
+
+    # FastRoute's `[...]` optional groups live outside `{...}` regex
+    # constraints (`[0-9]` inside `{year:[0-9]{4}}` is a character class).
+    private def expand_fastroute_optionals(path : String, budget : Int32 = MAX_OPTIONAL_VARIANTS) : Array(String)
+      return [path] unless path.includes?('[') && budget > 1
+
+      span = first_optional_bracket_span(path)
+      return [path] unless span
+
+      open_idx, close_idx = span
+      before = path[0...open_idx]
+      inner = path[open_idx + 1...close_idx]
+      after = path[close_idx + 1..]
+
+      without = expand_fastroute_optionals(before + after, budget // 2)
+      included = expand_fastroute_optionals(before + inner + after, budget - without.size)
+      (without + included).uniq!
+    end
+
+    private def first_optional_bracket_span(path : String) : {Int32, Int32}?
+      brace_depth = 0
+      bracket_depth = 0
+      open_idx = -1
+      escaped = false
+
+      path.each_char_with_index do |ch, i|
+        if escaped
+          escaped = false
+          next
+        end
+        if ch == '\\'
+          escaped = true
+          next
+        end
+
+        if ch == '{'
+          brace_depth += 1
+        elsif ch == '}' && brace_depth > 0
+          brace_depth -= 1
+        elsif brace_depth == 0
+          if ch == '['
+            open_idx = i if bracket_depth == 0
+            bracket_depth += 1
+          elsif ch == ']' && bracket_depth > 0
+            bracket_depth -= 1
+            return {open_idx, i} if bracket_depth == 0 && open_idx >= 0
+          end
+        end
+      end
+
+      nil
     end
 
     # Locate the first `$var->group("/prefix", function(...) { ... })` call
