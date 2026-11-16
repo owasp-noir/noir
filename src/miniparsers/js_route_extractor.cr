@@ -1702,10 +1702,19 @@ module Noir
       stop = Math.min(content.bytesize, from + 400)
       pos = from
       type_depth = 0 # braces of a return type (`Promise<{ a: A; b: B }>`)
+      paren_depth = 0
       while pos < stop
         case bytes[pos]
         when ';'.ord
           break if type_depth == 0
+        when '('.ord
+          paren_depth += 1
+        when ')'.ord
+          # The call a concise arrow was an argument of closes its line
+          # (`router.get('/', (req, res) => res.json(x))`): what follows is
+          # the next statement, semicolon or not.
+          paren_depth -= 1
+          break if paren_depth < 0 && content.byte_slice(pos + 1, (content.byte_index('\n', pos) || content.bytesize) - pos - 1).delete(')').blank?
         when '}'.ord
           type_depth -= 1
           break if type_depth < 0
