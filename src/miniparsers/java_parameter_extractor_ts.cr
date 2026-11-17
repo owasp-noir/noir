@@ -842,7 +842,13 @@ module Noir
           name = Noir::TreeSitter.node_text(mn, source)
           accessor = name.match(/\A(?:get|set|is)([A-Z]\w*)\z/)
           property = accessor.try { |found| found[1][0].downcase.to_s + found[1][1..] }
-          json_ignored << property if property && json_ignore?(member, source)
+          # `isMask(int bit)` is no getter: Jackson links a method to a
+          # property only when a getter takes nothing and a setter one value.
+          arity = 0
+          if parameters = Noir::TreeSitter.field(member, "parameters")
+            Noir::TreeSitter.each_named_child(parameters) { arity += 1 }
+          end
+          json_ignored << property if property && arity == (name.starts_with?("set") ? 1 : 0) && json_ignore?(member, source)
           # `@JsonSetter("encryptedValue") setEncryptedValueBase64(..)` binds
           # the key it names, whatever the method is called.
           {"JsonProperty", "JsonSetter"}.each do |binding|
