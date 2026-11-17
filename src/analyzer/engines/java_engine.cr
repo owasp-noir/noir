@@ -215,16 +215,27 @@ module Analyzer::Java
       Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/main/kotlin/"}) || File.dirname(path)
     end
 
-    # `server.servlet.context-path` / `spring.webflux.base-path` of one
-    # Spring module (Java and Kotlin analyzers alike).
+    # `server.servlet.context-path` / `spring.mvc.servlet.path` /
+    # `spring.webflux.base-path` of one Spring module (Java and Kotlin
+    # analyzers alike).
     struct SpringPathConfig
       getter servlet_context_path : String
       getter webflux_base_path : String
+      getter servlet_path : String
 
-      def initialize(@servlet_context_path = "", @webflux_base_path = "")
+      def initialize(@servlet_context_path = "", @webflux_base_path = "", @servlet_path = "")
       end
 
+      # Where the DispatcherServlet (or WebFlux) serves: handlers, resource
+      # handlers, STOMP endpoints, actuator on the main port.
       def web_base_path : String
+        return @webflux_base_path unless @webflux_base_path.empty?
+        Noir::URLPath.join_absorbing(@servlet_context_path, @servlet_path)
+      end
+
+      # Where a servlet filter (Spring Security) answers: in front of the
+      # DispatcherServlet, so its servlet path does not apply.
+      def filter_base_path : String
         @webflux_base_path.empty? ? @servlet_context_path : @webflux_base_path
       end
     end
@@ -440,6 +451,15 @@ module Analyzer::Java
       end
 
       values
+    end
+
+    private def spring_path_config(values : Hash(String, String)) : SpringPathConfig
+      SpringPathConfig.new(
+        normalize_optional_path(values["server.servlet.context-path"]?),
+        normalize_optional_path(values["spring.webflux.base-path"]?),
+        # Boot reads `/app`, `/app/` and `/app/*` alike.
+        normalize_optional_path(values["spring.mvc.servlet.path"]?.try(&.rstrip("/*")))
+      )
     end
 
     private def merge_yaml_properties(values : Hash(String, String), path : String)

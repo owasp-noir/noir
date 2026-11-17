@@ -154,7 +154,7 @@ module Analyzer::Java
       # before the main route pass — each pass re-reading and often
       # re-parsing the same files. Indexes are now built in at most two
       # content walks over the Java source set only; webflux /
-      # servlet context paths come from `path_config_for` (application.yml
+      # servlet paths come from `spring_path_config` (application.yml
       # / .properties under each project root).
       java_files = get_files_by_extension(".java").reject { |path| JavaEngine.test_path?(base_relative_path(path)) }
       path_configs, spring_property_maps, stomp_prefixes, meta_annotation_index, interface_route_index, injected_annotation_index, converted_type_index, advice_disallowed_index =
@@ -173,7 +173,7 @@ module Analyzer::Java
         content = read_file_content(path)
         # ponytail: file-scoped, ignores `@InitBinder("name")` targets and advice selectors.
         disallowed_fields = disallowed_binder_fields(content) + (advice_disallowed_index[project_root]? || [] of String)
-        @result.concat(spring_security_endpoints(path, configured_base_path))
+        @result.concat(spring_security_endpoints(path, path_config.filter_base_path))
 
         # Only files that mention Spring MVC / Feign bindings carry
         # annotation-based routes. Reactive `router().route()` files
@@ -555,10 +555,7 @@ module Analyzer::Java
       project_roots.each do |root|
         values = spring_config_values_for(root)
         spring_property_maps[root] = values
-        path_configs[root] = SpringPathConfig.new(
-          normalize_optional_path(values["server.servlet.context-path"]?),
-          normalize_optional_path(values["spring.webflux.base-path"]?)
-        )
+        path_configs[root] = spring_path_config(values)
       end
 
       interface_index = collect_interface_route_index(java_files, meta_index)
@@ -1575,14 +1572,6 @@ module Analyzer::Java
       end
 
       prefixes
-    end
-
-    private def path_config_for(project_root : String) : SpringPathConfig
-      values = spring_config_values_for(project_root)
-      SpringPathConfig.new(
-        normalize_optional_path(values["server.servlet.context-path"]?),
-        normalize_optional_path(values["spring.webflux.base-path"]?)
-      )
     end
 
     private def resolve_endpoint_path(path : String, properties : Hash(String, String)) : String
