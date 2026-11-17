@@ -58,6 +58,13 @@ title = "Noir 블로그"
 subscribe = "RSS 구독"
 back = "블로그로 돌아가기"
 empty = "아직 글이 없습니다. 곧 첫 글을 올릴게요."
+latest = "최신 글"
+date_format = "%Y년 %-m월 %-d일"
+min_read = "분 분량"
+about = "이 블로그는"
+written_by = "글쓴이"
+newer = "다음 글"
+older = "이전 글"
 
 [authors]
 title = "작성자"

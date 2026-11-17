@@ -5,6 +5,7 @@ date = "2026-08-30"
 tags = ["alibi", "release", "tooling"]
 authors = ["hahwul"]
 template = "blog_post"
+cover = "cover.webp"
 +++
 
 alibi is out: a companion tool that runs Noir once per view of your attack surface and cross-examines the results. It lives at [owasp-noir/alibi](https://github.com/owasp-noir/alibi).

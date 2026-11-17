@@ -1,8 +1,9 @@
 {% include "header.html" %}
 {% include "partials/nav.html" %}
 {% include "partials/search.html" %}
+{% set datefmt = "blog.date_format" | t %}
 <main id="main" class="blog">
-  <div class="wrap blog-inner">
+  <div class="wrap blog-inner blog-inner-post">
     <a class="blog-back" href="{{ base_url }}{{ lang_prefix }}/blog/">
       <svg class="ic" aria-hidden="true"><use href="#i-arrow-left"/></svg>
       {{ "blog.back" | t }}
@@ -10,22 +11,20 @@
 
     <article class="blog-post">
       <header class="blog-post-head">
-        <time class="post-date" datetime="{{ page.date }}">{{ page.date }}</time>
+        <div class="post-meta">
+          <time datetime="{{ page.date }}">{{ page.date | date(datefmt) }}</time>
+          {% if page.reading_time %}<span>{{ page.reading_time }}{{ "blog.min_read" | t }}</span>{% endif %}
+        </div>
         <h1 class="blog-post-title">{{ page.title }}</h1>
         {% if page.description %}<p class="blog-post-lede">{{ page.description }}</p>{% endif %}
-        {% if page.tags %}
-        <div class="post-tags">
-          {% for tag in page.tags %}<code>{{ tag }}</code>{% endfor %}
-        </div>
-        {% endif %}
 
         {% if page.authors %}
-        <ul class="author-row">
+        <ul class="post-authors">
           {% for slug in page.authors %}
           {% set author = site.data.authors[slug] %}
-          <li class="author-chip">
+          <li class="post-author">
             {% if author and author.image %}
-            <img class="author-avatar" src="{{ author.image }}" alt="{{ author.name | default(slug) }}" width="40" height="40" loading="lazy" decoding="async">
+            <img class="author-avatar" src="{{ author.image }}" alt="" width="40" height="40" decoding="async">
             {% endif %}
             <span class="author-chip-info">
               {# The profile is emitted per language (/authors/<slug>/ and
@@ -33,22 +32,76 @@
               <a class="author-name" href="{{ base_url }}{{ lang_prefix }}/authors/{{ slug }}/">{{ author.name | default(slug) }}</a>
               {% if author and author.role %}<span class="author-role">{{ author.role }}</span>{% endif %}
             </span>
-            {% if author and author.links %}
-            {% set link = author.links[0] %}
-            <a class="author-link" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
-              {% include "partials/author-link-icon.html" %}
-              <span>{% if link.label %}{{ link.label }}{% elif link.handle %}@{{ link.handle }}{% else %}{{ link.kind }}{% endif %}</span>
-            </a>
-            {% endif %}
           </li>
           {% endfor %}
         </ul>
         {% endif %}
       </header>
 
+      {% if page.extra is defined and page.extra.cover %}
+      <img class="post-cover post-cover-hero" src="{{ base_url }}{{ page.url }}{{ page.extra.cover }}" alt="" width="1600" height="840" decoding="async">
+      {% endif %}
+
       <div class="prose blog-post-body">
         {{ content }}
       </div>
+
+      <footer class="blog-post-foot">
+        {% if page.tags %}
+        <div class="post-tags">{% for tag in page.tags %}<span>{{ tag }}</span>{% endfor %}</div>
+        {% endif %}
+
+        {% if page.authors %}
+        <section class="post-written" aria-labelledby="written-by">
+          <h2 class="blog-label" id="written-by">{{ "blog.written_by" | t }}</h2>
+          <ul class="author-row">
+            {% for slug in page.authors %}
+            {% set author = site.data.authors[slug] %}
+            <li class="author-chip">
+              {% if author and author.image %}
+              <img class="author-avatar author-avatar-lg" src="{{ author.image }}" alt="" width="56" height="56" loading="lazy" decoding="async">
+              {% endif %}
+              <div class="author-chip-info">
+                <a class="author-name" href="{{ base_url }}{{ lang_prefix }}/authors/{{ slug }}/">{{ author.name | default(slug) }}</a>
+                {% if author and author.role %}<span class="author-role">{{ author.role }}</span>{% endif %}
+                {% if author and author.bio %}<p class="author-bio">{{ author.bio }}</p>{% endif %}
+                {% if author and author.links %}
+                <div class="author-links">
+                  {% for link in author.links %}
+                  <a class="author-link" href="{{ link.url }}" target="_blank" rel="noopener noreferrer">
+                    {% include "partials/author-link-icon.html" %}
+                    <span>{% if link.label %}{{ link.label }}{% elif link.handle %}@{{ link.handle }}{% else %}{{ link.kind | default(link.url) }}{% endif %}</span>
+                  </a>
+                  {% endfor %}
+                </div>
+                {% endif %}
+              </div>
+            </li>
+            {% endfor %}
+          </ul>
+        </section>
+        {% endif %}
+
+        {# The page's own lower and higher neighbours follow slug order and
+           run off the end of the section, so the neighbours are picked here.
+           In a post, section.pages is the other posts. Posts dated the same
+           day are ordered by url, which is why each list is sorted twice. #}
+        {% set here = page.date ~ page.url %}
+        <nav class="prev-next" aria-label="{{ "ui.page_nav_aria" | t }}">
+          {% for p in section.pages | sort(attribute="url") | sort(attribute="date") if (p.date ~ p.url) > here %}{% if loop.first %}
+          <a class="prevnext-prev" href="{{ base_url }}{{ p.url }}">
+            <span class="prevnext-dir">{{ "blog.newer" | t }}</span>
+            {{ p.title }}
+          </a>
+          {% endif %}{% endfor %}
+          {% for p in section.pages | sort(attribute="url", reverse=true) | sort(attribute="date", reverse=true) if (p.date ~ p.url) < here %}{% if loop.first %}
+          <a class="prevnext-next" href="{{ base_url }}{{ p.url }}">
+            <span class="prevnext-dir">{{ "blog.older" | t }}</span>
+            {{ p.title }}
+          </a>
+          {% endif %}{% endfor %}
+        </nav>
+      </footer>
     </article>
   </div>
 </main>

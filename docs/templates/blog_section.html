@@ -2,43 +2,40 @@
 {% include "partials/nav.html" %}
 {% include "partials/search.html" %}
 <main id="main" class="blog">
-  <div class="wrap blog-inner">
+  <div class="wrap blog-inner blog-inner-wide">
     <header class="blog-head">
-      <h1 class="blog-title">{{ "blog.title" | t }}</h1>
-      {% if page.description %}<p class="blog-lede">{{ page.description }}</p>{% endif %}
-      {% if content %}<div class="prose blog-intro">{{ content }}</div>{% endif %}
-      <a class="blog-rss" href="{{ base_url }}{{ lang_prefix }}/rss.xml">
-        <svg class="ic" aria-hidden="true"><use href="#i-rss"/></svg>
-        {{ "blog.subscribe" | t }}
-      </a>
+      <div>
+        <h1 class="blog-title">{{ "blog.title" | t }}</h1>
+        {% if page.description %}<p class="blog-lede">{{ page.description }}</p>{% endif %}
+      </div>
+      <nav class="blog-links" aria-label="{{ "blog.title" | t }}">
+        <a class="blog-link" href="{{ base_url }}{{ lang_prefix }}/authors/">{{ "authors.title" | t }}</a>
+        <a class="blog-link" href="{{ base_url }}{{ lang_prefix }}/rss.xml">
+          <svg class="ic" aria-hidden="true"><use href="#i-rss"/></svg>
+          {{ "blog.subscribe" | t }}
+        </a>
+      </nav>
     </header>
 
     {% if section.pages %}
-    <ul class="post-list">
-      {% for post in section.pages %}
-      <li class="post-row">
-        <a class="post-row-link" href="{{ base_url }}{{ post.url }}">
-          <time class="post-date" datetime="{{ post.date }}">{{ post.date }}</time>
-          <h2 class="post-row-title">{{ post.title }}</h2>
-          {% if post.description %}<p class="post-row-desc">{{ post.description }}</p>{% endif %}
-          <div class="post-row-foot">
-            {% if post.authors %}
-            <span class="post-authors">
-              {% for slug in post.authors %}{{ site.data.authors[slug].name | default(slug) }}{% if not loop.last %}, {% endif %}{% endfor %}
-            </span>
-            {% endif %}
-            {% if post.tags %}
-            <span class="post-tags">
-              {% for tag in post.tags %}<code>{{ tag }}</code>{% endfor %}
-            </span>
-            {% endif %}
-          </div>
-        </a>
-      </li>
+    {# The section's own date sort comes back in slug order, so the template
+       sorts: by url first so that posts dated the same day keep the order the
+       newer and older links in blog_post.html use. The newest post leads. #}
+    <ul class="post-grid">
+      {% for post in section.pages | sort(attribute="url", reverse=true) | sort(attribute="date", reverse=true) %}
+      {% set lead = loop.first %}
+      {% include "partials/post-card.html" %}
       {% endfor %}
     </ul>
     {% else %}
     <p class="blog-empty">{{ "blog.empty" | t }}</p>
+    {% endif %}
+
+    {% if content %}
+    <aside class="blog-about">
+      <h2 class="blog-about-title">{{ "blog.about" | t }}</h2>
+      <div class="prose">{{ content }}</div>
+    </aside>
     {% endif %}
   </div>
 </main>
