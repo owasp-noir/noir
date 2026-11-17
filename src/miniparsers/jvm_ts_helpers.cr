@@ -11,6 +11,24 @@ module Noir
   # module's own methods, so a local definition would be silently
   # ignored, by the mixer's own calls too.
   module JvmTsHelpers
+    # Java route and parameter literals. Unlike TreeSitter.decode_string_literal,
+    # an empty decoded buffer stays empty; there is no raw-source fallback.
+    module JavaStringLiterals
+      private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
+        buf = String.build do |io|
+          Noir::TreeSitter.each_named_child(node) do |child|
+            case Noir::TreeSitter.node_type(child)
+            when "string_fragment"
+              io << Noir::TreeSitter.node_text(child, source)
+            when "escape_sequence"
+              io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, source))
+            end
+          end
+        end
+        buf
+      end
+    end
+
     # Java call/argument plumbing: Helidon SE and the lambda-DSL extractor
     # (Javalin, Spark, Vert.x Web, ...).
     module JavaCalls
@@ -352,6 +370,37 @@ module Noir
             end
           end
           result
+        end
+      end
+    end
+
+    # Ktor and http4k expressions share constant/concatenation resolution,
+    # but each keeps its own decode_string_literal for template placeholders.
+    module KotlinStringValues
+      private def resolve_string_value(node : LibTreeSitter::TSNode,
+                                       source : String,
+                                       string_constants : Hash(String, String),
+                                       local_string_constants : Hash(String, String)) : String?
+        case Noir::TreeSitter.node_type(node)
+        when "string_literal"
+          decode_string_literal(node, source)
+        when "simple_identifier"
+          local_string_constants[Noir::TreeSitter.node_text(node, source)]?
+        when "navigation_expression"
+          text = Noir::TreeSitter.node_text(node, source)
+          local_string_constants[text]? || string_constants[text]?
+        when "parenthesized_expression"
+          Noir::TreeSitter.each_named_child(node) do |child|
+            return resolve_string_value(child, source, string_constants, local_string_constants)
+          end
+        when "additive_expression"
+          parts = [] of String
+          Noir::TreeSitter.each_named_child(node) do |child|
+            part = resolve_string_value(child, source, string_constants, local_string_constants)
+            return unless part
+            parts << part
+          end
+          parts.join
         end
       end
     end

@@ -25,6 +25,7 @@ module Noir
   # concern out of here keeps the extractor source-scoped and testable.
   module TreeSitterJavaParameterExtractor
     extend self
+    extend JvmTsHelpers::JavaStringLiterals
     extend JvmTsHelpers::Modifiers
 
     # Primitive / stdlib types whose name we emit directly as a
@@ -1458,20 +1459,6 @@ module Noir
         found = member
       end
       found
-    end
-
-    private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
-      buf = String.build do |io|
-        Noir::TreeSitter.each_named_child(node) do |child|
-          case Noir::TreeSitter.node_type(child)
-          when "string_fragment"
-            io << Noir::TreeSitter.node_text(child, source)
-          when "escape_sequence"
-            io << Noir::TreeSitter.unescape(Noir::TreeSitter.node_text(child, source))
-          end
-        end
-      end
-      buf
     end
   end
 
