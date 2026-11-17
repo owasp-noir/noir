@@ -47,8 +47,11 @@ module Noir::Detection
   extend self
 
   IGNORED_DIR_NAMES = Set{
-    # Source control / IDE / agent state
-    ".git", ".idea", ".vscode", ".claude",
+    # Source control / IDE
+    ".git", ".idea", ".vscode",
+    # Coding-agent state. A skill there ships helper scripts and reference
+    # sources (a sample controller to copy from) that no build compiles.
+    ".agents", ".claude", ".codex", ".cursor", ".gemini",
     # Language-specific dependency / build caches
     "node_modules", "__pycache__", ".venv", "venv", ".uv-cache",
     ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",

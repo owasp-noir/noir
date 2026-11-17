@@ -339,6 +339,42 @@ describe "detect_techs file walker" do
     end
   end
 
+  it "prunes coding-agent state directories" do
+    temp_dir = File.tempname("noir_detector_agent_state")
+
+    begin
+      kept = [
+        File.join(temp_dir, "src", "agents", "Ctl.java"),
+        File.join(temp_dir, "agents", "tool.py"),
+      ]
+      pruned = %w[.agents .claude .codex .cursor .gemini].flat_map do |name|
+        [
+          File.join(temp_dir, name, "skills", "report", "scripts", "build.py"),
+          File.join(temp_dir, "service", name, "skills", "report", "references", "Ctl.java"),
+        ]
+      end
+      (kept + pruned).each do |path|
+        Dir.mkdir_p(File.dirname(path))
+        File.write(path, "// x\n")
+      end
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      kept.each { |path| files.should contain(path) }
+      pruned.each { |path| files.should_not contain(path) }
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
   # `-t oas3 --only-techs js_express`: the forced spec tech still needs its
   # detector, which is what registers the spec file for the analyzer.
   it "keeps the detector of a -t tech under --only-techs" do
