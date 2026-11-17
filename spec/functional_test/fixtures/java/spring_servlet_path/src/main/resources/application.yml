@@ -1,0 +1,6 @@
+server:
+  servlet:
+    context-path: /shop
+spring:
+  mvc.servlet:
+    path: /app
