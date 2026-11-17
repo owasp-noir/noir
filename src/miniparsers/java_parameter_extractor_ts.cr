@@ -83,6 +83,13 @@ module Noir
     # Request parameters `PageableHandlerMethodArgumentResolver` reads.
     PAGEABLE_PARAMS = {"page", "size", "sort"}
 
+    # Spring Data paging types. No single request value converts to one, so
+    # a command-object field of such a type binds nothing. Wider than
+    # `pageable_type?` on purpose: a `Sort` handler argument binds `sort`
+    # through its own resolver, and a `PageRequest` one is not resolved as a
+    # `Pageable` at all.
+    PAGING_TYPES = Set{"Pageable", "PageRequest", "Sort"}
+
     # Lombok class-level annotations that synthesise setters (or an
     # all-args constructor) for every instance field at compile time.
     # The generated members never appear in source, so a DTO annotated
@@ -1171,6 +1178,7 @@ module Noir
         fields.each do |field|
           next unless json_body || field.access_modifier == "public" || field.has_setter?
           next if json_body && field.json_ignored?
+          next if !json_body && PAGING_TYPES.includes?(simple_type_name(field.type_name))
           # `default_value` comes from an annotation and is already literal;
           # `init_value` is raw Java source and only becomes a value when it
           # is one. See `Noir::JvmLiteral`.
@@ -1185,6 +1193,7 @@ module Noir
           if nested
             nested.each do |sub|
               next unless sub.access_modifier == "public" || sub.has_setter?
+              next if PAGING_TYPES.includes?(simple_type_name(sub.type_name))
               next if disallowed_field?("#{field.name}.#{sub.name}", disallowed_fields)
               sink << Param.new("#{field.name}.#{sub.name}", Noir::JvmLiteral.value_of(sub.init_value), effective_format)
             end
