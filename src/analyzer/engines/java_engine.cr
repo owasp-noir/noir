@@ -621,7 +621,8 @@ module Analyzer::Java
     # A module whose own build excludes the artifact from all its
     # configurations does not have it, whatever a parent hands down. A
     # parent's such block is not read: it may sit in a `project(':x') {}`
-    # that scopes it to one module.
+    # that scopes it to one module. Last come the library modules the
+    # module depends on (`spring_library_dependency`).
     #
     # ponytail: Gradle convention plugins (`buildSrc`) are not followed.
     private def spring_build_dependency(project_root : String, pattern : Regex) : PathInfo?
@@ -629,13 +630,88 @@ module Analyzer::Java
         content = read_file_content(file)
         next unless content_matches?(content, pattern)
         masked = content.gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' '))
-        return if File.dirname(file) == project_root && JavaEngine.gradle_excluded_everywhere?(masked, pattern)
+        return if File.dirname(file) == project_root && JavaEngine.gradle_excluded_everywhere?(JavaEngine.gradle_own_build(masked), pattern)
         masked = masked.gsub(GRADLE_EXCLUDE_RE, &.gsub(/[^\n]/, ' '))
         if match = pattern.match(masked)
           return PathInfo.new(file, line_number_for_index(masked, match.begin(0)))
         end
       end
+      spring_library_dependency(project_root, pattern)
+    end
+
+    # `implementation project(':common')` / Kotlin DSL
+    # `implementation(project(":common"))`: configuration and project path.
+    GRADLE_PROJECT_DEPENDENCY_RE = /^\s*([A-Za-z_]\w*)\s*\(?\s*project\s*\(\s*(?:path\s*[:=]\s*)?["']([^"']+)["']/m
+
+    # Where `pattern` is declared in the own build file of a library module
+    # (`spring_library_module?`) that the module's own Gradle build depends
+    # on outside test configurations: a library's dependencies reach the app.
+    #
+    # ponytail: one level of project dependencies, mapped below the nearest
+    # `settings.gradle(.kts)` (`:a:b` is `a/b`); a `projectDir` override or a
+    # library's own project dependencies are not followed.
+    private def spring_library_dependency(project_root : String, pattern : Regex) : PathInfo?
+      return unless settings_dir = gradle_settings_dir(project_root)
+      {"build.gradle", "build.gradle.kts"}.each do |name|
+        file = File.join(project_root, name)
+        next unless File.exists?(file)
+        own = JavaEngine.gradle_own_build(read_file_content(file).gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' ')))
+        own.scan(GRADLE_PROJECT_DEPENDENCY_RE) do |dependency|
+          next if dependency[1].downcase.includes?("test")
+          dir = File.join(settings_dir, dependency[2].split(':').reject(&.empty?).join('/'))
+          next if dir == project_root || !spring_library_module?(dir)
+          {"build.gradle", "build.gradle.kts"}.each do |library_name|
+            library_file = File.join(dir, library_name)
+            next unless File.exists?(library_file)
+            masked = read_file_content(library_file).gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' ')).gsub(GRADLE_EXCLUDE_RE, &.gsub(/[^\n]/, ' '))
+            if match = pattern.match(JavaEngine.gradle_own_build(masked))
+              return PathInfo.new(library_file, line_number_for_index(masked, match.begin(0)))
+            end
+          end
+        end
+      end
       nil
+    end
+
+    # The nearest directory from `project_root` up to the scan base that holds
+    # a `settings.gradle(.kts)`.
+    private def gradle_settings_dir(project_root : String) : String?
+      dir = project_root
+      while within_scan_base?(dir)
+        return dir if File.exists?(File.join(dir, "settings.gradle")) || File.exists?(File.join(dir, "settings.gradle.kts"))
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      nil
+    end
+
+    # Blocks of a Gradle build that configure other modules.
+    GRADLE_OTHER_MODULES_RE = /\b(?:subprojects\s*\{|project\s*\(|configure\s*\()/
+
+    # `code` (comment-masked Gradle) with the `subprojects {}`,
+    # `project(':x') {}` and `configure(...) {}` blocks blanked: what is left
+    # configures the module the file belongs to. Offsets keep their lines.
+    def self.gradle_own_build(code : String) : String
+      offset = 0
+      while found = code.match(GRADLE_OTHER_MODULES_RE, offset)
+        open_idx = found.end(0) - 1
+        unless code[open_idx] == '{'
+          # `project(':x')` / `configure(...)` followed by a block.
+          close_paren = find_matching_delimiter(code, open_idx, '(', ')')
+          brace = close_paren && code.index(/\S/, close_paren + 1)
+          open_idx = brace && code[brace] == '{' ? brace : nil
+        end
+        if open_idx
+          close_idx = find_matching_delimiter(code, open_idx, '{', '}') || code.size - 1
+          start = found.begin(0)
+          code = code[0, start] + code[start..close_idx].gsub(/[^\n]/, ' ') + code[(close_idx + 1)..]
+          offset = close_idx + 1
+        else
+          offset = found.end(0)
+        end
+      end
+      code
     end
 
     # Whether a Gradle build (comment-masked) excludes an artifact matching
@@ -670,13 +746,14 @@ module Analyzer::Java
     # The `war` plugin or a `bootWar` task: the app ships as a WAR instead.
     GRADLE_WAR_RE = /\bid\s*\(?\s*["']war["']|\bplugin\s*:\s*["']war["']|^\s*war\s*$|\bbootWar\b/m
 
-    # Whether the module's own Gradle build disables the Boot application
-    # archive without building a WAR: a library, whatever classes it holds.
+    # Whether the module's own Gradle build (outside the blocks that
+    # configure other modules) disables the Boot application archive without
+    # building a WAR: a library, whatever classes it holds.
     private def spring_library_module?(project_root : String) : Bool
       {"build.gradle", "build.gradle.kts"}.any? do |name|
         file = File.join(project_root, name)
         next false unless File.exists?(file)
-        build = read_file_content(file).gsub(SPRING_BUILD_NOISE_RE, " ")
+        build = JavaEngine.gradle_own_build(read_file_content(file).gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' ')))
         build.matches?(SPRING_BOOT_JAR_DISABLED_RE) && !build.matches?(GRADLE_WAR_RE)
       end
     end

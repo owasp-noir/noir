@@ -22,3 +22,25 @@ describe "Analyzer::Java::JavaEngine.gradle_excluded_everywhere?" do
     end
   end
 end
+
+describe "Analyzer::Java::JavaEngine.gradle_own_build" do
+  it "blanks the blocks that configure other modules, keeping lines" do
+    code = <<-GRADLE
+      dependencies { implementation 'a:b' }
+      subprojects {
+          bootJar { enabled = false }
+      }
+      project(':x') { configurations.all { exclude module: 'm' } }
+      configure(subprojects.findAll { it.name != 'app' }) {
+          bootJar { enabled = false }
+      }
+      dependencies { implementation project(':lib') }
+      GRADLE
+    own = JavaEngine.gradle_own_build(code)
+    own.lines.size.should eq(code.lines.size)
+    own.should contain("implementation 'a:b'")
+    own.should contain("implementation project(':lib')")
+    own.should_not contain("bootJar")
+    own.should_not contain("exclude")
+  end
+end
