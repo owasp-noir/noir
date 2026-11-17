@@ -135,8 +135,8 @@ module Noir
       # `TreeSitterJavaDtoIndex` replaces such a field with those properties.
       # A nil affix was written as something other than a string literal.
       getter unwrap : {String?, String?}?
-      # Jackson `@JsonIgnore` on the field or one of its accessors: a JSON
-      # body never binds it. Form/query binding (`WebDataBinder`) ignores
+      # Jackson `@JsonIgnore` on the field or one of its accessors, or a
+      # `transient` field nothing else names: a JSON body never binds it. Form/query binding (`WebDataBinder`) ignores
       # Jackson annotations, so it still binds there.
       getter? json_ignored : Bool
 
@@ -794,6 +794,9 @@ module Noir
       # `@JsonIgnore` getter, `@JsonProperty` setter).
       json_ignored = Set(String).new
       json_kept = Set(String).new
+      # Jackson does not read a `transient` field as a property; a setter
+      # (written or Lombok) or `@JsonProperty` still binds it.
+      transient_fields = Set(String).new
       # `@JsonProperty("hh") setH(..)`: the accessor names the property's key.
       renamed = Hash(String, String).new
 
@@ -805,7 +808,7 @@ module Noir
           # request body populates — skip them. This also keeps Lombok
           # `@Data` from promoting constants to params, since Lombok
           # never synthesises accessors for static fields.
-          next if field_static?(member, source)
+          next if field_modifier?(member, source, "static")
           access = modifier_access(member, source)
           type_node = Noir::TreeSitter.field(member, "type")
           type_name = type_node ? Noir::TreeSitter.node_text(type_node, source) : ""
@@ -821,6 +824,9 @@ module Noir
           declared << {name, access, init, json_property_name(member, source), type_name, json_unwrap(member, source)}
           json_ignored << name if json_ignore?(member, source)
           json_kept << name if annotation_node_on(member, source, "JsonProperty")
+          if field_modifier?(member, source, "transient") && !annotation_node_on(member, source, "Setter")
+            transient_fields << name
+          end
         when "method_declaration"
           mn = Noir::TreeSitter.field(member, "name")
           next unless mn
@@ -850,6 +856,7 @@ module Noir
         has_setter = lombok_setters || setter_targets.includes?(name)
         json_name ||= renamed[name]?
         ignored = json_ignored.includes?(name) && !json_kept.includes?(name) && !(json_name && json_kept.includes?(json_name))
+        ignored ||= transient_fields.includes?(name) && !has_setter && !json_kept.includes?(name)
         FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored)
       end
     end
@@ -865,14 +872,14 @@ module Noir
       false
     end
 
-    # True when a `field_declaration`'s modifier list includes `static`.
-    private def field_static?(decl : LibTreeSitter::TSNode, source : String) : Bool
+    # True when a `field_declaration`'s modifier list includes `keyword`.
+    private def field_modifier?(decl : LibTreeSitter::TSNode, source : String, keyword : String) : Bool
       mods = find_modifiers(decl)
       return false unless mods
       count = LibTreeSitter.ts_node_child_count(mods)
       count.times do |i|
         child = LibTreeSitter.ts_node_child(mods, i.to_u32)
-        return true if Noir::TreeSitter.node_text(child, source) == "static"
+        return true if Noir::TreeSitter.node_text(child, source) == keyword
       end
       false
     end
