@@ -73,8 +73,9 @@ module Noir
         # Spring's messaging handler detection keeps `@Controller` beans only,
         # searching the type hierarchy too. Neither a supertype nor an
         # annotation outside `inert_annotations` is resolved, so either keeps
-        # the class; nil (no table) reads every class.
-        controller = inert_annotations.nil? || declares_supertype?(node, source) ||
+        # the class; nil (no table) reads every class. An interface's mappings
+        # serve the controller that implements it.
+        controller = inert_annotations.nil? || interface_decl?(node, source) || declares_supertype?(node, source) ||
                      !only_annotated_with?(node, source, stray_annotation_nodes, inert_annotations)
         class_paths = [""] if class_paths.empty?
         prefixes = [] of String
