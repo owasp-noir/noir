@@ -776,7 +776,7 @@ module Analyzer::Kotlin
 
         routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes_from(
           root, content, string_constants, local_string_constants,
-          spring6_module?(project_root) ? spring_controller_stereotypes(path) : nil
+          spring6_module?(project_root) ? spring_inert_annotations(path) : nil
         )
         implementations = Noir::TreeSitterKotlinRouteExtractor.extract_controller_interface_implementations_from(
           root, content, string_constants, local_string_constants
@@ -785,7 +785,7 @@ module Analyzer::Kotlin
           if stomp_route_file?(content)
             Noir::TreeSitterKotlinRouteExtractor.extract_stomp_routes_from(
               root, content, string_constants, local_string_constants, stomp_application_prefixes,
-              spring_controller_stereotypes(path)
+              spring_inert_annotations(path)
             )
           else
             [] of SpringRoute

@@ -218,8 +218,8 @@ module Analyzer::Java
             param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
             model_attribute_methods = nil.as(Hash(String, Array(Tuple(String, Array(String))))?)
 
-            controller_stereotypes = spring6_module?(project_root) ? spring_controller_stereotypes(path) : nil
-            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants, controller_stereotypes).each do |route|
+            inert_annotations = spring6_module?(project_root) ? spring_inert_annotations(path) : nil
+            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants, inert_annotations).each do |route|
               is_feign_client = feign_clients.includes?(route.class_name)
               is_http_exchange_client = http_exchange_clients.includes?(route.class_name)
               is_internal_client = is_feign_client || is_http_exchange_client
@@ -348,7 +348,7 @@ module Analyzer::Java
 
             if has_message_mapping_bindings
               constants = file_constants
-              collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes, spring_controller_stereotypes(path)).each do |entry|
+              collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes, spring_inert_annotations(path)).each do |entry|
                 verb, destination, line = entry
                 endpoint = Endpoint.new(
                   resolve_endpoint_path(destination, spring_properties),
@@ -781,9 +781,9 @@ module Analyzer::Java
                                                   content : String,
                                                   constants : Hash(String, String),
                                                   application_prefixes : Array(String),
-                                                  stereotypes : Set(String)) : Array(Tuple(String, String, Int32))
+                                                  inert : Set(String)) : Array(Tuple(String, String, Int32))
       endpoints = [] of Tuple(String, String, Int32)
-      walk_message_mapping_classes(root, content, constants, application_prefixes, stereotypes, [""], endpoints)
+      walk_message_mapping_classes(root, content, constants, application_prefixes, inert, [""], endpoints)
       endpoints
     end
 
@@ -791,7 +791,7 @@ module Analyzer::Java
                                              content : String,
                                              constants : Hash(String, String),
                                              application_prefixes : Array(String),
-                                             stereotypes : Set(String),
+                                             inert : Set(String),
                                              outer_prefixes : Array(String),
                                              endpoints : Array(Tuple(String, String, Int32)),
                                              depth = 0)
@@ -799,10 +799,10 @@ module Analyzer::Java
 
       if Noir::TreeSitter.node_type(node) == "class_declaration"
         # Spring's messaging handler detection keeps `@Controller` beans only,
-        # searching the type hierarchy too; a supertype is not resolved, so
-        # any `extends` / `implements` keeps the class.
+        # searching the type hierarchy too. Neither a supertype nor an
+        # annotation outside `inert` is resolved, so either keeps the class.
         controller = !Noir::TreeSitter.field(node, "superclass").nil? || !Noir::TreeSitter.field(node, "interfaces").nil?
-        each_java_annotation(node, content) { |name| controller ||= stereotypes.includes?(name) }
+        each_java_annotation(node, content) { |name| controller ||= !inert.includes?(name) }
         class_paths = message_mapping_paths(node, content, constants)
         class_paths = [""] if class_paths.empty?
         prefixes = [] of String
@@ -818,7 +818,7 @@ module Analyzer::Java
             when "method_declaration"
               collect_message_mapping_method_endpoints(member, content, constants, application_prefixes, prefixes, endpoints) if controller
             when "class_declaration"
-              walk_message_mapping_classes(member, content, constants, application_prefixes, stereotypes, prefixes, endpoints, depth + 1)
+              walk_message_mapping_classes(member, content, constants, application_prefixes, inert, prefixes, endpoints, depth + 1)
             end
           end
         end
@@ -826,7 +826,7 @@ module Analyzer::Java
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_message_mapping_classes(child, content, constants, application_prefixes, stereotypes, outer_prefixes, endpoints, depth + 1)
+        walk_message_mapping_classes(child, content, constants, application_prefixes, inert, outer_prefixes, endpoints, depth + 1)
       end
     end
 

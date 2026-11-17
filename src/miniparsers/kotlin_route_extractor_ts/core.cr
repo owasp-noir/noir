@@ -313,10 +313,10 @@ module Noir
                             source : String,
                             string_constants = Hash(String, String).new,
                             local_string_constants : Hash(String, String)? = nil,
-                            controller_stereotypes : Set(String)? = nil) : Array(Route)
+                            inert_annotations : Set(String)? = nil) : Array(Route)
       routes = [] of Route
       file_constants = local_string_constants || extract_string_constants(source)
-      walk_classes(root, source, [""], routes, string_constants, file_constants, controller_stereotypes: controller_stereotypes)
+      walk_classes(root, source, [""], routes, string_constants, file_constants, inert_annotations: inert_annotations)
       collect_gateway_routes(source, string_constants, routes)
       collect_webflux_functional_routes(source, routes)
       routes
@@ -349,11 +349,11 @@ module Noir
                              string_constants : Hash(String, String),
                              local_string_constants : Hash(String, String),
                              depth : Int32 = 0,
-                             controller_stereotypes : Set(String)? = nil)
+                             inert_annotations : Set(String)? = nil)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       ty = Noir::TreeSitter.node_type(node)
       if ty == "class_declaration" || ty == "object_declaration" || ty == "interface_declaration"
-        process_class(node, source, outer_prefixes, [] of LibTreeSitter::TSNode, routes, string_constants, local_string_constants, depth, controller_stereotypes: controller_stereotypes)
+        process_class(node, source, outer_prefixes, [] of LibTreeSitter::TSNode, routes, string_constants, local_string_constants, depth, inert_annotations: inert_annotations)
         return
       end
 
@@ -373,7 +373,7 @@ module Noir
       Noir::TreeSitter.each_named_child(node) do |child|
         case Noir::TreeSitter.node_type(child)
         when "class_declaration", "object_declaration", "interface_declaration"
-          process_class(child, source, outer_prefixes, pending, routes, string_constants, local_string_constants, depth + 1, controller_stereotypes: controller_stereotypes)
+          process_class(child, source, outer_prefixes, pending, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations)
           orphan_class = recoverable_orphan_class(child, source, outer_prefixes, pending, string_constants, local_string_constants)
           pending = [] of LibTreeSitter::TSNode
         when "prefix_expression"
@@ -389,7 +389,7 @@ module Noir
             class_name, class_prefixes = ctx
             collect_recovered_function_routes(child, source, class_name, class_prefixes, routes, string_constants, local_string_constants)
           else
-            walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, controller_stereotypes: controller_stereotypes)
+            walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations)
           end
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
@@ -403,14 +403,14 @@ module Noir
             class_name, class_prefixes = ctx
             collect_recovered_function_routes(child, source, class_name, class_prefixes, routes, string_constants, local_string_constants)
           else
-            walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, controller_stereotypes: controller_stereotypes)
+            walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations)
           end
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
         else
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
-          walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, controller_stereotypes: controller_stereotypes)
+          walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations)
         end
       end
     end
@@ -543,7 +543,7 @@ module Noir
                               string_constants : Hash(String, String),
                               local_string_constants : Hash(String, String),
                               depth : Int32 = 0,
-                              controller_stereotypes : Set(String)? = nil)
+                              inert_annotations : Set(String)? = nil)
       class_name = type_identifier_text(node, source)
 
       # `@FeignClient` (Spring Cloud) interfaces declare OUTBOUND remote
@@ -555,7 +555,7 @@ module Noir
       prefixes = join_prefixes(outer_prefixes, class_mapping_prefixes(node, source, pending, string_constants, local_string_constants))
       # An interface function has no body; the implementing class supplies the handler.
       has_handler = !interface_decl?(node, source)
-      skip_functions = has_handler && spring6_non_controller?(node, source, pending, controller_stereotypes)
+      skip_functions = has_handler && spring6_non_controller?(node, source, pending, inert_annotations)
 
       if body = class_body(node)
         Noir::TreeSitter.each_named_child(body) do |member|
@@ -564,27 +564,27 @@ module Noir
             next if skip_functions
             collect_function_routes(member, source, class_name, prefixes, routes, string_constants, local_string_constants, has_handler)
           when "class_declaration", "object_declaration", "interface_declaration"
-            walk_classes(member, source, prefixes, routes, string_constants, local_string_constants, depth + 1, controller_stereotypes: controller_stereotypes)
+            walk_classes(member, source, prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations)
           end
         end
       end
     end
 
     # Spring 6 maps only `@Controller` beans: directly, through a
-    # meta-annotation (`stereotypes`), or up the type hierarchy. nil when the
-    # build is not known to be Spring 6. Classes read off the grammar's
-    # error-recovery shapes are left alone.
+    # meta-annotation, or up the type hierarchy. A class is surely not one
+    # when every annotation on it is in `inert` (nil when the build is not
+    # known to be Spring 6). Classes read off the grammar's error-recovery
+    # shapes are left alone.
     #
     # ponytail: any supertype counts as a possible controller supertype;
     # resolve the hierarchy across files if phantoms remain.
     private def spring6_non_controller?(decl : LibTreeSitter::TSNode,
                                         source : String,
                                         pending : Array(LibTreeSitter::TSNode),
-                                        stereotypes : Set(String)?) : Bool
-      return false unless stereotypes && Noir::TreeSitter.node_type(decl) == "class_declaration"
+                                        inert : Set(String)?) : Bool
+      return false unless inert && Noir::TreeSitter.node_type(decl) == "class_declaration"
       return false if abstract_type?(decl, source) || declares_supertype?(decl, source)
-      each_annotation(decl, source) { |name| return false if stereotypes.includes?(name) }
-      pending.none? { |stray| collect_stray_annotations(stray, source).any? { |entry| stereotypes.includes?(entry[0]) } }
+      only_annotated_with?(decl, source, pending, inert)
     end
 
     private def walk_interface_routes(node : LibTreeSitter::TSNode,

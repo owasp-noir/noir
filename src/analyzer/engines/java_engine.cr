@@ -1161,11 +1161,20 @@ module Analyzer::Java
       setups[project_root]?
     end
 
-    # What makes a class a Spring handler bean. Spring Data REST's two and
-    # actuator's (deprecated) controller endpoints map through their own
-    # handler mappings, whatever Spring version.
-    SPRING_CONTROLLER_STEREOTYPES = Set{"Controller", "RestController", "RepositoryRestController", "BasePathAwareController",
-                                        "ControllerEndpoint", "RestControllerEndpoint"}
+    # Class annotations known not to make a class a Spring controller: the
+    # mapping annotations themselves, the other bean stereotypes, and common
+    # Lombok, OpenAPI, security, JAX-RS and JDK ones. Any annotation neither
+    # here nor declared in the scan may be a stereotype from a jar (a
+    # starter's `@ApiController` meta-annotated with `@RestController`).
+    SPRING_INERT_ANNOTATIONS = Set{
+      "RequestMapping", "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "MessageMapping",
+      "Component", "Service", "Repository", "Configuration", "ResponseBody", "CrossOrigin", "Validated", "Transactional",
+      "PreAuthorize", "PostAuthorize", "Secured", "RolesAllowed", "Profile", "Lazy", "Scope", "Primary", "Order",
+      "Slf4j", "Log4j2", "Log", "CommonsLog", "Getter", "Setter", "Data", "Value", "Builder", "ToString",
+      "EqualsAndHashCode", "RequiredArgsConstructor", "AllArgsConstructor", "NoArgsConstructor",
+      "Tag", "Tags", "Api", "Hidden", "SecurityRequirement", "Path", "Produces", "Consumes",
+      "Deprecated", "SuppressWarnings", "Suppress", "Target", "Retention", "Documented", "Inherited", "MustBeDocumented",
+    }
     SPRING_ANNOTATION_DECL_RE = /@interface\s|\bannotation\s+class\s/
     # A Java `@interface X` / Kotlin `annotation class X` with the
     # annotations and modifiers in front of it (arguments nest).
@@ -1182,27 +1191,30 @@ module Analyzer::Java
       declared
     end
 
-    # The stereotypes plus every declared annotation type that carries one,
-    # however many levels down.
-    def self.controller_stereotypes(declared : Hash(String, Set(String))) : Set(String)
-      stereotypes = SPRING_CONTROLLER_STEREOTYPES.dup
+    # The inert annotations plus every declared annotation type whose own
+    # annotations are all inert, however many levels down. A declared type
+    # that carries `@Controller`, or an annotation from outside the scan,
+    # never becomes inert. The project's own declaration of an allowlisted
+    # name (an `@Api` of its own) is judged like any other.
+    def self.inert_annotations(declared : Hash(String, Set(String))) : Set(String)
+      inert = SPRING_INERT_ANNOTATIONS - declared.keys
       loop do
-        added = declared.keys.select { |name| !stereotypes.includes?(name) && declared[name].any? { |applied| stereotypes.includes?(applied) } }
+        added = declared.keys.select { |name| !inert.includes?(name) && declared[name].all? { |applied| inert.includes?(applied) } }
         break if added.empty?
-        stereotypes.concat(added)
+        inert.concat(added)
       end
-      stereotypes
+      inert
     end
 
-    @spring_controller_stereotypes : Hash(String, Set(String))? = nil
+    @spring_inert_annotations : Hash(String, Set(String))? = nil
 
-    # Simple names of the annotations that make a class under `path`'s scan
-    # base a controller: the stereotypes and the project's own annotation
-    # types meta-annotated with one (Java and Kotlin sources).
+    # Simple names of the class annotations that surely do not make a class
+    # under `path`'s scan base a Spring controller (Java and Kotlin
+    # sources). A class carrying any other annotation may be one.
     #
     # ponytail: simple names per scan base, not import-resolved.
-    private def spring_controller_stereotypes(path : String) : Set(String)
-      tables = @spring_controller_stereotypes ||= begin
+    private def spring_inert_annotations(path : String) : Set(String)
+      tables = @spring_inert_annotations ||= begin
         declared_by_base = Hash(String, Hash(String, Set(String))).new
         {".java", ".kt"}.each do |extension|
           get_files_by_extension(extension).each do |file|
@@ -1212,9 +1224,9 @@ module Analyzer::Java
             declared.merge!(JavaEngine.annotation_declarations(JavaEngine.strip_comments(content)))
           end
         end
-        declared_by_base.transform_values { |declared| JavaEngine.controller_stereotypes(declared) }
+        declared_by_base.transform_values { |declared| JavaEngine.inert_annotations(declared) }
       end
-      tables[configured_base_for(path)]? || SPRING_CONTROLLER_STEREOTYPES
+      tables[configured_base_for(path)]? || SPRING_INERT_ANNOTATIONS
     end
 
     # Every file a resource handler serves is a GET endpoint: Boot's default

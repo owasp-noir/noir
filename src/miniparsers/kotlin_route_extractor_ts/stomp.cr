@@ -21,11 +21,11 @@ module Noir
                                   string_constants = Hash(String, String).new,
                                   local_string_constants : Hash(String, String)? = nil,
                                   application_prefixes = [""],
-                                  controller_stereotypes : Set(String)? = nil) : Array(Route)
+                                  inert_annotations : Set(String)? = nil) : Array(Route)
       routes = [] of Route
       file_constants = local_string_constants || extract_string_constants(source)
       collect_stomp_handshake_routes(source, routes, string_constants, file_constants)
-      walk_message_mapping_routes(root, source, string_constants, file_constants, application_prefixes, controller_stereotypes, [""], routes)
+      walk_message_mapping_routes(root, source, string_constants, file_constants, application_prefixes, inert_annotations, [""], routes)
       routes
     end
 
@@ -59,7 +59,7 @@ module Noir
                                             string_constants : Hash(String, String),
                                             local_string_constants : Hash(String, String),
                                             application_prefixes : Array(String),
-                                            controller_stereotypes : Set(String)?,
+                                            inert_annotations : Set(String)?,
                                             outer_prefixes : Array(String),
                                             routes : Array(Route),
                                             depth = 0,
@@ -71,10 +71,11 @@ module Noir
         class_name = type_identifier_text(node, source)
         class_paths = message_mapping_paths(node, source, string_constants, local_string_constants, stray_annotation_nodes)
         # Spring's messaging handler detection keeps `@Controller` beans only,
-        # searching the type hierarchy too (a supertype is not resolved, so
-        # any keeps the class); nil (no stereotype table) reads every class.
-        controller = controller_stereotypes.nil? || declares_supertype?(node, source) ||
-                     annotated_with_any?(node, source, stray_annotation_nodes, controller_stereotypes)
+        # searching the type hierarchy too. Neither a supertype nor an
+        # annotation outside `inert_annotations` is resolved, so either keeps
+        # the class; nil (no table) reads every class.
+        controller = inert_annotations.nil? || declares_supertype?(node, source) ||
+                     !only_annotated_with?(node, source, stray_annotation_nodes, inert_annotations)
         class_paths = [""] if class_paths.empty?
         prefixes = [] of String
         outer_prefixes.each do |outer_prefix|
@@ -92,7 +93,7 @@ module Noir
               ) if controller
             when "class_declaration", "object_declaration", "interface_declaration"
               walk_message_mapping_routes(
-                member, source, string_constants, local_string_constants, application_prefixes, controller_stereotypes, prefixes, routes, depth + 1
+                member, source, string_constants, local_string_constants, application_prefixes, inert_annotations, prefixes, routes, depth + 1
               )
             end
           end
@@ -107,7 +108,7 @@ module Noir
         case Noir::TreeSitter.node_type(child)
         when "class_declaration", "object_declaration", "interface_declaration"
           walk_message_mapping_routes(
-            child, source, string_constants, local_string_constants, application_prefixes, controller_stereotypes, outer_prefixes, routes, depth + 1, pending
+            child, source, string_constants, local_string_constants, application_prefixes, inert_annotations, outer_prefixes, routes, depth + 1, pending
           )
           pending = [] of LibTreeSitter::TSNode
         when "prefix_expression"
@@ -116,7 +117,7 @@ module Noir
           else
             pending = [] of LibTreeSitter::TSNode
             walk_message_mapping_routes(
-              child, source, string_constants, local_string_constants, application_prefixes, controller_stereotypes, outer_prefixes, routes, depth + 1
+              child, source, string_constants, local_string_constants, application_prefixes, inert_annotations, outer_prefixes, routes, depth + 1
             )
           end
         when "line_comment", "multiline_comment"
@@ -124,7 +125,7 @@ module Noir
         else
           pending = [] of LibTreeSitter::TSNode
           walk_message_mapping_routes(
-            child, source, string_constants, local_string_constants, application_prefixes, controller_stereotypes, outer_prefixes, routes, depth + 1
+            child, source, string_constants, local_string_constants, application_prefixes, inert_annotations, outer_prefixes, routes, depth + 1
           )
         end
       end
@@ -177,14 +178,14 @@ module Noir
       destinations.uniq
     end
 
-    # Whether the class, or the stray annotation chunks the grammar split off
-    # in front of it, carries one of `names`.
-    private def annotated_with_any?(class_decl : LibTreeSitter::TSNode,
-                                    source : String,
-                                    stray_annotation_nodes : Array(LibTreeSitter::TSNode),
-                                    names : Set(String)) : Bool
-      each_annotation(class_decl, source) { |name| return true if names.includes?(name) }
-      stray_annotation_nodes.any? { |stray| collect_stray_annotations(stray, source).any? { |entry| names.includes?(entry[0]) } }
+    # Whether every annotation on the class, and on the stray annotation
+    # chunks the grammar split off in front of it, is one of `names`.
+    private def only_annotated_with?(class_decl : LibTreeSitter::TSNode,
+                                     source : String,
+                                     stray_annotation_nodes : Array(LibTreeSitter::TSNode),
+                                     names : Set(String)) : Bool
+      each_annotation(class_decl, source) { |name| return false unless names.includes?(name) }
+      stray_annotation_nodes.all? { |stray| collect_stray_annotations(stray, source).all? { |entry| names.includes?(entry[0]) } }
     end
 
     # Whether the class names a superclass or an interface.

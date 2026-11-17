@@ -216,12 +216,12 @@ module Noir
                             source : String,
                             external_meta_mappings = Hash(String, ClassMapping).new,
                             constants : Hash(String, String)? = nil,
-                            controller_stereotypes : Set(String)? = nil) : Array(Route)
+                            inert_annotations : Set(String)? = nil) : Array(Route)
       routes = [] of Route
       constants ||= extract_string_constants_from(root, source)
       meta_mappings = external_meta_mappings.dup
       collect_meta_mappings(root, source, constants, meta_mappings)
-      walk_classes(root, source, [""], [] of String, [] of Param, routes, constants, meta_mappings, controller_stereotypes)
+      walk_classes(root, source, [""], [] of String, [] of Param, routes, constants, meta_mappings, inert_annotations)
       collect_gateway_routes(source, constants, routes)
       routes
     end
@@ -427,7 +427,7 @@ module Noir
                              routes : Array(Route),
                              constants : Hash(String, String),
                              meta_mappings : Hash(String, ClassMapping),
-                             controller_stereotypes : Set(String)?)
+                             inert_annotations : Set(String)?)
       ty = Noir::TreeSitter.node_type(node)
       if ty == "class_declaration" || ty == "interface_declaration"
         if ty == "interface_declaration" && !endpoint_interface?(node, source)
@@ -444,7 +444,7 @@ module Noir
         # `@Service` with a stray `@PostMapping` is not a route.
         skip_methods = ty == "class_declaration" &&
                        (abstract_class?(node, source) || non_controller_bean?(node, source) ||
-                        spring6_non_controller?(node, source, controller_stereotypes))
+                        spring6_non_controller?(node, source, inert_annotations))
 
         class_name = class_simple_name(node, source)
         mapping = class_mapping(node, source, constants, class_name, meta_mappings)
@@ -465,7 +465,7 @@ module Noir
             when "method_declaration"
               collect_method_routes(member, source, class_name, prefixes, verbs, params, routes, constants, meta_mappings) unless skip_methods
             when "class_declaration", "interface_declaration"
-              walk_classes(member, source, prefixes, verbs, params, routes, constants, meta_mappings, controller_stereotypes)
+              walk_classes(member, source, prefixes, verbs, params, routes, constants, meta_mappings, inert_annotations)
             end
           end
         end
@@ -473,7 +473,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_classes(child, source, outer_prefixes, outer_verbs, outer_params, routes, constants, meta_mappings, controller_stereotypes)
+        walk_classes(child, source, outer_prefixes, outer_verbs, outer_params, routes, constants, meta_mappings, inert_annotations)
       end
     end
 
@@ -600,16 +600,17 @@ module Noir
     end
 
     # Spring 6 maps only `@Controller` beans: directly, through a
-    # meta-annotation (`stereotypes` holds the project's), or up the type
-    # hierarchy. `stereotypes` is nil when the build is not known to be
-    # Spring 6, which keeps the Spring 5 rule above.
+    # meta-annotation, or up the type hierarchy. A class is surely not one
+    # when every annotation on it is in `inert` (nil when the build is not
+    # known to be Spring 6, which keeps the Spring 5 rule above).
     #
     # ponytail: any `extends` / `implements` counts as a possible controller
     # supertype; resolve the hierarchy across files if phantoms remain.
-    private def spring6_non_controller?(decl : LibTreeSitter::TSNode, source : String, stereotypes : Set(String)?) : Bool
-      return false unless stereotypes
+    private def spring6_non_controller?(decl : LibTreeSitter::TSNode, source : String, inert : Set(String)?) : Bool
+      return false unless inert
       return false if Noir::TreeSitter.field(decl, "superclass") || Noir::TreeSitter.field(decl, "interfaces")
-      !annotated_with_any?(decl, source, stereotypes)
+      each_annotation(decl, source) { |name, _args, _line| return false unless inert.includes?(name) }
+      true
     end
 
     private def annotated_with_any?(decl : LibTreeSitter::TSNode, source : String, names : Set(String)) : Bool

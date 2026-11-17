@@ -23,17 +23,23 @@ describe "Analyzer::Java::JavaEngine.annotation_declarations" do
   end
 end
 
-describe "Analyzer::Java::JavaEngine.controller_stereotypes" do
-  it "adds the annotation types that carry a stereotype, however deep" do
+describe "Analyzer::Java::JavaEngine.inert_annotations" do
+  it "adds the declared types whose annotations are all inert, however deep" do
     declared = {
       "Api"      => Set{"RestController"},
       "Realtime" => Set{"Api"},
       "Audited"  => Set{"Retention"},
+      "Tracked"  => Set{"Audited", "Documented"},
+      "Branded"  => Set{"Retention", "CompanyController"},
     }
-    stereotypes = JavaEngine.controller_stereotypes(declared)
-    stereotypes.should contain("Api")
-    stereotypes.should contain("Realtime")
-    stereotypes.should_not contain("Audited")
-    stereotypes.should contain("Controller")
+    inert = JavaEngine.inert_annotations(declared)
+    inert.should contain("Audited")
+    inert.should contain("Tracked")
+    inert.should contain("Component")
+    # A stereotype, a type that carries one, and one that carries an
+    # annotation from outside the scan may each make a controller.
+    {"Controller", "RestController", "Api", "Realtime", "Branded", "CompanyController"}.each do |name|
+      inert.should_not contain(name)
+    end
   end
 end
