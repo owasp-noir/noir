@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.starter.StompController
 import org.springframework.messaging.handler.annotation.MessageMapping
 import org.springframework.stereotype.Component
 import org.springframework.stereotype.Controller
@@ -30,6 +31,15 @@ abstract class BaseHandlers
 class ScoreHandlers : BaseHandlers() {
     @MessageMapping("/score")
     fun score(text: String) {
+    }
+}
+
+// @StompController comes from a starter jar outside the scan: it may carry
+// @Controller, so the destination stays.
+@StompController
+class ExternalHandlers {
+    @MessageMapping("/external")
+    fun external(text: String) {
     }
 }
 

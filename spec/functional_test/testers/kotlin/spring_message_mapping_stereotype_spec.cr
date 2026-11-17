@@ -2,10 +2,13 @@ require "../../func_spec.cr"
 
 # Spring routes `@MessageMapping` only on `@Controller` beans: directly, or
 # through a project stereotype meta-annotated with it, or up the type
-# hierarchy. A `@Component` with a stray `@MessageMapping` is no destination.
+# hierarchy. A `@Component` with a stray `@MessageMapping` is no destination;
+# one whose annotation is declared outside the scan (`@StompController`) may
+# be a controller and stays.
 expected_endpoints = [
   Endpoint.new("/ws", "GET").tap(&.protocol=("ws")),
   Endpoint.new("/app/chat", "SEND").tap(&.protocol=("ws")),
+  Endpoint.new("/app/external", "SEND").tap(&.protocol=("ws")),
   Endpoint.new("/app/lobby", "SEND").tap(&.protocol=("ws")),
   Endpoint.new("/app/score", "SEND").tap(&.protocol=("ws")),
 ]
