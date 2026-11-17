@@ -53,13 +53,23 @@ module Analyzer::Java
     JOPT_ACCEPTS     = /\b(\w+)\.accepts\s*\(\s*"([^"]+)"/
     JOPT_ACCEPTS_ALL = /\b(\w+)\.acceptsAll\s*\(\s*(?:Arrays\.asList|List\.of|Collections\.singletonList)\s*\(\s*"([^"]+)"/
 
-    LIB_MARKERS      = ["picocli.", "org.kohsuke.args4j", "com.beust.jcommander", "org.apache.commons.cli", "com.github.rvesse.airline", "io.airlift.airline", "joptsimple."]
-    LIB_MARKERS_RE   = Regex.union(LIB_MARKERS)
+    # JCommander's API, not its `com.beust.jcommander.internal.*` collections
+    # helpers (`Maps`, `Lists`) that other code imports on their own.
+    # Mirrored in Detector::Java::Cli.
+    JCOMMANDER_IMPORT_RE = /\bimport\s+com\.beust\.jcommander\.(?:\*|JCommander|Parameters?)\s*;/
+    # `Parameter` is JCommander's when imported by name, or through the
+    # wildcard unless another library's `Parameter` is imported by name.
+    JCOMMANDER_PARAMETER_RE = /\bimport\s+com\.beust\.jcommander\.Parameter\s*;/
+    JCOMMANDER_WILDCARD_RE  = /\bimport\s+com\.beust\.jcommander\.\*\s*;/
+    OTHER_PARAMETER_RE      = /\bimport\s+(?!com\.beust\.jcommander\.)[\w.]+\.Parameter\s*;/
+
+    LIB_MARKERS      = ["picocli.", "org.kohsuke.args4j", "org.apache.commons.cli", "com.github.rvesse.airline", "io.airlift.airline", "joptsimple."]
+    LIB_MARKERS_RE   = Regex.union(LIB_MARKERS + [JCOMMANDER_IMPORT_RE])
     WEB_FRAMEWORK_RE = /\bimport\s+(?:org\.springframework|jakarta\.ws\.rs|javax\.ws\.rs|io\.quarkus|io\.micronaut|io\.javalin|io\.vertx|com\.linecorp\.armeria|io\.dropwizard|spark\.|org\.apache\.struts)/
 
     # No bare `@Parameter`: swagger/OpenAPI, Maven Mojo and Hibernate all
-    # declare one. A real JCommander file names `com.beust.jcommander`
-    # (LIB_MARKERS), and `scan` only reads `@Parameter` for those.
+    # declare one. `scan` reads it only where it resolves to JCommander's
+    # (`jcommander_parameter?`).
     CLI_GATE_RE = /@Command\b|new\s+JCommander|new\s+CmdLineParser|new\s+Options\s*\(/
 
     # Cheap pre-gate applied to the RAW file, before the comment strip.
@@ -76,7 +86,7 @@ module Analyzer::Java
     # relied on, since blanking a comment *can* manufacture whitespace).
     # Files that pass still go through the full, comment-aware gate.
     RAW_CLI_MARKERS_RE = Regex.union(
-      LIB_MARKERS + ["@Command", "JCommander", "CmdLineParser", "Options"]
+      LIB_MARKERS + ["com.beust.jcommander", "@Command", "JCommander", "CmdLineParser", "Options"]
     )
 
     def analyze
@@ -95,7 +105,7 @@ module Analyzer::Java
           binary = java_binary_name(content, path)
           root_url = "cli://#{binary}"
           emit_env = !content.matches?(WEB_FRAMEWORK_RE)
-          scan(content.lines, path, binary, root_url, endpoints, emit_env, content.includes?("com.beust.jcommander"))
+          scan(content.lines, path, binary, root_url, endpoints, emit_env, jcommander_parameter?(content))
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"
           next
@@ -104,6 +114,11 @@ module Analyzer::Java
 
       @result.concat(cli_endpoints(endpoints))
       @result
+    end
+
+    private def jcommander_parameter?(content : String) : Bool
+      content.matches?(JCOMMANDER_PARAMETER_RE) ||
+        (content.matches?(JCOMMANDER_WILDCARD_RE) && !content.matches?(OTHER_PARAMETER_RE))
     end
 
     # The picocli/airline root command's @Command name is the binary; prefer
