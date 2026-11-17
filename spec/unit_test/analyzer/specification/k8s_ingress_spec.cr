@@ -46,6 +46,59 @@ describe "Kubernetes Ingress Analyzer" do
     end
   end
 
+  # An unresolved template token stands for a host the deploy fills in.
+  it "does not read a template placeholder host as a host" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: widgets
+        annotations:
+          nginx.ingress.kubernetes.io/server-snippet: |
+            location /snippet { proxy_pass http://widgets; }
+      spec:
+        rules:
+        - host: __INGRESS_HOST__
+          http:
+            paths:
+            - path: /a
+              pathType: Prefix
+        - host: "${INGRESS_HOST}"
+          http:
+            paths:
+            - path: /b
+              pathType: Prefix
+        - host: "{{ .Values.host }}"
+          http:
+            paths:
+            - path: /c
+              pathType: Prefix
+        - host: <ingress-host>
+          http:
+            paths:
+            - path: /d
+              pathType: Prefix
+        - host: PLACEHOLDER
+          http:
+            paths:
+            - path: /e
+              pathType: Prefix
+      YAML
+
+    endpoints.map { |e| {e.url, tag_descriptions(e, "ingress-host")} }.sort!.should eq([
+      {"/a", [] of String},
+      {"/b", [] of String},
+      {"/c", [] of String},
+      {"/d", [] of String},
+      {"/e", ["PLACEHOLDER"]},
+      {"/snippet", [] of String},
+      {"/snippet", [] of String},
+      {"/snippet", [] of String},
+      {"/snippet", [] of String},
+      {"/snippet", ["PLACEHOLDER"]},
+    ])
+  end
+
   # The line was looked up by the source text, which still had the escapes.
   it "finds the line of a double-quoted path with escapes" do
     endpoints = analyze_ingress <<-'YAML'

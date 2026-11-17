@@ -194,6 +194,50 @@ describe "Nginx Analyzer" do
     ])
   end
 
+  # An unresolved template token stands for a host the deploy fills in.
+  it "does not read a template placeholder server_name as a host" do
+    endpoints = analyze_nginx <<-'CONF'
+      server {
+          server_name __SERVER_NAME__;
+          location /a { proxy_pass http://widgets; }
+      }
+      server {
+          server_name ${SERVER_NAME};
+          location /b { proxy_pass http://widgets; }
+      }
+      server {
+          server_name $hostname;
+          location /c { proxy_pass http://widgets; }
+      }
+      server {
+          server_name <server_name>;
+          location /d { proxy_pass http://widgets; }
+      }
+      server {
+          server_name PLACEHOLDER;
+          location /e { proxy_pass http://widgets; }
+      }
+      server {
+          server_name ~^(?<sub>\w+)\.example\.org$;
+          location /f { proxy_pass http://widgets; }
+      }
+      server {
+          server_name widgets.example.org;
+          location ${PREFIX}/api { proxy_pass http://widgets; }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-host")} }.sort!.should eq([
+      {"${PREFIX}/api", ["widgets.example.org"]},
+      {"/a", [] of String},
+      {"/b", [] of String},
+      {"/c", [] of String},
+      {"/d", [] of String},
+      {"/e", ["PLACEHOLDER"]},
+      {"/f", ["~^(?<sub>\\w+)\\.example\\.org$"]},
+    ])
+  end
+
   it "marks a regex location as kind regex only while it still reads as a pattern" do
     endpoints = analyze_nginx <<-CONF
       server {
@@ -250,6 +294,7 @@ describe "Nginx Analyzer" do
       server {
           location @fallback { proxy_pass http://fallback; }
           location {{ .Path }} { proxy_pass http://backend; }
+          location __ADMIN_PATH__ { proxy_pass http://backend; }
           location /public { proxy_pass http://public; }
       }
       CONF
