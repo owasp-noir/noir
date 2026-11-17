@@ -5,6 +5,7 @@ date = "2026-08-30"
 tags = ["alibi", "release", "tooling"]
 authors = ["hahwul"]
 template = "blog_post"
+cover = "cover.webp"
 +++
 
 alibi를 공개합니다. Noir를 공격 표면의 관점별로 한 번씩 돌리고, 그 결과를 서로 대질시키는 동반 도구입니다. [owasp-noir/alibi](https://github.com/owasp-noir/alibi)에 있습니다.

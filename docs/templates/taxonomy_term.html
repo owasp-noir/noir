@@ -7,7 +7,7 @@
 {% include "partials/nav.html" %}
 {% include "partials/search.html" %}
 <main id="main" class="blog">
-  <div class="wrap blog-inner">
+  <div class="wrap blog-inner blog-inner-wide">
     {# Find the current term by URL match and render inside that iteration:
        Crinja's `set` is loop-local and has no `namespace`/`update`. #}
     {% for key, data in site.authors %}
@@ -44,20 +44,16 @@
     </header>
 
     <h2 class="author-posts-title">{{ "authors.all_posts" | t }}</h2>
-    <ul class="post-list">
+    <ul class="post-grid">
       {# data.pages aggregates EN and KO. Hwaro leaves `language` blank on
          aggregated entries, so filter by URL prefix instead. #}
-      {% for post in data.pages %}
+      {% set lead = false %}
+      {% set htag = "h3" %}
+      {% for post in data.pages | sort(attribute="date", reverse=true) %}
       {% set is_ko = (post.url | replace("/ko/", "")) != post.url %}
       {% set keep = (page_language == "ko" and is_ko) or (page_language != "ko" and not is_ko) %}
       {% if keep %}
-      <li class="post-row">
-        <a class="post-row-link" href="{{ base_url }}{{ post.url }}">
-          <time class="post-date" datetime="{{ post.date }}">{{ post.date }}</time>
-          <h3 class="post-row-title">{{ post.title }}</h3>
-          {% if post.description %}<p class="post-row-desc">{{ post.description }}</p>{% endif %}
-        </a>
-      </li>
+      {% include "partials/post-card.html" %}
       {% endif %}
       {% endfor %}
     </ul>

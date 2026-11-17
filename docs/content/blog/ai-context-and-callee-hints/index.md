@@ -5,6 +5,7 @@ date = "2026-05-24"
 tags = ["v1", "ai-context", "callee", "design"]
 authors = ["hahwul"]
 template = "blog_post"
+cover = "cover.webp"
 +++
 
 Since late 2025 or so, AI has changed how a lot of software gets built, and source-code vulnerability analysis has been heading the same way.

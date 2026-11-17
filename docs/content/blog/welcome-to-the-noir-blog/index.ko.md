@@ -5,6 +5,7 @@ date = "2026-05-17"
 tags = ["meta", "announcements"]
 authors = ["hahwul"]
 template = "blog_post"
+cover = "cover.webp"
 +++
 
 안녕하세요, 하훌입니다. 그동안 Noir 팁이나 정보를 개인 블로그에 종종 올렸는데요. 개인 채널보단 공식 채널이 있는 게 좋을 것 같아서 문서 안에 블로그 공간을 마련했습니다.

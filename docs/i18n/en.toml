@@ -58,6 +58,13 @@ title = "The Noir Blog"
 subscribe = "Subscribe via RSS"
 back = "Back to blog"
 empty = "No posts yet. The first one is on its way."
+latest = "Latest"
+date_format = "%b %-d, %Y"
+min_read = " min read"
+about = "About this blog"
+written_by = "Written by"
+newer = "Newer post"
+older = "Older post"
 
 [authors]
 title = "Authors"

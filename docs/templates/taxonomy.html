@@ -5,15 +5,17 @@
 {% include "partials/nav.html" %}
 {% include "partials/search.html" %}
 <main id="main" class="blog">
-  <div class="wrap blog-inner">
+  <div class="wrap blog-inner blog-inner-wide">
     <a class="blog-back" href="{{ base_url }}{{ lang_prefix }}/blog/">
       <svg class="ic" aria-hidden="true"><use href="#i-arrow-left"/></svg>
       {{ "blog.back" | t }}
     </a>
 
     <header class="blog-head">
-      <h1 class="blog-title">{{ "authors.title" | t }}</h1>
-      <p class="blog-lede">{{ "authors.lede" | t }}</p>
+      <div>
+        <h1 class="blog-title">{{ "authors.title" | t }}</h1>
+        <p class="blog-lede">{{ "authors.lede" | t }}</p>
+      </div>
     </header>
 
     {# Iterate the data-file registry (every declared author) rather than

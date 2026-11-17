@@ -5,6 +5,7 @@ date = "2026-05-24"
 tags = ["v1", "ai-context", "callee", "design"]
 authors = ["hahwul"]
 template = "blog_post"
+cover = "cover.webp"
 +++
 
 2025년 말쯤부터 AI가 개발 방식을 크게 바꿔놓았고, 소스코드 취약점 분석도 같은 방향으로 옮겨가고 있습니다.

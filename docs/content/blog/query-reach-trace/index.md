@@ -5,6 +5,7 @@ date = "2026-11-06"
 tags = ["tips", "query", "reach", "trace", "workflow"]
 authors = ["hak"]
 template = "blog_post"
+cover = "cover.webp"
 +++
 
 An endpoint list is a good place to start a review. Then you find a shared helper, a suspicious request, or a group of routes that needs a closer look. Reading the whole list again does not help with any of them.

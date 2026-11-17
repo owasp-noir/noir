@@ -5,6 +5,7 @@ date = "2026-11-06"
 tags = ["tips", "query", "reach", "trace", "workflow"]
 authors = ["hak"]
 template = "blog_post"
+cover = "cover.webp"
 +++
 
 엔드포인트 목록을 뽑고 나면 다음 질문이 생긴다. 인증 확인이 안 보이는 라우트는 어디일까. 방금 수정한 공통 함수는 어떤 요청에서 사용할까. 프록시에서 본 요청은 어느 핸들러로 들어갈까.

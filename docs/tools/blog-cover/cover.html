@@ -1,0 +1,77 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Noir blog cover</title>
+<!-- Rendered by build.sh at 1600x840. Query: ?mood=<hak-*.webp mood>&l=<line>&l=...
+     In a line, [text] is set in the dim ink and the rest in the bright one. -->
+<style>
+  @font-face {
+    font-family: "Geist Mono"; font-weight: 100 900;
+    src: url("../../static/fonts/geist-mono-variable-latin.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Geist"; font-weight: 100 900;
+    src: url("../../static/fonts/geist-variable-latin.woff2") format("woff2");
+  }
+  html, body { margin: 0; }
+  body {
+    width: 1600px; height: 840px; overflow: hidden; position: relative;
+    background: #0b0b0c; color: #f2f1ef;
+    font-family: "Geist Mono", monospace;
+    /* Geist Mono fuses `--` into one cell; flags have to read as two hyphens. */
+    font-variant-ligatures: none;
+  }
+  /* A lamp behind Hak, so the figure reads against the plate. */
+  .lamp {
+    position: absolute; inset: 0;
+    background: radial-gradient(52% 78% at 76% 62%, #3a3a40 0%, #1d1d21 46%, #0b0b0c 100%);
+  }
+  /* Venetian-blind shadow across the whole frame, figure included. */
+  .slats {
+    position: absolute; inset: -40%;
+    background: repeating-linear-gradient(to bottom,
+      rgba(0, 0, 0, 0) 0 64px, rgba(0, 0, 0, 0.6) 76px 150px, rgba(0, 0, 0, 0) 162px 180px);
+    transform: rotate(-19deg);
+    filter: blur(4px);
+  }
+  .hak { position: absolute; right: 56px; bottom: -40px; width: 640px; height: 640px; }
+  .brand {
+    position: absolute; left: 96px; top: 84px;
+    display: flex; align-items: center; gap: 18px;
+    font-family: "Geist", sans-serif; font-size: 30px; font-weight: 500; letter-spacing: -0.01em;
+    color: #c9c7c3;
+  }
+  .brand img { width: 46px; height: 46px; }
+  .motif {
+    position: absolute; left: 96px; bottom: 92px; width: 760px;
+    font-size: 104px; font-weight: 600; line-height: 1.12; letter-spacing: -0.035em;
+  }
+  .motif div { white-space: nowrap; }
+  .motif i { font-style: normal; color: #85837e; }
+</style>
+<div class="lamp"></div>
+<img class="hak" id="hak" alt="">
+<div class="slats"></div>
+<div class="brand"><img src="../../static/images/logo-s.png" alt="">OWASP Noir Blog</div>
+<div class="motif" id="motif"></div>
+<script>
+  var q = new URLSearchParams(location.search);
+  document.getElementById("hak").src = "../../static/images/mascot/hak-" + (q.get("mood") || "wave") + ".webp";
+  var motif = document.getElementById("motif");
+  var lines = q.getAll("l");
+  lines.forEach(function (line) {
+    var row = document.createElement("div");
+    line.split(/(\[[^\]]*\])/).forEach(function (part) {
+      if (!part) return;
+      var dim = part.charAt(0) === "[";
+      var el = document.createElement(dim ? "i" : "span");
+      el.textContent = dim ? part.slice(1, -1) : part;
+      row.appendChild(el);
+    });
+    motif.appendChild(row);
+  });
+  // Long tokens step the size down so nothing reaches the figure.
+  var size = 104;
+  while (motif.scrollWidth > motif.clientWidth && size > 56) {
+    size -= 4; motif.style.fontSize = size + "px";
+  }
+</script>

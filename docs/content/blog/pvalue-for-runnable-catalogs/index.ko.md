@@ -5,6 +5,7 @@ date = "2026-09-27"
 tags = ["tips", "pvalue", "curl", "probe", "workflow"]
 authors = ["hak"]
 template = "blog_post"
+cover = "cover.webp"
 +++
 
 `noir scan ./app -f curl`을 한 번이라도 돌려봤다면 결과가 어떤지 아실 겁니다. `/users/{id}?limit=` 같은 줄이 길게 이어지죠. 앱의 지도로는 훌륭하지만, 그중 한 줄을 터미널에 붙여 넣어서 제대로 된 응답을 받을 수는 없습니다.

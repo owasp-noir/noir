@@ -1,0 +1,33 @@
+{# One entry in a post grid. The caller has `post` in scope and may set:
+     lead  - true on the entry that should carry the "latest" flag
+     htag  - heading element, so the card slots into the page outline
+   A post with a `cover` in its front matter shows it; the file sits in the
+   post's bundle, which hwaro publishes under both languages.
+   The whole card is one link, so nothing inside it may be a link. #}
+{% set datefmt = "blog.date_format" | t %}
+{% set cover = post.extra.cover if post.extra is defined else "" %}
+<li class="post-card{% if lead %} is-lead{% endif %}{% if cover %} has-cover{% endif %}">
+  <a class="post-card-link" href="{{ base_url }}{{ post.url }}">
+    {% if cover %}<img class="post-cover" src="{{ base_url }}{{ post.url }}{{ cover }}" alt="" width="1600" height="840" decoding="async"{% if not lead %} loading="lazy"{% endif %}>{% endif %}
+    <div class="post-meta">
+      {% if lead %}<span class="post-flag">{{ "blog.latest" | t }}</span>{% endif %}
+      <time datetime="{{ post.date }}">{{ post.date | date(datefmt) }}</time>
+      {% if post.reading_time %}<span>{{ post.reading_time }}{{ "blog.min_read" | t }}</span>{% endif %}
+    </div>
+    <{{ htag | default("h2") }} class="post-card-title">{{ post.title }}</{{ htag | default("h2") }}>
+    {% if post.description %}<p class="post-card-desc">{{ post.description }}</p>{% endif %}
+    <div class="post-card-foot">
+      {% if post.authors %}
+      <span class="post-byline">
+        <span class="avatar-stack">
+          {% for slug in post.authors %}{% set author = site.data.authors[slug] %}{% if author and author.image %}<img class="author-avatar" src="{{ author.image }}" alt="" width="24" height="24" loading="lazy" decoding="async">{% endif %}{% endfor %}
+        </span>
+        {% for slug in post.authors %}{{ site.data.authors[slug].name | default(slug) }}{% if not loop.last %}, {% endif %}{% endfor %}
+      </span>
+      {% endif %}
+      {% if post.tags %}
+      <span class="post-tags">{% for tag in post.tags %}<span>{{ tag }}</span>{% endfor %}</span>
+      {% endif %}
+    </div>
+  </a>
+</li>

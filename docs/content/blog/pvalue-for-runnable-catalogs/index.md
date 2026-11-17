@@ -5,6 +5,7 @@ date = "2026-09-27"
 tags = ["tips", "pvalue", "curl", "probe", "workflow"]
 authors = ["hak"]
 template = "blog_post"
+cover = "cover.webp"
 +++
 
 If you've ever run `noir scan ./app -f curl`, you know the result: a long list of `/users/{id}?limit=` lines. Great as a map of the app, but you can't paste a single one of them into a terminal and expect a real response.

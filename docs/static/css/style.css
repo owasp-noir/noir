@@ -1259,6 +1259,13 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
 
 .blog { padding-block: clamp(2.5rem, 6vw, 4.5rem) clamp(4rem, 9vw, 7rem); }
 .blog-inner { max-width: 820px; }
+.blog-inner-wide { max-width: 1160px; }
+/* A 43rem measure plus the gutters: about 70 characters of body text. */
+.blog-inner-post { max-width: calc(43rem + 2 * var(--gutter)); }
+
+/* Hangul breaks between any two syllables by default, which splits words
+   across lines in headlines and summaries. Break at spaces instead. */
+:lang(ko) .blog :is(h1, h2, h3, p, li) { word-break: keep-all; }
 
 .blog-back {
   display: inline-flex; align-items: center; gap: 0.4rem;
@@ -1267,61 +1274,142 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
 }
 .blog-back:hover { color: var(--heading); text-decoration: none; }
 
-.blog-head { padding-bottom: 2.25rem; border-bottom: 1px solid var(--border); margin-bottom: 0.5rem; }
-.blog-title { font-size: var(--fs-2xl); letter-spacing: -0.03em; }
-.blog-lede { margin-top: 0.9rem; color: var(--text-secondary); font-size: var(--fs-md); max-width: 60ch; }
-.blog-intro { margin-top: 1.25rem; }
-.blog-intro > * { max-width: 62ch; }
-
-.blog-rss {
+/* Nameplate. Kept small on purpose: on the index the newest post is the
+   headline, and a large "Blog" above it would compete with it. */
+.blog-head {
+  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
+  gap: 1rem 2rem;
+  padding-bottom: 1.25rem; border-bottom: 1px solid var(--border);
+}
+.blog-title { font-size: var(--fs-xl); letter-spacing: -0.03em; }
+.blog-lede { margin-top: 0.4rem; color: var(--text-secondary); font-size: 0.9375rem; max-width: 64ch; }
+.blog-links { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.blog-link {
   display: inline-flex; align-items: center; gap: 0.45rem;
-  margin-top: 1.5rem; padding: 0.4rem 0.75rem;
+  padding: 0.4rem 0.75rem;
   border: 1px solid var(--border); border-radius: var(--r);
   color: var(--text-secondary); font-size: var(--fs-sm);
 }
-.blog-rss:hover { color: var(--heading); border-color: var(--text-muted); text-decoration: none; }
+.blog-link:hover { color: var(--heading); border-color: var(--text-muted); text-decoration: none; }
 
 .blog-empty { margin-top: 2.5rem; color: var(--text-secondary); }
 
-/* Post list: hairline rows, not cards. Elevation would say nothing here. */
-.post-list { list-style: none; margin: 0; padding: 0; }
-.post-row { border-bottom: 1px solid var(--border); }
-.post-row-link { display: block; padding: 1.75rem 0; color: inherit; }
-.post-row-link:hover { text-decoration: none; }
-.post-row-link:hover .post-row-title { color: var(--accent-text); }
-
-.post-date {
-  display: block;
-  font-family: var(--font-mono); font-size: var(--fs-xs);
-  color: var(--text-muted); letter-spacing: 0.04em;
+/* Post grid: two columns of hairline-ruled entries, not cards. Elevation
+   would say nothing here. */
+.post-grid {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: clamp(2rem, 5vw, 4.5rem);
 }
-.post-row-title {
-  margin-top: 0.5rem;
-  font-size: var(--fs-lg); letter-spacing: -0.02em;
+.post-card { border-top: 1px solid var(--border); }
+.post-card-link {
+  display: flex; flex-direction: column; height: 100%;
+  padding: 1.6rem 0 2.1rem; color: inherit;
+}
+.post-card-link:hover { text-decoration: none; }
+.post-card-link:hover .post-card-title { color: var(--accent-text); }
+
+.post-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0;
+  color: var(--text-muted); font-size: var(--fs-sm);
+}
+.post-meta > * + * { margin-left: 0.75rem; padding-left: 0.75rem; border-left: 1px solid var(--border); line-height: 1.1; }
+.post-flag { color: var(--heading); font-weight: 600; }
+
+.post-card-title {
+  margin-top: 0.7rem;
+  font-size: var(--fs-lg); letter-spacing: -0.022em; line-height: 1.25;
   transition: color 0.18s var(--ease);
 }
-.post-row-desc { margin-top: 0.5rem; color: var(--text-secondary); max-width: 62ch; }
-.post-row-foot { margin-top: 0.9rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.25rem; }
-.post-authors { color: var(--text-muted); font-size: var(--fs-sm); }
-
-.post-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-.post-tags code {
-  font-size: 0.7rem; padding: 0.1rem 0.4rem;
-  border: 1px solid var(--border); border-radius: var(--r);
-  color: var(--text-muted);
+.post-card-desc { margin-top: 0.55rem; color: var(--text-secondary); max-width: 58ch; }
+.post-card-foot {
+  margin-top: auto; padding-top: 1.25rem;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.6rem 1.25rem;
 }
+.post-byline {
+  display: inline-flex; align-items: center; gap: 0.55rem;
+  color: var(--text); font-size: var(--fs-sm); font-weight: 500;
+}
+.avatar-stack { display: inline-flex; }
+.avatar-stack .author-avatar { width: 24px; height: 24px; }
+.avatar-stack .author-avatar + .author-avatar { margin-left: -8px; }
+
+.post-tags { display: flex; flex-wrap: wrap; gap: 0.2rem 0.7rem; color: var(--text-muted); font-size: var(--fs-xs); }
+.post-tags span::before { content: "#"; }
+
+/* The newest post runs the full width and splits on the same two columns as
+   the grid beneath it: headline left, summary and byline right, so the right
+   edge of the headline lines up with the gutter of the rows below. */
+.post-card.is-lead, .is-lead .post-card-link { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; }
+.post-card.is-lead { border-top: 0; }
+.is-lead .post-card-link {
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas: "meta meta" "title desc" "title foot";
+  padding: clamp(2rem, 4vw, 3rem) 0 clamp(2.5rem, 5vw, 3.75rem);
+}
+.is-lead .post-meta { grid-area: meta; }
+.is-lead .post-card-title {
+  grid-area: title; margin-top: 1.1rem;
+  font-size: clamp(2rem, 1.25rem + 3vw, 3.25rem); letter-spacing: -0.04em; line-height: 1.05;
+}
+.is-lead .post-card-desc { grid-area: desc; align-self: end; font-size: var(--fs-md); }
+.is-lead .post-card-foot { grid-area: foot; margin-top: 0; }
+
+/* Covers are dark plates in both themes, like the product screenshots. */
+.post-cover {
+  width: 100%; aspect-ratio: 40 / 21; object-fit: cover;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--shot-bg);
+}
+.post-card .post-cover { margin-bottom: 1.25rem; }
+.is-lead.has-cover .post-card-link {
+  grid-template-rows: auto auto 1fr auto;
+  grid-template-areas: "meta cover" "title cover" "desc cover" "foot cover";
+}
+.is-lead .post-cover { grid-area: cover; align-self: start; margin-bottom: 0; }
+.is-lead.has-cover .post-card-desc { align-self: start; margin-top: 1.1rem; }
+.is-lead.has-cover .post-card-foot { padding-top: 1.5rem; }
+
+.blog-about {
+  margin-top: clamp(2rem, 5vw, 3.5rem); padding-top: 2rem;
+  border-top: 1px solid var(--border);
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: clamp(2rem, 5vw, 4.5rem); row-gap: 1rem;
+}
+.blog-about-title { font-size: var(--fs-lg); letter-spacing: -0.02em; }
+.blog-about .prose { font-size: var(--fs-base); color: var(--text-secondary); }
 
 /* Post article */
 .blog-post-head { padding-bottom: 2rem; border-bottom: 1px solid var(--border); }
-.blog-post-title { margin-top: 0.6rem; font-size: var(--fs-2xl); letter-spacing: -0.03em; }
-.blog-post-lede { margin-top: 0.9rem; color: var(--text-secondary); font-size: var(--fs-md); max-width: 62ch; }
-.blog-post-head .post-tags { margin-top: 1.1rem; }
-.blog-post-body { margin-top: 2.5rem; }
+.blog-post-title {
+  margin-top: 1rem;
+  font-size: clamp(2.1rem, 1.5rem + 2.6vw, 3.25rem); letter-spacing: -0.038em; line-height: 1.06;
+}
+.blog-post-lede { margin-top: 1.1rem; color: var(--text-secondary); font-size: var(--fs-lg); line-height: 1.45; }
 
-.author-row { list-style: none; margin: 1.75rem 0 0; padding: 0; display: grid; gap: 0.75rem; }
+.blog-post-head:has(+ .post-cover-hero) { border-bottom: 0; }
+.post-cover-hero { margin-top: 0.5rem; }
+
+.post-authors { list-style: none; margin: 1.75rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 1rem 2rem; }
+.post-author { display: flex; align-items: center; gap: 0.7rem; }
+
+/* Body copy is set larger and looser than the reference pages, and fills the
+   column instead of stopping at the docs measure. */
+.blog-post-body { margin-top: 2.5rem; font-size: clamp(1.0625rem, 1rem + 0.35vw, 1.1875rem); line-height: 1.8; }
+.blog-post-body > * { max-width: none; }
+.blog-post-body h2 { border-bottom: 0; padding-bottom: 0; }
+
+.blog-post-foot { margin-top: 3.5rem; }
+.blog-post-foot .post-tags { font-size: var(--fs-sm); }
+.post-written { margin-top: 2rem; padding-top: 2rem; border-top: 1px solid var(--border); }
+.blog-label { font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0; color: var(--text-muted); }
+.blog-post-foot .prev-next { margin-top: 2.5rem; }
+
+.author-row { list-style: none; margin: 1rem 0 0; padding: 0; display: grid; gap: 0.75rem; }
 .author-chip {
-  display: flex; align-items: center; gap: 0.75rem;
-  padding: 0.7rem 0.9rem;
+  display: flex; align-items: flex-start; gap: 1rem;
+  padding: 1.15rem 1.25rem;
   border: 1px solid var(--border); border-radius: var(--r-lg);
   background: var(--surface);
 }
@@ -1335,7 +1423,6 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
 .author-bio { color: var(--text-secondary); font-size: var(--fs-sm); margin-top: 0.4rem; line-height: 1.55; }
 
 .author-link {
-  margin-left: auto;
   display: inline-flex; align-items: center; gap: 0.35rem;
   color: var(--text-secondary); font-size: var(--fs-sm);
   white-space: nowrap;
@@ -1368,8 +1455,7 @@ a.author-card-inner:hover { border-color: var(--accent-edge); text-decoration: n
 .author-profile-name { display: flex; align-items: center; gap: 0.65rem; font-size: var(--fs-xl); letter-spacing: -0.025em; }
 .author-profile-info .author-role { margin-top: 0.25rem; }
 .author-profile-info .author-bio { max-width: 58ch; }
-.author-links { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
-.author-links .author-link { margin-left: 0; }
+.author-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-top: 1rem; }
 .author-posts-title {
   margin: 2.5rem 0 0.5rem;
   font-size: var(--fs-xs); font-weight: 600;
@@ -1377,10 +1463,20 @@ a.author-card-inner:hover { border-color: var(--accent-edge); text-decoration: n
   color: var(--text-muted);
 }
 
+/* Wide enough for it, code and tables step out past the text column. */
+@media (min-width: 900px) {
+  .blog-post-body > :is(.code-block, pre:not(.mermaid), .table-scroll, table, figure) { margin-inline: -3rem; }
+  .post-cover-hero { margin-inline: -3rem; width: calc(100% + 6rem); max-width: none; }
+}
+@media (max-width: 720px) {
+  .post-grid, .blog-about { grid-template-columns: minmax(0, 1fr); }
+  .is-lead .post-card-link { display: flex; }
+  .is-lead .post-cover { margin-bottom: 1.25rem; }
+  .is-lead .post-card-desc { align-self: auto; margin-top: 0.9rem; }
+  .is-lead .post-card-foot { margin-top: 1.25rem; padding-top: 0; }
+}
 @media (max-width: 640px) {
   .author-profile { flex-direction: column; gap: 1rem; }
-  .author-chip { flex-wrap: wrap; }
-  .author-link { margin-left: 0; width: 100%; }
 }
 
 /* --------------------------------------------------------- 12. Site footer */

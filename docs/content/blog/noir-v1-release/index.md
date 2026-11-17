@@ -5,6 +5,7 @@ date = "2026-05-24"
 tags = ["release", "v1"]
 authors = ["hahwul"]
 template = "blog_post"
+cover = "cover.webp"
 +++
 
 Noir v1.0 is out.
