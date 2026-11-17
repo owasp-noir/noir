@@ -530,9 +530,18 @@ module Analyzer::Java
     SPRING_ACTUATOR_DEP_RE   = /spring[-.]boot[-.]starter[-.]actuator\b/
     SPRING_SPRINGDOC_DEP_RE  = /springdoc[-.]openapi/
     SPRING_SWAGGER_UI_DEP_RE = /springdoc[-.]openapi[\w.-]*?[-.]ui\b/
-    # Comments and Maven `<dependencyManagement>` (which only pins versions)
-    # are not dependencies; masked to spaces so offsets keep their lines.
-    SPRING_BUILD_NOISE_RE = /<!--.*?-->|<dependencyManagement>.*?<\/dependencyManagement>|\/\*.*?\*\/|\/\/[^\n]*/m
+    # Comments, Maven `<dependencyManagement>` (which only pins versions) and
+    # Maven `<exclusions>` are not dependencies; masked to spaces so offsets
+    # keep their lines.
+    SPRING_BUILD_NOISE_RE = /<!--.*?-->|<dependencyManagement>.*?<\/dependencyManagement>|<exclusions>.*?<\/exclusions>|\/\*.*?\*\/|\/\/[^\n]*/m
+    # Gradle `exclude group: 'g', module: 'm'` / `exclude(group = "g", module = "m")`.
+    GRADLE_EXCLUDE_RE = /\bexclude\b\s*\(?\s*(?:group|module)\b[^\n]*/
+    # `configurations.all {` / `.configureEach {`, or a `configurations {`
+    # block whose `all {` / `configureEach {` blocks apply to every configuration.
+    GRADLE_CONFIGURATIONS_RE = /\bconfigurations\s*(?:\.\s*(all|configureEach)\s*)?\{/
+    GRADLE_ALL_BLOCK_RE      = /(?<![\w.])(?:all|configureEach)\s*\{/
+    # Groovy's `configurations.all*.exclude group: ...`.
+    GRADLE_SPREAD_EXCLUDE_RE = /\bconfigurations\s*\.\s*all\s*\*\s*\.\s*(exclude\b[^\n]*)/
 
     FRAMEWORK_PROVIDED_TAG = Tag.new("framework-provided", "Served by Spring Boot / Spring Security itself, not by an application controller", "spring_analyzer")
     # The login / logout / OAuth2 routes: a filter of the chain answers them,
@@ -602,17 +611,49 @@ module Analyzer::Java
     # `pom.xml` / `build.gradle(.kts)`, or in a parent module's up to the
     # scan base (Maven parents and Gradle `subprojects {}` hand theirs down).
     #
+    # A module whose own build excludes the artifact from all its
+    # configurations does not have it, whatever a parent hands down. A
+    # parent's such block is not read: it may sit in a `project(':x') {}`
+    # that scopes it to one module.
+    #
     # ponytail: Gradle convention plugins (`buildSrc`) are not followed.
     private def spring_build_dependency(project_root : String, pattern : Regex) : PathInfo?
       each_spring_build_file(project_root) do |file|
         content = read_file_content(file)
         next unless content_matches?(content, pattern)
         masked = content.gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' '))
+        return if File.dirname(file) == project_root && JavaEngine.gradle_excluded_everywhere?(masked, pattern)
+        masked = masked.gsub(GRADLE_EXCLUDE_RE, &.gsub(/[^\n]/, ' '))
         if match = pattern.match(masked)
           return PathInfo.new(file, line_number_for_index(masked, match.begin(0)))
         end
       end
       nil
+    end
+
+    # Whether a Gradle build (comment-masked) excludes an artifact matching
+    # `pattern` for every configuration.
+    #
+    # ponytail: group-only excludes (`exclude group: 'org.springdoc'`) are not
+    # matched against artifact patterns, so they keep the dependency.
+    def self.gradle_excluded_everywhere?(code : String, pattern : Regex) : Bool
+      code.scan(GRADLE_SPREAD_EXCLUDE_RE) { |found| return true if found[1].matches?(pattern) }
+      code.scan(GRADLE_CONFIGURATIONS_RE) do |found|
+        blocks = [block_body(code, found.end(0) - 1)]
+        unless found[1]?
+          inner = blocks.first
+          blocks = inner.scan(GRADLE_ALL_BLOCK_RE).map { |all| block_body(inner, all.end(0) - 1) }
+        end
+        blocks.each do |block|
+          block.scan(GRADLE_EXCLUDE_RE) { |exclude| return true if exclude[0].matches?(pattern) }
+        end
+      end
+      false
+    end
+
+    # The text between the `{` at `open_idx` and its matching `}`.
+    private def self.block_body(code : String, open_idx : Int32) : String
+      code[(open_idx + 1)...(find_matching_delimiter(code, open_idx, '{', '}') || code.size)]
     end
 
     # The module's build files, then each parent directory's up to the scan base.
