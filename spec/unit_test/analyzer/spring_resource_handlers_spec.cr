@@ -5,8 +5,8 @@ require "../../../src/analyzer/analyzers/java/spring"
 private alias JavaEngine = Analyzer::Java::JavaEngine
 
 # `pattern -> location,location` of each registration in `source`.
-private def handlers(source : String) : Array(String)
-  JavaEngine.spring_resource_handlers(JavaEngine.strip_comments(source)).map do |handler|
+private def handlers(source : String, constants = {} of String => String) : Array(String)
+  JavaEngine.spring_resource_handlers(JavaEngine.strip_comments(source), constants).map do |handler|
     "#{handler.pattern} -> #{handler.locations.join(",")}"
   end
 end
@@ -51,6 +51,32 @@ describe "Analyzer::Java::JavaEngine.spring_resource_handlers" do
       .should eq(["/a/** -> classpath:/x/"])
   end
 
+  it "reads the project's qualified constants and + concatenations" do
+    handlers(%(registry.addResourceHandler(Paths.ASSETS + "/**").addResourceLocations(Paths.LOCATION);),
+      {"Paths.ASSETS" => "/assets", "Paths.LOCATION" => "classpath:/x/"}).should eq(["/assets/** -> classpath:/x/"])
+  end
+
+  it "does not take the first literal of a concatenated constant for its value" do
+    handlers(<<-JAVA).should eq(["/v/** -> "])
+      class C {
+        static final String LOCATION = "classpath:/x/" + VERSION + "/";
+        void add(ResourceHandlerRegistry registry) { registry.addResourceHandler("/v/**").addResourceLocations(LOCATION); }
+      }
+      JAVA
+  end
+
+  it "drops a Kotlin template, also behind a constant" do
+    handlers(<<-KOTLIN).should be_empty
+      const val PREFIX = "/assets"
+      const val PATTERN = "$PREFIX/**"
+      fun add(r: ResourceHandlerRegistry) { r.addResourceHandler(PATTERN).addResourceLocations("classpath:/x/") }
+      KOTLIN
+  end
+
+  it "ignores a registration quoted in a text block" do
+    handlers(%(String template = """\n  registry.addResourceHandler("/a/**").addResourceLocations("classpath:/x/");\n""";)).should be_empty
+  end
+
   it "drops a value it cannot read" do
     handlers(%(registry.addResourceHandler("/**").addResourceLocations("classpath:/x/", "classpath:$dir", Paths.OTHER, root + "/y/")))
       .should eq(["/** -> classpath:/x/"])
@@ -82,6 +108,7 @@ describe "Analyzer::Java::JavaEngine.spring_web_auto_config_replaced?" do
       "// @EnableWebMvc\n@Configuration class C {}",
       "/* extends WebMvcConfigurationSupport */ class C {}",
       %(class C { String hint = "add @EnableWebMvc to opt out"; }),
+      %(class C { String template = """\n@Configuration\n@EnableWebMvc\npublic class WebConfig {}\n"""; }),
       "@ConditionalOnMissingBean(WebMvcConfigurationSupport.class) class C {}",
       "@ConditionalOnMissingBean(value = [Other::class, WebMvcConfigurationSupport::class]) class C",
       "@EnableWebMvcMetrics class C {}",
