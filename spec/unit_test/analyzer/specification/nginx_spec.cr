@@ -88,6 +88,67 @@ describe "Nginx Analyzer" do
     endpoints.map(&.url).sort!.should eq(["/health", "/legacy/feed", "/mixed"])
   end
 
+  # First match wins: a location whose own list reaches `deny all` before any
+  # `allow` answers 403 to everyone, whatever else it holds. A `return`,
+  # `rewrite` or `if` answers before access is checked, and under
+  # `satisfy any` an auth method can still admit the client.
+  it "drops a location its own access list closes to every client" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location /status { stub_status on; deny all; }
+          location /status-log {
+              stub_status on;
+              access_log off;
+              deny 192.0.2.1;
+              deny all;
+          }
+          location /restricted {
+              allow 10.0.0.0/8;
+              deny all;
+              stub_status on;
+          }
+          location /redirected {
+              deny all;
+              return 301 $arg_next;
+          }
+          location /branch {
+              deny all;
+              if ($http_x_widget) { return 200; }
+              proxy_pass http://widgets;
+          }
+          location /templated {
+              {{ if .Private }}deny all;{{ end }}
+              proxy_pass http://widgets;
+          }
+      }
+      server {
+          deny all;
+          location /server-denied { proxy_pass http://widgets; }
+      }
+      server {
+          satisfy any;
+          auth_basic "widgets";
+          location /either { deny all; proxy_pass http://widgets; }
+          location /no-auth {
+              auth_basic off;
+              deny all;
+              proxy_pass http://widgets;
+          }
+      }
+      server {
+          location /late { deny all; proxy_pass http://widgets; }
+          satisfy any;
+          auth_request /auth;
+      }
+      CONF
+
+    endpoints.map(&.url).sort!.should eq([
+      "/branch", "/either", "/late", "/redirected", "/restricted", "/server-denied", "/templated",
+    ])
+    restricted = endpoints.find! { |e| e.url == "/restricted" }
+    tag_descriptions(restricted, "auth").should eq(["Protected by nginx allow 10.0.0.0/8; deny all"])
+  end
+
   it "marks a regex location as kind regex only while it still reads as a pattern" do
     endpoints = analyze_nginx <<-CONF
       server {
@@ -623,7 +684,8 @@ describe "Nginx Analyzer" do
         }
         CONF
 
-      endpoints.size.should eq(5)
+      # `/deny-only` refuses every client before `proxy_pass` runs.
+      endpoints.map(&.url).sort!.should eq(["/allow-all", "/blocklist", "/conditional", "/limit"])
       guards.call(endpoints).each { |_, descriptions| descriptions.should be_empty }
     end
 
