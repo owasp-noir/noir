@@ -149,6 +149,51 @@ describe "Nginx Analyzer" do
     tag_descriptions(restricted, "auth").should eq(["Protected by nginx allow 10.0.0.0/8; deny all"])
   end
 
+  # A redirect answers the request, and its target can itself be built from
+  # the request (`$arg_next`), so the row stays and says where it points.
+  it "tags a location whose only effect is a redirect" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location /old { return 301 https://example.org/new; }
+          location /moved { rewrite ^/moved/(.*)$ /next/$1 permanent; }
+          location /temp {
+              rewrite ^ /elsewhere redirect;
+          }
+          location /open { return 302 https://${DOMAIN}$request_uri; }
+          location /denied-redirect {
+              deny all;
+              return 307 $arg_next;
+          }
+          location /maybe {
+              if ($arg_old) { return 301 /new; }
+              proxy_pass http://widgets;
+          }
+          location /rewrite-or-serve {
+              rewrite ^/rewrite-or-serve/a$ /b permanent;
+              proxy_pass http://widgets;
+          }
+          location /internal-rewrite { rewrite ^ /x last; }
+          location /ok { return 200 ok; }
+          location /tmpl {
+              {{ if .Moved }}return 301 /new;{{ end }}
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-redirect")} }.sort!.should eq([
+      {"/denied-redirect", ["307 $arg_next"]},
+      {"/internal-rewrite", [] of String},
+      {"/maybe", [] of String},
+      {"/moved", ["301 /next/$1"]},
+      {"/ok", [] of String},
+      {"/old", ["301 https://example.org/new"]},
+      {"/open", ["302 https://${DOMAIN}$request_uri"]},
+      {"/rewrite-or-serve", [] of String},
+      {"/temp", ["302 /elsewhere"]},
+      {"/tmpl", [] of String},
+    ])
+  end
+
   it "marks a regex location as kind regex only while it still reads as a pattern" do
     endpoints = analyze_nginx <<-CONF
       server {
