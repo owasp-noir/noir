@@ -618,25 +618,40 @@ module Analyzer::Java
     # `pom.xml` / `build.gradle(.kts)`, or in a parent module's up to the
     # scan base (Maven parents and Gradle `subprojects {}` hand theirs down).
     #
-    # A module whose own build excludes the artifact from all its
-    # configurations does not have it, whatever a parent hands down. A
-    # parent's such block is not read: it may sit in a `project(':x') {}`
-    # that scopes it to one module. Last come the library modules the
-    # module depends on (`spring_library_dependency`).
+    # The module's own declaration wins. The artifacts its own build
+    # excludes from all its configurations do not arrive from a parent or a
+    # library; a parent's such block is not read, since it may sit in a
+    # `project(':x') {}` that scopes it to one module. Last come the library
+    # modules the module depends on (`spring_library_dependency`).
     #
     # ponytail: Gradle convention plugins (`buildSrc`) are not followed.
     private def spring_build_dependency(project_root : String, pattern : Regex) : PathInfo?
+      excluded = Set(String).new
       each_spring_build_file(project_root) do |file|
         content = read_file_content(file)
         next unless content_matches?(content, pattern)
         masked = content.gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' '))
-        return if File.dirname(file) == project_root && JavaEngine.gradle_excluded_everywhere?(JavaEngine.gradle_own_build(masked), pattern)
-        masked = masked.gsub(GRADLE_EXCLUDE_RE, &.gsub(/[^\n]/, ' '))
+        if File.dirname(file) == project_root
+          excluded.concat(JavaEngine.gradle_excluded_modules(JavaEngine.gradle_own_build(masked)))
+          masked = masked.gsub(GRADLE_EXCLUDE_RE, &.gsub(/[^\n]/, ' '))
+        else
+          masked = JavaEngine.mask_build_modules(masked.gsub(GRADLE_EXCLUDE_RE, &.gsub(/[^\n]/, ' ')), excluded)
+        end
         if match = pattern.match(masked)
           return PathInfo.new(file, line_number_for_index(masked, match.begin(0)))
         end
       end
-      spring_library_dependency(project_root, pattern)
+      spring_library_dependency(project_root, pattern, excluded)
+    end
+
+    # A quoted Gradle coordinate (module in group 1) or a Maven
+    # `<artifactId>` (group 2).
+    BUILD_MODULE_RE = /["'][\w.-]+:([\w.-]+)(?::[^"'\n]*)?["']|<artifactId>\s*([\w.-]+)\s*<\/artifactId>/
+
+    # `code` with every coordinate of one of `modules` blanked.
+    def self.mask_build_modules(code : String, modules : Set(String)) : String
+      return code if modules.empty?
+      code.gsub(BUILD_MODULE_RE) { |text, found| modules.includes?(found[1]? || found[2]) ? text.gsub(/[^\n]/, ' ') : text }
     end
 
     # `implementation project(':common')` / Kotlin DSL
@@ -650,7 +665,7 @@ module Analyzer::Java
     # ponytail: one level of project dependencies, mapped below the nearest
     # `settings.gradle(.kts)` (`:a:b` is `a/b`); a `projectDir` override or a
     # library's own project dependencies are not followed.
-    private def spring_library_dependency(project_root : String, pattern : Regex) : PathInfo?
+    private def spring_library_dependency(project_root : String, pattern : Regex, excluded : Set(String)) : PathInfo?
       return unless settings_dir = gradle_settings_dir(project_root)
       {"build.gradle", "build.gradle.kts"}.each do |name|
         file = File.join(project_root, name)
@@ -664,6 +679,7 @@ module Analyzer::Java
             library_file = File.join(dir, library_name)
             next unless File.exists?(library_file)
             masked = read_file_content(library_file).gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' ')).gsub(GRADLE_EXCLUDE_RE, &.gsub(/[^\n]/, ' '))
+            masked = JavaEngine.mask_build_modules(masked, excluded)
             if match = pattern.match(JavaEngine.gradle_own_build(masked))
               return PathInfo.new(library_file, line_number_for_index(masked, match.begin(0)))
             end
@@ -714,24 +730,24 @@ module Analyzer::Java
       code
     end
 
-    # Whether a Gradle build (comment-masked) excludes an artifact matching
-    # `pattern` for every configuration.
+    GRADLE_EXCLUDED_MODULE_RE = /\bmodule\s*[:=]\s*["']([^"']+)["']/
+
+    # The modules a Gradle build (comment-masked) excludes from every
+    # configuration.
     #
-    # ponytail: group-only excludes (`exclude group: 'org.springdoc'`) are not
-    # matched against artifact patterns, so they keep the dependency.
-    def self.gradle_excluded_everywhere?(code : String, pattern : Regex) : Bool
-      code.scan(GRADLE_SPREAD_EXCLUDE_RE) { |found| return true if found[1].matches?(pattern) }
+    # ponytail: group-only excludes (`exclude group: 'org.springdoc'`) name no
+    # module, so they keep the dependency.
+    def self.gradle_excluded_modules(code : String) : Set(String)
+      statements = code.scan(GRADLE_SPREAD_EXCLUDE_RE).map(&.[1])
       code.scan(GRADLE_CONFIGURATIONS_RE) do |found|
         blocks = [block_body(code, found.end(0) - 1)]
         unless found[1]?
           inner = blocks.first
           blocks = inner.scan(GRADLE_ALL_BLOCK_RE).map { |all| block_body(inner, all.end(0) - 1) }
         end
-        blocks.each do |block|
-          block.scan(GRADLE_EXCLUDE_RE) { |exclude| return true if exclude[0].matches?(pattern) }
-        end
+        blocks.each { |block| block.scan(GRADLE_EXCLUDE_RE) { |exclude| statements << exclude[0] } }
       end
-      false
+      statements.compact_map { |statement| statement.match(GRADLE_EXCLUDED_MODULE_RE).try(&.[1]) }.to_set
     end
 
     # The text between the `{` at `open_idx` and its matching `}`.

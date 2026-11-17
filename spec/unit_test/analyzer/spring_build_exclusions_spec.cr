@@ -3,23 +3,33 @@ require "../../../src/analyzer/engines/java_engine"
 
 private alias JavaEngine = Analyzer::Java::JavaEngine
 
-describe "Analyzer::Java::JavaEngine.gradle_excluded_everywhere?" do
-  springdoc = JavaEngine::SPRING_SPRINGDOC_DEP_RE
+describe "Analyzer::Java::JavaEngine.gradle_excluded_modules" do
+  ui = "springdoc-openapi-ui"
   {
-    %(configurations { all { exclude group: 'org.springdoc', module: 'springdoc-openapi-ui' } })                                                  => true,
-    %(configurations {\n  compileOnly { extendsFrom annotationProcessor }\n  configureEach {\n    exclude module: 'springdoc-openapi-ui'\n  }\n}) => true,
-    %(configurations.all {\n  exclude(group = "org.springdoc", module = "springdoc-openapi-starter-webmvc-ui")\n})                                => true,
-    %(configurations.configureEach { exclude(module = "springdoc-openapi-ui") })                                                                  => true,
-    %(configurations.all*.exclude group: 'org.springdoc', module: 'springdoc-openapi-ui')                                                         => true,
-    # One configuration, a single dependency or another artifact: not everywhere.
-    %(configurations { testImplementation { exclude module: 'springdoc-openapi-ui' } })                        => false,
-    %(implementation('org.springdoc:springdoc-openapi-ui:1.7.0') { exclude group: 'org.yaml' })                => false,
-    %(configurations.all { exclude group: 'org.springframework.boot', module: 'spring-boot-starter-logging' }) => false,
-    %(configurations.all { exclude group: 'org.springdoc' })                                                   => false,
+    %(configurations { all { exclude group: 'org.springdoc', module: 'springdoc-openapi-ui' } })                                                  => [ui],
+    %(configurations {\n  compileOnly { extendsFrom annotationProcessor }\n  configureEach {\n    exclude module: 'springdoc-openapi-ui'\n  }\n}) => [ui],
+    %(configurations.all {\n  exclude(group = "org.springdoc", module = "springdoc-openapi-starter-webmvc-ui")\n})                                => ["springdoc-openapi-starter-webmvc-ui"],
+    %(configurations.configureEach { exclude(module = "springdoc-openapi-ui") })                                                                  => [ui],
+    %(configurations.all*.exclude group: 'org.springdoc', module: 'springdoc-openapi-ui')                                                         => [ui],
+    # One configuration, a single dependency, or no module named: not everywhere.
+    %(configurations { testImplementation { exclude module: 'springdoc-openapi-ui' } })           => [] of String,
+    %(implementation('org.springdoc:springdoc-openapi-ui:1.7.0') { exclude module: 'snakeyaml' }) => [] of String,
+    %(configurations.all { exclude group: 'org.springdoc' })                                      => [] of String,
   }.each do |code, expected|
-    it "reads #{code.lines.first} as #{expected}" do
-      JavaEngine.gradle_excluded_everywhere?(code, springdoc).should eq(expected)
+    it "reads #{code.lines.first}" do
+      JavaEngine.gradle_excluded_modules(code).to_a.sort.should eq(expected)
     end
+  end
+end
+
+describe "Analyzer::Java::JavaEngine.mask_build_modules" do
+  it "blanks only the coordinates of the excluded modules" do
+    code = %(implementation 'org.springdoc:springdoc-openapi-ui:1.7.0'\nimplementation "org.springdoc:springdoc-openapi-starter-webmvc-ui"\n<artifactId>springdoc-openapi-ui</artifactId>)
+    masked = JavaEngine.mask_build_modules(code, Set{"springdoc-openapi-ui"})
+    masked.lines.size.should eq(3)
+    masked.should_not contain("springdoc-openapi-ui:")
+    masked.should_not contain("<artifactId>")
+    masked.should contain("springdoc-openapi-starter-webmvc-ui")
   end
 end
 
