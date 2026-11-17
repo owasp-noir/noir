@@ -70,8 +70,8 @@ describe "Spring parameter binding" do
   end
 
   it "drops @JsonIgnore properties from a JSON body only, unless an accessor names them with @JsonProperty" do
-    routes["PUT /entity"].should eq(["secret:json", "name:json", "blob:json", "nickname:json"])
-    routes["GET /entity"].should eq(["searchValue:query", "hidden:query", "secret:query", "name:query", "nick:query"])
+    routes["PUT /entity"].should eq(["secret:json", "name:json", "blob:json", "nickname:json", "mask:json"])
+    routes["GET /entity"].should eq(["searchValue:query", "hidden:query", "secret:query", "name:query", "nick:query", "mask:query"])
     routes["POST /pair"].should eq(["b:json"])
   end
 
