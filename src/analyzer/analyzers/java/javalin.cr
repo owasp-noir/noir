@@ -249,38 +249,6 @@ module Analyzer::Java
       matches.size == 1 ? matches.first : nil
     end
 
-    private def first_argument(args : String) : String
-      depth = 0
-      in_string = false
-      escape = false
-
-      args.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          return args[...index] if depth.zero?
-        end
-      end
-
-      args
-    end
-
     private def find_matching_paren(code : String, open_idx : Int32) : Int32?
       # Scan by CHARACTER (not byte): open_idx is a char index and the caller
       # char-slices with the returned index. ASCII-identical to the byte loop.

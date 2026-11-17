@@ -51,6 +51,7 @@ module Noir
   #   * `static` / `singlePageApp` for static asset routes.
   module TreeSitterHttp4kExtractor
     extend self
+    extend JvmTsHelpers::KotlinStringValues
     extend JvmTsHelpers::KotlinNavigation
 
     HTTP_VERBS = Set{
@@ -569,33 +570,6 @@ module Noir
         end
       end
       buf
-    end
-
-    private def resolve_string_value(node : LibTreeSitter::TSNode,
-                                     source : String,
-                                     string_constants : Hash(String, String),
-                                     local_string_constants : Hash(String, String)) : String?
-      case Noir::TreeSitter.node_type(node)
-      when "string_literal"
-        decode_string_literal(node, source)
-      when "simple_identifier"
-        local_string_constants[Noir::TreeSitter.node_text(node, source)]?
-      when "navigation_expression"
-        text = Noir::TreeSitter.node_text(node, source)
-        local_string_constants[text]? || string_constants[text]?
-      when "parenthesized_expression"
-        Noir::TreeSitter.each_named_child(node) do |child|
-          return resolve_string_value(child, source, string_constants, local_string_constants)
-        end
-      when "additive_expression"
-        parts = [] of String
-        Noir::TreeSitter.each_named_child(node) do |child|
-          part = resolve_string_value(child, source, string_constants, local_string_constants)
-          return unless part
-          parts << part
-        end
-        parts.join
-      end
     end
   end
 end

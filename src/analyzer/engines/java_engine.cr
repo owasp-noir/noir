@@ -248,6 +248,40 @@ module Analyzer::Java
     # `include JavaEngine`. `application_base_path_for` calls the
     # includer's own `project_root_for`.
 
+    # First call argument, preserving whitespace and ignoring commas in
+    # double-quoted strings or nested brackets. Shared by Javalin and Spring.
+    private def first_argument(args : String) : String
+      depth = 0
+      in_string = false
+      escape = false
+
+      args.each_char_with_index do |char, index|
+        if in_string
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == '"'
+            in_string = false
+          end
+          next
+        end
+
+        case char
+        when '"'
+          in_string = true
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+        when ','
+          return args[...index] if depth.zero?
+        end
+      end
+
+      args
+    end
+
     # `route` is any JVM extractor's `Route` (JAX-RS, Micronaut): verb,
     # params, 0-based line, `{name, line}` callees and protocol. `file` is
     # where the route and its callees live.
