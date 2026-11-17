@@ -68,6 +68,8 @@ module Analyzer::Javascript
 
     CONFIG_BASENAMES = ["next.config.js", "next.config.ts", "next.config.mjs", "next.config.cjs"]
     BASE_PATH_RE     = /\bbasePath\s*:\s*(['"`])(\/[^'"`$]*)\1/
+    # `{ basePath }` / `basePath: IDENT`, as a property key (not `assetPrefix: basePath`).
+    BASE_PATH_IDENT_RE = /[{,]\s*basePath\b(?:\s*:\s*([A-Za-z_$][\w$]*))?\s*(?=[,}])/
 
     # Config directory => its `basePath`, which prefixes every route below it.
     @next_base_paths = {} of String => String
@@ -103,12 +105,23 @@ module Analyzer::Javascript
         get_files_by_basename(basename).each do |file|
           content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(file))
           dir = File.dirname(Noir::PathScope.expand(file))
-          base_paths[dir] = content.match(BASE_PATH_RE).try(&.[2].rstrip('/')) || base_paths[dir]? || ""
+          base_paths[dir] = config_base_path(content) || base_paths[dir]? || ""
         rescue IO::Error
           next
         end
       end
       base_paths
+    end
+
+    # A string literal, or an identifier bound to one in the same file; anything
+    # else (env lookup, call, template) stays unresolved.
+    private def config_base_path(content : String) : String?
+      if literal = content.match(BASE_PATH_RE)
+        return literal[2].rstrip('/')
+      end
+      name = content.match(BASE_PATH_IDENT_RE).try { |m| m[1]? || "basePath" } || return
+      decl = /\b(?:const|let|var)\s+#{Regex.escape(name)}\s*(?::\s*string)?\s*=\s*(['"`])(\/[^'"`$\n]*)\1\s*(?:;|\n|\z)/
+      content.match(decl).try(&.[2].rstrip('/'))
     end
 
     # `basePath` of the closest `next.config.*` above `path`.
