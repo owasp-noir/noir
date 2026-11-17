@@ -31,6 +31,13 @@ module Analyzer::Specification
     TEMPLATE_CLOSE_RE = /\{\{-?\s*end\b/
     SETTING_NOTE      = " (a setting can make it public)"
 
+    # A value the deploy fills in: a `{{ }}` action anywhere in it, or the
+    # whole value as `__NAME__`, `${NAME}`, `$NAME` or `<name>`.
+    TEMPLATE_TOKEN_RE = /\A(?:__\w+__|\$\{\w+\}|\$\w+|<[\w.-]+>)\z/
+
+    RETURN_REDIRECT_RE  = /\Areturn\s+(30[12378])\s+(\S+)\z/
+    REWRITE_REDIRECT_RE = /\Arewrite\s+\S+\s+(\S+)\s+(permanent|redirect)\z/
+
     # A directive as written in one block. `conditional`: a template action
     # or a variable decides its value, or a template `if` around it decides
     # whether it is there at all.
@@ -198,6 +205,11 @@ module Analyzer::Specification
       property? denial_seen : Bool = false
       property? internal : Bool = false
       property? other_effect : Bool = false
+      # A `return`, `rewrite` or `if`: nginx runs these before it checks
+      # `allow` / `deny`.
+      property? rewrites : Bool = false
+      # The status and target of a redirect it answers with, as written.
+      property redirect : String? = nil
       getter parent : Frame?
       # `auth_basic` / `auth_request` / `auth_jwt` / `satisfy` set in this
       # block; `off` is kept, since it cancels an inherited one.
@@ -265,7 +277,7 @@ module Analyzer::Specification
           state.server_tls = false
         elsif m = SERVER_NAME_RE.match(balanced)
           # `_` and `""` are the conventional catch-all names, not hosts.
-          m[1].split(/\s+/).each { |n| state.server_names << n unless n.in?("", "_", %(""), "''") }
+          m[1].split(/\s+/).each { |n| state.server_names << n unless n.in?("", "_", %(""), "''") || Nginx.template_token?(n) }
         elsif balanced.matches?(LISTEN_RE)
           state.server_tls = true if balanced.matches?(LISTEN_TLS_RE)
         elsif m = INCLUDE_RE.match(balanced)
@@ -322,11 +334,33 @@ module Analyzer::Specification
     # Access rules are resolved only after the whole file is read: a
     # server-level `auth_basic` written below its locations still guards them.
     private def resolve_access(state : State)
+      refused = [] of Int32
       state.owners.each_with_index do |frame, i|
-        next unless tag = access_tag(frame)
+        next refused << i if refuses_everyone?(frame)
         endpoint = @result[state.base + i]
-        endpoint.add_tag(tag)
+        if (redirect = frame.redirect) && !frame.other_effect?
+          endpoint.add_tag(Tag.new("nginx-redirect", redirect, "nginx_analyzer"))
+        end
+        if tag = access_tag(frame)
+          endpoint.add_tag(tag)
+        end
         @result[state.base + i] = endpoint
+      end
+      refused.reverse_each { |i| @result.delete_at(state.base + i) }
+    end
+
+    # First match wins, so a location whose own list reaches `deny all`
+    # before any `allow` answers 403 to every client, whatever content it
+    # would serve. Under `satisfy any` an auth method can still admit one.
+    # An inherited list is not read here, as `pop_frame` does not either.
+    private def refuses_everyone?(location : Frame) : Bool
+      return false if location.rewrites?
+      first = location.access.find { |rule| rule.verb == "allow" || rule.address == "all" }
+      return false unless first && first.verb == "deny"
+      return false if first.conditional
+      return true unless effective_setting(location, "satisfy").try(&.value) == "any"
+      {"auth_basic", "auth_request", "auth_jwt"}.none? do |name|
+        effective_setting(location, name).try { |setting| !off?(setting.value) }
       end
     end
 
@@ -416,7 +450,7 @@ module Analyzer::Specification
       return unless frame.kind == "location"
       return drop_rows(frame, owners, base) if frame.internal?
       return unless frame.denial_seen?
-      return if frame.other_effect?
+      return if frame.other_effect? || frame.redirect
 
       # Only this location's own rows: a nested location matched on its own
       # does not run the parent's `return`.
@@ -443,7 +477,7 @@ module Analyzer::Specification
     # `conditional`: a template decides whether the line is there, so an
     # `internal` on it may not be.
     private def track_location_effect(location : Frame, line : String, conditional : Bool)
-      line = line.gsub(/\{\{.*?\}\}/, "").gsub(/[{}]/, " ")
+      line = line.gsub(/\{\{.*?\}\}/, "").gsub(BRACE_RE) { |token| token.size > 1 ? token : " " }
       line.split(';').each do |statement|
         directive = statement.strip
         next if directive.empty?
@@ -452,10 +486,25 @@ module Analyzer::Specification
           location.denial_seen = true
         elsif directive == "internal"
           location.internal = true unless conditional
+        elsif !conditional && (redirect = redirect_of(directive))
+          location.redirect ||= redirect
+          location.rewrites = true
         else
           # Conditional returns and other directives may still serve content.
           location.other_effect = true
+          location.rewrites = true if directive.matches?(/\A(?:return|rewrite|if)\b/)
         end
+      end
+    end
+
+    # ponytail: a redirect beside any other directive (`access_log off;`)
+    # is not tagged, though a location-level `return` answers before
+    # content runs; tell the two apart if that shape matters.
+    private def redirect_of(directive : String) : String?
+      if m = RETURN_REDIRECT_RE.match(directive)
+        "#{m[1]} #{m[2]}"
+      elsif m = REWRITE_REDIRECT_RE.match(directive)
+        "#{m[2] == "permanent" ? 301 : 302} #{m[1]}"
       end
     end
 
@@ -473,7 +522,11 @@ module Analyzer::Specification
     end
 
     private def internal_location?(path : String) : Bool
-      path.starts_with?("@") || path.includes?("{{") || path.includes?("}}")
+      path.starts_with?("@") || Nginx.template_token?(path)
+    end
+
+    def self.template_token?(value : String) : Bool
+      value.includes?("{{") || value.includes?("}}") || value.matches?(TEMPLATE_TOKEN_RE)
     end
 
     private def emit_location(file : String, path : String, modifier : String, method : String, hosts : Array(String), tls : Bool, line : Int32)

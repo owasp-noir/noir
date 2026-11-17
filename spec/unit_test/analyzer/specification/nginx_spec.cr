@@ -88,6 +88,174 @@ describe "Nginx Analyzer" do
     endpoints.map(&.url).sort!.should eq(["/health", "/legacy/feed", "/mixed"])
   end
 
+  # First match wins: a location whose own list reaches `deny all` before any
+  # `allow` answers 403 to everyone, whatever else it holds. A `return`,
+  # `rewrite` or `if` answers before access is checked, and under
+  # `satisfy any` an auth method can still admit the client.
+  it "drops a location its own access list closes to every client" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location /status { stub_status on; deny all; }
+          location /status-log {
+              stub_status on;
+              access_log off;
+              deny 192.0.2.1;
+              deny all;
+          }
+          location /restricted {
+              allow 10.0.0.0/8;
+              deny all;
+              stub_status on;
+          }
+          location /redirected {
+              deny all;
+              return 301 $arg_next;
+          }
+          location /branch {
+              deny all;
+              if ($http_x_widget) { return 200; }
+              proxy_pass http://widgets;
+          }
+          location /templated {
+              {{ if .Private }}deny all;{{ end }}
+              proxy_pass http://widgets;
+          }
+      }
+      server {
+          deny all;
+          location /server-denied { proxy_pass http://widgets; }
+      }
+      server {
+          satisfy any;
+          auth_basic "widgets";
+          location /either { deny all; proxy_pass http://widgets; }
+          location /no-auth {
+              auth_basic off;
+              deny all;
+              proxy_pass http://widgets;
+          }
+      }
+      server {
+          location /late { deny all; proxy_pass http://widgets; }
+          satisfy any;
+          auth_request /auth;
+      }
+      CONF
+
+    endpoints.map(&.url).sort!.should eq([
+      "/branch", "/either", "/late", "/redirected", "/restricted", "/server-denied", "/templated",
+    ])
+    restricted = endpoints.find! { |e| e.url == "/restricted" }
+    tag_descriptions(restricted, "auth").should eq(["Protected by nginx allow 10.0.0.0/8; deny all"])
+  end
+
+  # A redirect answers the request, and its target can itself be built from
+  # the request (`$arg_next`), so the row stays and says where it points.
+  it "tags a location whose only effect is a redirect" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location /old { return 301 https://example.org/new; }
+          location /moved { rewrite ^/moved/(.*)$ /next/$1 permanent; }
+          location /temp {
+              rewrite ^ /elsewhere redirect;
+          }
+          location /open { return 302 https://${DOMAIN}$request_uri; }
+          location /denied-redirect {
+              deny all;
+              return 307 $arg_next;
+          }
+          location /maybe {
+              if ($arg_old) { return 301 /new; }
+              proxy_pass http://widgets;
+          }
+          location /rewrite-or-serve {
+              rewrite ^/rewrite-or-serve/a$ /b permanent;
+              proxy_pass http://widgets;
+          }
+          location /internal-rewrite { rewrite ^ /x last; }
+          location /ok { return 200 ok; }
+          location /tmpl {
+              {{ if .Moved }}return 301 /new;{{ end }}
+          }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-redirect")} }.sort!.should eq([
+      {"/denied-redirect", ["307 $arg_next"]},
+      {"/internal-rewrite", [] of String},
+      {"/maybe", [] of String},
+      {"/moved", ["301 /next/$1"]},
+      {"/ok", [] of String},
+      {"/old", ["301 https://example.org/new"]},
+      {"/open", ["302 https://${DOMAIN}$request_uri"]},
+      {"/rewrite-or-serve", [] of String},
+      {"/temp", ["302 /elsewhere"]},
+      {"/tmpl", [] of String},
+    ])
+  end
+
+  # An unresolved template token stands for a host the deploy fills in.
+  it "does not read a template placeholder server_name as a host" do
+    endpoints = analyze_nginx <<-'CONF'
+      server {
+          server_name __SERVER_NAME__;
+          location /a { proxy_pass http://widgets; }
+      }
+      server {
+          server_name ${SERVER_NAME};
+          location /b { proxy_pass http://widgets; }
+      }
+      server {
+          server_name $hostname;
+          location /c { proxy_pass http://widgets; }
+      }
+      server {
+          server_name <server_name>;
+          location /d { proxy_pass http://widgets; }
+      }
+      server {
+          server_name PLACEHOLDER;
+          location /e { proxy_pass http://widgets; }
+      }
+      server {
+          server_name ~^(?<sub>\w+)\.example\.org$;
+          location /f { proxy_pass http://widgets; }
+      }
+      server {
+          server_name widgets.example.org;
+          location ${PREFIX}/api { proxy_pass http://widgets; }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-host")} }.sort!.should eq([
+      {"${PREFIX}/api", ["widgets.example.org"]},
+      {"/a", [] of String},
+      {"/b", [] of String},
+      {"/c", [] of String},
+      {"/d", [] of String},
+      {"/e", ["PLACEHOLDER"]},
+      {"/f", ["~^(?<sub>\\w+)\\.example\\.org$"]},
+    ])
+  end
+
+  it "reads only unresolved template tokens as placeholders" do
+    {
+      "__SERVER_NAME__"                 => true,
+      "${SERVER_NAME}"                  => true,
+      "$hostname"                       => true,
+      "<server_name>"                   => true,
+      "{{ .Values.host }}"              => true,
+      "{{ .Sub }}.example.org"          => true,
+      "PLACEHOLDER"                     => false,
+      "widgets.example.org"             => false,
+      "${PREFIX}/api"                   => false,
+      "~^(?<sub>\\w+)\\.example\\.org$" => false,
+      "_internal_"                      => false,
+    }.each do |value, expected|
+      Analyzer::Specification::Nginx.template_token?(value).should eq(expected), value
+    end
+  end
+
   it "marks a regex location as kind regex only while it still reads as a pattern" do
     endpoints = analyze_nginx <<-CONF
       server {
@@ -144,6 +312,7 @@ describe "Nginx Analyzer" do
       server {
           location @fallback { proxy_pass http://fallback; }
           location {{ .Path }} { proxy_pass http://backend; }
+          location __ADMIN_PATH__ { proxy_pass http://backend; }
           location /public { proxy_pass http://public; }
       }
       CONF
@@ -623,7 +792,8 @@ describe "Nginx Analyzer" do
         }
         CONF
 
-      endpoints.size.should eq(5)
+      # `/deny-only` refuses every client before `proxy_pass` runs.
+      endpoints.map(&.url).sort!.should eq(["/allow-all", "/blocklist", "/conditional", "/limit"])
       guards.call(endpoints).each { |_, descriptions| descriptions.should be_empty }
     end
 
