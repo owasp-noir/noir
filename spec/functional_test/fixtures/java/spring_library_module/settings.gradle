@@ -1,1 +1,1 @@
-include 'app', 'lib', 'kts-lib', 'war-app'
+include 'app', 'lib', 'kts-lib', 'war-app', 'portal'

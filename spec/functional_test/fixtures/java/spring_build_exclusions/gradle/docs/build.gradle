@@ -3,3 +3,10 @@ plugins { id 'org.springframework.boot' version '3.3.0' }
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
 }
+
+// Configures the nested modules, not this one: docs keeps springdoc.
+subprojects {
+    configurations.all {
+        exclude group: 'org.springdoc', module: 'springdoc-openapi-starter-webmvc-ui'
+    }
+}
