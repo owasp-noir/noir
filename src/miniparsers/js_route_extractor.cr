@@ -465,8 +465,10 @@ module Noir
         end
 
         endpoints
-      rescue
-        # If parser fails, return empty array
+      rescue e
+        # A parser failure costs the file its routes; say so, or the loss
+        # looks like a file with none.
+        STDERR.puts "Route extraction failed for #{file_path}: #{e.message}" if debug
         [] of Endpoint
       end
     end
@@ -2876,8 +2878,7 @@ module Noir
         open_brace = match.byte_end(0) - 1
         close_brace = JSLiteralScanner.find_matching_brace_at_byte(handler_body, open_brace) || next
         close_paren = JSLiteralScanner.find_matching_paren_at_byte(handler_body, open_paren) || next
-        after_len = [handler_body.bytesize - close_paren - 1, 120].min
-        after_paren = after_len > 0 ? handler_body.byte_slice(close_paren + 1, after_len) : ""
+        after_paren = Noir::TextFile.byte_window(handler_body, close_paren + 1, 120)
         before_paren = handler_body.byte_slice(0, open_paren)
         if after_paren.matches?(/\A(?:\s*:\s*[^{=;]+)?\s*=>/m) ||
            before_paren.matches?(/\bfunction(?:\s+[A-Za-z_$][\w$]*)?\s*\z/)
@@ -2887,9 +2888,7 @@ module Noir
       handler_body.scan(/(?:const|let|var)\s*\{/) do |match|
         open_brace = match.byte_end(0) - 1
         close_brace = JSLiteralScanner.find_matching_brace_at_byte(handler_body, open_brace) || next
-        after_len = [handler_body.bytesize - close_brace - 1, 120].min
-        next unless after_len > 0
-        after_brace = handler_body.byte_slice(close_brace + 1, after_len)
+        after_brace = Noir::TextFile.byte_window(handler_body, close_brace + 1, 120)
         if after_brace.matches?(/\A(?:\s*:\s*[^=;]+)?\s*=\s*(?:req|request|ctx(?:\.request)?)\b(?!\s*[\.\[])/)
           clauses << handler_body.byte_slice(open_brace + 1, close_brace - open_brace - 1)
         end

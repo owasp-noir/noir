@@ -1539,7 +1539,7 @@ class SpringAuthTagger < FrameworkTagger
   private def scan_bean_types(content : String, module_dir : String?)
     clean = Noir::CComments.strip(content)
     clean.scan(/@Bean\b/) do |found|
-      after = clean.byte_slice(found.byte_end(0), [clean.bytesize - found.byte_end(0), 400].min).scrub
+      after = Noir::TextFile.byte_window(clean, found.byte_end(0), 400)
       next if after.matches?(/\A[^{=]*\{\s*return\s+null\s*;?\s*\}/)
       if java = after.match(/\A(?:\s*@[\w.]+(?:\([^)]*\))?)*\s*(?:(?:public|protected|private|static|final)\s+)*([A-Z][\w$]*)(?:\s*<[^>]*>)?\s+[a-z_$][\w$]*\s*\(/)
         @bean_types << {module_dir, java[1]}
@@ -1692,14 +1692,14 @@ class SpringAuthTagger < FrameworkTagger
     block.scan(MATCHERS_CALL) do |match|
       open = match.byte_end(0) - 1
       next unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(block, open)
-      slice_len = Math.min(96, block.bytesize - (close + 1))
-      next unless rule = block.byte_slice(close + 1, slice_len).match(RULE_AFTER_CALL)
+      after_call = Noir::TextFile.byte_window(block, close + 1, 96)
+      next unless rule = after_call.match(RULE_AFTER_CALL)
 
       args = block.byte_slice(open + 1, close - open - 1)
       auth_type = rule[1]
       is_anonymous = auth_type == "anonymous" ||
-                     (auth_type == "hasRole" && block.byte_slice(close + 1, slice_len).matches?(/\A\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
-                     (auth_type == "hasAuthority" && block.byte_slice(close + 1, slice_len).matches?(/\A\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
+                     (auth_type == "hasRole" && after_call.matches?(/\A\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
+                     (auth_type == "hasAuthority" && after_call.matches?(/\A\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
       protected_rule = auth_type != "permitAll" && auth_type != "denyAll" && !is_anonymous
       # An inline `access((authentication, context) -> ..)` that admits only
       # signed-out callers (`!isAuthenticated`) is a public page, not a guard.

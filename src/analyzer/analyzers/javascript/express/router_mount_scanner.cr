@@ -207,7 +207,7 @@ module Analyzer::Javascript
             open_paren = m.byte_end(0) - 1
             close_paren = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, open_paren) || next
             param = content.byte_slice(open_paren + 1, close_paren - open_paren - 1).match(FIRST_PARAM_RE).try(&.[1]) || next
-            rest = content.byte_slice(close_paren + 1, {content.bytesize - close_paren - 1, 8}.min)
+            rest = Noir::TextFile.byte_window(content, close_paren + 1, 8)
             body_start = re == FORWARDER_ARROW_RE ? rest.match(/\A\s*=>\s*\{/) : rest.match(/\A\s*\{/)
             next unless body_start
             open_brace = close_paren + body_start.byte_end(0)
@@ -521,7 +521,7 @@ module Analyzer::Javascript
     # parameter list opens at `head`'s first group.
     private def function_body_after(content : String, head : Regex::MatchData, arrow : Bool) : Tuple(Int32, Int32, String)?
       params_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(content, head.byte_begin(1)) || return
-      rest = content.byte_slice(params_close + 1, {content.bytesize - params_close - 1, 256}.min)
+      rest = Noir::TextFile.byte_window(content, params_close + 1, 256)
       lead = rest.match(arrow ? ARROW_BODY_START : FUNCTION_BODY_START) || return
       open = params_close + 1 + lead.byte_end(0)
       close = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, open) || return
