@@ -772,13 +772,13 @@ class JsMiscAuthTagger < FrameworkTagger
       when '{'.ord, '('.ord, '['.ord then depth += 1
       when '}'.ord, ')'.ord, ']'.ord then depth -= 1
       when 'i'.ord
-        if depth == 0 && (head = body.byte_slice(idx, {body.bytesize - idx, 8}.min).match(/\Aif\s*\(/)) &&
+        if depth == 0 && (head = Noir::TextFile.byte_window(body, idx, 8).match(/\Aif\s*\(/)) &&
            (idx == 0 || !identifier_byte?(bytes[idx - 1]))
           open = idx + head.byte_end(0) - 1
           close = Noir::JSLiteralScanner.find_matching_paren_at_byte(body, open) || return
           cond = body.byte_slice(open + 1, close - open - 1)
           if cond.matches?(FASTIFY_ABSENCE_TEST) && cond.matches?(FASTIFY_CREDENTIAL)
-            consequent = body.byte_slice(close + 1, {body.bytesize - close - 1, 400}.min).lstrip
+            consequent = Noir::TextFile.byte_window(body, close + 1, 400).lstrip
             consequent = consequent.lchop('{').lstrip if consequent.starts_with?('{')
             if consequent.matches?(FASTIFY_THROW_FIRST)
               exits = [] of Int32
@@ -835,7 +835,7 @@ class JsMiscAuthTagger < FrameworkTagger
           text = read_file(file) || next
           if text.includes?("decorateRequest")
             text.scan(FASTIFY_DECORATE_REQUEST) do |m|
-              value = text.byte_slice(m.byte_end(0), {text.bytesize - m.byte_end(0), 64}.min)
+              value = Noir::TextFile.byte_window(text, m.byte_end(0), 64)
               declared << m[1] unless value.matches?(FASTIFY_COMPUTED_DECORATION)
             end
           end

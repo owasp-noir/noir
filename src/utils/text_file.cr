@@ -134,4 +134,16 @@ module Noir::TextFile
   # the re-check is pure overhead. Only pass this for strings that came
   # through `read`, or for slices of one taken at character boundaries.
   MATCH_OPTIONS = Regex::MatchOptions::NO_UTF_CHECK
+
+  # Up to `limit` bytes of `text` from byte `start`, for a bounded look-ahead
+  # past a delimiter. A cut inside a multi-byte character leaves invalid
+  # UTF-8, which PCRE2 refuses to match, so the cut moves back to the
+  # character boundary. `start` must be one itself.
+  def self.byte_window(text : String, start : Int32, limit : Int32) : String
+    finish = Math.min(text.bytesize, start + limit)
+    while finish > start && finish < text.bytesize && (text.byte_at(finish) & 0xC0) == 0x80
+      finish -= 1
+    end
+    finish > start ? text.byte_slice(start, finish - start) : ""
+  end
 end
