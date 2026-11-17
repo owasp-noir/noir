@@ -373,7 +373,8 @@ module Noir
                                        index : FileIndex? = nil,
                                        injected_annotations : Set(String)? = nil,
                                        converted_types : Set(String)? = nil,
-                                       disallowed_fields : Array(String)? = nil) : Array(Param)
+                                       disallowed_fields : Array(String)? = nil,
+                                       injected_types : Set(String)? = nil) : Array(Param)
       index ||= build_file_index(root, source)
       method = find_method(index, class_name, method_name, target_line)
       return [] of Param unless method
@@ -384,7 +385,8 @@ module Noir
       resolved_constants = constants || TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
       model_attributes = index.suppliers[class_name] ||= model_attribute_suppliers(root, source, class_name)
       collect_method_params(method, source, verb, parameter_format, class_fields, resolved_constants, class_name, model_attributes,
-        injected_annotations || Set(String).new, converted_types || Set(String).new, disallowed_fields || [] of String)
+        injected_annotations || Set(String).new, converted_types || Set(String).new, disallowed_fields || [] of String,
+        injected_types || Set(String).new)
     end
 
     # Per-file memo for callers that look up many routes in one parsed
@@ -914,7 +916,8 @@ module Noir
                                       model_attributes = [] of ModelAttributeSupplier,
                                       injected_annotations = Set(String).new,
                                       converted_types = Set(String).new,
-                                      disallowed_fields = [] of String) : Array(Param)
+                                      disallowed_fields = [] of String,
+                                      injected_types = Set(String).new) : Array(Param)
       params = [] of Param
       fparams = Noir::TreeSitter.field(method, "parameters")
       return params unless fparams
@@ -927,7 +930,7 @@ module Noir
 
       Noir::TreeSitter.each_named_child(fparams) do |fp|
         next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
-        current_format = emit_param_for(fp, method, source, verb, current_format, parameter_format, class_fields, constants, current_class, params, model_attributes, injected_annotations, converted_types, disallowed_fields)
+        current_format = emit_param_for(fp, method, source, verb, current_format, parameter_format, class_fields, constants, current_class, params, model_attributes, injected_annotations, converted_types, disallowed_fields, injected_types)
       end
 
       # A JSON body and a form body cannot share one request: a value Spring
@@ -963,7 +966,8 @@ module Noir
                                model_attributes = [] of ModelAttributeSupplier,
                                injected_annotations = Set(String).new,
                                converted_types = Set(String).new,
-                               disallowed_fields = [] of String) : String?
+                               disallowed_fields = [] of String,
+                               injected_types = Set(String).new) : String?
       type_node = Noir::TreeSitter.field(fp, "type")
       name_node = Noir::TreeSitter.field(fp, "name")
       return parameter_format unless type_node && name_node
@@ -978,6 +982,7 @@ module Noir
       ann_node : LibTreeSitter::TSNode? = nil
       injected_param = false
       validated_param = false
+      model_attribute = false
       model_attribute_name : String? = nil
       pageable_default : LibTreeSitter::TSNode? = nil
       if mods = find_modifiers(fp)
@@ -989,7 +994,10 @@ module Noir
           sn = simple_name(Noir::TreeSitter.node_text(n, source))
           injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(sn) || injected_annotations.includes?(sn)
           validated_param = true if sn == "Valid" || sn == "Validated"
-          model_attribute_name = annotation_string_arg(ann, source) if sn == "ModelAttribute"
+          if sn == "ModelAttribute"
+            model_attribute = true
+            model_attribute_name = annotation_string_arg(ann, source)
+          end
           pageable_default = ann if sn == "PageableDefault"
           case sn
           when "PathVariable"
@@ -1030,6 +1038,9 @@ module Noir
       # input — drop it before the implicit-binding path can expand its
       # (often DTO-typed) fields into phantom params.
       return parameter_format if ann_kind.nil? && injected_param
+      # A resolver keyed on the parameter's type supplies it too, unless
+      # `@ModelAttribute`, whose resolver runs first, claims it.
+      return parameter_format if ann_kind.nil? && !model_attribute && injected_types.includes?(simple_type_name(type_name))
       if ann_kind.nil? && !validated_param &&
          supplied_model_attribute_param?(arg_name, type_name, model_attribute_name, model_attributes)
         return parameter_format

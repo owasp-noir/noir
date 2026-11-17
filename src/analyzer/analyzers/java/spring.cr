@@ -169,6 +169,7 @@ module Analyzer::Java
         injected_annotations = injected_annotation_index[project_root]?
         resolver_bound = resolver_injected_annotations(path)
         injected_annotations = (injected_annotations || Set(String).new) | resolver_bound unless resolver_bound.empty?
+        injected_types = resolver_injected_types(path)
         converted_types = converted_type_index[project_root]?
         content = read_file_content(path)
         # ponytail: file-scoped, ignores `@InitBinder("name")` targets and advice selectors.
@@ -234,7 +235,7 @@ module Analyzer::Java
               parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
                 root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index, route.line,
                 constants: file_constants, index: param_index, injected_annotations: injected_annotations,
-                converted_types: converted_types, disallowed_fields: disallowed_fields
+                converted_types: converted_types, disallowed_fields: disallowed_fields, injected_types: injected_types
               )
               merge_route_condition_params(parameters, route.params)
 
@@ -290,7 +291,7 @@ module Analyzer::Java
                 entries = visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).reject do |entry|
                   implementation.annotated_method_names.includes?(entry.route.method_name)
                 end
-                entry_params = interface_route_params(entries, dto_builder, injected_annotations, converted_types)
+                entry_params = interface_route_params(entries, dto_builder, injected_annotations, converted_types, injected_types)
                 entries.each_with_index do |entry, entry_index|
                   entry_route = entry.route
                   implementation.paths.each do |implementation_path|
@@ -652,7 +653,8 @@ module Analyzer::Java
     private def interface_route_params(entries : Array(SpringInterfaceRouteEntry),
                                        dto_builder : Noir::TreeSitterJavaDtoIndex,
                                        injected_annotations : Set(String)?,
-                                       converted_types : Set(String)?) : Array(Array(Param))
+                                       converted_types : Set(String)?,
+                                       injected_types : Set(String)) : Array(Array(Param))
       result = Array(Array(Param)).new(entries.size) { [] of Param }
       indexes_by_path = Hash(String, Array(Int32)).new { |hash, key| hash[key] = [] of Int32 }
       entries.each_with_index { |entry, i| indexes_by_path[entry.path] << i }
@@ -673,7 +675,7 @@ module Analyzer::Java
             result[i] = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
               interface_root, source, route.class_name, route.method_name,
               route.verb, parameter_format, dto_index, route.line, constants: constants, index: param_index,
-              injected_annotations: injected_annotations, converted_types: converted_types
+              injected_annotations: injected_annotations, converted_types: converted_types, injected_types: injected_types
             )
           end
         end
