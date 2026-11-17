@@ -557,6 +557,9 @@ module Analyzer::Java
     # need their dependency in a build file, so config alone emits nothing.
     private def spring_provided_endpoints(project_root : String, values : Hash(String, String), base_path : String) : Array(Endpoint)
       endpoints = spring_static_endpoints(project_root, values, base_path)
+      # A library's static files are served by the app that depends on it;
+      # its actuator and springdoc are the app's to report.
+      return endpoints if spring_library_module?(project_root)
 
       if evidence = spring_build_dependency(project_root, SPRING_ACTUATOR_DEP_RE)
         # A separate management port drops the servlet context path.
@@ -654,6 +657,24 @@ module Analyzer::Java
     # The text between the `{` at `open_idx` and its matching `}`.
     private def self.block_body(code : String, open_idx : Int32) : String
       code[(open_idx + 1)...(find_matching_delimiter(code, open_idx, '{', '}') || code.size)]
+    end
+
+    # `bootJar { enabled = false }`, `tasks.bootJar { ... }`,
+    # `tasks.named("bootJar") { ... }`, `tasks.getByName<BootJar>("bootJar") { ... }`,
+    # `bootJar.enabled = false`.
+    SPRING_BOOT_JAR_DISABLED_RE = /\bbootJar\b["']?\s*\)?\s*(?:\{[^{}]*?\b(?:enabled|isEnabled)\s*=\s*false\b|\.\s*(?:enabled|isEnabled)\s*=\s*false\b)/
+    # The `war` plugin or a `bootWar` task: the app ships as a WAR instead.
+    GRADLE_WAR_RE = /\bid\s*\(?\s*["']war["']|\bplugin\s*:\s*["']war["']|^\s*war\s*$|\bbootWar\b/m
+
+    # Whether the module's own Gradle build disables the Boot application
+    # archive without building a WAR: a library, whatever classes it holds.
+    private def spring_library_module?(project_root : String) : Bool
+      {"build.gradle", "build.gradle.kts"}.any? do |name|
+        file = File.join(project_root, name)
+        next false unless File.exists?(file)
+        build = read_file_content(file).gsub(SPRING_BUILD_NOISE_RE, " ")
+        build.matches?(SPRING_BOOT_JAR_DISABLED_RE) && !build.matches?(GRADLE_WAR_RE)
+      end
     end
 
     # The module's build files, then each parent directory's up to the scan base.
