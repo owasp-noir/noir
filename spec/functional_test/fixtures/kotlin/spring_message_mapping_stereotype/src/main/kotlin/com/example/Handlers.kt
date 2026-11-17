@@ -43,6 +43,19 @@ class ExternalHandlers {
     }
 }
 
+// Spring finds a mapping an interface declares on the controller that
+// implements it.
+interface PingMessages {
+    @MessageMapping("/ping")
+    fun ping(text: String)
+}
+
+@Controller
+class PingHandlers : PingMessages {
+    override fun ping(text: String) {
+    }
+}
+
 // Not a @Controller: Spring's messaging handler detection never sees it.
 @Component
 class RelayService {
