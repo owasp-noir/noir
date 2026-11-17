@@ -21,9 +21,11 @@ require "../../func_spec.cr"
 #   parameter type, so it is not request input; `@ModelAttribute` still binds
 #   it, and a resolver that also needs an annotation (`@Tenant`) leaves the
 #   bare type to Spring.
+# - paging_field: a `Pageable` / `PageRequest` / `Sort` field of a command
+#   object takes no single request value.
 tester = FunctionalTester.new("fixtures/java/spring_request_params/", {
   :techs     => 1,
-  :endpoints => 16,
+  :endpoints => 17,
 }, [] of Endpoint)
 tester.perform_tests
 
@@ -33,6 +35,7 @@ it "reports the wire names and locations Spring binds", tags: "functional" do
   end
   summary.sort!.should eq([
     {"GET /gadgets", ["computedLabel:query", "label:query", "nickname:query", "pinned:query"]},
+    {"GET /gizmos/search", ["keyword:query", "page:query", "range.min:query", "size:query", "sort:query"]},
     {"GET /posts/{postId}", ["postId:path"]},
     {"GET /stores/bound", ["shopId:query", "shopName:query"]},
     {"GET /stores/{storeId}/widgets", ["limit:query", "storeId:path"]},
