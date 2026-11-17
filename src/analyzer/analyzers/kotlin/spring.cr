@@ -775,7 +775,8 @@ module Analyzer::Kotlin
         webflux_base_path = (path_configs[project_root]? || SpringPathConfig.new).web_base_path
 
         routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes_from(
-          root, content, string_constants, local_string_constants
+          root, content, string_constants, local_string_constants,
+          spring6_module?(project_root) ? spring_controller_stereotypes(path) : nil
         )
         implementations = Noir::TreeSitterKotlinRouteExtractor.extract_controller_interface_implementations_from(
           root, content, string_constants, local_string_constants
