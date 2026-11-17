@@ -1,0 +1,10 @@
+plugins { id 'org.springframework.boot' version '3.3.0' }
+
+// Excludes the old UI artifact; the parent hands down another one.
+configurations.all {
+    exclude group: 'org.springdoc', module: 'springdoc-openapi-ui'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+}
