@@ -218,7 +218,8 @@ module Analyzer::Java
             param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
             model_attribute_methods = nil.as(Hash(String, Array(Tuple(String, Array(String))))?)
 
-            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants).each do |route|
+            controller_stereotypes = spring6_module?(project_root) ? spring_controller_stereotypes(path) : nil
+            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants, controller_stereotypes).each do |route|
               is_feign_client = feign_clients.includes?(route.class_name)
               is_http_exchange_client = http_exchange_clients.includes?(route.class_name)
               is_internal_client = is_feign_client || is_http_exchange_client

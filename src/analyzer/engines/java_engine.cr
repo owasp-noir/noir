@@ -604,23 +604,69 @@ module Analyzer::Java
     #
     # ponytail: Gradle convention plugins (`buildSrc`) are not followed.
     private def spring_build_dependency(project_root : String, pattern : Regex) : PathInfo?
+      each_spring_build_file(project_root) do |file|
+        content = read_file_content(file)
+        next unless content_matches?(content, pattern)
+        masked = content.gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' '))
+        if match = pattern.match(masked)
+          return PathInfo.new(file, line_number_for_index(masked, match.begin(0)))
+        end
+      end
+      nil
+    end
+
+    # The module's build files, then each parent directory's up to the scan base.
+    private def each_spring_build_file(project_root : String, &)
       dir = project_root
       while within_scan_base?(dir)
         {"pom.xml", "build.gradle", "build.gradle.kts"}.each do |name|
           file = File.join(dir, name)
-          next unless File.exists?(file)
-          content = read_file_content(file)
-          next unless content_matches?(content, pattern)
-          masked = content.gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' '))
-          if match = pattern.match(masked)
-            return PathInfo.new(file, line_number_for_index(masked, match.begin(0)))
-          end
+          yield file if File.exists?(file)
         end
         parent = File.dirname(dir)
         break if parent == dir
         dir = parent
       end
+    end
+
+    # Literal Spring Boot / Spring Framework versions (major in group 1): the
+    # Maven parent or BOM, the `spring-boot.version` property, the Gradle
+    # plugin (Groovy and Kotlin DSL) and its classpath coordinate.
+    SPRING_BOOT_VERSION_RES = [
+      %r{<artifactId>\s*spring-boot-(?:starter-parent|dependencies)\s*</artifactId>\s*<version>\s*(\d+)\.},
+      /<spring-boot\.version>\s*(\d+)\./,
+      /\bid\s*\(?\s*["']org\.springframework\.boot["']\s*\)?\s*version\s*\(?\s*["'](\d+)\./,
+      /\borg\.springframework\.boot:spring-boot-(?:gradle-plugin|dependencies|starter-parent):(\d+)\./,
+      /\bspringBootVersion\s*=\s*["'](\d+)\./,
+    ]
+    SPRING_FRAMEWORK_VERSION_RES = [
+      %r{<artifactId>\s*spring-(?:framework-bom|webmvc|context)\s*</artifactId>\s*<version>\s*(\d+)\.},
+      /<spring(?:-framework)?\.version>\s*(\d+)\./,
+      /\borg\.springframework:spring-(?:framework-bom|webmvc|context):(\d+)\./,
+    ]
+    SPRING_BUILD_COMMENT_RE = /<!--.*?-->|\/\*.*?\*\/|\/\/[^\n]*/m
+
+    # Whether a build file pins Spring Boot 3+ / Spring Framework 6+; nil when
+    # it pins neither as a literal (a property, a version catalog).
+    def self.spring6_build?(content : String) : Bool?
+      code = content.gsub(SPRING_BUILD_COMMENT_RE, " ")
+      SPRING_BOOT_VERSION_RES.each { |pattern| code.match(pattern).try { |found| return found[1].to_i >= 3 } }
+      SPRING_FRAMEWORK_VERSION_RES.each { |pattern| code.match(pattern).try { |found| return found[1].to_i >= 6 } }
       nil
+    end
+
+    @spring6_modules = Hash(String, Bool).new
+
+    # Whether the module's build (its own file, else the nearest parent's
+    # that says) is Spring 6+. An unknown version is not.
+    private def spring6_module?(project_root : String) : Bool
+      @spring6_modules.fetch(project_root) do
+        found = nil
+        each_spring_build_file(project_root) do |file|
+          break unless (found = JavaEngine.spring6_build?(read_file_content(file))).nil?
+        end
+        @spring6_modules[project_root] = found || false
+      end
     end
 
     # Files that configure an `HttpSecurity` / `ServerHttpSecurity` chain.
@@ -1049,10 +1095,12 @@ module Analyzer::Java
       setups[project_root]?
     end
 
-    # What makes a class a Spring handler bean. Spring Data REST's two map
-    # through its own handler mapping, whatever Spring version.
-    SPRING_CONTROLLER_STEREOTYPES = Set{"Controller", "RestController", "RepositoryRestController", "BasePathAwareController"}
-    SPRING_ANNOTATION_DECL_RE     = /@interface\s|\bannotation\s+class\s/
+    # What makes a class a Spring handler bean. Spring Data REST's two and
+    # actuator's (deprecated) controller endpoints map through their own
+    # handler mappings, whatever Spring version.
+    SPRING_CONTROLLER_STEREOTYPES = Set{"Controller", "RestController", "RepositoryRestController", "BasePathAwareController",
+                                        "ControllerEndpoint", "RestControllerEndpoint"}
+    SPRING_ANNOTATION_DECL_RE = /@interface\s|\bannotation\s+class\s/
     # A Java `@interface X` / Kotlin `annotation class X` with the
     # annotations and modifiers in front of it (arguments nest).
     SPRING_ANNOTATION_HEADER_RE = /(?<header>(?:@(?!interface\b)[\w$.]+\s*(?<args>\((?:[^()"]++|"(?:[^"\\]|\\.)*+"|(?&args))*+\))?\s*|\b(?:public|internal|private|protected|open|final|abstract)\s+)*+)(?:@interface|annotation\s+class)\s+(?<name>[A-Za-z_$][\w$]*)/
