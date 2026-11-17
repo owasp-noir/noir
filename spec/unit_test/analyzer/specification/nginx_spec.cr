@@ -238,6 +238,24 @@ describe "Nginx Analyzer" do
     ])
   end
 
+  it "reads only unresolved template tokens as placeholders" do
+    {
+      "__SERVER_NAME__"                 => true,
+      "${SERVER_NAME}"                  => true,
+      "$hostname"                       => true,
+      "<server_name>"                   => true,
+      "{{ .Values.host }}"              => true,
+      "{{ .Sub }}.example.org"          => true,
+      "PLACEHOLDER"                     => false,
+      "widgets.example.org"             => false,
+      "${PREFIX}/api"                   => false,
+      "~^(?<sub>\\w+)\\.example\\.org$" => false,
+      "_internal_"                      => false,
+    }.each do |value, expected|
+      Analyzer::Specification::Nginx.template_token?(value).should eq(expected), value
+    end
+  end
+
   it "marks a regex location as kind regex only while it still reads as a pattern" do
     endpoints = analyze_nginx <<-CONF
       server {

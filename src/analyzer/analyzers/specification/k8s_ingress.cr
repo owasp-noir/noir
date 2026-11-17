@@ -86,7 +86,7 @@ module Analyzer::Specification
       (hosts.empty? ? [""] : hosts).each do |host|
         Nginx.new(@raw_options).snippet_endpoints(snippet, file, first_line).each do |endpoint|
           endpoint.tags.map! { |tag| tag.tagger == nginx_access ? declared_access_tag(tag.description, tag.path, tag.line) : tag }
-          endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?
+          endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty? || Nginx.template_token?(host)
           endpoint.add_tag(Tag.new("ingress-source", "server-snippet", "k8s_ingress_analyzer"))
           endpoint.protocol = "https" if !host.empty? && tls_hosts.includes?(host)
           @result << endpoint
@@ -222,7 +222,7 @@ module Analyzer::Specification
       endpoint = Endpoint.new(path, METHOD_ANY, details)
       endpoint.kind = "regex" if regex
       endpoint.add_tag(Tag.new("ingress-path-type", path_type.downcase, "k8s_ingress_analyzer"))
-      endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?
+      endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty? || Nginx.template_token?(host)
       endpoint.add_tag(Tag.new("ingress-source", origin, "k8s_ingress_analyzer"))
       endpoint.add_tag(access) if access
       endpoint.protocol = "https" if !host.empty? && tls_hosts.includes?(host)

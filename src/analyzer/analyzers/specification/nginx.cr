@@ -31,6 +31,10 @@ module Analyzer::Specification
     TEMPLATE_CLOSE_RE = /\{\{-?\s*end\b/
     SETTING_NOTE      = " (a setting can make it public)"
 
+    # A value the deploy fills in: a `{{ }}` action anywhere in it, or the
+    # whole value as `__NAME__`, `${NAME}`, `$NAME` or `<name>`.
+    TEMPLATE_TOKEN_RE = /\A(?:__\w+__|\$\{\w+\}|\$\w+|<[\w.-]+>)\z/
+
     RETURN_REDIRECT_RE  = /\Areturn\s+(30[12378])\s+(\S+)\z/
     REWRITE_REDIRECT_RE = /\Arewrite\s+\S+\s+(\S+)\s+(permanent|redirect)\z/
 
@@ -273,7 +277,7 @@ module Analyzer::Specification
           state.server_tls = false
         elsif m = SERVER_NAME_RE.match(balanced)
           # `_` and `""` are the conventional catch-all names, not hosts.
-          m[1].split(/\s+/).each { |n| state.server_names << n unless n.in?("", "_", %(""), "''") }
+          m[1].split(/\s+/).each { |n| state.server_names << n unless n.in?("", "_", %(""), "''") || Nginx.template_token?(n) }
         elsif balanced.matches?(LISTEN_RE)
           state.server_tls = true if balanced.matches?(LISTEN_TLS_RE)
         elsif m = INCLUDE_RE.match(balanced)
@@ -518,7 +522,11 @@ module Analyzer::Specification
     end
 
     private def internal_location?(path : String) : Bool
-      path.starts_with?("@") || path.includes?("{{") || path.includes?("}}")
+      path.starts_with?("@") || Nginx.template_token?(path)
+    end
+
+    def self.template_token?(value : String) : Bool
+      value.includes?("{{") || value.includes?("}}") || value.matches?(TEMPLATE_TOKEN_RE)
     end
 
     private def emit_location(file : String, path : String, modifier : String, method : String, hosts : Array(String), tls : Bool, line : Int32)
