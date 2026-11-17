@@ -61,7 +61,6 @@ UNTESTED_DETECTORS = [
   "go/cli",
   "groovy/cli",
   "haskell/cli",
-  "java/cli",
   "javascript/cli",
   "javascript/sveltekit",
   "kotlin/cli",

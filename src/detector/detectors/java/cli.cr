@@ -11,12 +11,15 @@ module Detector::Java
     LIB_IMPORTS = [
       "picocli.",
       "org.kohsuke.args4j",
-      "com.beust.jcommander",
       "org.apache.commons.cli",
       "com.github.rvesse.airline",
       "io.airlift.airline",
       "joptsimple.",
     ]
+
+    # JCommander's API, not its `com.beust.jcommander.internal.*` helpers.
+    # Mirrored in Analyzer::Java::Cli.
+    JCOMMANDER_IMPORT_RE = /\bimport\s+com\.beust\.jcommander\.(?:\*|JCommander|Parameters?)\s*;/
 
     # NOTE: deliberately no `new\s+OptionParser\s*\(` alternative here — jopt-simple's
     # `OptionParser` is a common, generic class name apps also give their own
@@ -29,6 +32,7 @@ module Detector::Java
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".java")
       return true if LIB_IMPORTS.any? { |marker| file_contents.includes?(marker) }
+      return true if file_contents.matches?(JCOMMANDER_IMPORT_RE)
       content_matches?(file_contents, USAGE)
     end
   end
