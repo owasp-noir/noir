@@ -63,10 +63,23 @@ expected_endpoints = [
   # SharedOrderResource.java — @Path from an interface in another package.
   Endpoint.new("/services/shared-orders/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/simple-api/simple", "GET"),
+  # NoteResource.java — Jackson skips a `transient` field unless a setter or
+  # `@JsonProperty` names the property.
+  Endpoint.new("/services/notes", "POST", [
+    Param.new("title", "", "json"),
+    Param.new("author", "", "json"),
+    Param.new("color", "", "json"),
+  ]),
   chat_ws_endpoint,
 ]
 
-FunctionalTester.new("fixtures/java/jaxrs/", {
+tester = FunctionalTester.new("fixtures/java/jaxrs/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "drops transient fields Jackson does not bind", tags: "functional" do
+  notes = tester.endpoints.find! { |endpoint| endpoint.url == "/services/notes" && endpoint.method == "POST" }
+  notes.params.map(&.name).sort!.should eq(["author", "color", "title"])
+end

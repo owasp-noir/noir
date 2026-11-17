@@ -36,4 +36,10 @@ public class IgnoredEntity {
     public String getNick() { return nick; }
     @JsonProperty("nickname")
     public void setNick(String nick) { this.nick = nick; }
+
+    public int mask;
+
+    // Takes an argument, so it is not the getter of `mask`.
+    @JsonIgnore
+    public boolean isMask(int bit) { return (mask & bit) == bit; }
 }

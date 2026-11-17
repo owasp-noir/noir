@@ -1101,7 +1101,7 @@ module Analyzer::Java
     JAVA_STRING_CONSTANT_RE = /\bstatic\s+final\s+(?:java\.lang\.)?String\b|\bfinal\s+static\s+(?:java\.lang\.)?String\b|\binterface\s/
 
     @java_project_constants : Hash(String, Hash(String, String))? = nil
-    @resolver_injected_annotations : Hash(String, Set(String))? = nil
+    @resolver_supplied : Hash(String, {Set(String), Set(String)})? = nil
     @jackson_defaults = Hash(String, {String?, Bool}).new
 
     # The module's `spring.jackson.property-naming-strategy` (normalised) and
@@ -1142,6 +1142,35 @@ module Analyzer::Java
                                      "RequestHeader", "RequestPart", "PathVariable", "CookieValue", "MatrixVariable"}
     RESOLVER_SUPPORTS_RE = /\b(?:has|get)ParameterAnnotation\s*\(\s*(?:[\w.]+\.)?(\w+)\s*(?:\.\s*class|::\s*class(?:\s*\.\s*java)?)\b/
 
+    # A `supportsParameter` test of the handler parameter's type against one
+    # class: `X.class.isAssignableFrom(p.getParameterType())`,
+    # `p.getParameterType().equals(X.class)` / `== X.class`, and the Kotlin
+    # `X::class.java` / `p.parameterType` spellings.
+    RESOLVER_CLASS_LITERAL  = /(?:[\w.]+\.)?(\w+)\s*(?:\.\s*class|::\s*class\s*\.\s*java)\b/
+    RESOLVER_PARAMETER_TYPE = /\w+\s*\.\s*(?:getParameterType\s*\(\s*\)|parameterType\b)/
+    RESOLVER_TYPE_TEST_RE   = /#{RESOLVER_CLASS_LITERAL}\s*\.\s*(?:isAssignableFrom|equals)\s*\(\s*#{RESOLVER_PARAMETER_TYPE}\s*\)|#{RESOLVER_PARAMETER_TYPE}\s*(?:\.\s*equals\s*\(\s*#{RESOLVER_CLASS_LITERAL}\s*\)|==\s*#{RESOLVER_CLASS_LITERAL})/
+    # Where a `supportsParameter` body ends: the next member, or `resolveArgument`.
+    RESOLVER_BODY_END_RE = /\n\s*(?:@\w|(?:public|protected|private|override|fun)\b)|\bresolveArgument\b/
+
+    # Simple names of the types a resolver's `supportsParameter` accepts on
+    # type alone. A body that also tests an annotation, joins tests with
+    # `&&` or negates one accepts only some arguments of the type, so it
+    # contributes nothing.
+    # ponytail: textual body slice, not a parse; misses a type read into a local first.
+    def self.resolver_supplied_types(content : String) : Array(String)
+      types = [] of String
+      content.scan(/\bsupportsParameter\s*\(/) do |match|
+        body = content[match.end..].split(RESOLVER_BODY_END_RE, 2).first
+        next if body.includes?("&&") || body.includes?("ParameterAnnotation") || body.matches?(/!(?!=)/)
+        body.scan(RESOLVER_TYPE_TEST_RE) do |test|
+          if name = test[1]? || test[2]? || test[3]?
+            types << name
+          end
+        end
+      end
+      types
+    end
+
     # Parameter annotations a custom `HandlerMethodArgumentResolver` binds
     # (`supportsParameter` -> `parameter.hasParameterAnnotation(CurrentAccount.class)`),
     # from every `.java`/`.kt` source under `path`'s configured base. The
@@ -1149,18 +1178,31 @@ module Analyzer::Java
     # scan base, not module: the resolver usually lives in a shared module.
     # ponytail: simple names, not import-resolved.
     private def resolver_injected_annotations(path : String) : Set(String)
-      tables = @resolver_injected_annotations ||= begin
-        by_base = Hash(String, Set(String)).new
+      resolver_supplied(path)[0]
+    end
+
+    # Parameter types a resolver supplies (`resolver_supplied_types`), on
+    # the same scope as `resolver_injected_annotations`.
+    private def resolver_injected_types(path : String) : Set(String)
+      resolver_supplied(path)[1]
+    end
+
+    private def resolver_supplied(path : String) : {Set(String), Set(String)}
+      tables = @resolver_supplied ||= begin
+        by_base = Hash(String, {Set(String), Set(String)}).new
         (get_files_by_extension(".java") + get_files_by_extension(".kt")).each do |file|
           next if JavaEngine.test_path?(base_relative_path(file))
           content = read_file_content(file)
-          next unless content.includes?("ParameterAnnotation") && content.includes?("HandlerMethodArgumentResolver")
-          names = by_base[configured_base_for(file)] ||= Set(String).new
-          content.scan(RESOLVER_SUPPORTS_RE) { |match| names << match[1] unless SPRING_BINDING_ANNOTATIONS.includes?(match[1]) }
+          next unless content.includes?("HandlerMethodArgumentResolver")
+          names, types = by_base[configured_base_for(file)] ||= {Set(String).new, Set(String).new}
+          if content.includes?("ParameterAnnotation")
+            content.scan(RESOLVER_SUPPORTS_RE) { |match| names << match[1] unless SPRING_BINDING_ANNOTATIONS.includes?(match[1]) }
+          end
+          types.concat(JavaEngine.resolver_supplied_types(content))
         end
         by_base
       end
-      tables[configured_base_for(path)]? || Set(String).new
+      tables[configured_base_for(path)]? || {Set(String).new, Set(String).new}
     end
 
     # Qualified (`Paths.API`, `com.ex.Paths.API`) String constants from

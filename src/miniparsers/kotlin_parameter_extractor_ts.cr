@@ -302,11 +302,13 @@ module Noir
                                        class_fields : Hash(String, Array(FieldInfo)),
                                        string_constants = Hash(String, String).new,
                                        local_string_constants = Hash(String, String).new,
-                                       injected_annotations = Set(String).new) : Array(Param)
+                                       injected_annotations = Set(String).new,
+                                       injected_types = Set(String).new) : Array(Param)
       method = find_function(root, source, class_name, method_name)
       return [] of Param unless method
       extract_method_parameters_from_method(
-        method, source, verb, parameter_format, class_fields, string_constants, local_string_constants, injected_annotations
+        method, source, verb, parameter_format, class_fields, string_constants, local_string_constants, injected_annotations,
+        injected_types
       )
     end
 
@@ -317,9 +319,11 @@ module Noir
                                               class_fields : Hash(String, Array(FieldInfo)),
                                               string_constants = Hash(String, String).new,
                                               local_string_constants = Hash(String, String).new,
-                                              injected_annotations = Set(String).new) : Array(Param)
+                                              injected_annotations = Set(String).new,
+                                              injected_types = Set(String).new) : Array(Param)
       params = collect_method_params(
-        method, source, verb, parameter_format, class_fields, string_constants, local_string_constants, injected_annotations
+        method, source, verb, parameter_format, class_fields, string_constants, local_string_constants, injected_annotations,
+        injected_types
       )
       append_constraint_params(method, source, verb, params, string_constants, local_string_constants)
       params
@@ -993,7 +997,8 @@ module Noir
                                       class_fields : Hash(String, Array(FieldInfo)),
                                       string_constants : Hash(String, String),
                                       local_string_constants : Hash(String, String),
-                                      injected_annotations = Set(String).new) : Array(Param)
+                                      injected_annotations = Set(String).new,
+                                      injected_types = Set(String).new) : Array(Param)
       params = [] of Param
       fparams = function_value_parameters(method)
       return params unless fparams
@@ -1008,7 +1013,7 @@ module Noir
         when "parameter"
           current_format = emit_param_for(
             child, pending_modifiers, source, verb, current_format, parameter_format, class_fields, params,
-            string_constants, local_string_constants, injected_annotations
+            string_constants, local_string_constants, injected_annotations, injected_types
           )
           pending_modifiers = nil
         end
@@ -1044,7 +1049,8 @@ module Noir
                                sink : Array(Param),
                                string_constants : Hash(String, String),
                                local_string_constants : Hash(String, String),
-                               injected_annotations : Set(String)) : String?
+                               injected_annotations : Set(String),
+                               injected_types : Set(String)) : String?
       arg_name = ""
       type_name = ""
       type_text = ""
@@ -1067,12 +1073,14 @@ module Noir
       ann_kind = nil
       ann_node : LibTreeSitter::TSNode? = nil
       injected_param = false
+      model_attribute = false
       validation_groups = active_validation_groups(modifiers, source)
       if modifiers
         Noir::TreeSitter.each_named_child(modifiers) do |ann|
           next unless Noir::TreeSitter.node_type(ann) == "annotation"
           name = annotation_simple_name(ann, source)
           injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(name) || injected_annotations.includes?(name)
+          model_attribute = true if name == "ModelAttribute"
           case name
           when "PathVariable", "DestinationVariable"
             ann_kind = :path
@@ -1107,6 +1115,9 @@ module Noir
       # the implicit-binding path can expand its (often DTO-typed) fields
       # into phantom params.
       return parameter_format if ann_kind.nil? && injected_param
+      # A resolver keyed on the parameter's type supplies it too, unless
+      # `@ModelAttribute`, whose resolver runs first, claims it.
+      return parameter_format if ann_kind.nil? && !model_attribute && injected_types.includes?(type_name)
 
       effective_format = parameter_format
       # A carried-over "header"/"cookie" describes how the *previous*

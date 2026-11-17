@@ -83,6 +83,13 @@ module Noir
     # Request parameters `PageableHandlerMethodArgumentResolver` reads.
     PAGEABLE_PARAMS = {"page", "size", "sort"}
 
+    # Spring Data paging types. No single request value converts to one, so
+    # a command-object field of such a type binds nothing. Wider than
+    # `pageable_type?` on purpose: a `Sort` handler argument binds `sort`
+    # through its own resolver, and a `PageRequest` one is not resolved as a
+    # `Pageable` at all.
+    PAGING_TYPES = Set{"Pageable", "PageRequest", "Sort"}
+
     # Lombok class-level annotations that synthesise setters (or an
     # all-args constructor) for every instance field at compile time.
     # The generated members never appear in source, so a DTO annotated
@@ -135,8 +142,8 @@ module Noir
       # `TreeSitterJavaDtoIndex` replaces such a field with those properties.
       # A nil affix was written as something other than a string literal.
       getter unwrap : {String?, String?}?
-      # Jackson `@JsonIgnore` on the field or one of its accessors: a JSON
-      # body never binds it. Form/query binding (`WebDataBinder`) ignores
+      # Jackson `@JsonIgnore` on the field or one of its accessors, or a
+      # `transient` field nothing else names: a JSON body never binds it. Form/query binding (`WebDataBinder`) ignores
       # Jackson annotations, so it still binds there.
       getter? json_ignored : Bool
 
@@ -373,7 +380,8 @@ module Noir
                                        index : FileIndex? = nil,
                                        injected_annotations : Set(String)? = nil,
                                        converted_types : Set(String)? = nil,
-                                       disallowed_fields : Array(String)? = nil) : Array(Param)
+                                       disallowed_fields : Array(String)? = nil,
+                                       injected_types : Set(String)? = nil) : Array(Param)
       index ||= build_file_index(root, source)
       method = find_method(index, class_name, method_name, target_line)
       return [] of Param unless method
@@ -384,7 +392,8 @@ module Noir
       resolved_constants = constants || TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
       model_attributes = index.suppliers[class_name] ||= model_attribute_suppliers(root, source, class_name)
       collect_method_params(method, source, verb, parameter_format, class_fields, resolved_constants, class_name, model_attributes,
-        injected_annotations || Set(String).new, converted_types || Set(String).new, disallowed_fields || [] of String)
+        injected_annotations || Set(String).new, converted_types || Set(String).new, disallowed_fields || [] of String,
+        injected_types || Set(String).new)
     end
 
     # Per-file memo for callers that look up many routes in one parsed
@@ -794,6 +803,9 @@ module Noir
       # `@JsonIgnore` getter, `@JsonProperty` setter).
       json_ignored = Set(String).new
       json_kept = Set(String).new
+      # Jackson does not read a `transient` field as a property; a setter
+      # (written or Lombok) or `@JsonProperty` still binds it.
+      transient_fields = Set(String).new
       # `@JsonProperty("hh") setH(..)`: the accessor names the property's key.
       renamed = Hash(String, String).new
 
@@ -805,7 +817,7 @@ module Noir
           # request body populates — skip them. This also keeps Lombok
           # `@Data` from promoting constants to params, since Lombok
           # never synthesises accessors for static fields.
-          next if field_static?(member, source)
+          next if field_modifier?(member, source, "static")
           access = modifier_access(member, source)
           type_node = Noir::TreeSitter.field(member, "type")
           type_name = type_node ? Noir::TreeSitter.node_text(type_node, source) : ""
@@ -821,13 +833,22 @@ module Noir
           declared << {name, access, init, json_property_name(member, source), type_name, json_unwrap(member, source)}
           json_ignored << name if json_ignore?(member, source)
           json_kept << name if annotation_node_on(member, source, "JsonProperty")
+          if field_modifier?(member, source, "transient") && !annotation_node_on(member, source, "Setter")
+            transient_fields << name
+          end
         when "method_declaration"
           mn = Noir::TreeSitter.field(member, "name")
           next unless mn
           name = Noir::TreeSitter.node_text(mn, source)
           accessor = name.match(/\A(?:get|set|is)([A-Z]\w*)\z/)
           property = accessor.try { |found| found[1][0].downcase.to_s + found[1][1..] }
-          json_ignored << property if property && json_ignore?(member, source)
+          # `isMask(int bit)` is no getter: Jackson links a method to a
+          # property only when a getter takes nothing and a setter one value.
+          arity = 0
+          if parameters = Noir::TreeSitter.field(member, "parameters")
+            Noir::TreeSitter.each_named_child(parameters) { arity += 1 }
+          end
+          json_ignored << property if property && arity == (name.starts_with?("set") ? 1 : 0) && json_ignore?(member, source)
           # `@JsonSetter("encryptedValue") setEncryptedValueBase64(..)` binds
           # the key it names, whatever the method is called.
           {"JsonProperty", "JsonSetter"}.each do |binding|
@@ -850,6 +871,7 @@ module Noir
         has_setter = lombok_setters || setter_targets.includes?(name)
         json_name ||= renamed[name]?
         ignored = json_ignored.includes?(name) && !json_kept.includes?(name) && !(json_name && json_kept.includes?(json_name))
+        ignored ||= transient_fields.includes?(name) && !has_setter && !json_kept.includes?(name)
         FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored)
       end
     end
@@ -865,14 +887,14 @@ module Noir
       false
     end
 
-    # True when a `field_declaration`'s modifier list includes `static`.
-    private def field_static?(decl : LibTreeSitter::TSNode, source : String) : Bool
+    # True when a `field_declaration`'s modifier list includes `keyword`.
+    private def field_modifier?(decl : LibTreeSitter::TSNode, source : String, keyword : String) : Bool
       mods = find_modifiers(decl)
       return false unless mods
       count = LibTreeSitter.ts_node_child_count(mods)
       count.times do |i|
         child = LibTreeSitter.ts_node_child(mods, i.to_u32)
-        return true if Noir::TreeSitter.node_text(child, source) == "static"
+        return true if Noir::TreeSitter.node_text(child, source) == keyword
       end
       false
     end
@@ -907,7 +929,8 @@ module Noir
                                       model_attributes = [] of ModelAttributeSupplier,
                                       injected_annotations = Set(String).new,
                                       converted_types = Set(String).new,
-                                      disallowed_fields = [] of String) : Array(Param)
+                                      disallowed_fields = [] of String,
+                                      injected_types = Set(String).new) : Array(Param)
       params = [] of Param
       fparams = Noir::TreeSitter.field(method, "parameters")
       return params unless fparams
@@ -920,7 +943,7 @@ module Noir
 
       Noir::TreeSitter.each_named_child(fparams) do |fp|
         next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
-        current_format = emit_param_for(fp, method, source, verb, current_format, parameter_format, class_fields, constants, current_class, params, model_attributes, injected_annotations, converted_types, disallowed_fields)
+        current_format = emit_param_for(fp, method, source, verb, current_format, parameter_format, class_fields, constants, current_class, params, model_attributes, injected_annotations, converted_types, disallowed_fields, injected_types)
       end
 
       # A JSON body and a form body cannot share one request: a value Spring
@@ -956,7 +979,8 @@ module Noir
                                model_attributes = [] of ModelAttributeSupplier,
                                injected_annotations = Set(String).new,
                                converted_types = Set(String).new,
-                               disallowed_fields = [] of String) : String?
+                               disallowed_fields = [] of String,
+                               injected_types = Set(String).new) : String?
       type_node = Noir::TreeSitter.field(fp, "type")
       name_node = Noir::TreeSitter.field(fp, "name")
       return parameter_format unless type_node && name_node
@@ -971,6 +995,7 @@ module Noir
       ann_node : LibTreeSitter::TSNode? = nil
       injected_param = false
       validated_param = false
+      model_attribute = false
       model_attribute_name : String? = nil
       pageable_default : LibTreeSitter::TSNode? = nil
       if mods = find_modifiers(fp)
@@ -982,7 +1007,10 @@ module Noir
           sn = simple_name(Noir::TreeSitter.node_text(n, source))
           injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(sn) || injected_annotations.includes?(sn)
           validated_param = true if sn == "Valid" || sn == "Validated"
-          model_attribute_name = annotation_string_arg(ann, source) if sn == "ModelAttribute"
+          if sn == "ModelAttribute"
+            model_attribute = true
+            model_attribute_name = annotation_string_arg(ann, source)
+          end
           pageable_default = ann if sn == "PageableDefault"
           case sn
           when "PathVariable"
@@ -1023,6 +1051,9 @@ module Noir
       # input — drop it before the implicit-binding path can expand its
       # (often DTO-typed) fields into phantom params.
       return parameter_format if ann_kind.nil? && injected_param
+      # A resolver keyed on the parameter's type supplies it too, unless
+      # `@ModelAttribute`, whose resolver runs first, claims it.
+      return parameter_format if ann_kind.nil? && !model_attribute && injected_types.includes?(simple_type_name(type_name))
       if ann_kind.nil? && !validated_param &&
          supplied_model_attribute_param?(arg_name, type_name, model_attribute_name, model_attributes)
         return parameter_format
@@ -1153,6 +1184,7 @@ module Noir
         fields.each do |field|
           next unless json_body || field.access_modifier == "public" || field.has_setter?
           next if json_body && field.json_ignored?
+          next if !json_body && PAGING_TYPES.includes?(simple_type_name(field.type_name))
           # `default_value` comes from an annotation and is already literal;
           # `init_value` is raw Java source and only becomes a value when it
           # is one. See `Noir::JvmLiteral`.
@@ -1167,6 +1199,7 @@ module Noir
           if nested
             nested.each do |sub|
               next unless sub.access_modifier == "public" || sub.has_setter?
+              next if PAGING_TYPES.includes?(simple_type_name(sub.type_name))
               next if disallowed_field?("#{field.name}.#{sub.name}", disallowed_fields)
               sink << Param.new("#{field.name}.#{sub.name}", Noir::JvmLiteral.value_of(sub.init_value), effective_format)
             end
