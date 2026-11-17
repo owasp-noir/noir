@@ -1,0 +1,3 @@
+spring:
+  mvc:
+    static-path-pattern: ${STATIC_PATTERN:/content/**}

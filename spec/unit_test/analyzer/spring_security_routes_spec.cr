@@ -20,6 +20,8 @@ describe "Analyzer::Java::JavaEngine.spring_security_routes" do
       .should eq(["POST /do username,password filter", "POST /bye  filter"])
     security_routes("class C { static final String P = \"/p\"; SecurityFilterChain c(HttpSecurity http) { http.formLogin(f -> f.loginProcessingUrl(P)); return http.build(); } }")
       .should eq(["POST /p username,password filter"])
+    security_routes("class C { static final String P = \"/p\" + SUFFIX; SecurityFilterChain c(HttpSecurity http) { http.formLogin(f -> f.loginProcessingUrl(P)); return http.build(); } }")
+      .should be_empty
   end
 
   it "yields no default route for a URL or matcher it cannot read" do

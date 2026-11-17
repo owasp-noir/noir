@@ -7,6 +7,8 @@ require "../../utils/jackson_naming"
 require "yaml"
 require "../../utils/path_scope"
 require "../../utils/url_path"
+require "../../utils/spring_property_path"
+require "./kotlin_engine"
 
 # Shared helpers for the Java analyzers. They each extend `Analyzer`
 # directly rather than a language-specific engine (historically the
@@ -479,6 +481,27 @@ module Analyzer::Java
     # Spring Boot's four classpath defaults for `spring.web.resources.static-locations`.
     SPRING_DEFAULT_STATIC_LOCATIONS = ["classpath:/META-INF/resources/", "classpath:/resources/", "classpath:/static/", "classpath:/public/"]
 
+    # One `addResourceHandler(pattern)` registration and the locations
+    # chained onto it. Boot's own default is the same shape:
+    # `spring.mvc.static-path-pattern` over `static-locations`.
+    record SpringResourceHandler, pattern : String, locations : Array(String)
+
+    # What one module's sources say about its static resources.
+    class SpringWebSetup
+      property? own_web_config = false
+      getter resource_handlers = [] of SpringResourceHandler
+    end
+
+    SPRING_WEB_SUPPORT_TYPE = "(?:WebMvcConfigurationSupport|DelegatingWebMvcConfiguration|WebFluxConfigurationSupport|DelegatingWebFluxConfiguration)"
+    # `@EnableWebMvc` / `@EnableWebFlux`, or a class that extends the
+    # configuration they import (Java `extends X`, Kotlin `: X()`).
+    SPRING_OWN_WEB_CONFIG_RE   = /@(?:[\w.]+\.)?EnableWeb(?:Mvc|Flux)\b|\bextends\s+(?:[\w.]+\.)?#{SPRING_WEB_SUPPORT_TYPE}\b|[:,]\s*(?:[\w.]+\.)?#{SPRING_WEB_SUPPORT_TYPE}\s*\(/
+    SPRING_WEB_SETUP_MARKER_RE = Regex.union("EnableWebMvc", "EnableWebFlux", "ConfigurationSupport", "DelegatingWebMvcConfiguration", "DelegatingWebFluxConfiguration", "addResourceHandler")
+    SPRING_CHAINED_CALL_RE     = /\s*\.\s*([A-Za-z_]\w*)\s*\(/
+    # A Java text block or Kotlin raw string: prose or a code template,
+    # never a live annotation or call.
+    JVM_TEXT_BLOCK_RE = /"""[\s\S]*?"""/
+
     # Actuator endpoints every Boot app has once they are exposed; the rest
     # (prometheus, flyway, ...) need their own dependency, so they are
     # emitted only when `exposure.include` names them.
@@ -823,14 +846,21 @@ module Analyzer::Java
         if literal = argument.match(/\A"((?:[^"\\]|\\.)*)"/)
           values[key] = literal[1]
         elsif (constant = argument.match(/\A([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*[),;}\n]/)) &&
-              (name = constant[1].split('.').last) &&
-              (declared = code.match(/\b(?:static\s+final\s+String|final\s+static\s+String|const\s+val)\s+#{Regex.escape(name)}\s*(?::\s*String\s*)?=\s*"((?:[^"\\]|\\.)*)"/))
-          values[key] = declared[1]
+              (declared = file_string_constant(code, constant[1]))
+          values[key] = declared
         else
           unknown << key
         end
       end
       {values, unknown}
+    end
+
+    # The value of the `static final String` / `const val` that `reference`
+    # (`NAME` or `Owner.NAME`) names, when this file declares it as one
+    # literal. The start of `"a" + B` is not its value.
+    private def self.file_string_constant(code : String, reference : String) : String?
+      name = Regex.escape(reference.split('.').last)
+      code.match(/\b(?:static\s+final\s+String|final\s+static\s+String|const\s+val)\s+#{name}\s*(?::\s*String\s*)?=\s*"((?:[^"\\]|\\.)*)"(?!\s*[+.])/).try(&.[1])
     end
 
     private def spring_security_endpoints(path : String, base_path : String) : Array(Endpoint)
@@ -906,39 +936,150 @@ module Analyzer::Java
       (braces == 1 && parens == 0) || (kotlin_property && braces == 0 && parens == 1)
     end
 
-    # Every file under a resolved static-resource directory is a GET
-    # endpoint. The walk is a `Dir.glob` rather than a `file_map` lookup
+    # Boot's web auto-configuration is conditional on the application not
+    # bringing its own `WebMvcConfigurationSupport` /
+    # `WebFluxConfigurationSupport` bean, which is what `@EnableWebMvc` /
+    # `@EnableWebFlux` import. With it goes the default static-resource
+    # handler. `code` is comment-stripped source.
+    def self.spring_web_auto_config_replaced?(code : String) : Bool
+      code.gsub(JVM_TEXT_BLOCK_RE, %("")).gsub(JAVA_STRING_RE, %("")).matches?(SPRING_OWN_WEB_CONFIG_RE)
+    end
+
+    # The `addResourceHandler(patterns).addResourceLocations(locations)`
+    # registrations of a Java or Kotlin source, one entry per pattern.
+    # `code` is comment-stripped source. A value is a string literal, a
+    # `static final String` / `const val` of the file, one of `constants`
+    # (the project's qualified constants), or a `+` of those. A pattern or
+    # location written any other way (a template, an injected property, an
+    # array constant) is dropped: where it points is unknown.
+    #
+    # ponytail: only locations chained onto the `addResourceHandler` call.
+    # A registration kept in a variable and configured later has none.
+    def self.spring_resource_handlers(code : String, constants = {} of String => String) : Array(SpringResourceHandler)
+      code = code.gsub(JVM_TEXT_BLOCK_RE, %(""))
+      handlers = [] of SpringResourceHandler
+      offset = 0
+      while marker = code.match(/\baddResourceHandler\s*\(/, offset)
+        open_idx = marker.end(0) - 1
+        break unless close_idx = find_matching_delimiter(code, open_idx, '(', ')')
+        offset = close_idx + 1
+        locations = [] of String
+        while call = code.match(SPRING_CHAINED_CALL_RE, offset, options: Regex::MatchOptions::ANCHORED)
+          args_open = call.end(0) - 1
+          break unless args_close = find_matching_delimiter(code, args_open, '(', ')')
+          locations.concat(spring_string_arguments(code, args_open, args_close, constants)) if call[1] == "addResourceLocations"
+          offset = args_close + 1
+        end
+        spring_string_arguments(code, open_idx, close_idx, constants).each do |pattern|
+          handlers << SpringResourceHandler.new(pattern, locations)
+        end
+      end
+      handlers
+    end
+
+    private def self.spring_string_arguments(code : String, open_idx : Int32, close_idx : Int32, constants : Hash(String, String)) : Array(String)
+      Noir::TopLevelSplit.split(code[(open_idx + 1)...close_idx], ',', Noir::TopLevelSplit::Rules::JAVA).compact_map do |argument|
+        parts = Noir::TopLevelSplit.split(argument, '+', Noir::TopLevelSplit::Rules::JAVA).map do |part|
+          if literal = part.match(/\A"((?:[^"\\]|\\.)*)"\z/)
+            literal[1]
+          elsif part.matches?(/\A[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\z/)
+            constants[part]? || file_string_constant(code, part)
+          end
+        end
+        next if parts.empty? || parts.includes?(nil)
+        # `$`: a Kotlin template or a `${...}` placeholder, not a path.
+        value = parts.join
+        value unless value.includes?('$')
+      end
+    end
+
+    # The URL prefix a handler serves its locations under: `/assets` for
+    # `/assets/**`, empty for `/**`. Nil for a pattern that does not map a
+    # whole directory tree (`/robots.txt`, `/img/*`, `/{tenant}/**`).
+    def self.spring_resource_prefix(pattern : String) : String?
+      return unless pattern.ends_with?("/**")
+      prefix = pattern.rchop("/**")
+      prefix unless prefix.matches?(/[*?{]/)
+    end
+
+    @spring_web_setups : Hash(String, SpringWebSetup)? = nil
+
+    # ponytail: scoped to one module root. A configuration class in a
+    # library module does not reach the applications that depend on it;
+    # resolve the build's module graph if that matters.
+    private def spring_web_setup(project_root : String) : SpringWebSetup?
+      setups = @spring_web_setups ||= begin
+        found = Hash(String, SpringWebSetup).new
+        {".java", ".kt"}.each do |extension|
+          kotlin = extension == ".kt"
+          get_files_by_extension(extension).each do |path|
+            relative = base_relative_path(path)
+            next if kotlin ? Analyzer::Kotlin::KotlinEngine.test_path?(relative) : JavaEngine.test_path?(relative)
+            content = read_file_content(path)
+            next unless content_matches?(content, SPRING_WEB_SETUP_MARKER_RE)
+            code = JavaEngine.strip_comments(content)
+            constants = kotlin ? Hash(String, String).new : java_project_constants(path)
+            setup = found[project_root_for(path)] ||= SpringWebSetup.new
+            setup.own_web_config = true if JavaEngine.spring_web_auto_config_replaced?(code)
+            setup.resource_handlers.concat(JavaEngine.spring_resource_handlers(code, constants))
+          end
+        end
+        found
+      end
+      setups[project_root]?
+    end
+
+    # Every file a resource handler serves is a GET endpoint: Boot's default
+    # handler (unless the module replaces the web auto-configuration or
+    # sets `add-mappings: false`) and the ones the module registers itself.
+    # The walk is a `Dir.glob` rather than a `file_map` lookup
     # because the endpoint set is "every file under this directory",
     # including the images and fonts the media filter keeps out of the
     # index (and dotfiles like `.env.prod`) — so `--exclude-path` has to be
     # re-applied here by hand.
     private def spring_static_endpoints(project_root : String, values : Hash(String, String), base_path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      configured = values["spring.web.resources.static-locations"]? || values["spring.resources.static-locations"]?
-      locations = configured.try(&.split(',').map(&.strip).reject(&.empty?))
-      locations = SPRING_DEFAULT_STATIC_LOCATIONS if locations.nil? || locations.empty?
+      handlers = [] of SpringResourceHandler
+      setup = spring_web_setup(project_root)
+      add_mappings = values["spring.web.resources.add-mappings"]? || values["spring.resources.add-mappings"]?
+      unless setup.try(&.own_web_config?) || add_mappings.try(&.downcase) == "false"
+        configured = values["spring.web.resources.static-locations"]? || values["spring.resources.static-locations"]?
+        locations = configured.try(&.split(',').map(&.strip).reject(&.empty?))
+        locations = SPRING_DEFAULT_STATIC_LOCATIONS if locations.nil? || locations.empty?
+        pattern = values["spring.mvc.static-path-pattern"]? || values["spring.webflux.static-path-pattern"]?
+        pattern = pattern.try { |raw| SpringPropertyPath.resolve(raw, values).strip }.presence || "/**"
+        handlers << SpringResourceHandler.new(pattern, locations)
+      end
+      handlers.concat(setup.resource_handlers) if setup
 
-      locations.each do |location|
-        dir = if location.starts_with?("classpath:")
-                File.join(project_root, "src/main/resources", location.sub("classpath:", "").strip)
-              elsif location.starts_with?("file:")
-                location.sub("file:", "").strip
-              end
-        next unless dir && Dir.exists?(dir)
-        # The location comes verbatim from the app's own config, so it can
-        # point anywhere: `file:/etc/` is an absolute path, and a
-        # `classpath:/../../../x/` climbs out of `src/main/resources`.
-        # Walking it emitted an endpoint per file outside the scan, with
-        # `code_paths` leaking the scanning machine's layout into a report
-        # that may be shared.
-        unless within_scan_base?(dir)
-          logger.debug "Skipping static-location #{location}: resolves outside the scan base"
-          next
-        end
-        Dir.glob("#{escape_glob_path(dir)}/**/*", match: File::MatchOptions::DotFiles) do |file|
-          next if File.directory?(file) || excluded_path?(file)
-          url = Noir::URLPath.absolute_join(base_path, file.sub(dir, ""))
-          endpoints << Endpoint.new(url, "GET", Details.new(PathInfo.new(file)))
+      served = Set({String, String}).new
+      handlers.each do |handler|
+        next unless prefix = JavaEngine.spring_resource_prefix(handler.pattern)
+        handler.locations.each do |location|
+          dir = if location.starts_with?("classpath:")
+                  File.join(project_root, "src/main/resources", location.sub("classpath:", "").strip)
+                elsif location.starts_with?("file:")
+                  location.sub("file:", "").strip
+                elsif location.starts_with?('/')
+                  # No scheme: a servlet-context resource, the WAR root.
+                  File.join(project_root, "src/main/webapp", location)
+                end
+          next unless dir && Dir.exists?(dir)
+          # The location comes verbatim from the app's own config, so it can
+          # point anywhere: `file:/etc/` is an absolute path, and a
+          # `classpath:/../../../x/` climbs out of `src/main/resources`.
+          # Walking it emitted an endpoint per file outside the scan, with
+          # `code_paths` leaking the scanning machine's layout into a report
+          # that may be shared.
+          unless within_scan_base?(dir)
+            logger.debug "Skipping static-location #{location}: resolves outside the scan base"
+            next
+          end
+          Dir.glob("#{escape_glob_path(dir)}/**/*", match: File::MatchOptions::DotFiles) do |file|
+            next if File.directory?(file) || excluded_path?(file)
+            url = Noir::URLPath.absolute_join(base_path, prefix, file.sub(dir, ""))
+            endpoints << Endpoint.new(url, "GET", Details.new(PathInfo.new(file))) if served.add?({url, file})
+          end
         end
       end
 
