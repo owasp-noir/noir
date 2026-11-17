@@ -8,6 +8,8 @@ require "../../func_spec.cr"
 #   opts out of it.
 # - resolver: `@CurrentAccount` is bound by a custom
 #   `HandlerMethodArgumentResolver`, so it is not request input.
+# - type_resolver: `ShopSession` and `Ledger` are supplied by resolvers that
+#   test the parameter type, so they are not request input.
 # - scalar: an un-annotated scalar next to a JSON `@RequestBody` is a query param.
 # - header: `@RequestHeader headers: HttpHeaders` / `Map` names no header.
 # - dotted_folder: a DTO under `src/main/kotlin/com.example/model` resolves.
@@ -17,7 +19,7 @@ require "../../func_spec.cr"
 #   (`@JsonRootName` and `@JsonNaming` alike).
 tester = FunctionalTester.new("fixtures/kotlin/spring_request_params/", {
   :techs     => 1,
-  :endpoints => 15,
+  :endpoints => 16,
 }, [] of Endpoint)
 tester.perform_tests
 
@@ -28,6 +30,7 @@ it "reports the wire names and locations Spring binds", tags: "functional" do
   summary.sort!.should eq([
     {"GET /logs", [] of String},
     {"GET /posts/{postId}", ["postId:path"]},
+    {"GET /stores/{storeId}/widgets", ["limit:query", "region:query", "storeId:path"]},
     {"POST /articles", ["NewArticleParam.title:json"]},
     {"POST /block-commented", ["BlockCommented.w:json"]},
     {"POST /camel", ["Camel.mName:json"]},

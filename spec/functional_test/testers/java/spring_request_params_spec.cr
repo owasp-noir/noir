@@ -17,9 +17,13 @@ require "../../func_spec.cr"
 # - transient_body: Jackson skips a `transient` field unless a setter,
 #   Lombok `@Setter` or `@JsonProperty` names the property; form binding
 #   (`@ModelAttribute`) is unchanged.
+# - type_resolver: `ShopSession` is supplied by a resolver that tests the
+#   parameter type, so it is not request input; `@ModelAttribute` still binds
+#   it, and a resolver that also needs an annotation (`@Tenant`) leaves the
+#   bare type to Spring.
 tester = FunctionalTester.new("fixtures/java/spring_request_params/", {
   :techs     => 1,
-  :endpoints => 12,
+  :endpoints => 16,
 }, [] of Endpoint)
 tester.perform_tests
 
@@ -30,6 +34,10 @@ it "reports the wire names and locations Spring binds", tags: "functional" do
   summary.sort!.should eq([
     {"GET /gadgets", ["computedLabel:query", "label:query", "nickname:query", "pinned:query"]},
     {"GET /posts/{postId}", ["postId:path"]},
+    {"GET /stores/bound", ["shopId:query", "shopName:query"]},
+    {"GET /stores/{storeId}/widgets", ["limit:query", "storeId:path"]},
+    {"GET /tenants/current", [] of String},
+    {"GET /tenants/lookup", ["tenantCode:query"]},
     {"POST /articles", ["NewArticleParam.title:json"]},
     {"POST /events/{id}", ["id:path", "type:query", "userId:json"]},
     {"POST /gadgets", ["label:json", "nickname:json", "pinned:json", "tag:json"]},
