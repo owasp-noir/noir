@@ -229,7 +229,11 @@ module Analyzer::Java
       # Where the DispatcherServlet (or WebFlux) serves: handlers, resource
       # handlers, STOMP endpoints, actuator on the main port.
       def web_base_path : String
-        return @webflux_base_path unless @webflux_base_path.empty?
+        @webflux_base_path.empty? ? dispatcher_servlet_path : @webflux_base_path
+      end
+
+      # Where the DispatcherServlet serves on the servlet stack.
+      def dispatcher_servlet_path : String
         Noir::URLPath.join_absorbing(@servlet_context_path, @servlet_path)
       end
 

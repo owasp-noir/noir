@@ -139,7 +139,7 @@ module Analyzer::Java
       entity = Model.simple_type_name(entity)
       resource = type_annotation.try(&.string("path")) || SpringDataRest.pluralize(uncapitalize(entity))
       base = Noir::URLPath.join_absorbing(
-        normalize_optional_path(config["server.servlet.context-path"]?),
+        spring_path_config(config).dispatcher_servlet_path,
         normalize_optional_path(config["spring.data.rest.base-path"]? || config["spring.data.rest.basePath"]?))
       collection = Noir::URLPath.join_rooted(base, resource.strip('/'))
       item = "#{collection}/{id}"
