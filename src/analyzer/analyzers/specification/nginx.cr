@@ -198,6 +198,9 @@ module Analyzer::Specification
       property? denial_seen : Bool = false
       property? internal : Bool = false
       property? other_effect : Bool = false
+      # A `return`, `rewrite` or `if`: nginx runs these before it checks
+      # `allow` / `deny`.
+      property? rewrites : Bool = false
       getter parent : Frame?
       # `auth_basic` / `auth_request` / `auth_jwt` / `satisfy` set in this
       # block; `off` is kept, since it cancels an inherited one.
@@ -322,11 +325,29 @@ module Analyzer::Specification
     # Access rules are resolved only after the whole file is read: a
     # server-level `auth_basic` written below its locations still guards them.
     private def resolve_access(state : State)
+      refused = [] of Int32
       state.owners.each_with_index do |frame, i|
+        next refused << i if refuses_everyone?(frame)
         next unless tag = access_tag(frame)
         endpoint = @result[state.base + i]
         endpoint.add_tag(tag)
         @result[state.base + i] = endpoint
+      end
+      refused.reverse_each { |i| @result.delete_at(state.base + i) }
+    end
+
+    # First match wins, so a location whose own list reaches `deny all`
+    # before any `allow` answers 403 to every client, whatever content it
+    # would serve. Under `satisfy any` an auth method can still admit one.
+    # An inherited list is not read here, as `pop_frame` does not either.
+    private def refuses_everyone?(location : Frame) : Bool
+      return false if location.rewrites?
+      first = location.access.find { |rule| rule.verb == "allow" || rule.address == "all" }
+      return false unless first && first.verb == "deny"
+      return false if first.conditional
+      return true unless effective_setting(location, "satisfy").try(&.value) == "any"
+      {"auth_basic", "auth_request", "auth_jwt"}.none? do |name|
+        effective_setting(location, name).try { |setting| !off?(setting.value) }
       end
     end
 
@@ -455,6 +476,7 @@ module Analyzer::Specification
         else
           # Conditional returns and other directives may still serve content.
           location.other_effect = true
+          location.rewrites = true if directive.matches?(/\A(?:return|rewrite|if)\b/)
         end
       end
     end
