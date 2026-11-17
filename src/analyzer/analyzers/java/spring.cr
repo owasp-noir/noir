@@ -741,18 +741,19 @@ module Analyzer::Java
                                                    constants : Hash(String, String)) : Array(Tuple(String, Int32))
       endpoints = [] of Tuple(String, Int32)
       offset = 0
+      code = JavaEngine.strip_comments(content)
 
-      while marker = content.index("addResourceHandler", offset)
+      while marker = code.index("addResourceHandler", offset)
         offset = marker + 18
-        next unless method_call_name?(content, marker, 18)
+        next unless method_call_name?(code, marker, 18)
 
-        open_idx = content.index('(', marker)
+        open_idx = code.index('(', marker)
         next unless open_idx
-        close_idx = find_matching_paren(content, open_idx)
+        close_idx = find_matching_paren(code, open_idx)
         next unless close_idx
 
-        args = content[(open_idx + 1)...close_idx]
-        line = line_number_for_index(content, marker)
+        args = code[(open_idx + 1)...close_idx]
+        line = line_number_for_index(code, marker)
         top_level_arguments(args).each do |arg|
           resource_handler_patterns(arg, content, constants).each { |pattern| endpoints << {pattern, line} }
         end
