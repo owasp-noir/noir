@@ -347,7 +347,7 @@ module Analyzer::Java
 
             if has_message_mapping_bindings
               constants = file_constants
-              collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes).each do |entry|
+              collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes, spring_controller_stereotypes(path)).each do |entry|
                 verb, destination, line = entry
                 endpoint = Endpoint.new(
                   resolve_endpoint_path(destination, spring_properties),
@@ -779,9 +779,10 @@ module Analyzer::Java
     private def collect_message_mapping_endpoints(root : LibTreeSitter::TSNode,
                                                   content : String,
                                                   constants : Hash(String, String),
-                                                  application_prefixes : Array(String)) : Array(Tuple(String, String, Int32))
+                                                  application_prefixes : Array(String),
+                                                  stereotypes : Set(String)) : Array(Tuple(String, String, Int32))
       endpoints = [] of Tuple(String, String, Int32)
-      walk_message_mapping_classes(root, content, constants, application_prefixes, [""], endpoints)
+      walk_message_mapping_classes(root, content, constants, application_prefixes, stereotypes, [""], endpoints)
       endpoints
     end
 
@@ -789,12 +790,18 @@ module Analyzer::Java
                                              content : String,
                                              constants : Hash(String, String),
                                              application_prefixes : Array(String),
+                                             stereotypes : Set(String),
                                              outer_prefixes : Array(String),
                                              endpoints : Array(Tuple(String, String, Int32)),
                                              depth = 0)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       if Noir::TreeSitter.node_type(node) == "class_declaration"
+        # Spring's messaging handler detection keeps `@Controller` beans only,
+        # searching the type hierarchy too; a supertype is not resolved, so
+        # any `extends` / `implements` keeps the class.
+        controller = !Noir::TreeSitter.field(node, "superclass").nil? || !Noir::TreeSitter.field(node, "interfaces").nil?
+        each_java_annotation(node, content) { |name| controller ||= stereotypes.includes?(name) }
         class_paths = message_mapping_paths(node, content, constants)
         class_paths = [""] if class_paths.empty?
         prefixes = [] of String
@@ -808,9 +815,9 @@ module Analyzer::Java
           Noir::TreeSitter.each_named_child(body) do |member|
             case Noir::TreeSitter.node_type(member)
             when "method_declaration"
-              collect_message_mapping_method_endpoints(member, content, constants, application_prefixes, prefixes, endpoints)
+              collect_message_mapping_method_endpoints(member, content, constants, application_prefixes, prefixes, endpoints) if controller
             when "class_declaration"
-              walk_message_mapping_classes(member, content, constants, application_prefixes, prefixes, endpoints, depth + 1)
+              walk_message_mapping_classes(member, content, constants, application_prefixes, stereotypes, prefixes, endpoints, depth + 1)
             end
           end
         end
@@ -818,7 +825,7 @@ module Analyzer::Java
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_message_mapping_classes(child, content, constants, application_prefixes, outer_prefixes, endpoints, depth + 1)
+        walk_message_mapping_classes(child, content, constants, application_prefixes, stereotypes, outer_prefixes, endpoints, depth + 1)
       end
     end
 

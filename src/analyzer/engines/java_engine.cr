@@ -1049,6 +1049,60 @@ module Analyzer::Java
       setups[project_root]?
     end
 
+    # What makes a class a Spring handler bean. Spring Data REST's two map
+    # through its own handler mapping, whatever Spring version.
+    SPRING_CONTROLLER_STEREOTYPES = Set{"Controller", "RestController", "RepositoryRestController", "BasePathAwareController"}
+    SPRING_ANNOTATION_DECL_RE     = /@interface\s|\bannotation\s+class\s/
+    # A Java `@interface X` / Kotlin `annotation class X` with the
+    # annotations and modifiers in front of it (arguments nest).
+    SPRING_ANNOTATION_HEADER_RE = /(?<header>(?:@(?!interface\b)[\w$.]+\s*(?<args>\((?:[^()"]++|"(?:[^"\\]|\\.)*+"|(?&args))*+\))?\s*|\b(?:public|internal|private|protected|open|final|abstract)\s+)*+)(?:@interface|annotation\s+class)\s+(?<name>[A-Za-z_$][\w$]*)/
+
+    # `{annotation type => simple names of the annotations on it}` for every
+    # annotation type `code` (comment-stripped) declares.
+    def self.annotation_declarations(code : String) : Hash(String, Set(String))
+      declared = Hash(String, Set(String)).new
+      code.scan(SPRING_ANNOTATION_HEADER_RE) do |match|
+        applied = match["header"].scan(/@([\w$.]+)/).map(&.[1].split('.').last).to_set
+        declared[match["name"]] = applied
+      end
+      declared
+    end
+
+    # The stereotypes plus every declared annotation type that carries one,
+    # however many levels down.
+    def self.controller_stereotypes(declared : Hash(String, Set(String))) : Set(String)
+      stereotypes = SPRING_CONTROLLER_STEREOTYPES.dup
+      loop do
+        added = declared.keys.select { |name| !stereotypes.includes?(name) && declared[name].any? { |applied| stereotypes.includes?(applied) } }
+        break if added.empty?
+        stereotypes.concat(added)
+      end
+      stereotypes
+    end
+
+    @spring_controller_stereotypes : Hash(String, Set(String))? = nil
+
+    # Simple names of the annotations that make a class under `path`'s scan
+    # base a controller: the stereotypes and the project's own annotation
+    # types meta-annotated with one (Java and Kotlin sources).
+    #
+    # ponytail: simple names per scan base, not import-resolved.
+    private def spring_controller_stereotypes(path : String) : Set(String)
+      tables = @spring_controller_stereotypes ||= begin
+        declared_by_base = Hash(String, Hash(String, Set(String))).new
+        {".java", ".kt"}.each do |extension|
+          get_files_by_extension(extension).each do |file|
+            content = read_file_content(file)
+            next unless content_matches?(content, SPRING_ANNOTATION_DECL_RE)
+            declared = declared_by_base[configured_base_for(file)] ||= Hash(String, Set(String)).new
+            declared.merge!(JavaEngine.annotation_declarations(JavaEngine.strip_comments(content)))
+          end
+        end
+        declared_by_base.transform_values { |declared| JavaEngine.controller_stereotypes(declared) }
+      end
+      tables[configured_base_for(path)]? || SPRING_CONTROLLER_STEREOTYPES
+    end
+
     # Every file a resource handler serves is a GET endpoint: Boot's default
     # handler (unless the module replaces the web auto-configuration or
     # sets `add-mappings: false`) and the ones the module registers itself.

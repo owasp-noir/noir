@@ -783,7 +783,8 @@ module Analyzer::Kotlin
         stomp_routes =
           if stomp_route_file?(content)
             Noir::TreeSitterKotlinRouteExtractor.extract_stomp_routes_from(
-              root, content, string_constants, local_string_constants, stomp_application_prefixes
+              root, content, string_constants, local_string_constants, stomp_application_prefixes,
+              spring_controller_stereotypes(path)
             )
           else
             [] of SpringRoute
