@@ -1,0 +1,12 @@
+subprojects {
+    dependencies {
+        implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0'
+    }
+}
+
+// Scoped to one module: the other subprojects keep springdoc.
+project(':kts') {
+    configurations.all {
+        exclude group: 'org.springdoc', module: 'springdoc-openapi-starter-webmvc-ui'
+    }
+}

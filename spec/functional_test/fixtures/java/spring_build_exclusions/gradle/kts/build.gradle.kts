@@ -1,0 +1,11 @@
+plugins { id("org.springframework.boot") version "3.3.0" }
+
+configurations.all {
+    exclude(group = "org.springdoc", module = "springdoc-openapi-starter-webmvc-ui")
+}
+
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-web") {
+        exclude(group = "org.springframework.boot", module = "spring-boot-starter-actuator")
+    }
+}

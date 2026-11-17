@@ -1,0 +1,11 @@
+plugins {
+    id 'war'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+}
+
+// Deployed as a WAR: no runnable jar, but still the application.
+bootJar { enabled = false }

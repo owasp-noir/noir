@@ -215,16 +215,31 @@ module Analyzer::Java
       Noir::PathScope.marker_root(path, base, {"/src/main/java/", "/src/main/kotlin/"}) || File.dirname(path)
     end
 
-    # `server.servlet.context-path` / `spring.webflux.base-path` of one
-    # Spring module (Java and Kotlin analyzers alike).
+    # `server.servlet.context-path` / `spring.mvc.servlet.path` /
+    # `spring.webflux.base-path` of one Spring module (Java and Kotlin
+    # analyzers alike).
     struct SpringPathConfig
       getter servlet_context_path : String
       getter webflux_base_path : String
+      getter servlet_path : String
 
-      def initialize(@servlet_context_path = "", @webflux_base_path = "")
+      def initialize(@servlet_context_path = "", @webflux_base_path = "", @servlet_path = "")
       end
 
+      # Where the DispatcherServlet (or WebFlux) serves: handlers, resource
+      # handlers, STOMP endpoints, actuator on the main port.
       def web_base_path : String
+        @webflux_base_path.empty? ? dispatcher_servlet_path : @webflux_base_path
+      end
+
+      # Where the DispatcherServlet serves on the servlet stack.
+      def dispatcher_servlet_path : String
+        Noir::URLPath.join_absorbing(@servlet_context_path, @servlet_path)
+      end
+
+      # Where a servlet filter (Spring Security) answers: in front of the
+      # DispatcherServlet, so its servlet path does not apply.
+      def filter_base_path : String
         @webflux_base_path.empty? ? @servlet_context_path : @webflux_base_path
       end
     end
@@ -442,6 +457,15 @@ module Analyzer::Java
       values
     end
 
+    private def spring_path_config(values : Hash(String, String)) : SpringPathConfig
+      SpringPathConfig.new(
+        normalize_optional_path(values["server.servlet.context-path"]?),
+        normalize_optional_path(values["spring.webflux.base-path"]?),
+        # Boot reads `/app`, `/app/` and `/app/*` alike.
+        normalize_optional_path(values["spring.mvc.servlet.path"]?.try(&.rstrip("/*")))
+      )
+    end
+
     private def merge_yaml_properties(values : Hash(String, String), path : String)
       document = YAML.parse(read_file_content(path))
       flatten_yaml_properties("", document, values)
@@ -510,9 +534,18 @@ module Analyzer::Java
     SPRING_ACTUATOR_DEP_RE   = /spring[-.]boot[-.]starter[-.]actuator\b/
     SPRING_SPRINGDOC_DEP_RE  = /springdoc[-.]openapi/
     SPRING_SWAGGER_UI_DEP_RE = /springdoc[-.]openapi[\w.-]*?[-.]ui\b/
-    # Comments and Maven `<dependencyManagement>` (which only pins versions)
-    # are not dependencies; masked to spaces so offsets keep their lines.
-    SPRING_BUILD_NOISE_RE = /<!--.*?-->|<dependencyManagement>.*?<\/dependencyManagement>|\/\*.*?\*\/|\/\/[^\n]*/m
+    # Comments, Maven `<dependencyManagement>` (which only pins versions) and
+    # Maven `<exclusions>` are not dependencies; masked to spaces so offsets
+    # keep their lines.
+    SPRING_BUILD_NOISE_RE = /<!--.*?-->|<dependencyManagement>.*?<\/dependencyManagement>|<exclusions>.*?<\/exclusions>|\/\*.*?\*\/|\/\/[^\n]*/m
+    # Gradle `exclude group: 'g', module: 'm'` / `exclude(group = "g", module = "m")`.
+    GRADLE_EXCLUDE_RE = /\bexclude\b\s*\(?\s*(?:group|module)\b[^\n]*/
+    # `configurations.all {` / `.configureEach {`, or a `configurations {`
+    # block whose `all {` / `configureEach {` blocks apply to every configuration.
+    GRADLE_CONFIGURATIONS_RE = /\bconfigurations\s*(?:\.\s*(all|configureEach)\s*)?\{/
+    GRADLE_ALL_BLOCK_RE      = /(?<![\w.])(?:all|configureEach)\s*\{/
+    # Groovy's `configurations.all*.exclude group: ...`.
+    GRADLE_SPREAD_EXCLUDE_RE = /\bconfigurations\s*\.\s*all\s*\*\s*\.\s*(exclude\b[^\n]*)/
 
     FRAMEWORK_PROVIDED_TAG = Tag.new("framework-provided", "Served by Spring Boot / Spring Security itself, not by an application controller", "spring_analyzer")
     # The login / logout / OAuth2 routes: a filter of the chain answers them,
@@ -528,6 +561,9 @@ module Analyzer::Java
     # need their dependency in a build file, so config alone emits nothing.
     private def spring_provided_endpoints(project_root : String, values : Hash(String, String), base_path : String) : Array(Endpoint)
       endpoints = spring_static_endpoints(project_root, values, base_path)
+      # A library's static files are served by the app that depends on it;
+      # its actuator and springdoc are the app's to report.
+      return endpoints if spring_library_module?(project_root)
 
       if evidence = spring_build_dependency(project_root, SPRING_ACTUATOR_DEP_RE)
         # A separate management port drops the servlet context path.
@@ -582,25 +618,214 @@ module Analyzer::Java
     # `pom.xml` / `build.gradle(.kts)`, or in a parent module's up to the
     # scan base (Maven parents and Gradle `subprojects {}` hand theirs down).
     #
+    # The module's own declaration wins. The artifacts its own build
+    # excludes from all its configurations do not arrive from a parent or a
+    # library; a parent's such block is not read, since it may sit in a
+    # `project(':x') {}` that scopes it to one module. Last come the library
+    # modules the module depends on (`spring_library_dependency`).
+    #
     # ponytail: Gradle convention plugins (`buildSrc`) are not followed.
     private def spring_build_dependency(project_root : String, pattern : Regex) : PathInfo?
-      dir = project_root
-      while within_scan_base?(dir)
-        {"pom.xml", "build.gradle", "build.gradle.kts"}.each do |name|
-          file = File.join(dir, name)
-          next unless File.exists?(file)
-          content = read_file_content(file)
-          next unless content_matches?(content, pattern)
-          masked = content.gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' '))
-          if match = pattern.match(masked)
-            return PathInfo.new(file, line_number_for_index(masked, match.begin(0)))
+      excluded = Set(String).new
+      each_spring_build_file(project_root) do |file|
+        content = read_file_content(file)
+        next unless content_matches?(content, pattern)
+        masked = content.gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' '))
+        if File.dirname(file) == project_root
+          excluded.concat(JavaEngine.gradle_excluded_modules(JavaEngine.gradle_own_build(masked)))
+          masked = masked.gsub(GRADLE_EXCLUDE_RE, &.gsub(/[^\n]/, ' '))
+        else
+          masked = JavaEngine.mask_build_modules(masked.gsub(GRADLE_EXCLUDE_RE, &.gsub(/[^\n]/, ' ')), excluded)
+        end
+        if match = pattern.match(masked)
+          return PathInfo.new(file, line_number_for_index(masked, match.begin(0)))
+        end
+      end
+      spring_library_dependency(project_root, pattern, excluded)
+    end
+
+    # A quoted Gradle coordinate (module in group 1) or a Maven
+    # `<artifactId>` (group 2).
+    BUILD_MODULE_RE = /["'][\w.-]+:([\w.-]+)(?::[^"'\n]*)?["']|<artifactId>\s*([\w.-]+)\s*<\/artifactId>/
+
+    # `code` with every coordinate of one of `modules` blanked.
+    def self.mask_build_modules(code : String, modules : Set(String)) : String
+      return code if modules.empty?
+      code.gsub(BUILD_MODULE_RE) { |text, found| modules.includes?(found[1]? || found[2]) ? text.gsub(/[^\n]/, ' ') : text }
+    end
+
+    # `implementation project(':common')` / Kotlin DSL
+    # `implementation(project(":common"))`: configuration and project path.
+    GRADLE_PROJECT_DEPENDENCY_RE = /^\s*([A-Za-z_]\w*)\s*\(?\s*project\s*\(\s*(?:path\s*[:=]\s*)?["']([^"']+)["']/m
+
+    # Where `pattern` is declared in the own build file of a library module
+    # (`spring_library_module?`) that the module's own Gradle build depends
+    # on outside test configurations: a library's dependencies reach the app.
+    #
+    # ponytail: one level of project dependencies, mapped below the nearest
+    # `settings.gradle(.kts)` (`:a:b` is `a/b`); a `projectDir` override or a
+    # library's own project dependencies are not followed.
+    private def spring_library_dependency(project_root : String, pattern : Regex, excluded : Set(String)) : PathInfo?
+      return unless settings_dir = gradle_settings_dir(project_root)
+      {"build.gradle", "build.gradle.kts"}.each do |name|
+        file = File.join(project_root, name)
+        next unless File.exists?(file)
+        own = JavaEngine.gradle_own_build(read_file_content(file).gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' ')))
+        own.scan(GRADLE_PROJECT_DEPENDENCY_RE) do |dependency|
+          next if dependency[1].downcase.includes?("test")
+          dir = File.join(settings_dir, dependency[2].split(':').reject(&.empty?).join('/'))
+          next if dir == project_root || !spring_library_module?(dir)
+          {"build.gradle", "build.gradle.kts"}.each do |library_name|
+            library_file = File.join(dir, library_name)
+            next unless File.exists?(library_file)
+            masked = read_file_content(library_file).gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' ')).gsub(GRADLE_EXCLUDE_RE, &.gsub(/[^\n]/, ' '))
+            masked = JavaEngine.mask_build_modules(masked, excluded)
+            if match = pattern.match(JavaEngine.gradle_own_build(masked))
+              return PathInfo.new(library_file, line_number_for_index(masked, match.begin(0)))
+            end
           end
         end
+      end
+      nil
+    end
+
+    # The nearest directory from `project_root` up to the scan base that holds
+    # a `settings.gradle(.kts)`.
+    private def gradle_settings_dir(project_root : String) : String?
+      dir = project_root
+      while within_scan_base?(dir)
+        return dir if File.exists?(File.join(dir, "settings.gradle")) || File.exists?(File.join(dir, "settings.gradle.kts"))
         parent = File.dirname(dir)
         break if parent == dir
         dir = parent
       end
       nil
+    end
+
+    # Blocks of a Gradle build that configure other modules.
+    GRADLE_OTHER_MODULES_RE = /\b(?:subprojects\s*\{|project\s*\(|configure\s*\()/
+
+    # `code` (comment-masked Gradle) with the `subprojects {}`,
+    # `project(':x') {}` and `configure(...) {}` blocks blanked: what is left
+    # configures the module the file belongs to. Offsets keep their lines.
+    def self.gradle_own_build(code : String) : String
+      offset = 0
+      while found = code.match(GRADLE_OTHER_MODULES_RE, offset)
+        open_idx = found.end(0) - 1
+        unless code[open_idx] == '{'
+          # `project(':x')` / `configure(...)` followed by a block.
+          close_paren = find_matching_delimiter(code, open_idx, '(', ')')
+          brace = close_paren && code.index(/\S/, close_paren + 1)
+          open_idx = brace && code[brace] == '{' ? brace : nil
+        end
+        if open_idx
+          close_idx = find_matching_delimiter(code, open_idx, '{', '}') || code.size - 1
+          start = found.begin(0)
+          code = code[0, start] + code[start..close_idx].gsub(/[^\n]/, ' ') + code[(close_idx + 1)..]
+          offset = close_idx + 1
+        else
+          offset = found.end(0)
+        end
+      end
+      code
+    end
+
+    GRADLE_EXCLUDED_MODULE_RE = /\bmodule\s*[:=]\s*["']([^"']+)["']/
+
+    # The modules a Gradle build (comment-masked) excludes from every
+    # configuration.
+    #
+    # ponytail: group-only excludes (`exclude group: 'org.springdoc'`) name no
+    # module, so they keep the dependency.
+    def self.gradle_excluded_modules(code : String) : Set(String)
+      statements = code.scan(GRADLE_SPREAD_EXCLUDE_RE).map(&.[1])
+      code.scan(GRADLE_CONFIGURATIONS_RE) do |found|
+        blocks = [block_body(code, found.end(0) - 1)]
+        unless found[1]?
+          inner = blocks.first
+          blocks = inner.scan(GRADLE_ALL_BLOCK_RE).map { |all| block_body(inner, all.end(0) - 1) }
+        end
+        blocks.each { |block| block.scan(GRADLE_EXCLUDE_RE) { |exclude| statements << exclude[0] } }
+      end
+      statements.compact_map { |statement| statement.match(GRADLE_EXCLUDED_MODULE_RE).try(&.[1]) }.to_set
+    end
+
+    # The text between the `{` at `open_idx` and its matching `}`.
+    private def self.block_body(code : String, open_idx : Int32) : String
+      code[(open_idx + 1)...(find_matching_delimiter(code, open_idx, '{', '}') || code.size)]
+    end
+
+    # `bootJar { enabled = false }`, `tasks.bootJar { ... }`,
+    # `tasks.named("bootJar") { ... }`, `tasks.getByName<BootJar>("bootJar") { ... }`,
+    # `bootJar.enabled = false`.
+    SPRING_BOOT_JAR_DISABLED_RE = /\bbootJar\b["']?\s*\)?\s*(?:\{[^{}]*?\b(?:enabled|isEnabled)\s*=\s*false\b|\.\s*(?:enabled|isEnabled)\s*=\s*false\b)/
+    # The `war` plugin or a `bootWar` task: the app ships as a WAR instead.
+    GRADLE_WAR_RE = /\bid\s*\(?\s*["']war["']|\bplugin\s*:\s*["']war["']|^\s*war\s*$|\bbootWar\b/m
+
+    # Whether the module's own Gradle build (outside the blocks that
+    # configure other modules) disables the Boot application archive without
+    # building a WAR: a library, whatever classes it holds.
+    private def spring_library_module?(project_root : String) : Bool
+      {"build.gradle", "build.gradle.kts"}.any? do |name|
+        file = File.join(project_root, name)
+        next false unless File.exists?(file)
+        build = JavaEngine.gradle_own_build(read_file_content(file).gsub(SPRING_BUILD_NOISE_RE, &.gsub(/[^\n]/, ' ')))
+        build.matches?(SPRING_BOOT_JAR_DISABLED_RE) && !build.matches?(GRADLE_WAR_RE)
+      end
+    end
+
+    # The module's build files, then each parent directory's up to the scan base.
+    private def each_spring_build_file(project_root : String, &)
+      dir = project_root
+      while within_scan_base?(dir)
+        {"pom.xml", "build.gradle", "build.gradle.kts"}.each do |name|
+          file = File.join(dir, name)
+          yield file if File.exists?(file)
+        end
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+    end
+
+    # Literal Spring Boot / Spring Framework versions (major in group 1): the
+    # Maven parent or BOM, the `spring-boot.version` property, the Gradle
+    # plugin (Groovy and Kotlin DSL) and its classpath coordinate.
+    SPRING_BOOT_VERSION_RES = [
+      %r{<artifactId>\s*spring-boot-(?:starter-parent|dependencies)\s*</artifactId>\s*<version>\s*(\d+)\.},
+      /<spring-boot\.version>\s*(\d+)\./,
+      /\bid\s*\(?\s*["']org\.springframework\.boot["']\s*\)?\s*version\s*\(?\s*["'](\d+)\./,
+      /\borg\.springframework\.boot:spring-boot-(?:gradle-plugin|dependencies|starter-parent):(\d+)\./,
+      /\bspringBootVersion\s*=\s*["'](\d+)\./,
+    ]
+    SPRING_FRAMEWORK_VERSION_RES = [
+      %r{<artifactId>\s*spring-(?:framework-bom|webmvc|context)\s*</artifactId>\s*<version>\s*(\d+)\.},
+      /<spring(?:-framework)?\.version>\s*(\d+)\./,
+      /\borg\.springframework:spring-(?:framework-bom|webmvc|context):(\d+)\./,
+    ]
+    SPRING_BUILD_COMMENT_RE = /<!--.*?-->|\/\*.*?\*\/|\/\/[^\n]*/m
+
+    # Whether a build file pins Spring Boot 3+ / Spring Framework 6+; nil when
+    # it pins neither as a literal (a property, a version catalog).
+    def self.spring6_build?(content : String) : Bool?
+      code = content.gsub(SPRING_BUILD_COMMENT_RE, " ")
+      SPRING_BOOT_VERSION_RES.each { |pattern| code.match(pattern).try { |found| return found[1].to_i >= 3 } }
+      SPRING_FRAMEWORK_VERSION_RES.each { |pattern| code.match(pattern).try { |found| return found[1].to_i >= 6 } }
+      nil
+    end
+
+    @spring6_modules = Hash(String, Bool).new
+
+    # Whether the module's build (its own file, else the nearest parent's
+    # that says) is Spring 6+. An unknown version is not.
+    private def spring6_module?(project_root : String) : Bool
+      @spring6_modules.fetch(project_root) do
+        found = nil
+        each_spring_build_file(project_root) do |file|
+          break unless (found = JavaEngine.spring6_build?(read_file_content(file))).nil?
+        end
+        @spring6_modules[project_root] = found || false
+      end
     end
 
     # Files that configure an `HttpSecurity` / `ServerHttpSecurity` chain.
@@ -1027,6 +1252,74 @@ module Analyzer::Java
         found
       end
       setups[project_root]?
+    end
+
+    # Class annotations known not to make a class a Spring controller: the
+    # mapping annotations themselves, the other bean stereotypes, and common
+    # Lombok, OpenAPI, security, JAX-RS and JDK ones. Any annotation neither
+    # here nor declared in the scan may be a stereotype from a jar (a
+    # starter's `@ApiController` meta-annotated with `@RestController`).
+    SPRING_INERT_ANNOTATIONS = Set{
+      "RequestMapping", "GetMapping", "PostMapping", "PutMapping", "DeleteMapping", "PatchMapping", "MessageMapping",
+      "Component", "Service", "Repository", "Configuration", "ResponseBody", "CrossOrigin", "Validated", "Transactional",
+      "PreAuthorize", "PostAuthorize", "Secured", "RolesAllowed", "Profile", "Lazy", "Scope", "Primary", "Order",
+      "Slf4j", "Log4j2", "Log", "CommonsLog", "Getter", "Setter", "Data", "Value", "Builder", "ToString",
+      "EqualsAndHashCode", "RequiredArgsConstructor", "AllArgsConstructor", "NoArgsConstructor",
+      "Tag", "Tags", "Api", "Hidden", "SecurityRequirement", "Path", "Produces", "Consumes",
+      "Deprecated", "SuppressWarnings", "Suppress", "Target", "Retention", "Documented", "Inherited", "MustBeDocumented",
+    }
+    SPRING_ANNOTATION_DECL_RE = /@interface\s|\bannotation\s+class\s/
+    # A Java `@interface X` / Kotlin `annotation class X` with the
+    # annotations and modifiers in front of it (arguments nest).
+    SPRING_ANNOTATION_HEADER_RE = /(?<header>(?:@(?!interface\b)[\w$.]+\s*(?<args>\((?:[^()"]++|"(?:[^"\\]|\\.)*+"|(?&args))*+\))?\s*|\b(?:public|internal|private|protected|open|final|abstract)\s+)*+)(?:@interface|annotation\s+class)\s+(?<name>[A-Za-z_$][\w$]*)/
+
+    # `{annotation type => simple names of the annotations on it}` for every
+    # annotation type `code` (comment-stripped) declares.
+    def self.annotation_declarations(code : String) : Hash(String, Set(String))
+      declared = Hash(String, Set(String)).new
+      code.scan(SPRING_ANNOTATION_HEADER_RE) do |match|
+        applied = match["header"].scan(/@([\w$.]+)/).map(&.[1].split('.').last).to_set
+        declared[match["name"]] = applied
+      end
+      declared
+    end
+
+    # The inert annotations plus every declared annotation type whose own
+    # annotations are all inert, however many levels down. A declared type
+    # that carries `@Controller`, or an annotation from outside the scan,
+    # never becomes inert. The project's own declaration of an allowlisted
+    # name (an `@Api` of its own) is judged like any other.
+    def self.inert_annotations(declared : Hash(String, Set(String))) : Set(String)
+      inert = SPRING_INERT_ANNOTATIONS - declared.keys
+      loop do
+        added = declared.keys.select { |name| !inert.includes?(name) && declared[name].all? { |applied| inert.includes?(applied) } }
+        break if added.empty?
+        inert.concat(added)
+      end
+      inert
+    end
+
+    @spring_inert_annotations : Hash(String, Set(String))? = nil
+
+    # Simple names of the class annotations that surely do not make a class
+    # under `path`'s scan base a Spring controller (Java and Kotlin
+    # sources). A class carrying any other annotation may be one.
+    #
+    # ponytail: simple names per scan base, not import-resolved.
+    private def spring_inert_annotations(path : String) : Set(String)
+      tables = @spring_inert_annotations ||= begin
+        declared_by_base = Hash(String, Hash(String, Set(String))).new
+        {".java", ".kt"}.each do |extension|
+          get_files_by_extension(extension).each do |file|
+            content = read_file_content(file)
+            next unless content_matches?(content, SPRING_ANNOTATION_DECL_RE)
+            declared = declared_by_base[configured_base_for(file)] ||= Hash(String, Set(String)).new
+            declared.merge!(JavaEngine.annotation_declarations(JavaEngine.strip_comments(content)))
+          end
+        end
+        declared_by_base.transform_values { |declared| JavaEngine.inert_annotations(declared) }
+      end
+      tables[configured_base_for(path)]? || SPRING_INERT_ANNOTATIONS
     end
 
     # Every file a resource handler serves is a GET endpoint: Boot's default

@@ -1,0 +1,6 @@
+dependencies {
+    api 'org.springframework.boot:spring-boot-starter-actuator'
+}
+
+// A library: its actuator reaches the apps that depend on it.
+bootJar { enabled = false }

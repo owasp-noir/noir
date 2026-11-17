@@ -1,0 +1,65 @@
+package com.example
+
+import com.example.starter.StompController
+import org.springframework.messaging.handler.annotation.MessageMapping
+import org.springframework.stereotype.Component
+import org.springframework.stereotype.Controller
+
+@Target(AnnotationTarget.CLASS)
+@Retention(AnnotationRetention.RUNTIME)
+@Controller
+annotation class SocketController
+
+@Controller
+class ChatController {
+    @MessageMapping("/chat")
+    fun chat(text: String) {
+    }
+}
+
+@SocketController
+class LobbyHandlers {
+    @MessageMapping("/lobby")
+    fun lobby(text: String) {
+    }
+}
+
+@Controller
+abstract class BaseHandlers
+
+// @Controller on the superclass: Spring finds it up the hierarchy.
+class ScoreHandlers : BaseHandlers() {
+    @MessageMapping("/score")
+    fun score(text: String) {
+    }
+}
+
+// @StompController comes from a starter jar outside the scan: it may carry
+// @Controller, so the destination stays.
+@StompController
+class ExternalHandlers {
+    @MessageMapping("/external")
+    fun external(text: String) {
+    }
+}
+
+// Spring finds a mapping an interface declares on the controller that
+// implements it.
+interface PingMessages {
+    @MessageMapping("/ping")
+    fun ping(text: String)
+}
+
+@Controller
+class PingHandlers : PingMessages {
+    override fun ping(text: String) {
+    }
+}
+
+// Not a @Controller: Spring's messaging handler detection never sees it.
+@Component
+class RelayService {
+    @MessageMapping("/relay")
+    fun relay(text: String) {
+    }
+}

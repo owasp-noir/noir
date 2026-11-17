@@ -1629,16 +1629,29 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
-  # The endpoint URL below `app`'s context path: chain matchers and
-  # interceptor patterns are written relative to it.
+  SERVLET_PATH = "spring.mvc.servlet.path"
+
+  # The endpoint URL below `app`'s context path and, on the servlet stack,
+  # its `spring.mvc.servlet.path` (the analyzer prefixes both): chain
+  # matchers and interceptor patterns are written relative to the
+  # DispatcherServlet.
+  #
+  # ponytail: an ant matcher spelled with the servlet path
+  # (`antMatchers("/app/admin/**")`) no longer meets the stripped URL; record
+  # each rule's matcher kind if that shape turns up.
   private def path_within_app(url : String, app : String?) : String
     return url unless app
     CONTEXT_PATH_KEYS.each do |key|
       context = context_path(app, key)
       next if context.nil? || context.empty?
-      return url == context ? "/" : url[context.size..] if url == context || url.starts_with?("#{context}/")
+      next unless url == context || url.starts_with?("#{context}/")
+      url = url == context ? "/" : url[context.size..]
+      return url unless key == SERVLET_CONTEXT_PATH
+      break
     end
-    url
+    servlet = context_path(app, SERVLET_PATH).try(&.rstrip("/*"))
+    return url if servlet.nil? || servlet.empty? || !(url == servlet || url.starts_with?("#{servlet}/"))
+    url == servlet ? "/" : url[servlet.size..]
   end
 
   # Servlet URL-pattern matching: `/x/*` prefix, `*.ext` extension, `/` and

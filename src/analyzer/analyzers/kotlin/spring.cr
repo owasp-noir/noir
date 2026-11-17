@@ -225,7 +225,7 @@ module Analyzer::Kotlin
       file_list.each do |path|
         project_root = project_root_for(path)
         base_constants = string_constants_by_base[configured_base_for(path)]? || Hash(String, String).new
-        @result.concat(spring_security_endpoints(path, (path_configs[project_root]? || SpringPathConfig.new).web_base_path))
+        @result.concat(spring_security_endpoints(path, (path_configs[project_root]? || SpringPathConfig.new).filter_base_path))
         process_kotlin_file(
           path, dto_builder, path_configs, base_constants, local_string_constants[path]?,
           interface_route_index, method_index, stomp_prefixes[project_root]? || [""], graphql_paths[project_root]? || "/graphql"
@@ -618,51 +618,10 @@ module Analyzer::Kotlin
       end
 
       project_roots.each do |root|
-        configs[root] = path_config_for(root)
+        configs[root] = spring_path_config(spring_config_values_for(root))
       end
 
       configs
-    end
-
-    private def path_config_for(project_root : String) : SpringPathConfig
-      values = Hash(String, String).new
-
-      resource_dirs_for(project_root).each do |dir|
-        properties_path = File.join(dir, "application.properties")
-        values.merge!(read_properties(properties_path)) if File.exists?(properties_path)
-
-        yml_path = File.join(dir, "application.yml")
-        yaml_path = File.join(dir, "application.yaml")
-        merge_yaml_path_config(values, yml_path) if File.exists?(yml_path)
-        merge_yaml_path_config(values, yaml_path) if File.exists?(yaml_path)
-      end
-
-      SpringPathConfig.new(
-        normalize_optional_path(values["server.servlet.context-path"]?),
-        normalize_optional_path(values["spring.webflux.base-path"]?)
-      )
-    end
-
-    private def merge_yaml_path_config(values : Hash(String, String), path : String)
-      document = YAML.parse(read_file_content(path))
-      if value = yaml_string_value(document, "server", "servlet", "context-path")
-        values["server.servlet.context-path"] = value
-      end
-      if value = yaml_string_value(document, "spring", "webflux", "base-path")
-        values["spring.webflux.base-path"] = value
-      end
-    rescue
-      # Ignore unreadable or malformed YAML.
-    end
-
-    private def yaml_string_value(document : YAML::Any, *keys : String) : String?
-      value = document
-      keys.each do |key|
-        value = value[key]
-      end
-      value.as_s?
-    rescue
-      nil
     end
 
     private def graphql_paths_for(file_list : Array(String), path_configs : Hash(String, SpringPathConfig)) : Hash(String, String)
@@ -816,7 +775,8 @@ module Analyzer::Kotlin
         webflux_base_path = (path_configs[project_root]? || SpringPathConfig.new).web_base_path
 
         routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes_from(
-          root, content, string_constants, local_string_constants
+          root, content, string_constants, local_string_constants,
+          spring6_module?(project_root) ? spring_inert_annotations(path) : nil
         )
         implementations = Noir::TreeSitterKotlinRouteExtractor.extract_controller_interface_implementations_from(
           root, content, string_constants, local_string_constants
@@ -824,7 +784,8 @@ module Analyzer::Kotlin
         stomp_routes =
           if stomp_route_file?(content)
             Noir::TreeSitterKotlinRouteExtractor.extract_stomp_routes_from(
-              root, content, string_constants, local_string_constants, stomp_application_prefixes
+              root, content, string_constants, local_string_constants, stomp_application_prefixes,
+              spring_inert_annotations(path)
             )
           else
             [] of SpringRoute

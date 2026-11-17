@@ -4475,4 +4475,58 @@ describe "SpringAuthTagger (rules below the context path)" do
     tags["GET /shop/admin/users"].should eq(["Protected by Spring HandlerInterceptor AuthInterceptor"])
     tags["GET /shop/items"].should be_empty
   end
+
+  it "matches chain matchers and interceptors below spring.mvc.servlet.path too" do
+    chain = <<-JAVA
+      @Configuration
+      public class SecurityConfig {
+          @Bean
+          public SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(auth -> auth
+                  .requestMatchers("/items/**").permitAll()
+                  .requestMatchers(HttpMethod.GET, "/admin/**").hasRole("ADMIN")
+                  .anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    yaml = "server:\n  servlet:\n    context-path: /shop\nspring:\n  mvc.servlet:\n    path: /app/\n"
+    tags = auth_tags.call({
+      "src/main/java/app/SecurityConfig.java" => chain,
+      "src/main/resources/application.yml"    => yaml,
+    }, {"GET /shop/app/admin/users" => "#{controller}:4", "GET /shop/app/items" => "#{controller}:8"})
+
+    tags["GET /shop/app/items"].should be_empty
+    tags["GET /shop/app/admin/users"].should eq(["Protected by Spring Security hasRole via requestMatchers(\"/admin/**\")"])
+
+    interceptor = <<-JAVA
+      public class AuthInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+              if (request.getHeader("Authorization") == null) {
+                  response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized");
+                  return false;
+              }
+              return true;
+          }
+      }
+      JAVA
+    config = <<-JAVA
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new AuthInterceptor()).addPathPatterns("/admin/**");
+          }
+      }
+      JAVA
+    tags = auth_tags.call({
+      "src/main/java/app/AuthInterceptor.java"    => interceptor,
+      "src/main/java/app/WebConfig.java"          => config,
+      "src/main/resources/application.properties" => "spring.mvc.servlet.path=/app\n",
+    }, {"GET /app/admin/users" => "#{controller}:4", "GET /app/items" => "#{controller}:8"})
+
+    tags["GET /app/admin/users"].should eq(["Protected by Spring HandlerInterceptor AuthInterceptor"])
+    tags["GET /app/items"].should be_empty
+  end
 end

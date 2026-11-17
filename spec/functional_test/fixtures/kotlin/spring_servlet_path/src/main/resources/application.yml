@@ -1,0 +1,4 @@
+spring:
+  mvc:
+    servlet:
+      path: /app/

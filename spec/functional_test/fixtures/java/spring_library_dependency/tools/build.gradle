@@ -1,0 +1,5 @@
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    // Only on the test classpath: the running app has no actuator.
+    testImplementation project(':common')
+}

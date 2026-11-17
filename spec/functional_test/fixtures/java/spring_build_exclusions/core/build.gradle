@@ -1,0 +1,11 @@
+plugins { id 'org.springframework.boot' version '3.3.0' }
+
+configurations.all {
+    exclude group: 'org.springdoc', module: 'springdoc-openapi-ui'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    // A real dependency of this module: it wins over the exclusion above.
+    implementation 'org.springdoc:springdoc-openapi-webmvc-core:1.7.0'
+}

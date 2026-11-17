@@ -1,0 +1,5 @@
+management:
+  server.port: 9011
+  endpoints:
+    web:
+      base-path: /

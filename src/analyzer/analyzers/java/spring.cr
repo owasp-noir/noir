@@ -154,7 +154,7 @@ module Analyzer::Java
       # before the main route pass — each pass re-reading and often
       # re-parsing the same files. Indexes are now built in at most two
       # content walks over the Java source set only; webflux /
-      # servlet context paths come from `path_config_for` (application.yml
+      # servlet paths come from `spring_path_config` (application.yml
       # / .properties under each project root).
       java_files = get_files_by_extension(".java").reject { |path| JavaEngine.test_path?(base_relative_path(path)) }
       path_configs, spring_property_maps, stomp_prefixes, meta_annotation_index, interface_route_index, injected_annotation_index, converted_type_index, advice_disallowed_index =
@@ -174,7 +174,7 @@ module Analyzer::Java
         content = read_file_content(path)
         # ponytail: file-scoped, ignores `@InitBinder("name")` targets and advice selectors.
         disallowed_fields = disallowed_binder_fields(content) + (advice_disallowed_index[project_root]? || [] of String)
-        @result.concat(spring_security_endpoints(path, configured_base_path))
+        @result.concat(spring_security_endpoints(path, path_config.filter_base_path))
 
         # Only files that mention Spring MVC / Feign bindings carry
         # annotation-based routes. Reactive `router().route()` files
@@ -219,7 +219,8 @@ module Analyzer::Java
             param_index = nil.as(Noir::TreeSitterJavaParameterExtractor::FileIndex?)
             model_attribute_methods = nil.as(Hash(String, Array(Tuple(String, Array(String))))?)
 
-            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants).each do |route|
+            inert_annotations = spring6_module?(project_root) ? spring_inert_annotations(path) : nil
+            Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings, file_constants, inert_annotations).each do |route|
               is_feign_client = feign_clients.includes?(route.class_name)
               is_http_exchange_client = http_exchange_clients.includes?(route.class_name)
               is_internal_client = is_feign_client || is_http_exchange_client
@@ -348,7 +349,7 @@ module Analyzer::Java
 
             if has_message_mapping_bindings
               constants = file_constants
-              collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes).each do |entry|
+              collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes, spring_inert_annotations(path)).each do |entry|
                 verb, destination, line = entry
                 endpoint = Endpoint.new(
                   resolve_endpoint_path(destination, spring_properties),
@@ -556,10 +557,7 @@ module Analyzer::Java
       project_roots.each do |root|
         values = spring_config_values_for(root)
         spring_property_maps[root] = values
-        path_configs[root] = SpringPathConfig.new(
-          normalize_optional_path(values["server.servlet.context-path"]?),
-          normalize_optional_path(values["spring.webflux.base-path"]?)
-        )
+        path_configs[root] = spring_path_config(values)
       end
 
       interface_index = collect_interface_route_index(java_files, meta_index)
@@ -784,9 +782,10 @@ module Analyzer::Java
     private def collect_message_mapping_endpoints(root : LibTreeSitter::TSNode,
                                                   content : String,
                                                   constants : Hash(String, String),
-                                                  application_prefixes : Array(String)) : Array(Tuple(String, String, Int32))
+                                                  application_prefixes : Array(String),
+                                                  inert : Set(String)) : Array(Tuple(String, String, Int32))
       endpoints = [] of Tuple(String, String, Int32)
-      walk_message_mapping_classes(root, content, constants, application_prefixes, [""], endpoints)
+      walk_message_mapping_classes(root, content, constants, application_prefixes, inert, [""], endpoints)
       endpoints
     end
 
@@ -794,12 +793,18 @@ module Analyzer::Java
                                              content : String,
                                              constants : Hash(String, String),
                                              application_prefixes : Array(String),
+                                             inert : Set(String),
                                              outer_prefixes : Array(String),
                                              endpoints : Array(Tuple(String, String, Int32)),
                                              depth = 0)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       if Noir::TreeSitter.node_type(node) == "class_declaration"
+        # Spring's messaging handler detection keeps `@Controller` beans only,
+        # searching the type hierarchy too. Neither a supertype nor an
+        # annotation outside `inert` is resolved, so either keeps the class.
+        controller = !Noir::TreeSitter.field(node, "superclass").nil? || !Noir::TreeSitter.field(node, "interfaces").nil?
+        each_java_annotation(node, content) { |name| controller ||= !inert.includes?(name) }
         class_paths = message_mapping_paths(node, content, constants)
         class_paths = [""] if class_paths.empty?
         prefixes = [] of String
@@ -813,9 +818,9 @@ module Analyzer::Java
           Noir::TreeSitter.each_named_child(body) do |member|
             case Noir::TreeSitter.node_type(member)
             when "method_declaration"
-              collect_message_mapping_method_endpoints(member, content, constants, application_prefixes, prefixes, endpoints)
+              collect_message_mapping_method_endpoints(member, content, constants, application_prefixes, prefixes, endpoints) if controller
             when "class_declaration"
-              walk_message_mapping_classes(member, content, constants, application_prefixes, prefixes, endpoints, depth + 1)
+              walk_message_mapping_classes(member, content, constants, application_prefixes, inert, prefixes, endpoints, depth + 1)
             end
           end
         end
@@ -823,7 +828,7 @@ module Analyzer::Java
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_message_mapping_classes(child, content, constants, application_prefixes, outer_prefixes, endpoints, depth + 1)
+        walk_message_mapping_classes(child, content, constants, application_prefixes, inert, outer_prefixes, endpoints, depth + 1)
       end
     end
 
@@ -1577,14 +1582,6 @@ module Analyzer::Java
       end
 
       prefixes
-    end
-
-    private def path_config_for(project_root : String) : SpringPathConfig
-      values = spring_config_values_for(project_root)
-      SpringPathConfig.new(
-        normalize_optional_path(values["server.servlet.context-path"]?),
-        normalize_optional_path(values["spring.webflux.base-path"]?)
-      )
     end
 
     private def resolve_endpoint_path(path : String, properties : Hash(String, String)) : String
