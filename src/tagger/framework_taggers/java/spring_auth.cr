@@ -1950,10 +1950,16 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
-  # Whether `app` serves the Actuator on its own `management.server.port`.
+  # Whether `app` serves the Actuator on its own `management.server.port`,
+  # read as the analyzer reads it: the key in the app's base configuration.
   private def management_port?(app : String) : Bool
-    values, note = module_config_list(app, "management.server.port")
-    !!values || note == "management.server.port#{PLACEHOLDER_NOTE}"
+    target = relaxed_property("management.server.port")
+    CONFIG_DIRS.any? do |sub|
+      BASE_CONFIG_FILES.any? do |name|
+        path = File.join(app, sub, name)
+        !!(File.exists?(path) && (content = read_file(path)) && config_file_values(content, name.ends_with?(".properties"), target)[0])
+      end
+    end
   end
 
   CLASS_DECLARATION = /\b(?:class|object)\s+[A-Za-z_$][\w$]*[^{;=]*\{/
@@ -2296,7 +2302,6 @@ class SpringAuthTagger < FrameworkTagger
   # Keys that pull configuration from elsewhere (another file, a config
   # server, Nacos) which can override the list.
   CONFIG_IMPORT_KEYS = %w[spring.config.import spring.config.location spring.config.additional-location]
-  PLACEHOLDER_NOTE   = ", set from a ${...} placeholder"
 
   # The values of list property `key` in `module_dir`'s Spring Boot
   # configuration (`src/main/resources[/config]/application.{yml,yaml,properties}`),
@@ -2342,7 +2347,7 @@ class SpringAuthTagger < FrameworkTagger
         return {nil, "#{key}, which #{File.basename(dir) == "config" ? "config/" : ""}#{name} beside the module also sets"} if base || profiled
       end
     end
-    return {nil, "#{key}#{PLACEHOLDER_NOTE}"} if values.try &.any?(&.includes?("${"))
+    return {nil, "#{key}, set from a ${...} placeholder"} if values.try &.any?(&.includes?("${"))
     {values, nil}
   end
 
