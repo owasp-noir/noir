@@ -52,11 +52,16 @@ describe "crystal_cli subcommands named by an ARGV comparison" do
           parser.on("--apply", "Apply") { puts "apply" }
         end
       elsif notify
+        raise ArgumentError.new unless ARGV == ["notify-orders"] || ARGV == ["notify-orders", "--all"]
         OptionParser.parse(ARGV[1..]) do |parser|
           parser.on("--order ID", "Order") { |v| puts v }
         end
       else
         exit 2
+      end
+      ready = true
+      if export && ready
+        puts ARGV[2]
       end
       CRYSTAL
 
@@ -69,8 +74,8 @@ describe "crystal_cli subcommands named by an ARGV comparison" do
     (params.delete("cli://jobs") || [] of String).should be_empty
     params.should eq({
       "cli://jobs/prune"         => [] of String,
-      "cli://jobs/export-items"  => ["apply", "arg0"],
-      "cli://jobs/notify-orders" => ["order"],
+      "cli://jobs/export-items"  => ["apply", "arg0", "arg1"],
+      "cli://jobs/notify-orders" => ["all", "order"],
     })
   ensure
     CodeLocator.instance.reset_files
