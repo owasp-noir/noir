@@ -35,3 +35,45 @@ describe "crystal_cli binary name" do
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
 end
+
+describe "crystal_cli subcommands named by an ARGV comparison" do
+  it "scopes reads guarded by the comparison's variable to that subcommand" do
+    temp_dir = File.tempname("crystal_cli_guard")
+    Dir.mkdir_p(File.join(temp_dir, "src"))
+    File.write(File.join(temp_dir, "src", "jobs.cr"), <<-CRYSTAL)
+      require "option_parser"
+
+      export = ARGV[0]? == "export-items" && ARGV[1]?
+      notify = ARGV[0]? == "notify-orders"
+      if ARGV == ["prune"]
+        puts "prune"
+      elsif export
+        OptionParser.parse(ARGV[2..]) do |parser|
+          parser.on("--apply", "Apply") { puts "apply" }
+        end
+      elsif notify
+        OptionParser.parse(ARGV[1..]) do |parser|
+          parser.on("--order ID", "Order") { |v| puts v }
+        end
+      else
+        exit 2
+      end
+      CRYSTAL
+
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+    runner = NoirRunner.new(options)
+    runner.detect
+    runner.analyze
+    params = runner.endpoints.select(&.method.==("CLI")).to_h { |e| {e.url, e.params.map(&.name).sort!} }
+    (params.delete("cli://jobs") || [] of String).should be_empty
+    params.should eq({
+      "cli://jobs/prune"         => [] of String,
+      "cli://jobs/export-items"  => ["apply", "arg0"],
+      "cli://jobs/notify-orders" => ["order"],
+    })
+  ensure
+    CodeLocator.instance.reset_files
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+end
