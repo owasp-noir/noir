@@ -91,3 +91,106 @@ describe "Analyzer::Mobile::Ios (format-string literals)" do
     urls.should contain("demo://items/list")
   end
 end
+
+# A host enum read only inside a dispatcher that runs under a secondary
+# scheme's guard belongs to that scheme, not to the primary one.
+describe "Analyzer::Mobile::Ios (secondary-scheme dispatchers)" do
+  dir = File.tempname("noir-ios-secondary-scheme")
+  Dir.mkdir_p(dir)
+  plist = File.join(dir, "Info.plist")
+  swift = File.join(dir, "Router.swift")
+  constants = File.join(dir, "SchemeName.swift")
+  File.write(plist, <<-XML)
+    <plist version="1.0"><dict>
+    <key>CFBundleURLTypes</key><array>
+    <dict><key>CFBundleURLSchemes</key><array><string>demo</string></array></dict>
+    <dict><key>CFBundleURLSchemes</key><array><string>demolink</string></array></dict>
+    <dict><key>CFBundleURLSchemes</key><array><string>demoshare</string></array></dict>
+    </array></dict></plist>
+    XML
+  File.write(constants, <<-SWIFT)
+    public final class SchemeName {
+        #if DEBUG
+        public static let share = "demoshare-dev"
+        #else
+        public static let share = "demoshare"
+        #endif
+    }
+    SWIFT
+  File.write(swift, <<-SWIFT)
+    import Foundation
+    public enum LinkHost: String {
+        case send
+        case copy
+    }
+    public enum ShareHost: String {
+        case post
+    }
+    public enum ItemHost: String {
+        case item
+    }
+    enum SchemeKind: Int {
+        case share
+        var urlScheme: String? {
+            switch self {
+            case .share:
+                return SchemeName.share
+            }
+        }
+    }
+    final class Router {
+        func handle(_ url: URL) -> Bool {
+            let urlScheme = url.scheme
+            if url.scheme == "demolink" {
+                return handleLink(url)
+            } else if SchemeKind.share.urlScheme == urlScheme {
+                return handleShare(url)
+            }
+            return handleItem(url)
+        }
+        private func handleLink(_ url: URL) -> Bool {
+            if LinkHost.send.rawValue == url.host {
+                return true
+            }
+            if ItemHost.item.rawValue == url.host {
+                return true
+            }
+            return false
+        }
+        private func handleShare(_ url: URL) -> Bool {
+            return ShareHost.post.rawValue == url.host
+        }
+        private func handleItem(_ url: URL) -> Bool {
+            return url.host == ItemHost.item.rawValue
+        }
+    }
+    SWIFT
+
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_ENTITLEMENTS)
+  CodeLocator.instance.reset_files
+  CodeLocator.instance.push(Noir::LocatorKeys::IOS_INFO_PLIST, plist)
+  [swift, constants].each { |path| CodeLocator.instance.register_file(path, File.read(path)) }
+  urls = Analyzer::Mobile::Ios.new(create_test_options).analyze.map(&.url)
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
+  CodeLocator.instance.reset_files
+  FileUtils.rm_rf(dir)
+
+  it "credits hosts to the scheme a literal guard selects" do
+    urls.should contain("demolink://send")
+    urls.should contain("demolink://copy")
+    urls.should_not contain("demo://send")
+    urls.should_not contain("demo://copy")
+  end
+
+  it "resolves a guard through an enum property and a static constant" do
+    urls.should contain("demoshare://post")
+    urls.should_not contain("demo://post")
+    urls.should_not contain("demoshare-dev://post")
+  end
+
+  it "keeps the primary scheme when the enum is also read by an unguarded router" do
+    urls.should contain("demo://item")
+    urls.should contain("demolink://item")
+  end
+end
