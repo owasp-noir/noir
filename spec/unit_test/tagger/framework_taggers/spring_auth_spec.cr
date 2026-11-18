@@ -4792,9 +4792,9 @@ describe "SpringAuthTagger (Actuator routes)" do
 
     # The same holds when @EnableWebSecurity sits on a class with no chain.
     endpoints = run_spring_endpoints_map({
-      "build.gradle"                              => build,
-      "src/main/java/com/example/App.java"        => app,
-      "src/main/java/com/example/Security.java"   => "@Configuration\n@EnableWebSecurity\npublic class Security {}\n",
+      "build.gradle"                            => build,
+      "src/main/java/com/example/App.java"      => app,
+      "src/main/java/com/example/Security.java" => "@Configuration\n@EnableWebSecurity\npublic class Security {}\n",
     }, {"GET /manage/health" => "build.gradle:3", "GET /manage/info" => "build.gradle:3"}, ["GET /manage/health", "GET /manage/info"])
     auth_of.call(endpoints, "GET /manage/health").should be_empty
     auth_of.call(endpoints, "GET /manage/info").should eq(["Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)"])
