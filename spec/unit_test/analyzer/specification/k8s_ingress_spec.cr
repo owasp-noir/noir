@@ -257,6 +257,69 @@ describe "Kubernetes Ingress Analyzer" do
     ])
   end
 
+  it "tags every row of an Ingress whose annotation answers with a redirect" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: old-items
+        annotations:
+          nginx.ingress.kubernetes.io/permanent-redirect: https://cdn.example.test/items
+      spec:
+        rules:
+        - host: items.example.test
+          http:
+            paths:
+            - path: /old
+              pathType: Prefix
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: moved-orders
+        annotations:
+          nginx.ingress.kubernetes.io/permanent-redirect: https://orders.example.test/new
+          nginx.ingress.kubernetes.io/permanent-redirect-code: "308"
+      spec:
+        rules:
+        - http:
+            paths:
+            - path: /orders
+              pathType: Prefix
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: promo
+        annotations:
+          nginx.ingress.kubernetes.io/temporal-redirect: https://demo.example.test/promo
+      spec:
+        rules:
+        - http:
+            paths:
+            - path: /promo
+              pathType: Prefix
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: served
+      spec:
+        rules:
+        - http:
+            paths:
+            - path: /served
+              pathType: Prefix
+      YAML
+
+    endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-redirect")} }.should eq([
+      {"/old", ["301 https://cdn.example.test/items"]},
+      {"/orders", ["308 https://orders.example.test/new"]},
+      {"/promo", ["302 https://demo.example.test/promo"]},
+      {"/served", [] of String},
+    ])
+  end
+
   it "reads an Ingress inside a Helm named template" do
     endpoints = analyze_ingress <<-YAML
       {{- define "demo.ingress" }}
