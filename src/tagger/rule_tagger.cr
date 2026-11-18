@@ -69,6 +69,14 @@ module NoirTagRules
     url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
   end
 
+  # Extension of the last path segment, lowercased, without the dot and
+  # ignoring any query or fragment (`/a/app.JS?v=2` is `js`). Empty when the
+  # segment has none.
+  def self.path_extension(url : String) : String
+    last = url.split("?", 2)[0].split("#", 2)[0].split("/").last? || ""
+    File.extname(last).lstrip('.').downcase
+  end
+
   BUILTIN_SOURCES = {{ run("./rules/embed.cr", __DIR__ + "/rules") }}
 
   BUILTIN = BUILTIN_SOURCES.map { |file, content| parse(content, file) }
@@ -192,6 +200,9 @@ module NoirTagRules
         raise RuleError.new("#{where}: path_segment '#{bad}' contains a separator (/ - _ .) and can never match a single segment")
       end
       ->(ep : Endpoint) { url_parts(ep.url).any? { |part| words.includes?(part) } }
+    when "path_extension"
+      exts = strings(value, key, where).map(&.downcase.lstrip('.')).to_set
+      ->(ep : Endpoint) { exts.includes?(path_extension(ep.url)) }
     when "url_contains"
       needles = strings(value, key, where).map(&.downcase)
       ->(ep : Endpoint) { url = ep.url.downcase; needles.any? { |s| url.includes?(s) } }
