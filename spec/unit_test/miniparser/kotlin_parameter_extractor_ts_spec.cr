@@ -869,6 +869,38 @@ describe Noir::TreeSitterKotlinParameterExtractor do
     end
   end
 
+  describe "#extract_route_conditions_from_method" do
+    it "keeps presence, empty-value, negated and != conditions apart" do
+      source = <<-KT
+        class C {
+            @GetMapping("/x", params = ["a", "b="])
+            fun one(): String = ""
+            @GetMapping("/x", params = ["a=", "b"])
+            fun two(): String = ""
+            @GetMapping("/y", params = ["a", "!b"], headers = ["!X-Mode"])
+            fun three(): String = ""
+            @GetMapping("/z", params = ["c=1", "d!=2"])
+            fun four(): String = ""
+        }
+        KT
+
+      conditions = Hash(String, Array(String)).new
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, source).each do |key, method|
+          conditions[key] = Noir::TreeSitterKotlinParameterExtractor.extract_route_conditions_from_method(method, source, "GET")
+            .map { |p| "#{p.param_type}:#{p.name}=#{p.value}" }
+        end
+      end
+
+      # Spring tells `b` (present) from `b=` (present and empty), and `!b`
+      # (absent) from no condition; each is a separate handler.
+      conditions["C#one"].should eq(["query:a=", "query:b=="])
+      conditions["C#two"].should eq(["query:a==", "query:b="])
+      conditions["C#three"].should eq(["query:a=", "query:!b=", "header:!X-Mode="])
+      conditions["C#four"].should eq(["query:c=1", "query:d!=2="])
+    end
+  end
+
   describe "#extract_consumes_from" do
     it "detects form via the urlencoded literal" do
       source = <<-KT
