@@ -1479,7 +1479,8 @@ module Analyzer::Python
     end
 
     # Whether no parameter but `param` is a body: a `Body()`, a container
-    # type, a bare `dict`, or a model the scan resolves.
+    # type, a bare `dict`, or a model the scan resolves or that is imported
+    # from outside it.
     private def fastapi_lone_body?(param : FunctionParameter, all : Array(FunctionParameter), path_param_names : Array(::String),
                                    source : ::String, path : ::String, base_path : ::String) : Bool
       all.none? do |other|
@@ -1491,7 +1492,9 @@ module Analyzer::Python
         # A union of several types: unsure, so taken for a body.
         peeled = fastapi_peeled_type(other.type) || next true
         next true if peeled.matches?(BODY_CONTAINER_TYPE_RE) || peeled.matches?(DICT_BODY_TYPE_RE)
-        !!fastapi_model_name(peeled, qualified: true).try { |model| resolve_model_reference(model, source, path, base_path) }
+        !!fastapi_model_name(peeled, qualified: true).try do |model|
+          resolve_model_reference(model, source, path, base_path) || foreign_project_model?(model, source, path, base_path)
+        end
       end
     end
 

@@ -1524,7 +1524,8 @@ class FastAPIAuthTagger < FrameworkTagger
   STARLETTE_PATH_EXPR = /(?<![\w.])request\.url\.path\b/
   MW_MODULE_CONSTANT  = /^([A-Z_][A-Z0-9_]*)\s*(?::[^=\n]+)?=\s*(?:frozenset|set|tuple|list)?\s*\(?\s*[\[({]/
   MW_LOCAL_ASSIGNMENT = /\A([A-Za-z_]\w*)\s*(?::[^=]+)?=(?!=)\s*(.+)\z/m
-  MW_CREDENTIAL_READ  = /\brequest\.(?:headers|cookies)\b.*['"][\w-]*(?:key|token|secret|signature|password|authorization|session|auth)[\w-]*['"]/i
+  MW_CREDENTIAL_SOURCE_HTTP = /\brequest\.(?:headers|cookies)\b/
+  MW_CREDENTIAL_NAME_HTTP   = /['"][\w-]*(?:key|token|secret|signature|password|authorization|session|auth)[\w-]*['"]/i
   MW_IDENTITY_CALL    = /\A(?:await\s+)?[\w.]*(?:user|session|principal|identity|caller)\w*\s*\(/i
   # A name read (not called, not assigned), or a string literal to step over.
   MW_LOCAL_NAME         = /#{PythonGuardDefinitions::STRING_LITERAL.source}|(?<![\w.])[A-Za-z_]\w*\b(?!\s*\()(?!\s*=(?!=))/
@@ -1538,8 +1539,12 @@ class FastAPIAuthTagger < FrameworkTagger
   # DjangoMiddlewareGuard reads them.
   # ponytail: `app.add_middleware(BaseHTTPMiddleware subclass)` is not
   # followed; a class middleware's `dispatch` would read the same way.
+  # Starlette runs an http middleware for HTTP requests, never websockets.
   private def http_middleware_guard(endpoint : Endpoint) : String?
-    sample = mw_sample(endpoint.url.sub(/\A[a-zA-Z][\w+.-]*:\/\/[^\/]*/, ""), endpoint.method.upcase)
+    return if endpoint.protocol == "ws"
+    # `{*name}` (a `:path` param) reaches every path below it, as `<path:name>` does.
+    url = endpoint.url.sub(/\A[a-zA-Z][\w+.-]*:\/\/[^\/]*/, "").gsub(/\{\*(\w+)\}/, "<path:\\1>")
+    sample = mw_sample(url, endpoint.method.upcase)
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path) || next
       idx = (path_info.line || next) - 1
@@ -1665,7 +1670,9 @@ class FastAPIAuthTagger < FrameworkTagger
       return mw_eval(expanded, klass, sample)
     end
     unless atom.matches?(/\Arequest\.method\b/) || atom.matches?(path_expr(klass))
-      if atom.matches?(MW_CREDENTIAL_READ) || atom.matches?(MW_IDENTITY_CALL)
+      # `request.user.is_authenticated` and the like.
+      return super if atom.matches?(/\buser\.is_anonymous\b/) || atom.matches?(MW_ANONYMOUS_FAILS)
+      if (atom.matches?(MW_CREDENTIAL_SOURCE_HTTP) && atom.matches?(MW_CREDENTIAL_NAME_HTTP)) || atom.matches?(MW_IDENTITY_CALL)
         # A CSRF double-submit token is no identity.
         return MwTri::Choice if atom.matches?(PythonGuardDefinitions::CREDENTIAL_LOOKALIKE)
         return atom.matches?(MW_CREDENTIAL_MISSING) ? MwTri::T : MwTri::F
