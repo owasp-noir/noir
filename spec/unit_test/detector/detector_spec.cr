@@ -628,6 +628,46 @@ describe "detect_techs passive results" do
     end
   end
 
+  it "skips a .crystal-cache and the share/ of an unpacked Crystal toolchain" do
+    temp_dir = File.tempname("noir_detector_crystal_toolchain")
+    Dir.mkdir_p(temp_dir)
+
+    begin
+      app = File.join(temp_dir, "src", "app.cr")
+      cached = File.join(temp_dir, ".crystal-cache", "demo-src-app.cr", "macro_run.cr")
+      toolchain = File.join(temp_dir, ".tools", "crystal-9.9.9", "share", "crystal", "src")
+      prelude = File.join(toolchain, "prelude.cr")
+      command = File.join(toolchain, "compiler", "command.cr")
+      own_share = File.join(temp_dir, "share", "notes.cr")
+
+      [app, cached, prelude, command, own_share].each { |file| Dir.mkdir_p(File.dirname(file)) }
+      cli = %(require "option_parser"\nOptionParser.parse do |opts|\n  opts.on("--flag", "x") { }\nend\n)
+      File.write(app, "puts 1\n")
+      File.write(cached, cli)
+      File.write(prelude, "")
+      File.write(command, cli)
+      File.write(own_share, "puts 2\n")
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      techs, _ = detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      techs.should_not contain("crystal_cli")
+      files = locator.all_files
+
+      files.should contain(app)
+      files.should contain(own_share)
+      files.should_not contain(cached)
+      files.should_not contain(command)
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(temp_dir) if temp_dir
+    end
+  end
+
   it "skips .uv-cache and directories containing CACHEDIR.TAG" do
     temp_dir = File.tempname("noir_detector_cachedir")
     Dir.mkdir_p(temp_dir)

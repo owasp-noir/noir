@@ -32,6 +32,10 @@ class JwtTagger < Tagger
   AUTH_PATH_PARTS = Set{"auth", "authenticate", "authentication", "login", "signin", "sign_in", "token", "refresh", "jwt"}
 
   private def check_endpoint(endpoint : Endpoint)
+    # A CLI command's `*_TOKEN` env reads are credentials for some other
+    # service, not request tokens this endpoint verifies; see HuntParamTagger.
+    return if endpoint.cli?
+
     signals = endpoint.params.count { |param| jwt_signal?(param) }
     has_bearer_value = endpoint.params.any? { |param| bearer_or_jwt_value?(param.value) }
     is_auth_url = auth_url?(endpoint.url)

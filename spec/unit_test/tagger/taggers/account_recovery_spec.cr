@@ -186,5 +186,53 @@ describe "AccountRecoveryTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "does not treat a file password on a download route as a credential action" do
+      tagger = AccountRecoveryTagger.new(default_tagger_options)
+
+      zip = Endpoint.new("/api/docs/zip/password/download", "POST")
+      file = Endpoint.new("/api/file/password", "POST")
+
+      tagger.perform([zip, file])
+
+      zip.tags.size.should eq(0)
+      file.tags.size.should eq(0)
+    end
+
+    it "does not pair verification with a bare update or change" do
+      tagger = AccountRecoveryTagger.new(default_tagger_options)
+
+      update = Endpoint.new("/verification/:id/update_file", "POST")
+      change = Endpoint.new("/verification/:id/change_owner", "POST")
+
+      tagger.perform([update, change])
+
+      update.tags.size.should eq(0)
+      change.tags.size.should eq(0)
+    end
+
+    it "still tags a bare password route and a verification email change" do
+      tagger = AccountRecoveryTagger.new(default_tagger_options)
+
+      password = Endpoint.new("/accounts/password", "POST")
+      change = Endpoint.new("/verification/change-email", "POST")
+
+      tagger.perform([password, change])
+
+      password.tags.size.should eq(1)
+      change.tags.size.should eq(1)
+    end
+
+    it "keeps account update and confirm-change tagged" do
+      tagger = AccountRecoveryTagger.new(default_tagger_options)
+
+      update = Endpoint.new("/account/update", "POST")
+      confirm = Endpoint.new("/confirm-change", "POST")
+
+      tagger.perform([update, confirm])
+
+      update.tags.size.should eq(1)
+      confirm.tags.size.should eq(1)
+    end
   end
 end
