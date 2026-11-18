@@ -122,8 +122,9 @@ module Analyzer::Python
               endpoint = Endpoint.new(normalized, http_method)
               endpoint.details = Details.new(PathInfo.new(path, hit_line + 1))
 
-              # Parameters from the same do_* body (query, form, json, header, cookie)
-              extract_request_params(body_lines, http_method).each do |param|
+              # Parameters from the same do_* body (query, form, json, header, cookie),
+              # minus the branches that guard other paths.
+              extract_request_params(lines_without_other_branches(body_lines, path_hits, i, hit_line), http_method).each do |param|
                 endpoint.push_param(param)
               end
 
@@ -144,6 +145,37 @@ module Analyzer::Python
           i += 1
         end
       end
+    end
+
+    # `body_lines` with the indented blocks that guard the *other* path hits
+    # removed, so a branch reads only the params of its own block plus the
+    # shared lines around the branches (`qs = parse_qs(...)` above an `if`).
+    # A block that holds this hit's line is kept: nested guards share it.
+    private def lines_without_other_branches(body_lines : Array(::String), path_hits : Array(Tuple(::String, Int32)), body_start : Int32, hit_line : Int32) : Array(::String)
+      return body_lines if path_hits.map(&.[1]).uniq!.size < 2
+
+      own = hit_line - body_start
+      skipped = Set(Int32).new
+      path_hits.each do |_, other_abs|
+        other = other_abs - body_start
+        next if other == own || other < 0 || other >= body_lines.size
+
+        branch_indent = indent_level(body_lines[other])
+        block_end = other
+        (other + 1...body_lines.size).each do |k|
+          raw = body_lines[k]
+          break if !raw.strip.empty? && indent_level(raw) <= branch_indent
+          block_end = k
+        end
+        next if own >= other && own <= block_end
+
+        (other..block_end).each { |k| skipped << k }
+      end
+      return body_lines if skipped.empty?
+
+      kept = [] of ::String
+      body_lines.each_with_index { |line, k| kept << line unless skipped.includes?(k) }
+      kept
     end
 
     # Quote-aware single-line comment strip. Sufficient for path/parameter lines that
