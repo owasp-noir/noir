@@ -1313,7 +1313,8 @@ describe "SpringAuthTagger (multi-module projects)" do
   end
 end
 
-def run_spring_endpoints_map(files : Hash(String, String), routes : Hash(String, String)) : Hash(String, Endpoint)
+# `framework` names the routes the analyzer marks framework-provided.
+def run_spring_endpoints_map(files : Hash(String, String), routes : Hash(String, String), framework = [] of String) : Hash(String, Endpoint)
   CodeLocator.instance.clear_all
   root = File.tempname("spring_endpoints_map")
   files.each do |relative, source|
@@ -1327,7 +1328,9 @@ def run_spring_endpoints_map(files : Hash(String, String), routes : Hash(String,
   endpoints = routes.map do |route, location|
     method, url = route.split(' ', 2)
     file, line = location.split(':')
-    Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new(File.join(root, file), line.to_i)))
+    endpoint = Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new(File.join(root, file), line.to_i)))
+    endpoint.add_tag(Analyzer::Java::JavaEngine::FRAMEWORK_PROVIDED_TAG) if framework.includes?(route)
+    endpoint
   end
   SpringAuthTagger.new(noir_options).perform(endpoints)
   FileUtils.rm_rf(root)
@@ -4763,5 +4766,68 @@ describe "SpringAuthTagger (Gradle scripts outside the build)" do
     plain = "#{SPRING_WEB_STARTER}}\n"
     gradle_items_guard(plain, {".github/ci/init.gradle" => "def core = gradle.rootProject.project(':api')\n"}).should be_empty
     gradle_items_guard(plain, {"gradle/shared.gradle" => "dependencies { implementation project(':api') }\n"}).should eq(["Protected by Spring Security hasRole via anyRequest()"])
+  end
+end
+
+describe "SpringAuthTagger (Actuator routes)" do
+  build = "dependencies {\n    implementation 'org.springframework.boot:spring-boot-starter-web'\n    implementation 'org.springframework.boot:spring-boot-starter-actuator'\n    implementation 'org.springframework.boot:spring-boot-starter-security'\n}\n"
+  app = "@SpringBootApplication\npublic class App { public static void main(String[] a) { SpringApplication.run(App.class, a); } }\n"
+  boot_default = ["Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)"]
+  auth_of = ->(endpoints : Hash(String, Endpoint), route : String) { endpoints[route].tags.select(&.name.==("auth")).map(&.description) }
+
+  it "leaves the Actuator health endpoint public under Boot's default security" do
+    endpoints = run_spring_endpoints_map({
+      "build.gradle"                              => build,
+      "src/main/java/com/example/App.java"        => app,
+      "src/main/java/com/example/Controller.java" => "public class Controller {\n    @GetMapping(\"/health\")\n    public String health() { return \"\"; }\n}\n",
+    }, {
+      "GET /actuator/health" => "build.gradle:3",
+      "GET /actuator/info"   => "build.gradle:3",
+      "GET /health"          => "src/main/java/com/example/Controller.java:2",
+    }, ["GET /actuator/health", "GET /actuator/info"])
+    auth_of.call(endpoints, "GET /actuator/health").should be_empty
+    auth_of.call(endpoints, "GET /actuator/info").should eq(boot_default)
+    # The app's own /health is not the Actuator's.
+    auth_of.call(endpoints, "GET /health").should eq(boot_default)
+  end
+
+  it "decides Actuator routes on the management port by the chain matching that port" do
+    config = <<-JAVA
+      @Configuration
+      public class OpsSecurityConfig {
+          @Autowired ManagementServerProperties ops;
+
+          @Bean
+          @Order(0)
+          SecurityFilterChain opsChain(HttpSecurity http) throws Exception {
+              http.securityMatcher(request -> ops.getPort().equals(request.getLocalPort()))
+                  .authorizeHttpRequests(c -> c.anyRequest().permitAll());
+              return http.build();
+          }
+
+          @Bean
+          @Order(1)
+          SecurityFilterChain appChain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(c -> c.anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    files = {
+      "build.gradle"                                     => build,
+      "src/main/java/com/example/App.java"               => app,
+      "src/main/java/com/example/OpsSecurityConfig.java" => config,
+      "src/main/java/com/example/Controller.java"        => SPRING_ITEMS_CONTROLLER,
+    }
+    routes = {"GET /actuator/health" => "build.gradle:3", "GET /items" => "src/main/java/com/example/Controller.java:2"}
+    authenticated = ["Protected by Spring Security authenticated via anyRequest()"]
+
+    endpoints = run_spring_endpoints_map(files.merge({"src/main/resources/application.properties" => "management.server.port=${OPS_PORT:9091}\n"}), routes, ["GET /actuator/health"])
+    auth_of.call(endpoints, "GET /actuator/health").should be_empty
+    auth_of.call(endpoints, "GET /items").should eq(authenticated)
+
+    # Without its own port the Actuator answers on the app's port.
+    endpoints = run_spring_endpoints_map(files, routes, ["GET /actuator/health"])
+    auth_of.call(endpoints, "GET /actuator/health").should eq(authenticated)
   end
 end
