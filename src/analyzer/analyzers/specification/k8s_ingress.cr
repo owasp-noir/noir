@@ -60,15 +60,16 @@ module Analyzer::Specification
       annotations = metadata[YAML::Any.new("annotations")]?.try(&.as_h?) || {} of YAML::Any => YAML::Any
       rewrite_target = annotations[YAML::Any.new(REWRITE_ANNOTATION)]?.try(&.as_s?)
       access = access_tag(annotations)
+      redirect = redirect_tag(annotations)
 
       spec = root[YAML::Any.new("spec")]?.try(&.as_h?)
       return unless spec
 
       tls_hosts = collect_tls_hosts(spec[YAML::Any.new("tls")]?)
-      process_default_backend(spec[YAML::Any.new("defaultBackend")]?, tls_hosts, details, access)
+      process_default_backend(spec[YAML::Any.new("defaultBackend")]?, tls_hosts, details, access, redirect)
 
       rules = spec[YAML::Any.new("rules")]?.try(&.as_a?) || [] of YAML::Any
-      rules.each { |rule| process_rule(rule, tls_hosts, rewrite_target, details, path_lines, access) }
+      rules.each { |rule| process_rule(rule, tls_hosts, rewrite_target, details, path_lines, access, redirect) }
 
       if snippet = annotations[YAML::Any.new(SNIPPET_ANNOTATION)]?.try(&.as_s?)
         hosts = rules.compact_map { |rule| rule.as_h?.try(&.[YAML::Any.new("host")]?).try(&.as_s?) }.uniq!
@@ -160,6 +161,20 @@ module Analyzer::Specification
       declared_access_tag("Protected by ingress-nginx #{guards.join(", ", &.[0])}#{note}")
     end
 
+    # ingress-nginx answers every location the Ingress generates with this
+    # redirect, before the backend: `temporal-redirect` (302) wins over
+    # `permanent-redirect` (301, or its `permanent-redirect-code`). Tagged
+    # as the nginx analyzer tags a redirect-only location.
+    private def redirect_tag(annotations : Hash(YAML::Any, YAML::Any)) : Tag?
+      value = ->(name : String) { annotations[YAML::Any.new(AUTH_ANNOTATION_PREFIX + name)]?.try(&.as_s?).try(&.strip).presence }
+      redirect = if target = value.call("temporal-redirect")
+                   "302 #{target}"
+                 elsif target = value.call("permanent-redirect")
+                   "#{value.call("permanent-redirect-code") || 301} #{target}"
+                 end
+      Tag.new("nginx-redirect", redirect, "k8s_ingress_analyzer") if redirect
+    end
+
     private def supported_api_version?(api_version : String?) : Bool
       return false unless api_version
 
@@ -184,7 +199,7 @@ module Analyzer::Specification
       hosts_set
     end
 
-    private def process_rule(rule : YAML::Any, tls_hosts : Set(String), rewrite_target : String?, details : Details, path_lines : Hash(String, Array(Int32)), access : Tag?)
+    private def process_rule(rule : YAML::Any, tls_hosts : Set(String), rewrite_target : String?, details : Details, path_lines : Hash(String, Array(Int32)), access : Tag?, redirect : Tag?)
       rule_h = rule.as_h?
       return unless rule_h
 
@@ -204,21 +219,21 @@ module Analyzer::Specification
         path_type = path_h[YAML::Any.new("pathType")]?.try(&.as_s?) || DEFAULT_PATH_TYPE
         rule_details = line_details(details, path_lines[path]?.try(&.shift?))
         backend = backend_service(path_h[YAML::Any.new("backend")]?)
-        emit_endpoint(path, path_type, host, tls_hosts, rule_details, access: access, backend: backend)
+        emit_endpoint(path, path_type, host, tls_hosts, rule_details, access: access, backend: backend, redirect: redirect)
 
         if rewrite_target && !rewrite_target.empty?
           rewritten = strip_capture_groups(rewrite_target)
           if rewritten != path
-            emit_endpoint(rewritten, path_type, host, tls_hosts, rule_details, "rewrite", access, backend)
+            emit_endpoint(rewritten, path_type, host, tls_hosts, rule_details, "rewrite", access, backend, redirect)
           end
         end
       end
     end
 
-    private def process_default_backend(default_backend : YAML::Any?, tls_hosts : Set(String), details : Details, access : Tag?)
+    private def process_default_backend(default_backend : YAML::Any?, tls_hosts : Set(String), details : Details, access : Tag?, redirect : Tag?)
       return unless backend_present?(default_backend)
 
-      emit_endpoint("/", DEFAULT_PATH_TYPE, "", tls_hosts, details, "default-backend", access, backend_service(default_backend))
+      emit_endpoint("/", DEFAULT_PATH_TYPE, "", tls_hosts, details, "default-backend", access, backend_service(default_backend), redirect)
     end
 
     # The Service a rule routes to: `service.name` (v1) or `serviceName`
@@ -234,7 +249,7 @@ module Analyzer::Specification
       backend.try(&.as_h?) != nil
     end
 
-    private def emit_endpoint(path : String, path_type : String, host : String, tls_hosts : Set(String), details : Details, origin : String = "rule", access : Tag? = nil, backend : String = "")
+    private def emit_endpoint(path : String, path_type : String, host : String, tls_hosts : Set(String), details : Details, origin : String = "rule", access : Tag? = nil, backend : String = "", redirect : Tag? = nil)
       # ingress-nginx reads `ImplementationSpecific` paths as regexes when
       # `use-regex` is on; `Exact` / `Prefix` paths are literal.
       # GCE / ALB spell a prefix as `/static/*` under the same path type.
@@ -247,6 +262,7 @@ module Analyzer::Specification
       endpoint.add_tag(Tag.new("ingress-source", origin, "k8s_ingress_analyzer"))
       endpoint.add_tag(Tag.new("ingress-backend", backend, "k8s_ingress_analyzer")) unless backend.empty? || Nginx.template_token?(backend)
       endpoint.add_tag(access) if access
+      endpoint.add_tag(redirect) if redirect
       endpoint.protocol = "https" if !host.empty? && tls_hosts.includes?(host)
       @result << endpoint
     end
