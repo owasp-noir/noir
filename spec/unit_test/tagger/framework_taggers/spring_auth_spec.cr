@@ -4831,3 +4831,59 @@ describe "SpringAuthTagger (Actuator routes)" do
     auth_of.call(endpoints, "GET /actuator/health").should eq(authenticated)
   end
 end
+
+describe "SpringAuthTagger (HandlerInterceptor path constants)" do
+  interceptor = <<-JAVA
+    package com.example;
+
+    public class KeyInterceptor implements HandlerInterceptor {
+        @Override
+        public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+            if (request.getHeader("X-Key") == null) {
+                response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+                return false;
+            }
+            return true;
+        }
+    }
+    JAVA
+  controller = "public class Controller {\n    @GetMapping(\"/items/{id}\")\n    public String item() { return \"\"; }\n}\n"
+  routes = {
+    "GET /items/1"      => "src/main/java/com/example/Controller.java:2",
+    "GET /items/open/1" => "src/main/java/com/example/Controller.java:2",
+    "GET /home"         => "src/main/java/com/example/Controller.java:2",
+  }
+  guarded_routes = ->(registration : String) do
+    config = <<-JAVA
+      package com.example;
+
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          private static final String BASE = "/items";
+          private static final String ITEM_PATHS = "/items/**";
+          private static final String OPEN_PATHS = "/items/open/**";
+
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new KeyInterceptor())#{registration};
+          }
+      }
+      JAVA
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/KeyInterceptor.java" => interceptor,
+      "src/main/java/com/example/WebConfig.java"      => config,
+      "src/main/java/com/example/Controller.java"     => controller,
+    }, routes)
+    routes.keys.select { |route| endpoints[route].tags.any?(&.name.==("auth")) }
+  end
+
+  it "reads String constants and concatenations as path patterns" do
+    guarded_routes.call(".addPathPatterns(ITEM_PATHS).excludePathPatterns(OPEN_PATHS)").should eq(["GET /items/1"])
+    guarded_routes.call(".addPathPatterns(BASE + \"/**\").excludePathPatterns(OPEN_PATHS)").should eq(["GET /items/1"])
+    guarded_routes.call(".addPathPatterns(List.of(\"/items/**\"))").should eq(["GET /items/1", "GET /items/open/1"])
+  end
+
+  it "does not widen an include pattern it cannot read to every route" do
+    guarded_routes.call(".addPathPatterns(patterns())").should be_empty
+  end
+end
