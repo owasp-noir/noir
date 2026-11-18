@@ -1072,15 +1072,15 @@ describe "GoAuthTagger caller-dependent refusals" do
   end
 
   {
-    "missing user"       => { %(user, _ := c.Get("user")), "user == nil", "c.AbortWithStatus(401)", "auth" },
-    "permission"         => { %(user, _ := c.Get("user")), "!isAdmin(user)", "c.AbortWithStatus(403)", "authz" },
-    "missing token"      => { %(token := c.GetHeader("Authorization")), %(token == ""), "c.AbortWithStatus(401)", "auth" },
+    "missing user"         => { %(user, _ := c.Get("user")), "user == nil", "c.AbortWithStatus(401)", "auth" },
+    "permission"           => { %(user, _ := c.Get("user")), "!isAdmin(user)", "c.AbortWithStatus(403)", "authz" },
+    "missing token"        => { %(token := c.GetHeader("Authorization")), %(token == ""), "c.AbortWithStatus(401)", "auth" },
     "missing access token" => { %(accessToken := c.GetHeader("Authorization")), %(accessToken == ""), "c.AbortWithStatus(401)", "auth" },
     "missing access key"   => { %(access_key := c.GetHeader("X-Api-Key")), %(access_key == ""), "c.AbortWithStatus(401)", "auth" },
     "access level"         => { %(user, _ := c.Get("user")), "!hasAccess(user)", "c.AbortWithStatus(403)", "authz" },
-    "verification error" => {"", "err := verify(c.Request); err != nil", "c.AbortWithStatus(401)", "auth"},
-    "session redirect"   => {"sess := session.Get(c)", "!sess.Authenticated()", %(c.Redirect(302, "/login")), "auth"},
-    "followed predicate" => {"", "!allowed(c)", "c.AbortWithStatus(401)", "auth"},
+    "verification error"   => {"", "err := verify(c.Request); err != nil", "c.AbortWithStatus(401)", "auth"},
+    "session redirect"     => {"sess := session.Get(c)", "!sess.Authenticated()", %(c.Redirect(302, "/login")), "auth"},
+    "followed predicate"   => {"", "!allowed(c)", "c.AbortWithStatus(401)", "auth"},
   }.each do |shape, (read, test, refusal, kind)|
     it "keeps a real #{shape} guard" do
       source = <<-GO
