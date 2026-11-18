@@ -80,11 +80,6 @@ module Noir
     # parameters. Anything else uses form data.
     QUERY_VERB_PARAMS = Set{"GET", "HEAD", "OPTIONS"}
 
-    # Spring Data paging types: no request value converts to one, so a
-    # command-object property of such a type binds nothing. Same set as the
-    # Java extractor's `PAGING_TYPES`.
-    PAGING_TYPES = Set{"Pageable", "PageRequest", "Sort"}
-
     HTTP_HEADER_SPECIAL_CASES = {
       "Etag"             => "ETag",
       "Te"               => "TE",
@@ -103,7 +98,7 @@ module Noir
       getter? has_setter : Bool
       getter init_value : String
       getter null_validation_groups : Array(String)
-      property? server_managed : Bool
+      getter? server_managed : Bool
       getter validation_annotations : Array(String)
       # True when `init_value` came from a `string_literal` node and was
       # therefore already decoded (quotes stripped) on the way in.
@@ -119,6 +114,9 @@ module Noir
       property json_root : String? = nil
       # Simple name of the declared type (`Sort` for `org.x.Sort?`), "" when unwritten.
       getter type_name : String
+      # Named by the class-level `@JsonIgnoreProperties`: a JSON body never
+      # binds it, form/query binding (`WebDataBinder`) still does.
+      property? json_ignored : Bool = false
 
       def initialize(@name, @access_modifier, @has_setter, @init_value,
                      @null_validation_groups = [] of String, @server_managed = false,
@@ -187,11 +185,9 @@ module Noir
         next if name.empty?
         strategy, root_name, ignored = jackson_class_annotations(decl, source)
         fields = apply_json_naming(collect_class_fields(decl, source), strategy, root_name)
-        # Like a member `@JsonIgnore`, a key the class-level
-        # `@JsonIgnoreProperties` names is no client input.
         unless ignored.empty?
           fields = fields.map do |field|
-            field.server_managed = true if ignored.includes?(field.json_name)
+            field.json_ignored = true if ignored.includes?(field.json_name)
             field
           end
         end
@@ -1251,9 +1247,10 @@ module Noir
           json_body = effective_format == "json"
           fields.each do |field|
             next if field.server_managed?
+            next if json_body && field.json_ignored?
             next if field.null_for_any_group?(validation_groups)
             next unless json_body || field.access_modifier == "public" || field.has_setter?
-            next if !json_body && PAGING_TYPES.includes?(field.type_name)
+            next if !json_body && JvmTsHelpers::PAGING_TYPES.includes?(field.type_name)
             # `default_value` is an annotation-supplied value
             # (`@RequestParam(defaultValue = "all")`) and is already literal.
             # A field initialiser only becomes a value when it is one —
@@ -1378,6 +1375,7 @@ module Noir
       if fields = class_fields[type_name]?
         fields.each do |field|
           next if field.server_managed?
+          next if format == "json" && field.json_ignored?
           # `literal_default`, not `init_value`: this inferred-body path
           # (`req.awaitBody<Post>()`) fed the raw initialiser straight into
           # `Param#value`, so it published `{"addedAt":"LocalDateTime.now()"}`

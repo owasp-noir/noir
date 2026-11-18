@@ -724,7 +724,7 @@ module Noir
                                 format : String) : Array(Param)?
       fields = dto_index[type_name]?
       return unless fields
-      fields.reject(&.server_managed?).map { |field| Param.new(field.name_for(format), field.literal_default, format) }
+      fields.reject { |field| field.server_managed? || (format == "json" && field.json_ignored?) }.map { |field| Param.new(field.name_for(format), field.literal_default, format) }
     end
   end
 end

@@ -1093,9 +1093,22 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         }
         KT
       fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
-      fields["ItemDto"].select(&.server_managed?).map(&.name).should eq(["secret"])
-      fields["OrderDto"].select(&.server_managed?).map(&.name).should eq(["internalNote"])
-      fields["SignupDto"].select(&.server_managed?).map(&.name).should eq([] of String)
+      fields["ItemDto"].select(&.json_ignored?).map(&.name).should eq(["secret"])
+      fields["OrderDto"].select(&.json_ignored?).map(&.name).should eq(["internalNote"])
+      fields["SignupDto"].select(&.json_ignored?).map(&.name).should eq([] of String)
+
+      # Jackson only: form/query binding (`WebDataBinder`) still binds the key.
+      controller = <<-KT
+        @RestController
+        class C {
+            @PostMapping("/orders")
+            fun create(@RequestBody body: OrderDto): String = ""
+            @GetMapping("/orders")
+            fun search(cmd: OrderDto): String = ""
+        }
+        KT
+      extract(controller, "C", "create", "POST", nil, fields).map(&.name).should eq(["title"])
+      extract(controller, "C", "search", "GET", nil, fields).map(&.name).should eq(["title", "internalNote"])
     end
   end
 

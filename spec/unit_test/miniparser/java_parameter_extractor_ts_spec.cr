@@ -213,11 +213,19 @@ describe Noir::TreeSitterJavaParameterExtractor do
             private String revision;
             @JsonProperty(access = JsonProperty.Access.READ_ONLY)
             public String getRevision() { return revision; }
+            private String label;
+            @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+            public void setLabel(String label) { this.label = label; }
         }
+
+        record OrderDto(String name, @JsonProperty(access = JsonProperty.Access.READ_ONLY) String stamp) {}
         JAVA
 
-      fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)["ItemDto"]
-      fields.select(&.json_ignored?).map(&.name).should eq(["stamp", "revision"])
+      fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)
+      fields["ItemDto"].select(&.json_ignored?).map(&.name).should eq(["stamp", "revision", "label"])
+      # The READ_ONLY setter is still a setter for form binding.
+      fields["ItemDto"].find { |field| field.name == "label" }.try(&.has_setter?).should be_true
+      fields["OrderDto"].select(&.json_ignored?).map(&.name).should eq(["stamp"])
     end
   end
 

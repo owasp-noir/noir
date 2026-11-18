@@ -11,6 +11,13 @@ module Noir
   # module's own methods, so a local definition would be silently
   # ignored, by the mixer's own calls too.
   module JvmTsHelpers
+    # Spring Data paging types. No single request value converts to one, so
+    # a command-object field of such a type binds nothing. Wider than the
+    # Java extractor's `pageable_type?` on purpose: a `Sort` handler argument
+    # binds `sort` through its own resolver, and a `PageRequest` one is not
+    # resolved as a `Pageable` at all.
+    PAGING_TYPES = Set{"Pageable", "PageRequest", "Sort"}
+
     # Java route and parameter literals. Unlike TreeSitter.decode_string_literal,
     # an empty decoded buffer stays empty; there is no raw-source fallback.
     module JavaStringLiterals
