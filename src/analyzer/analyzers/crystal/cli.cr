@@ -30,13 +30,13 @@ module Analyzer::Crystal
 
     # stdlib subcommand dispatch. `case ARGV.shift?` / `case ARGV[0]?` with
     # string `when` arms; `ARGV[0]? == "x"` / `ARGV == ["x", "--y"]` tests.
-    ARGV_CASE     = /\bcase\s+ARGV(?:\.(?:shift|first)\??|\s*\[\s*0\s*\]\??)\s*$/
-    ARGV_CASE_IDX = /\bcase\s+ARGV\s*\[/
-    WHEN_STRINGS  = /^\s*when\s+("[^"]*"(?:\s*,\s*"[^"]*")*)(?:\s+then\b|\s*$)/
-    ARGV_SUB_EQ   = /\bARGV(?:\s*\[\s*0\s*\]\??|\.first\??)\s*[!=]=\s*"([^"]+)"/
-    ARGV_ARRAY_EQ = /\bARGV\s*[!=]=\s*\[([^\]]*)\]/
-    ARGV_TAKE     = /\bARGV\.(?:first|shift)\b/
-    ARGV_SPLAT    = /^\s*(\w+(?:\s*,\s*\w+)+)\s*=\s*ARGV\s*$/
+    ARGV_CASE      = /\bcase\s+ARGV(?:\.(?:shift|first)\??|\s*\[\s*0\s*\]\??)\s*$/
+    ARGV_CASE_PEEK = /\bcase\s+ARGV(?:\s*\[|\.first\b)/
+    WHEN_STRINGS   = /^\s*when\s+("[^"]*"(?:\s*,\s*"[^"]*")*)(?:\s+then\b|\s*$)/
+    ARGV_SUB_EQ    = /\bARGV(?:\s*\[\s*0\s*\]\??|\.first\??)\s*[!=]=\s*"([^"]+)"/
+    ARGV_ARRAY_EQ  = /\bARGV\s*[!=]=\s*\[([^\]]*)\]/
+    ARGV_TAKE      = /\bARGV\.(?:first|shift)\b/
+    ARGV_SPLAT     = /^\s*(\w+(?:\s*,\s*\w+)+)\s*=\s*ARGV\s*$/
 
     MARKERS = Detector::Crystal::Cli::MARKERS
     WEB_RE  = /\brequire\s+"(?:kemal|amber|lucky|grip|marten)"|HTTP::Server\.new|\bKemal\b|Amber::Server/
@@ -66,16 +66,23 @@ module Analyzer::Crystal
 
     # A `case` on an ARGV selector being walked. `column` is its `when`
     # column (the first `when` sets it), `arm` the URLs the current arm
-    # names, and `offset` maps a raw ARGV index onto the arm's own
-    # positions: -1 when the selector reads ARGV[0] without shifting it off.
+    # names, `named` whether any arm named a subcommand.
     private class ArgvCase
       property column : Int32? = nil
       property arm : Array(String)
+      property? named = false
       getter parent : Array(String)
-      getter offset : Int32
+      getter line : Int32
 
-      def initialize(@parent, @offset)
+      def initialize(@parent, @shifts : Bool, @line)
         @arm = @parent
+      end
+
+      # Maps a raw ARGV index onto the arm's own positions: an arm that named
+      # a subcommand off a peeking selector (`ARGV[0]?`, `ARGV.first?`) still
+      # has that subcommand at ARGV[0]. `else` and non-string arms keep it.
+      def offset : Int32
+        !@shifts && arm != parent ? -1 : 0
       end
     end
 
@@ -88,7 +95,7 @@ module Analyzer::Crystal
         # ponytail: arms are scoped by indentation, which `crystal tool
         # format` makes reliable; unformatted code leaves the case early and
         # its params land on the parent command.
-        unless line.blank?
+        unless cases.empty? || line.blank?
           indent = line.size - line.lstrip.size
           while frame = cases.last?
             frame.column = indent if frame.column.nil? && line.matches?(/^\s*when\b/)
@@ -96,9 +103,10 @@ module Analyzer::Crystal
             break if column && indent > column
             if column == indent && (m = line.match(/^\s*(when|else)\b/))
               frame.arm = m[1] == "else" ? frame.parent : case_arm(line, frame.parent, endpoints, path, line_no)
+              frame.named = true if frame.arm != frame.parent
               break
             end
-            cases.pop
+            close_case(cases.pop, endpoints, path)
           end
         end
         targets = cases.last?.try(&.arm) || [root_url]
@@ -129,25 +137,11 @@ module Analyzer::Crystal
           fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1], "", "argument"))
         end
 
-        line.scan(ARGV_SUB_EQ) { |em| argv_words([em[1]], targets, endpoints, path, line_no) }
-        line.scan(ARGV_ARRAY_EQ) { |em| argv_words(em[1].scan(/"([^"]*)"/).map(&.[1]), targets, endpoints, path, line_no) }
-
-        if line.matches?(ARGV_CASE)
-          cases << ArgvCase.new(targets, line.matches?(ARGV_CASE_IDX) ? -1 : 0)
-        else
-          # An `ARGV[0]? == "x"` test names a subcommand, not a positional.
-          rest = line.gsub(ARGV_SUB_EQ, "")
-          positions = if m = rest.match(ARGV_INDEX)
-                        [m[1].to_i]
-                      elsif rest.matches?(ARGV_TAKE)
-                        [0]
-                      elsif m = rest.match(ARGV_SPLAT)
-                        (0...m[1].split(',').size).to_a
-                      else
-                        [] of Int32
-                      end
-          positions.each do |position|
-            push_params(endpoints, targets, path, line_no, "arg#{position + offset}", "argument") if position + offset >= 0
+        if line.includes?("ARGV")
+          if line.matches?(ARGV_CASE)
+            cases << ArgvCase.new(targets, !line.matches?(ARGV_CASE_PEEK), line_no)
+          else
+            argv_reads(line, targets, offset, endpoints, path, line_no)
           end
         end
         if emit_env
@@ -155,6 +149,32 @@ module Analyzer::Crystal
           line.scan(ENV_FETCH) { |em| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(em[1], "", "env")) }
         end
       end
+      cases.reverse_each { |frame| close_case(frame, endpoints, path) }
+    end
+
+    private def argv_reads(line, targets, offset, endpoints, path, line_no)
+      line.scan(ARGV_SUB_EQ) { |em| argv_words([em[1]], targets, endpoints, path, line_no) }
+      line.scan(ARGV_ARRAY_EQ) { |em| argv_words(em[1].scan(/"([^"]*)"/).map(&.[1]), targets, endpoints, path, line_no) }
+      # An `ARGV[0]? == "x"` test names a subcommand, not a positional.
+      rest = line.gsub(ARGV_SUB_EQ, "")
+      positions = if m = rest.match(ARGV_INDEX)
+                    [m[1].to_i]
+                  elsif rest.matches?(ARGV_TAKE)
+                    [0]
+                  elsif m = rest.match(ARGV_SPLAT)
+                    (0...m[1].split(',').size).to_a
+                  else
+                    [] of Int32
+                  end
+      positions.each do |position|
+        push_params(endpoints, targets, path, line_no, "arg#{position + offset}", "argument") if position + offset >= 0
+      end
+    end
+
+    # A case that never named a subcommand (`when nil`, `when /re/`, flags
+    # only) reads its selector as the parent's first positional.
+    private def close_case(frame, endpoints, path)
+      push_params(endpoints, frame.parent, path, frame.line, "arg0", "argument") unless frame.named?
     end
 
     # A `when "a", "b"` arm: each non-flag string is a subcommand under

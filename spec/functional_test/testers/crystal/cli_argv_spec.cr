@@ -2,7 +2,7 @@ require "../../func_spec.cr"
 
 # Stdlib programs that read ARGV without OptionParser or indexing:
 # `ARGV.first?`, `ARGV == [...]`, and `case ARGV.shift?` / `case ARGV[0]?`
-# subcommand dispatch.
+# subcommand dispatch, including arms that name no subcommand.
 build = ->(url : String, params : Array(Param)) do
   ep = Endpoint.new(url, "CLI", params)
   ep.protocol = "cli"
@@ -41,6 +41,17 @@ endpoints = [
     Param.new("force", "", "flag"),
   ]),
   build.call("cli://tasks/report", [
+    Param.new("arg0", "", "argument"),
+  ]),
+  build.call("cli://pager", [
+    Param.new("v", "", "flag"),
+    Param.new("version", "", "flag"),
+    Param.new("arg0", "", "argument"),
+  ]),
+  build.call("cli://counter", [
+    Param.new("arg0", "", "argument"),
+  ]),
+  build.call("cli://notes/add", [
     Param.new("arg0", "", "argument"),
   ]),
 ]
