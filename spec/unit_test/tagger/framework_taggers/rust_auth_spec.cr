@@ -878,3 +878,113 @@ describe "RustAuthTagger actix extractors that fail with a 401 error variant" do
     tag_handler.call("guarded.rs", "anon", 16).should be_empty
   end
 end
+
+describe "RustAuthTagger request guards a macro_rules! generates" do
+  src = <<-RUST
+    use rocket::http::Status;
+    use rocket::request::{FromRequest, Outcome, Request};
+
+    pub struct User {
+        pub role: String,
+    }
+
+    #[rocket::async_trait]
+    impl<'r> FromRequest<'r> for User {
+        type Error = &'static str;
+
+        async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+            match request.headers().get_one("Authorization") {
+                Some(token) => Outcome::Success(User { role: token.to_string() }),
+                None => Outcome::Error((Status::Unauthorized, "missing token")),
+            }
+        }
+    }
+
+    macro_rules! role_guard {
+        ($(#[$doc:meta])* $name:ident, $role:expr) => {
+            $(#[$doc])*
+            pub struct $name {
+                pub user: User,
+            }
+
+            #[rocket::async_trait]
+            impl<'r> FromRequest<'r> for $name {
+                type Error = &'static str;
+
+                async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+                    let user = try_outcome!(User::from_request(request).await);
+                    if user.role == $role {
+                        Outcome::Success(Self { user })
+                    } else {
+                        Outcome::Error((Status::Forbidden, "missing role"))
+                    }
+                }
+            }
+        };
+    }
+
+    macro_rules! labelled {
+        ($name:ident) => {
+            pub struct $name;
+
+            #[rocket::async_trait]
+            impl<'r> FromRequest<'r> for $name {
+                type Error = ();
+
+                async fn from_request(_request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+                    Outcome::Success($name)
+                }
+            }
+        };
+    }
+
+    role_guard!(Manager, "manager");
+    role_guard!(
+        /// Reads reports.
+        Auditor,
+        "auditor"
+    );
+    labelled!(Locale);
+
+    #[post("/items")]
+    fn create_item(manager: Manager) -> &'static str { "created" }
+
+    #[get("/reports")]
+    fn list_reports(auditor: Auditor) -> &'static str { "reports" }
+
+    #[get("/drafts")]
+    fn list_drafts(auditor: Option<Auditor>) -> &'static str { "drafts" }
+
+    #[get("/items")]
+    fn list_items(locale: Locale) -> &'static str { "items" }
+    RUST
+
+  tag_handler = ->(name : String) do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("rocket_macro_guards")
+    main = File.join(tmpdir, "src", "main.rs")
+    Dir.mkdir_p(File.dirname(main))
+    File.write(main, src)
+    CodeLocator.instance.register_path(main)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    line = src.lines.index!(&.includes?("fn #{name}(")) + 1
+    details = Details.new(PathInfo.new(main, line - 1))
+    details.technology = "rust_rocket"
+    endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+    endpoint.handler = Handler.new(name, main, line)
+    RustAuthTagger.new(noir_options).perform([endpoint])
+    FileUtils.rm_rf(tmpdir)
+    endpoint.tags.map(&.description)
+  end
+
+  it "tags each guard type a macro invocation names, doc comments and all" do
+    tag_handler.call("create_item").should eq(["Protected by Rust Manager request guard"])
+    tag_handler.call("list_reports").should eq(["Protected by Rust Auditor request guard"])
+  end
+
+  it "leaves an Option-wrapped or never-failing generated guard anonymous" do
+    tag_handler.call("list_drafts").should be_empty
+    tag_handler.call("list_items").should be_empty
+  end
+end
