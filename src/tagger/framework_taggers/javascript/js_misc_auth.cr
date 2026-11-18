@@ -181,11 +181,12 @@ class JsMiscAuthTagger < FrameworkTagger
   end
 
   # What a Koa middleware's definition does to refuse a caller: throw
-  # (`ctx.throw(401)`, `throw AuthenticationError(…)`), assert, or set 401/403.
+  # (`ctx.throw(401)`, `throw AuthenticationError(…)`), assert (with a 401/403
+  # or an authentication error, which http-errors throws as is), or set 401/403.
   # An error built with a 401/403 status counts when it is thrown or handed
   # to an assertion (logto's `throw new RequestError({ code, status: 401 })`,
   # `assertThat(ok, new RequestError({ status: 403 }))`).
-  KOA_REFUSAL    = /\bctx\.throw\s*\(\s*40[13]\b|\bctx\.status\s*=\s*40[13]\b|\bctx\.assert\s*\([^;]*?,\s*40[13]\b|\bthrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Forbidden|Authentication|Authorization)\w*\s*\(|\b(?:throw|assert\w*\s*\((?:[^;()]|\([^()]*\))*?,)\s*new\s+\w*Error\s*\(\s*\{(?:[^{}]|\{[^{}]*\})*?\bstatus\s*:\s*40[13]\b/
+  KOA_REFUSAL    = /\bctx\.throw\s*\(\s*40[13]\b|\bctx\.status\s*=\s*40[13]\b|\bctx\.assert\s*\([^;]*?,\s*40[13]\b|\bctx\.assert\s*\([^;]*?,\s*new\s+\w*(?:Unauthori[sz]ed|Forbidden|Authentication|Authorization)\w*\s*\(\)?|\bthrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Forbidden|Authentication|Authorization)\w*\s*\(|\b(?:throw|assert\w*\s*\((?:[^;()]|\([^()]*\))*?,)\s*new\s+\w*Error\s*\(\s*\{(?:[^{}]|\{[^{}]*\})*?\bstatus\s*:\s*40[13]\b/
   KOA_ROUTE_CALL = /\.\s*(?:get|post|put|patch|delete|del|all|head|options)\s*\(/
   # `auth`, `auth()`, `mw.requireUser({ … })`: the reference and its arguments.
   KOA_MIDDLEWARE_CALL = /\A((?:[A-Za-z_$][\w$]*\s*\.\s*)?[A-Za-z_$][\w$]*)\s*(?:\((.*)\))?\z/m

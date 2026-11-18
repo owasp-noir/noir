@@ -173,6 +173,52 @@ describe "JsMiscAuthTagger" do
     end
   end
 
+  # `ctx.assert(value, err)` throws `err` when `value` is falsy; http-errors
+  # keeps the error's own 401/403 status.
+  it "counts a Koa ctx.assert on the caller with an authentication error as a refusal" do
+    dir = File.tempname("koa_assert_error")
+    Dir.mkdir_p("#{dir}/middleware")
+    File.write("#{dir}/middleware/auth-required.js", <<-JS)
+      const { AuthenticationError } = require("../lib/errors")
+
+      module.exports = function(ctx, next) {
+        ctx.assert(ctx.state.user, new AuthenticationError())
+        return next()
+      }
+      JS
+    File.write("#{dir}/middleware/found.js", <<-JS)
+      const { NotFoundError } = require("../lib/errors")
+
+      module.exports = function(ctx, next) {
+        ctx.assert(ctx.state.item, new NotFoundError())
+        return next()
+      }
+      JS
+    File.write("#{dir}/routes.js", <<-JS)
+      const Router = require("koa-router")
+      const router = new Router()
+      const auth = require("./middleware/auth-required")
+      const found = require("./middleware/found")
+
+      router.post("/items", auth, (ctx) => { ctx.body = {} })
+      router.get("/items/:id", found, (ctx) => { ctx.body = {} })
+      JS
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      endpoints = {6 => "/items", 7 => "/items/:id"}.map do |line, url|
+        details = Details.new(PathInfo.new("#{dir}/routes.js", line))
+        details.technology = "js_koa"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      verdicts = JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.map(&.description)} }
+      verdicts["/items"].should eq(["Protected by Koa auth middleware (ctx.assert(ctx.state.user, new AuthenticationError()))"])
+      verdicts["/items/:id"].should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   # koa_router_use_guard/src/app.ts: `admin.use(requireLogin)` before
   # `admin.get('/items')`; `scoped.use('/private', requireLogin)` between
   # `/before` and the `/private` and `/public` routes; a route that only
