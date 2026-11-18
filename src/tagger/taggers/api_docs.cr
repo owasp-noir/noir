@@ -35,8 +35,9 @@ class ApiDocsTagger < Tagger
 
   # `openapi` also prefixes business routes of an "Open API" product
   # (`/v1/open-api/items`), so it marks a document only as the last path
-  # segment (`/openapi`, `/openapi.json`) or above a spec file
-  # (`/openapi/v1.json`).
+  # segment (`/openapi`, `/openapi.json`), above a spec file
+  # (`/openapi/v1.json`), or directly above a format or name as the last
+  # segment (`/openapi/json`, `/openapi/{name}`).
   NAMESPACE_DOC_SEGMENTS = Set{"openapi", "openapi3"}
   SPEC_EXTENSIONS        = Set{"json", "yaml", "yml"}
 
@@ -63,9 +64,13 @@ class ApiDocsTagger < Tagger
     return false unless DOC_SEGMENTS_NORMALIZED.includes?(segment)
     return true unless NAMESPACE_DOC_SEGMENTS.includes?(segment)
 
-    last = url.downcase.split(/[?#]/, 2)[0].split("/", remove_empty: true).last? || ""
+    path = url.downcase.split(/[?#]/, 2)[0].split("/", remove_empty: true)
+    last = path.last? || ""
     parts = last.split(".")
-    parts[0].gsub(/[-_]/, "") == segment || (parts.size > 1 && SPEC_EXTENSIONS.includes?(parts.last))
+    return true if parts[0].gsub(/[-_]/, "") == segment || (parts.size > 1 && SPEC_EXTENSIONS.includes?(parts.last))
+
+    path.size >= 2 && path[-2].gsub(/[-_]/, "") == segment &&
+      (SPEC_EXTENSIONS.includes?(last) || last.starts_with?(':') || last.starts_with?('{') || last.starts_with?('<'))
   end
 
   # `schema` is too generic to match on its own (GraphQL `/schema`,
