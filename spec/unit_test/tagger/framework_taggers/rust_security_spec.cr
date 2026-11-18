@@ -80,6 +80,41 @@ describe "RustSecurityTagger" do
     axum_security_tags(src, ["/items"]).should eq({"/items" => [] of String})
   end
 
+  it "applies an axum layer only to the routes registered before it" do
+    src = <<-RUST
+      use axum::{extract::DefaultBodyLimit, routing::{get, post}, Router};
+      use tower_http::cors::CorsLayer;
+
+      pub fn file_routes() -> Router {
+          Router::new()
+              .route("/files", get(list_files).post(upload_file))
+              .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+              .route("/files/new", get(new_file))
+              .route("/avatar", post(set_avatar).layer(DefaultBodyLimit::max(1024)))
+      }
+
+      pub fn app() -> Router {
+          Router::new().route("/health", get(health)).merge(file_routes())
+      }
+
+      pub async fn run(api: Router) {
+          let app = api
+              .layer(CorsLayer::permissive())
+              .route("/metrics", get(metrics));
+          serve(app).await;
+      }
+      RUST
+    tags = axum_security_tags(src, ["/files", "/files/new", "/avatar", "/health", "/metrics", "/api/items"])
+    tags.should eq({
+      "/files"     => ["body-limit", "cors"],
+      "/files/new" => ["cors"],
+      "/avatar"    => ["body-limit", "cors"],
+      "/health"    => ["cors"],
+      "/metrics"   => [] of String,
+      "/api/items" => ["cors"],
+    })
+  end
+
   fixtures = File.expand_path("../../../functional_test/fixtures/rust/rust_security", __DIR__)
 
   describe "target techs" do

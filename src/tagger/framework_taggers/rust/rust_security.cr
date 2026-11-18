@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../ext/tree_sitter/tree_sitter"
+require "./axum_chain"
 
 # Rust-specific security tagger.
 #
@@ -26,8 +27,9 @@ require "../../../ext/tree_sitter/tree_sitter"
 #   1. Source middleware — every `.rs` file is pre-scanned for the
 #      builder calls above. The enclosing Actix `web::scope("/x")` (if
 #      any) gives the URL prefix the protection applies to; app-wide
-#      middleware (`App::new().wrap(..)`, `Router::new().layer(..)`)
-#      maps to `/` so it tags every endpoint. Test modules
+#      middleware (`App::new().wrap(..)`) maps to `/` so it tags every
+#      endpoint. An axum `.layer(..)` covers the routes registered before
+#      it on its router chain (see `layer_scope`). Test modules
 #      (`#[cfg(test)]`) and `tests/`/`benches/`/`examples/` files are
 #      skipped so test-only middleware can't taint real endpoints.
 #
@@ -41,14 +43,27 @@ require "../../../ext/tree_sitter/tree_sitter"
 # rest of Noir's tagging.
 @[Noir::TaggerFor(key: "rust_security", name: "Rust Security Tagger", desc: "Identifies Rust framework security protections (CORS, rate limiting, security headers, body-size limits)", order: 80)]
 class RustSecurityTagger < FrameworkTagger
+  include RustAxumChain
+
+  # Where a protection applies: under `prefix` bar the `except` routes, or,
+  # when `mounts` is set, only on those router-local `{"route"|"nest", path}`
+  # mounts (an axum `.layer(..)` whose routes were read).
+  record Scope,
+    prefix : String,
+    mounts : Array({String, String})? = nil,
+    except : Array(String) = [] of String
+
   # A single detected protection: the tag to emit, its human description,
-  # the URL prefix it guards, and whether it is a risk (risk variants win
-  # dedup so the reviewer sees the alarming description, not the benign).
+  # where it applies, and whether it is a risk (risk variants win dedup so
+  # the reviewer sees the alarming description, not the benign).
   record Protection,
     tag : String,
     description : String,
-    prefix : String,
+    scope : Scope,
     risk : Bool
+
+  # The rows of an axum `.layer(..)` call's arguments and what it wraps.
+  private record LayerSpan, first : Int32, last : Int32, scope : Scope
 
   # --- CORS -----------------------------------------------------------
   # Permissive: any origin is accepted. The classic finding.
@@ -185,7 +200,7 @@ class RustSecurityTagger < FrameworkTagger
 
   private def scan_rust_source(content : String)
     lines = content.split("\n")
-    imports = import_rows(content)
+    imports, layers = syntax_spans(content)
 
     # `#[cfg(test)]` module skipping via brace depth.
     brace_depth = 0
@@ -210,7 +225,7 @@ class RustSecurityTagger < FrameworkTagger
       end
 
       unless in_test || stripped.starts_with?("//") || imports.includes?(idx)
-        detect_line_protections(lines, idx, stripped)
+        detect_line_protections(lines, idx, stripped, layers)
       end
 
       brace_depth += opens - closes
@@ -220,47 +235,119 @@ class RustSecurityTagger < FrameworkTagger
     end
   end
 
-  # Rows of `use` declarations: naming a layer type applies nothing.
-  private def import_rows(content : String) : Set(Int32)
+  # Rows of `use` declarations (naming a layer type applies nothing) and
+  # the axum `.layer(..)` calls of the file.
+  private def syntax_spans(content : String) : {Set(Int32), Array(LayerSpan)}
     rows = Set(Int32).new
-    return rows unless content.includes?("use ") && content.matches?(ANY_PATTERN)
+    layers = [] of LayerSpan
+    return {rows, layers} unless content.matches?(ANY_PATTERN)
     Noir::TreeSitter.parse_rust(content) do |root|
       Noir::TreeSitter.walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "use_declaration"
-        (Noir::TreeSitter.node_start_row(node)..Noir::TreeSitter.node_end_row(node)).each { |row| rows << row }
+        case Noir::TreeSitter.node_type(node)
+        when "use_declaration"
+          (Noir::TreeSitter.node_start_row(node)..Noir::TreeSitter.node_end_row(node)).each { |row| rows << row }
+        when "call_expression"
+          next unless {"layer", "route_layer"}.includes?(field_call_name(node, content))
+          args = Noir::TreeSitter.field(node, "arguments") || next
+          scope = layer_scope(node, content) || next
+          layers << LayerSpan.new(Noir::TreeSitter.node_start_row(args), Noir::TreeSitter.node_end_row(args), scope)
+        end
       end
     end
-    rows
+    {rows, layers}
   end
 
-  private def detect_line_protections(lines : Array(String), idx : Int32, stripped : String)
-    # `resolve_chain_prefix` is only invoked from a branch that already
-    # matched, so the walk-up cost is paid solely on middleware lines.
+  # What `recv.layer(..)` wraps. axum applies a layer only to the routes
+  # registered before it: `.route("/p", get(h).layer(x))` wraps that route,
+  # a `Router::new()` chain the routes it reads, and an unread receiver
+  # every route but the ones chained after the layer. A tower
+  # `ServiceBuilder` layer is not a router's; the router layer it is handed
+  # to decides.
+  private def layer_scope(call : LibTreeSitter::TSNode, source : String) : Scope?
+    if route = find_enclosing_route_call(call, source)
+      path = named_call_args(route)[0]?.try { |arg| string_literal_content(arg, source) }
+      return path ? Scope.new("/", [{"route", path}]) : nil
+    end
+    root = call
+    while (recv = chain_receiver(root)) && Noir::TreeSitter.node_type(recv) == "call_expression"
+      root = recv
+    end
+    return if call_func_full_text(root, source).ends_with?("ServiceBuilder::new")
+    if mounts = router_mounts(call, source)
+      return Scope.new("/", mounts)
+    end
+    Scope.new("/", nil, routes_chained_after(call, source))
+  end
+
+  ROUTER_NEW = /\bRouter(?:::<[^<>]*>)?::new\z/
+
+  # The routes and nests of the `Router::new()` chain read before `call`;
+  # nil when the chain holds anything else (a merge, a variable, a path
+  # that is not a literal).
+  private def router_mounts(call : LibTreeSitter::TSNode, source : String) : Array({String, String})?
+    mounts = [] of {String, String}
+    cursor = chain_receiver(call)
+    while cur = cursor
+      return unless Noir::TreeSitter.node_type(cur) == "call_expression"
+      case name = field_call_name(cur, source)
+      when nil
+        return unless call_func_full_text(cur, source).matches?(ROUTER_NEW)
+        return mounts.empty? ? nil : mounts
+      when "route", "nest", "nest_service"
+        path = named_call_args(cur)[0]?.try { |arg| string_literal_content(arg, source) }
+        return unless path
+        mounts << {name == "route" ? "route" : "nest", path}
+      when "merge"
+        return
+      end
+      cursor = chain_receiver(cur)
+    end
+    nil
+  end
+
+  # Literal paths of the `.route(..)` calls chained onto `call`.
+  private def routes_chained_after(call : LibTreeSitter::TSNode, source : String) : Array(String)
+    paths = [] of String
+    node = call
+    while (field = Noir::TreeSitter.parent(node)) && Noir::TreeSitter.node_type(field) == "field_expression"
+      outer = Noir::TreeSitter.parent(field) || break
+      break unless Noir::TreeSitter.node_type(outer) == "call_expression"
+      if field_call_name(outer, source) == "route"
+        named_call_args(outer)[0]?.try { |arg| string_literal_content(arg, source) }.try { |path| paths << path }
+      end
+      node = outer
+    end
+    paths
+  end
+
+  private def detect_line_protections(lines : Array(String), idx : Int32, stripped : String, layers : Array(LayerSpan))
+    # `scope_at` is only invoked from a branch that already matched, so the
+    # walk-up cost is paid solely on middleware lines.
 
     # CORS — permissive wins over a generic "present" match on the same line.
     if m = match_first(stripped, CORS_PERMISSIVE_PATTERNS)
-      add_protection("cors", resolve_chain_prefix(lines, idx), true,
+      add_protection("cors", scope_at(lines, idx, layers), true,
         "Permissive CORS (#{m}) — cross-origin requests are accepted from any origin, so any website can read responses to credentialed requests. Confirm this is intended for the endpoints it covers.")
     elsif m = match_first(stripped, CORS_PRESENT_PATTERNS)
-      add_protection("cors", resolve_chain_prefix(lines, idx), false,
+      add_protection("cors", scope_at(lines, idx, layers), false,
         "CORS configured (#{m}) — cross-origin access is restricted to an explicit origin allow-list.")
     end
 
     if m = match_first(stripped, RATE_LIMIT_PATTERNS)
-      add_protection("rate-limit", resolve_chain_prefix(lines, idx), false,
+      add_protection("rate-limit", scope_at(lines, idx, layers), false,
         "Rate limited (#{m}) — request volume to this endpoint is throttled per client, mitigating brute-force and abuse.")
     end
 
     if m = match_first(stripped, SECURITY_HEADER_PATTERNS)
-      add_protection("security-headers", resolve_chain_prefix(lines, idx), false,
+      add_protection("security-headers", scope_at(lines, idx, layers), false,
         "Security response header set (#{m}) — the response is hardened against clickjacking / MIME-sniffing / protocol-downgrade attacks.")
     end
 
     if m = match_first(stripped, BODY_LIMIT_DISABLED_PATTERNS)
-      add_protection("body-limit", resolve_chain_prefix(lines, idx), true,
+      add_protection("body-limit", scope_at(lines, idx, layers), true,
         "Request body size limit disabled (#{m}) — unbounded request bodies are accepted, a memory-exhaustion denial-of-service risk.")
     elsif m = match_first(stripped, BODY_LIMIT_PATTERNS)
-      add_protection("body-limit", resolve_chain_prefix(lines, idx), false,
+      add_protection("body-limit", scope_at(lines, idx, layers), false,
         "Request body size limited (#{m}) — oversized request bodies are rejected, mitigating memory-exhaustion DoS.")
     end
   end
@@ -285,17 +372,17 @@ class RustSecurityTagger < FrameworkTagger
       case kind
       when "cors"
         if loco_cors_permissive?(block)
-          add_protection("cors", "/", true,
+          add_protection("cors", APP_WIDE, true,
             "Permissive CORS (Loco config allow_origins: \"*\") — cross-origin requests are accepted from any origin.")
         else
-          add_protection("cors", "/", false,
+          add_protection("cors", APP_WIDE, false,
             "CORS configured (Loco middleware) — cross-origin access is governed by the Loco CORS middleware.")
         end
       when "limit_payload"
-        add_protection("body-limit", "/", false,
+        add_protection("body-limit", APP_WIDE, false,
           "Request body size limited (Loco limit_payload middleware) — oversized request bodies are rejected.")
       when "secure_headers"
-        add_protection("security-headers", "/", false,
+        add_protection("security-headers", APP_WIDE, false,
           "Security response headers set (Loco secure_headers middleware) — responses carry hardening headers (CSP, X-Frame-Options, …).")
       end
     end
@@ -334,17 +421,7 @@ class RustSecurityTagger < FrameworkTagger
   # Walk upward from a middleware call to the nearest enclosing Actix
   # `web::scope("/x")`, or `/` when the call sits on an app/router head.
   # A found scope always wins; otherwise we fall back to `/`.
-  #
-  # Caveat (Axum/Tower): when a `.layer(..)` is applied to a sub-router
-  # that is built in its own statement/function and only later mounted
-  # with `nest("/x", sub)`, the walk-up reaches `Router::new(` and
-  # resolves `/` — i.e. it tags the whole app even though the layer only
-  # covers `/x`. That is a false *positive* (over-broad), unlike the
-  # Actix path which errs toward false negatives. We accept it because
-  # the alternative (data-flow tracking a router variable across
-  # statements) is out of scope for a line-based tagger, and an
-  # over-broad "protected" signal is rarer in practice than the inline
-  # `Router::new().route(..).layer(..)` form this resolves correctly.
+  # An axum `.layer(..)` never gets here: `layer_scope` reads what it wraps.
   private def resolve_chain_prefix(lines : Array(String), idx : Int32) : String
     i = idx
     steps = 0
@@ -383,8 +460,17 @@ class RustSecurityTagger < FrameworkTagger
     nil
   end
 
-  private def add_protection(tag : String, prefix : String, risk : Bool, description : String)
-    @protections << Protection.new(tag, description, prefix, risk)
+  APP_WIDE = Scope.new("/")
+
+  # The innermost axum `.layer(..)` whose arguments hold the line decides;
+  # any other line falls back to the enclosing scope or the app.
+  private def scope_at(lines : Array(String), idx : Int32, layers : Array(LayerSpan)) : Scope
+    layer = layers.select { |span| span.first <= idx && idx <= span.last }.min_by? { |span| span.last - span.first }
+    layer ? layer.scope : Scope.new(resolve_chain_prefix(lines, idx))
+  end
+
+  private def add_protection(tag : String, scope : Scope, risk : Bool, description : String)
+    @protections << Protection.new(tag, description, scope, risk)
   end
 
   private def count_char(str : String, char : Char) : Int32
@@ -394,9 +480,24 @@ class RustSecurityTagger < FrameworkTagger
   private def check_endpoint(endpoint : Endpoint)
     url = endpoint.url
     @protections.each do |protection|
-      next unless url_under_prefix?(url, protection.prefix)
+      next unless covers?(protection.scope, url)
       endpoint.add_tag(Tag.new(protection.tag, protection.description, "rust_security"))
     end
+  end
+
+  # A router-local path also covers itself under a `nest` prefix, so
+  # `/files` covers `/api/files`.
+  private def covers?(scope : Scope, url : String) : Bool
+    if mounts = scope.mounts
+      return mounts.any? do |(kind, path)|
+        if kind == "nest"
+          url_under_prefix?(url, path) || url.includes?("#{path.rstrip('/')}/")
+        else
+          url == path || (path.size > 1 && url.ends_with?(path))
+        end
+      end
+    end
+    url_under_prefix?(url, scope.prefix) && scope.except.none? { |path| url == path || (path.size > 1 && url.ends_with?(path)) }
   end
 
   # `/` (or empty) matches everything. Otherwise require a real path
