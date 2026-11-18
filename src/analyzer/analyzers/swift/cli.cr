@@ -22,8 +22,10 @@ module Analyzer::Swift
     SUBCOMMANDS_KEY = /\bsubcommands:/
     OPTION_FLAG     = /@(?:Option|Flag)\b/
     ARGUMENT_WRAP   = /@Argument\b/
-    CUSTOM_LONG     = /name:\s*\.(?:customLong|long)\s*\(\s*"([^"]+)"/
-    VAR_DECL        = /\bvar\s+(\w+)/
+    # `name: .customLong("x")` or the first one in `name: [.short, .customLong("x")]`.
+    CUSTOM_LONG    = /name:\s*(?:\[[^\]]*?)?\.(?:customLong|long)\s*\(\s*"([^"]+)"/
+    VAR_DECL       = /\bvar\s+(\w+)/
+    STRING_LITERAL = /"(?:[^"\\]|\\.)*"/
 
     GETENV   = /\bgetenv\s*\(\s*"([^"]+)"/
     PROC_ENV = /ProcessInfo(?:\.processInfo|\(\))?\.environment\s*\[\s*"([^"]+)"\s*\]/
@@ -101,20 +103,24 @@ module Analyzer::Swift
         line_no = index + 1
 
         if sm = line.match(PARSABLE_STRUCT)
-          name = command_name_after(lines, index) || sm[1].downcase
-          current_url = name == binary ? root_url : "#{root_url}/#{name}"
+          # Unnamed, the binary keeps its lowercased type name; a subcommand
+          # takes ArgumentParser's default, the kebab-cased type name.
+          explicit = command_name_after(lines, index)
+          current_url = (explicit || sm[1].downcase) == binary ? root_url : "#{root_url}/#{explicit || camel_to_kebab(sm[1])}"
           fetch_endpoint(endpoints, current_url, path, line_no)
         end
 
-        if line.matches?(OPTION_FLAG)
+        # A wrapper spelled inside a string (`print("@Flag var …")`) is prose.
+        code = line.gsub(STRING_LITERAL, "\"\"")
+        if code.matches?(OPTION_FLAG)
           pending = :flag
           pending_custom = line.match(CUSTOM_LONG).try(&.[1])
-        elsif line.matches?(ARGUMENT_WRAP)
+        elsif code.matches?(ARGUMENT_WRAP)
           pending = :argument
           pending_custom = nil
         end
 
-        if pending && (vm = line.match(VAR_DECL))
+        if pending && (vm = code.match(VAR_DECL))
           name = pending_custom || camel_to_kebab(vm[1])
           type = pending == :flag ? "flag" : "argument"
           fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", type))
@@ -139,13 +145,10 @@ module Analyzer::Swift
       end
     end
 
+    # ArgumentParser's default spelling of a property or command type name:
+    # `dryRun` -> `dry-run`, `orderID` -> `order-id`, `HTTPItems` -> `http-items`.
     private def camel_to_kebab(name : String) : String
-      result = String::Builder.new
-      name.each_char_with_index do |ch, i|
-        result << '-' if ch.uppercase? && i > 0
-        result << ch.downcase
-      end
-      result.to_s
+      name.gsub(/([a-z0-9])([A-Z])/, "\\1-\\2").gsub(/([A-Z]+)([A-Z][a-z])/, "\\1-\\2").downcase
     end
   end
 end
