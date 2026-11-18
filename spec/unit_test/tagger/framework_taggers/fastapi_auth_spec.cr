@@ -550,6 +550,7 @@ describe "FastAPIAuthTagger" do
       {"main.py", 67, "GET", "/api/orders/{order_id}"}, {"main.py", 72, "GET", "/api/invoices/daily"},
       {"factory.py", 26, "GET", "/assets/{name}"}, {"factory.py", 30, "GET", "/signin"},
       {"factory.py", 34, "GET", "/dashboard"}, {"local_only.py", 14, "GET", "/status"},
+      {"csrf.py", 15, "POST", "/notes"},
     ]
     endpoints = routes.map do |file, line, method, url|
       Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new("#{base}/#{file}", line)))
@@ -580,5 +581,7 @@ describe "FastAPIAuthTagger" do
     verdicts["factory.py:30"].should be_empty
     # A host check refuses by network origin, not by who the caller is.
     verdicts["local_only.py:14"].should be_empty
+    # A CSRF token check refuses a forged request, not an anonymous one.
+    verdicts["csrf.py:15"].should be_empty
   end
 end
