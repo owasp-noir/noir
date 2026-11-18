@@ -1352,6 +1352,7 @@ class DjangoAuthTagger < FrameworkTagger
       return (verb[1] == "==" || verb[1] == "in") == hit ? MwTri::T : MwTri::F
     end
     return MwTri::F if expr.matches?(/\A[\w.]*\buser\.(?:is_authenticated|is_staff|is_superuser|is_active)\z/)
+    return MwTri::T if expr.matches?(/\A[\w.]*\buser\.is_anonymous\z/)
     return MwTri::T if expr == "True"
     return MwTri::F if expr.in?("False", "None")
     # An anonymous request carries no `request.auth`.

@@ -2282,4 +2282,50 @@ describe "DjangoAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "reads request.user.is_anonymous as true for an anonymous caller in has_permission" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_is_anonymous")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    File.write(views, <<-PY)
+      class MemberPermission(BasePermission):
+          def has_permission(self, request, view):
+              if request.user.is_anonymous:
+                  return False
+
+              if request.method in SAFE_METHODS:
+                  return Member.objects.filter(member=request.user).exists()
+
+              return Member.objects.filter(member=request.user, role=20).exists()
+
+      class GuestReadPermission(BasePermission):
+          def has_permission(self, request, view):
+              if request.user.is_anonymous:
+                  return request.method in SAFE_METHODS
+              return Member.objects.filter(member=request.user).exists()
+
+      class ItemViewSet(viewsets.ViewSet):
+          permission_classes = [MemberPermission]
+
+      class NoteViewSet(viewsets.ViewSet):
+          permission_classes = [GuestReadPermission]
+      PY
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}/#{method}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      item_read, item_write, note_read, note_write = at.call("GET", 17), at.call("POST", 17), at.call("GET", 20), at.call("POST", 20)
+      DjangoAuthTagger.new(noir_options).perform([item_read, item_write, note_read, note_write])
+      item_read.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      item_write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      note_read.tags.should be_empty
+      note_write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
