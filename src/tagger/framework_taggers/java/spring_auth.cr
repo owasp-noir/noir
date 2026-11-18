@@ -159,6 +159,10 @@ class SpringAuthTagger < FrameworkTagger
   # last), so its rules decide them and no other chain's do.
   alias UnreadConfig = NamedTuple(module: String?, what: String, path: String, line: Int32)
 
+  # A path `web.ignoring()` takes out of every chain (`WebSecurityCustomizer`,
+  # `configure(WebSecurity)`): no chain, Boot's default included, guards it.
+  alias IgnoredPath = NamedTuple(pattern: String, method: String?, module: String?)
+
   alias ScopedChain = NamedTuple(scope: Array(String), order: Int32, rules: Array(SecurityRule), module: String?)
 
   def initialize(options : Hash(String, YAML::Any))
@@ -167,6 +171,7 @@ class SpringAuthTagger < FrameworkTagger
     # a matcher noir cannot read, which keep the old global treatment).
     @security_rules = [] of SecurityRule
     @scoped_chains = [] of ScopedChain
+    @ignored_paths = [] of IgnoredPath
     # Build units that declare a security chain (nil: a file outside any).
     @chain_modules = Set(String?).new
     # Build units that switch Spring Security on (`@EnableWebSecurity`), and
@@ -235,6 +240,7 @@ class SpringAuthTagger < FrameworkTagger
   private def pre_scan_security_configs
     @security_rules.clear
     @scoped_chains.clear
+    @ignored_paths.clear
     @chain_modules.clear
     @security_enabled.clear
     @unread_configs.clear
@@ -296,6 +302,7 @@ class SpringAuthTagger < FrameworkTagger
           scan_filter_registrations(content, file, module_dir) if content.includes?("FilterRegistrationBean")
           scan_bean_types(content, module_dir) if content.includes?("@Bean")
           @servlet_component_scans << module_dir if content.includes?("@ServletComponentScan")
+          scan_ignored_paths(content, file.ends_with?(".java"), module_dir) if content.includes?("ignoring(")
           scan_component_packages(content, module_dir) if module_dir && (content.includes?("@SpringBootApplication") || content.includes?("@ComponentScan") || content.includes?("@Import"))
         end
 
@@ -1678,6 +1685,28 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
+  IGNORING_CALL    = /\bignoring\s*\(\s*\)/
+  IGNORED_MATCHERS = /\A\s*\.\s*(?:antMatchers|requestMatchers|mvcMatchers)\s*\(/
+
+  # `web.ignoring().requestMatchers(..)`, chained calls included
+  # (`.antMatchers("/a").antMatchers("/b")`).
+  private def scan_ignored_paths(content : String, java : Bool, module_dir : String?)
+    code = Noir::CComments.strip(content)
+    return unless code.matches?(IGNORING_CALL)
+    strings, arrays = java ? security_constants(content) : {Hash(String, String).new, Hash(String, Array(String)).new}
+    code.scan(IGNORING_CALL) do |match|
+      position = match.byte_end(0)
+      while call = Noir::TextFile.byte_window(code, position, 64).match(IGNORED_MATCHERS)
+        open = position + call.byte_end(0) - 1
+        break unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(code, open)
+        args = code.byte_slice(open + 1, close - open - 1)
+        method = request_matcher_method(args)
+        matcher_patterns(args, strings, arrays).each { |pattern| @ignored_paths << {pattern: pattern, method: method, module: module_dir} }
+        position = close + 1
+      end
+    end
+  end
+
   private def scan_security_config(content : String, java : Bool, module_dir : String?, file_path : String)
     strings, arrays = java ? security_constants(content) : {Hash(String, String).new, Hash(String, Array(String)).new}
     code = Noir::CComments.strip(content)
@@ -2063,6 +2092,9 @@ class SpringAuthTagger < FrameworkTagger
     # A security configuration or switch outside any build unit (an example
     # under `docs/`) reaches only endpoints whose classpath is unknown.
     reaches = ->(owner : String?) { owner ? applies.call(owner) : classpath.nil? }
+    return if @ignored_paths.any? do |ignored|
+                applies.call(ignored[:module]) && ignored[:method].in?(nil, endpoint.method.upcase) && matches_ant_pattern?(url, ignored[:pattern])
+              end
     if config_dir && classpath && @chain_modules.none? { |owner| applies.call(owner) } && @unread_configs.none? { |config| reaches.call(config[:module]) } &&
        module_classpath(config_dir).try(&.[1])
       # The app declares no chain, yet Spring Security is on its classpath
