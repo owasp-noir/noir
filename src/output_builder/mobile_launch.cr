@@ -15,15 +15,22 @@ module MobileLaunch
   # the backing file — Android `assetlinks.json` vs Apple
   # apple-app-site-association.
   def ios_origin?(endpoint : Endpoint) : Bool
-    tech = endpoint.details.technology
-    return true if tech == "ios"
-    return false unless tech == "well_known_applinks"
+    return true if declared_by?(endpoint, "ios")
+    return false unless endpoint.details.technology == "well_known_applinks"
 
     # Classify as iOS only on an affirmative Apple apple-app-site-association
     # backing file. The old `none? { assetlinks.json }` was vacuously true for
     # an empty code_paths list (which optimization can produce), so an Android
     # App-Links association with no code_paths leaked into the iOS simctl list.
     endpoint.details.code_paths.any? { |pi| File.basename(pi.path) == "apple-app-site-association" }
+  end
+
+  # Android and iOS declaring the same link merge into one endpoint whose
+  # `technology` names only the winner; `technologies` keeps both, so the
+  # link launches on either platform.
+  def declared_by?(endpoint : Endpoint, tech : String) : Bool
+    details = endpoint.details
+    details.technology == tech || details.technologies.includes?(tech)
   end
 
   # App Links / Universal Links from `.well-known` files are bare path
