@@ -10,6 +10,9 @@ class HuntParamTagger < Tagger
   # params qualify; body params stay suppressed to mirror the bare-`id`
   # heuristic below.
   IDOR_SUFFIX_PARAM_TYPES = Set{"path", "query"}
+  # A compound `file*` name ending in one of these carries a number, hash
+  # or label about a file (`fileSize`, `fileSeq`, `file_hash`), not a path.
+  FILE_ATTRIBUTE_TOKENS = Set{"size", "id", "ids", "seq", "seqs", "hash", "ext", "type", "count", "no", "sn"}
 
   TAG_DEFINITIONS = {
     "ssti" => {
@@ -86,7 +89,9 @@ class HuntParamTagger < Tagger
     when "ssrf"
       return true if name_tokens(param.name).any? { |token| token == "url" || token == "uri" }
     when "file-inclusion"
-      return true if name_tokens(param.name).includes?("file")
+      tokens = name_tokens(param.name)
+      tokens.pop if tokens.size > 1 && tokens.last == "list"
+      return true if tokens.includes?("file") && !FILE_ATTRIBUTE_TOKENS.includes?(tokens.last)
     when "idor"
       if IDOR_SUFFIX_PARAM_TYPES.includes?(param.param_type)
         return true if identifier_suffix_like?(param.name)

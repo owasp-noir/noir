@@ -155,5 +155,31 @@ describe "ApiDocsTagger" do
         endpoint.tags[0].name.should eq("api_docs")
       end
     end
+
+    it "does not tag an openapi route namespace" do
+      tagger = ApiDocsTagger.new(default_tagger_options)
+
+      endpoints = [
+        Endpoint.new("/v1/open-api/items", "GET"),
+        Endpoint.new("/v1/open-api/items/{itemId}", "PUT"),
+        Endpoint.new("/v1/open-api/{groupId}", "GET"),
+        Endpoint.new("/openapi/v2/items/{itemId}/links", "POST"),
+      ]
+
+      tagger.perform(endpoints)
+
+      endpoints.each(&.tags.size.should(eq(0)))
+    end
+
+    it "still tags openapi documents" do
+      tagger = ApiDocsTagger.new(default_tagger_options)
+
+      endpoints = ["/openapi", "/q/openapi", "/openapi.yaml", "/openapi/v1.json",
+                   "/api/openapi3.json", "/openapi/schema", "/openapi/json", "/openapi/yaml"].map { |path| Endpoint.new(path, "GET") }
+
+      tagger.perform(endpoints)
+
+      endpoints.each(&.tags.size.should(eq(1)))
+    end
   end
 end

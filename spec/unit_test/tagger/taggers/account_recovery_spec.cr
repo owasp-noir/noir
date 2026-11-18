@@ -234,5 +234,17 @@ describe "AccountRecoveryTagger" do
       update.tags.size.should eq(1)
       confirm.tags.size.should eq(1)
     end
+
+    it "treats a camelCase zip/download segment as file context" do
+      tagger = AccountRecoveryTagger.new(default_tagger_options)
+
+      zip = Endpoint.new("/api/items/zipDownload/password", "GET")
+      reset = Endpoint.new("/api/account/password", "PUT")
+
+      tagger.perform([zip, reset])
+
+      zip.tags.size.should eq(0)
+      reset.tags.size.should eq(1)
+    end
   end
 end

@@ -446,5 +446,32 @@ describe "HuntParamTagger" do
 
       endpoint.params[0].tags.map(&.name).should_not contain("idor")
     end
+
+    it "does not tag file-attribute names as file inclusion" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      names = ["fileSize", "fileId", "file_ids", "fileSeq", "fileSeqs", "file_hash",
+               "fileExt", "fileType", "fileCount", "fileNo", "fileIdList", "fileReference.id"]
+      endpoint = Endpoint.new("/api/items", "GET", names.map { |n| Param.new(n, "", "query") })
+
+      tagger.perform([endpoint])
+
+      endpoint.params.each do |param|
+        param.tags.map(&.name).should_not contain("file-inclusion")
+      end
+    end
+
+    it "still tags path-like compound file names as file inclusion" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      names = ["filePath", "fileName", "fileUrl", "uploadFile", "filePathList", "file_key"]
+      endpoint = Endpoint.new("/api/items", "GET", names.map { |n| Param.new(n, "", "query") })
+
+      tagger.perform([endpoint])
+
+      endpoint.params.each do |param|
+        param.tags.map(&.name).should contain("file-inclusion")
+      end
+    end
   end
 end

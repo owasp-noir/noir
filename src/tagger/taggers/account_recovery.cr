@@ -62,7 +62,9 @@ class AccountRecoveryTagger < Tagger
     param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
     url_segments = url_parts(endpoint.url)
 
-    file_context = url_segments.any? { |part| FILE_CONTEXT_PATH_PARTS.includes?(part) }
+    # Split camelCase too, so `/zipDownload/password` is file context.
+    file_context = url_parts(endpoint.url.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2"))
+      .any? { |part| FILE_CONTEXT_PATH_PARTS.includes?(part) }
 
     has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
                  url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) && !(file_context && FILE_PASSWORD_PARTS.includes?(part)) } ||

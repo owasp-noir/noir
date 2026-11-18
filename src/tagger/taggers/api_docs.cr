@@ -33,9 +33,18 @@ class ApiDocsTagger < Tagger
   # source used `-`, `_`, or no separator at all.
   DOC_SEGMENTS_NORMALIZED = DOC_SEGMENTS.map(&.gsub(/[-_]/, "")).to_set
 
+  # `openapi` also prefixes business routes of an "Open API" product
+  # (`/v1/open-api/items`), so it marks a document only as the last path
+  # segment (`/openapi`, `/openapi.json`), above a spec file
+  # (`/openapi/v1.json`), or directly above a format name as the last
+  # segment (`/openapi/json`). Not above a path parameter: that is an
+  # "Open API" resource (`/v1/open-api/{itemId}`).
+  NAMESPACE_DOC_SEGMENTS = Set{"openapi", "openapi3"}
+  SPEC_EXTENSIONS        = Set{"json", "yaml", "yml"}
+
   private def check_endpoint(endpoint : Endpoint)
     segments = doc_segments(endpoint.url)
-    check = segments.any? { |seg| DOC_SEGMENTS_NORMALIZED.includes?(seg.gsub(/[-_]/, "")) } ||
+    check = segments.any? { |seg| doc_segment?(seg.gsub(/[-_]/, ""), endpoint.url) } ||
             api_schema?(segments)
 
     if check
@@ -50,6 +59,18 @@ class ApiDocsTagger < Tagger
 
   private def doc_segments(url : String) : Array(String)
     url.downcase.split(/[\/.]+/, remove_empty: true)
+  end
+
+  private def doc_segment?(segment : String, url : String) : Bool
+    return false unless DOC_SEGMENTS_NORMALIZED.includes?(segment)
+    return true unless NAMESPACE_DOC_SEGMENTS.includes?(segment)
+
+    path = url.downcase.split(/[?#]/, 2)[0].split("/", remove_empty: true)
+    last = path.last? || ""
+    parts = last.split(".")
+    return true if parts[0].gsub(/[-_]/, "") == segment || (parts.size > 1 && SPEC_EXTENSIONS.includes?(parts.last))
+
+    path.size >= 2 && path[-2].gsub(/[-_]/, "") == segment && SPEC_EXTENSIONS.includes?(last)
   end
 
   # `schema` is too generic to match on its own (GraphQL `/schema`,
