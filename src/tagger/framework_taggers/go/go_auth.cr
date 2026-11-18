@@ -3367,17 +3367,21 @@ class GoAuthTagger < FrameworkTagger
       # `:=` or `var r = ...` only: `r = chi.NewRouter()` may set a
       # package-level router other functions use.
       built = /\A(?:var\s+#{receiver}\b[^=]*=|#{receiver}\s*:=)\s*(?:&\s*)?\w+\s*\.\s*New\w*\s*\([^()]*\)\s*\z/
-      use = /\A#{receiver}\s*\.\s*(?:Use\s*\(|(?i:get|post|put|patch|delete|head|options)\s*\(\s*""\s*,)/
+      use = /\A#{receiver}\s*\.\s*(?:Use\s*\(|(?i:get|post|put|patch|delete|head|options|handle(?:func)?)\s*\(\s*""\s*,)/
       mount = /\A\w+\s*\.\s*Mount\s*\(\s*""\s*,\s*#{receiver}\s*\)\z/
+      # Returned as an `http.Handler`, it can only be served or mounted.
+      handed_back = code_only(owner_lines[start]).matches?(HANDLER_RESULT) ? "return #{owner[:receiver]}" : nil
       ((start + 1)...Math.min(last, owner_lines.size)).any? do |row|
         code = code_only(owner_lines[row]).strip
         mentions = code.split(/\W+/).count(owner[:receiver])
         next false if mentions.zero?
         next true if mentions > 1
-        !(code.matches?(built) || code.matches?(use) || code.matches?(mount))
+        !(code.matches?(built) || code.matches?(use) || code.matches?(mount) || code == handed_back)
       end
     end
   end
+
+  HANDLER_RESULT = /\)\s*http\s*\.\s*Handler\s*\{\s*\z/
 
   ROUTER_ASSIGNMENT = /\A(?:var\s+)?(\w+)(?:\s+[\w.*\[\]]+)?\s*:?=(?!=)\s*(.+)\z/
   # A router read off another variable: `r.Group("/x")`, `r.PathPrefix("/api").

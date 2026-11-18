@@ -584,6 +584,50 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     guarded?(result["GET /health"]).should be_false
   end
 
+  it "keeps the .Use of a router returned as http.Handler off every other router's routes (chi)" do
+    src = <<-GO
+      package main
+
+      import (
+      \t"net/http"
+
+      \t"github.com/go-chi/chi/v5"
+      \t"github.com/go-chi/chi/v5/middleware"
+      )
+
+      type Server struct {
+      \trouter chi.Router
+      }
+
+      func metricsHandler() http.Handler {
+      \tr := chi.NewRouter()
+      \tr.Use(middleware.BasicAuth("metrics", map[string]string{"user": "pass"}))
+      \tr.Handle("/metrics", http.NotFoundHandler())
+      \treturn r
+      }
+
+      func (s *Server) mountLogin() {
+      \tr := s.router
+      \tr.Post("/login", func(w http.ResponseWriter, r *http.Request) {})
+      }
+
+      func addItems(r chi.Router) {
+      \tr.Get("/items", func(w http.ResponseWriter, r *http.Request) {})
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module c\n", "main.go" => src},
+      [{"GET", "/metrics", "main.go", %("/metrics")}, {"POST", "/login", "main.go", %("/login")},
+       {"GET", "/items", "main.go", %("/items")}], "go_chi")
+    guarded?(result["GET /metrics"]).should be_true
+    guarded?(result["POST /login"]).should be_false
+    guarded?(result["GET /items"]).should be_false
+
+    # Returned as a router, it can still take the caller's routes.
+    result = router_scope_scan({"go.mod" => "module c\n", "main.go" => src.sub("metricsHandler() http.Handler", "metricsHandler() chi.Router")},
+      [{"GET", "/items", "main.go", %("/items")}], "go_chi")
+    guarded?(result["GET /items"]).should be_true
+  end
+
   it "still guards a subrouter mounted on the guarded router (chi Mount, mux Subrouter)" do
     chi = <<-GO
       package main
