@@ -171,6 +171,8 @@ class SpringAuthTagger < FrameworkTagger
     # a matcher noir cannot read, which keep the old global treatment).
     @security_rules = [] of SecurityRule
     @scoped_chains = [] of ScopedChain
+    # Chains matched by the request's local port (the management port).
+    @management_chains = [] of ScopedChain
     @ignored_paths = [] of IgnoredPath
     # Build units that declare a security chain (nil: a file outside any).
     @chain_modules = Set(String?).new
@@ -240,6 +242,7 @@ class SpringAuthTagger < FrameworkTagger
   private def pre_scan_security_configs
     @security_rules.clear
     @scoped_chains.clear
+    @management_chains.clear
     @ignored_paths.clear
     @chain_modules.clear
     @security_enabled.clear
@@ -1759,6 +1762,7 @@ class SpringAuthTagger < FrameworkTagger
 
   private def scan_security_chain(block : String, strings : Hash(String, String), arrays : Hash(String, Array(String)), module_dir : String?, java_source : String?, file_path : String, block_start_line : Int32)
     scope = chain_scope(block, strings, arrays)
+    management = scope.try(&.empty?) && management_port_matcher?(block)
     builders = servlet_path_builders(block, strings, arrays)
     rules = [] of SecurityRule
     # A rule whose matcher noir cannot read (`EndpointRequest.toAnyEndpoint()`)
@@ -1826,7 +1830,7 @@ class SpringAuthTagger < FrameworkTagger
     # A scoped chain's `anyRequest()` covers its scope; an unscoped chain's
     # covers everything. A chain scoped by a matcher noir cannot read drops
     # it — the old behaviour, since what it covers is unknown.
-    any_request_covered = scope.nil? || !scope.empty?
+    any_request_covered = scope.nil? || !scope.empty? || management
     block.each_line.with_index(block_start_line) do |line, line_num|
       line.scan(KOTLIN_AUTHORIZE_RULE) do |match|
         auth_type = match[4]
@@ -1911,11 +1915,45 @@ class SpringAuthTagger < FrameworkTagger
       end
     end
 
-    if scope && !scope.empty?
+    if management
+      @management_chains << {scope: [] of String, order: chain_order(block), rules: rules, module: module_dir}
+    elsif scope && !scope.empty?
       @scoped_chains << {scope: scope, order: chain_order(block), rules: rules, module: module_dir}
     else
       @security_rules.concat(rules)
     end
+  end
+
+  LOCAL_PORT = /\bgetLocalPort\s*\(|\.\s*localPort\b/
+
+  # A `securityMatcher` lambda that admits requests by the port they arrive
+  # on (`request -> ops.getPort().equals(request.getLocalPort())`): the
+  # management port. One that negates the test serves the other ports.
+  private def management_port_matcher?(block : String) : Bool
+    block.scan(/\bsecurityMatcher\s*\(/).any? do |match|
+      open = match.byte_end(0) - 1
+      next false unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(block, open)
+      args = block.byte_slice(open + 1, close - open - 1)
+      args.matches?(LOCAL_PORT) && !args.includes?('!')
+    end
+  end
+
+  # A route only the Actuator serves: framework-provided, and every location
+  # the actuator dependency of a build file. An application route merged
+  # into it, or the springdoc and static routes, are not.
+  private def actuator_route?(endpoint : Endpoint) : Bool
+    return false unless endpoint.tags.includes?(Analyzer::Java::JavaEngine::FRAMEWORK_PROVIDED_TAG)
+    paths = endpoint.details.code_paths
+    !paths.empty? && paths.all? do |info|
+      line = info.line
+      !!(line && read_file(info.path).try(&.lines[line - 1]?).try(&.matches?(Analyzer::Java::JavaEngine::SPRING_ACTUATOR_DEP_RE)))
+    end
+  end
+
+  # Whether `app` serves the Actuator on its own `management.server.port`.
+  private def management_port?(app : String) : Bool
+    values, note = module_config_list(app, "management.server.port")
+    !!values || note == "management.server.port#{PLACEHOLDER_NOTE}"
   end
 
   CLASS_DECLARATION = /\b(?:class|object)\s+[A-Za-z_$][\w$]*[^{;=]*\{/
@@ -2143,6 +2181,9 @@ class SpringAuthTagger < FrameworkTagger
       if @security_enabled.any? { |owner| reaches.call(owner) }
         return {"Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)", nil, nil}
       elsif (@boot_apps.empty? || @boot_apps.includes?(config_dir)) && !security_autoconfig_off?(config_dir)
+        # Boot's management security permits the health endpoint and its
+        # groups (`/health/liveness`).
+        return if actuator_route?(endpoint) && (endpoint.url.ends_with?("/health") || endpoint.url.includes?("/health/"))
         return {"Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)", nil, nil}
       end
     end
@@ -2150,6 +2191,9 @@ class SpringAuthTagger < FrameworkTagger
     rules =
       if ignored
         [] of SecurityRule
+      elsif config_dir && actuator_route?(endpoint) && management_port?(config_dir) &&
+            (chain = @management_chains.select { |candidate| applies.call(candidate[:module]) }.min_by?(&.[:order]))
+        chain[:rules]
       elsif chain = scoped.min_by? { |candidate| {candidate[:order], -candidate[:scope].max_of { |pattern| matches_ant_pattern?(url, pattern) ? pattern_specificity(pattern) : 0 }} }
         chain[:rules]
       else
@@ -2252,6 +2296,7 @@ class SpringAuthTagger < FrameworkTagger
   # Keys that pull configuration from elsewhere (another file, a config
   # server, Nacos) which can override the list.
   CONFIG_IMPORT_KEYS = %w[spring.config.import spring.config.location spring.config.additional-location]
+  PLACEHOLDER_NOTE   = ", set from a ${...} placeholder"
 
   # The values of list property `key` in `module_dir`'s Spring Boot
   # configuration (`src/main/resources[/config]/application.{yml,yaml,properties}`),
@@ -2297,7 +2342,7 @@ class SpringAuthTagger < FrameworkTagger
         return {nil, "#{key}, which #{File.basename(dir) == "config" ? "config/" : ""}#{name} beside the module also sets"} if base || profiled
       end
     end
-    return {nil, "#{key}, set from a ${...} placeholder"} if values.try &.any?(&.includes?("${"))
+    return {nil, "#{key}#{PLACEHOLDER_NOTE}"} if values.try &.any?(&.includes?("${"))
     {values, nil}
   end
 
