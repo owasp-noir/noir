@@ -628,6 +628,68 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     guarded?(result["GET /items"]).should be_true
   end
 
+  it "guards the routes a helper registers on a closure group's router after its .Use (chi)" do
+    src = <<-GO
+      package main
+
+      import (
+      \t"net/http"
+
+      \t"github.com/go-chi/chi/v5"
+      )
+
+      func Authenticator(next http.Handler) http.Handler {
+      \treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      \t\tif r.Header.Get("Authorization") == "" {
+      \t\t\thttp.Error(w, "unauthorized", http.StatusUnauthorized)
+      \t\t\treturn
+      \t\t}
+      \t\tnext.ServeHTTP(w, r)
+      \t})
+      }
+
+      type API struct{}
+
+      func (api *API) routes() http.Handler {
+      \tr := chi.NewRouter()
+      \taddPublic(r)
+      \tr.Group(func(r chi.Router) {
+      \t\taddEarly(r)
+      \t\tr.Use(Authenticator)
+      \t\tapi.addItems(r)
+      \t\taddShared(r)
+      \t})
+      \taddShared(r)
+      \treturn r
+      }
+
+      func addPublic(r chi.Router) {
+      \tr.Get("/public", func(w http.ResponseWriter, r *http.Request) {})
+      }
+
+      func addEarly(r chi.Router) {
+      \tr.Get("/early", func(w http.ResponseWriter, r *http.Request) {})
+      }
+
+      func addShared(r chi.Router) {
+      \tr.Get("/shared", func(w http.ResponseWriter, r *http.Request) {})
+      }
+
+      func (api *API) addItems(r chi.Router) {
+      \tr.Route("/items", func(r chi.Router) {
+      \t\tr.Get("/", func(w http.ResponseWriter, r *http.Request) {})
+      \t})
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module c\n", "main.go" => src},
+      [{"GET", "/items/", "main.go", "r.Get(\"/\","}, {"GET", "/public", "main.go", %("/public")},
+       {"GET", "/early", "main.go", %("/early")}, {"GET", "/shared", "main.go", %("/shared")}], "go_chi")
+    guarded?(result["GET /items/"]).should be_true
+    guarded?(result["GET /public"]).should be_false
+    guarded?(result["GET /early"]).should be_false
+    guarded?(result["GET /shared"]).should be_false
+  end
+
   it "still guards a subrouter mounted on the guarded router (chi Mount, mux Subrouter)" do
     chi = <<-GO
       package main

@@ -250,7 +250,7 @@ class GoAuthTagger < FrameworkTagger
     @bound_requests = Hash(String, Tag).new
     @server_scopes = [] of {owner: Gate, tag: Tag}
     @parameter_scopes = [] of {owner: Gate, tag: Tag, prefix: String?}
-    @group_uses = [] of {file: String, receiver: String, row: Int32, tag: Tag}
+    @group_uses = [] of {file: String, receiver: String, row: Int32, tag: Tag, last: Int32}
     @registrar_tags = Hash({String, Int32}, Array(Tag)).new
     @gozero_groups = Hash(String, Array({Range(Int32, Int32), Array(Tag)})).new
   end
@@ -398,6 +398,13 @@ class GoAuthTagger < FrameworkTagger
             args.each { |arg| frame[:binds] << {index, arg} }
           else
             frame[:uses] << {index, args}
+            # Also for the registrars it hands its router to below, up to
+            # the end of the closure (see `registrar_guards`).
+            args.each do |arg|
+              guard_by_definition(arg, file, authish_name: true).try do |tag|
+                @group_uses << {file: file, receiver: call[1], row: index, tag: tag, last: enclosing_block_end(lines, index)}
+              end
+            end
           end
           in_closure = true
         end
@@ -733,7 +740,7 @@ class GoAuthTagger < FrameworkTagger
     receiver = stripped.match(REGISTRATION_RECEIVER).try &.[1]
     # The guard also stays on the group variable, for the registrars it is
     # handed to (see `registrar_guards`).
-    tags.each { |tag| @group_uses << {file: file, receiver: receiver, row: index, tag: tag} } if receiver
+    tags.each { |tag| @group_uses << {file: file, receiver: receiver, row: index, tag: tag, last: lines.size} } if receiver
     # The middleware guards a route group whose URL prefix we could not read
     # (`r.Group(cfg.APIBase + "/v1")`). Recording it as global would claim
     # every endpoint in the app is protected — including the ones registered on
@@ -3267,7 +3274,7 @@ class GoAuthTagger < FrameworkTagger
     @group_uses.compact_map do |use|
       next unless use[:file] == file && function_start(lines, use[:row]) == caller
       reaches = chain.any? do |(group, at)|
-        next false unless group == use[:receiver] && use[:row] < at
+        next false unless group == use[:receiver] && use[:row] < at <= use[:last]
         # Reassigned in between: the `.Use` was on the old group.
         reassigned = /\A\s*#{Regex.escape(group)}\s*:?=(?!=)/
         ((use[:row] + 1)...at).none? { |between| lines[between - 1].matches?(reassigned) }
