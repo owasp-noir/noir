@@ -4,12 +4,13 @@ style: voronoi
 output: docs/static/CONTRIBUTORS.svg
 
 contributors:
-  # The passive-scan rules live in their own repository, so someone who only
-  # writes rules would otherwise never reach this wall. Contribution counts are
-  # summed across the two.
+  # The passive-scan rules and the artwork live in their own repositories, so
+  # someone who only writes rules or draws would otherwise never reach this
+  # wall. Contribution counts are summed across all of them.
   repos:
     - owasp-noir/noir
     - owasp-noir/noir-passive-rules
+    - owasp-noir/noir-artwork
   include_bots: true
 
 users:
