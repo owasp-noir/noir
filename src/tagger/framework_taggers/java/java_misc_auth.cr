@@ -9,6 +9,8 @@ class JavaMiscAuthTagger < FrameworkTagger
   # Vert.x auth patterns
   VERTX_AUTH_PATTERNS = [
     {/AuthHandler/, "Vert.x AuthHandler"},
+    # Vert.x 4's name for the same handlers (`SimpleAuthenticationHandler`).
+    {/AuthenticationHandler/, "Vert.x AuthenticationHandler"},
     {/JWTAuth/, "Vert.x JWTAuth"},
     {/BasicAuthHandler/, "Vert.x BasicAuthHandler"},
     {/OAuth2AuthHandler/, "Vert.x OAuth2AuthHandler"},

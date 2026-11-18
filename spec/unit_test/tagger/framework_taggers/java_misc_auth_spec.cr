@@ -200,6 +200,35 @@ describe "JavaMiscAuthTagger" do
     endpoints[2].tags.should be_empty
   end
 
+  it "reads a Vert.x AuthenticationHandler as authentication" do
+    tmpdir = File.tempname("vertx_authn")
+    Dir.mkdir_p(tmpdir)
+    verticle = File.join(tmpdir, "MainVerticle.java")
+    File.write(verticle, [
+      "public class MainVerticle extends AbstractVerticle {",                                       # 1
+      "  public void start() {",                                                                    # 2
+      "    router.post(\"/login\").handler(SimpleAuthenticationHandler.create().authenticate(fn))", # 3
+      "      .handler(ctx -> ctx.json(new JsonObject()));",                                         # 4
+      "    router.get(\"/status\").handler(ctx -> ctx.response().end(\"ok\"));",                    # 5
+      "  }",                                                                                        # 6
+      "}",                                                                                          # 7
+    ].join("\n"))
+    CodeLocator.instance.register_path(verticle)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    endpoints = {3 => {"/login", "POST"}, 5 => {"/status", "GET"}}.map do |line, (url, verb)|
+      details = Details.new(PathInfo.new(verticle, line))
+      details.technology = "java_vertx"
+      Endpoint.new(url, verb, [] of Param, details)
+    end
+    JavaMiscAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+
+    endpoints[0].tags.map(&.description).should eq(["Protected by Vert.x AuthenticationHandler"])
+    endpoints[1].tags.should be_empty
+  end
+
   it "handles empty code_paths gracefully" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
