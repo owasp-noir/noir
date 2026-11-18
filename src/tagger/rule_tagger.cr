@@ -201,7 +201,7 @@ module NoirTagRules
       end
       ->(ep : Endpoint) { url_parts(ep.url).any? { |part| words.includes?(part) } }
     when "path_extension"
-      exts = strings(value, key, where).map { |e| e.downcase.lstrip('.') }.to_set
+      exts = strings(value, key, where).map(&.downcase.lstrip('.')).to_set
       ->(ep : Endpoint) { exts.includes?(path_extension(ep.url)) }
     when "url_contains"
       needles = strings(value, key, where).map(&.downcase)

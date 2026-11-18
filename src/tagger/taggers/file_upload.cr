@@ -101,7 +101,7 @@ class FileUploadTagger < Tagger
   # `file`/`files` counts only as the last segment of the path.
   private def collection_upload?(url : String) : Bool
     last = url.split("?", 2)[0].split("#", 2)[0].downcase.split("/").reject(&.empty?).last?
-    !last.nil? && url_parts(last).size == 1 && COLLECTION_PATH_PARTS.includes?(last)
+    !last.nil? && COLLECTION_PATH_PARTS.includes?(last)
   end
 
   # Whole-segment-only path words: matched against `/`-delimited segments
