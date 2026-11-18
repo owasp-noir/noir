@@ -43,7 +43,7 @@ describe "crystal_cli subcommands named by an ARGV comparison" do
     File.write(File.join(temp_dir, "src", "jobs.cr"), <<-CRYSTAL)
       require "option_parser"
 
-      export = ARGV[0]? == "export-items" && ARGV[1]?
+      export = ARGV[0]? == "export-items" && valid?(ARGV[1]? || "")
       notify = ARGV[0]? == "notify-orders"
       if ARGV == ["prune"]
         puts "prune"
@@ -101,6 +101,10 @@ describe "crystal_cli subcommands named by an ARGV comparison" do
       if verbose
         puts ARGV[2]
       end
+      quiet = ARGV[0]? == "quiet" || debug
+      if quiet
+        puts ARGV[3]
+      end
       CRYSTAL
 
     options = create_test_options
@@ -109,7 +113,7 @@ describe "crystal_cli subcommands named by an ARGV comparison" do
     runner.detect
     runner.analyze
     params = runner.endpoints.select(&.method.==("CLI")).to_h { |e| {e.url, e.params.map(&.name).sort!} }
-    params["cli://jobs"].should eq(["arg0", "arg1", "arg2"])
+    params["cli://jobs"].should eq(["arg0", "arg1", "arg2", "arg3"])
   ensure
     CodeLocator.instance.reset_files
     FileUtils.rm_rf(temp_dir) if temp_dir

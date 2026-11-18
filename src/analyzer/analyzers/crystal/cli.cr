@@ -37,12 +37,13 @@ module Analyzer::Crystal
     ARGV_ARRAY_EQ  = /\bARGV\s*[!=]=\s*\[([^\]]*)\]/
     ARGV_TAKE      = /\bARGV\.(?:first|shift)\b/
     ARGV_SPLAT     = /^\s*(\w+(?:\s*,\s*\w+)+)\s*=\s*ARGV\s*$/
-    # `sync = ARGV[0]? == "sync"` (optionally `&& …`) names a subcommand that
-    # `if sync` / `elsif sync && ready` later selects. Any other assignment
-    # to the variable forgets it.
+    # `sync = ARGV[0]? == "sync"` names a subcommand that `if sync` /
+    # `elsif sync && ready` later selects. An `&& …` tail may follow (`||`
+    # only inside parentheses); a ternary may not. Any other assignment to
+    # the variable forgets it.
     ARGV_SUB_IS  = /\bARGV(?:\s*\[\s*0\s*\]\??|\.first\??)\s*==\s*"/
     ASSIGN       = /^\s*([a-z_]\w*)\s*=[^=~]/
-    GUARD_ASSIGN = /^\s*([a-z_]\w*)\s*=\s*ARGV(?:\s*\[\s*0\s*\]\??|\.first\??)\s*==\s*"[^"]+"\s*(?:&&(?![^|]*\s\?\s)[^|]*)?$/
+    GUARD_ASSIGN = /^\s*([a-z_]\w*)\s*=\s*ARGV(?:\s*\[\s*0\s*\]\??|\.first\??)\s*==\s*"[^"]+"\s*(?:&&(?!.*\s\?\s)(?:\([^()]*\)|[^|()])*)?$/
     GUARD_BRANCH = /^\s*(?:if|elsif)\s+([a-z_]\w*)(?:\s*&&[^|]*)?(?:\s+then)?\s*$/
 
     MARKERS = Detector::Crystal::Cli::MARKERS
