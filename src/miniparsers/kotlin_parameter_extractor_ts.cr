@@ -363,7 +363,7 @@ module Noir
                                              string_constants = Hash(String, String).new,
                                              local_string_constants = Hash(String, String).new) : Array(Param)
       conditions = [] of Param
-      append_constraint_params(method, source, verb, conditions, string_constants, local_string_constants)
+      append_constraint_params(method, source, verb, conditions, string_constants, local_string_constants, as_conditions: true)
       conditions
     end
 
@@ -1462,7 +1462,8 @@ module Noir
                                          verb : String,
                                          sink : Array(Param),
                                          string_constants : Hash(String, String),
-                                         local_string_constants : Hash(String, String))
+                                         local_string_constants : Hash(String, String),
+                                         as_conditions : Bool = false)
       ann = mapping_annotation_on(method, source)
       return unless ann
       args = annotation_args(ann)
@@ -1482,7 +1483,7 @@ module Noir
           # one format (mirrors the legacy `||=` quirk).
           format = QUERY_VERB_PARAMS.includes?(verb.upcase) ? "query" : "form"
           string_values_in(value, source, string_constants, local_string_constants).each do |raw|
-            next unless pair = split_constraint(raw)
+            next unless pair = as_conditions ? condition_constraint(raw) : split_constraint(raw)
             name, default = pair
             # Already bound by a `@RequestParam` of the same name.
             next if name.empty? || sink.any? { |param| param.name == name }
@@ -1490,13 +1491,21 @@ module Noir
           end
         when "headers"
           string_values_in(value, source, string_constants, local_string_constants).each do |raw|
-            next unless pair = split_constraint(raw)
+            next unless pair = as_conditions ? condition_constraint(raw) : split_constraint(raw)
             name, default = pair
             next if name.empty?
             sink << Param.new(name, default, "header")
           end
         end
       end
+    end
+
+    # A route condition's identity. Spring keeps `!name`, `name=` (present and
+    # empty) and `name!=value` apart from `name` (present), so they key as
+    # written; `split_constraint` folds them into what a request would send.
+    private def condition_constraint(raw : String) : Tuple(String, String)?
+      return {raw, ""} if raw.starts_with?('!') || raw.ends_with?('=') || raw.includes?("!=")
+      split_constraint(raw)
     end
 
     # `"name=value"` → `{"name", "value"}`. `"name"` and `"name!=value"`
