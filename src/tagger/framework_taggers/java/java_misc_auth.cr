@@ -42,6 +42,8 @@ class JavaMiscAuthTagger < FrameworkTagger
   # route).
   VERTX_ROUTE = /\b\w+\s*\.\s*(?:route|get|post|put|delete|patch|head|options|trace|connect)\s*\(\s*(?:"([^"]*)"\s*)?\)\s*(?:\.\s*(?:handler|blockingHandler|respond|failureHandler|produces|consumes|order|subRouter)\b|$)/
 
+  HANDLER_VARIABLE = /\.\s*(?:handler|blockingHandler)\s*\(\s*([a-z_$][\w$]*)\s*\)/
+
   # One registration in an Armeria `Server.builder()` chain. The analyzer
   # reads that chain's decorators itself (`ArmeriaChainGuards`); the lines
   # around a registration are other routes' and other servers' calls, so
@@ -82,18 +84,20 @@ class JavaMiscAuthTagger < FrameworkTagger
     end
   end
 
-  # The lines just above the route, plus (for Vert.x) every earlier route
-  # registration whose path scopes over this one: `router.route("/private/*")
-  # .handler(AuthHandler)` guards the routes under `/private` registered
-  # after it, and no other.
+  # The lines just above the route. For Vert.x, the route's own line and
+  # every earlier route registration whose path scopes over this one
+  # instead: `router.route("/private/*").handler(AuthHandler)` guards the
+  # routes under `/private` registered after it, and no other. An auth
+  # provider built nearby (`JWTAuth.create(..)`) guards nothing.
   private def check_route_auth(lines : Array(String), line_idx : Int32, url : String, vertx : Bool) : String?
     start_idx = [line_idx - 10, 0].max
 
     (0..line_idx).each do |idx|
       current = lines[idx]
       next if import_line?(current)
-      if vertx && idx < line_idx && (route = current.match(VERTX_ROUTE))
-        next unless vertx_route_covers?(route[1]?, url)
+      if vertx
+        next if idx < line_idx && !((route = current.match(VERTX_ROUTE)) && vertx_route_covers?(route[1]?, url))
+        current = with_handler_declarations(lines, current)
       elsif idx < start_idx
         next
       end
@@ -108,18 +112,39 @@ class JavaMiscAuthTagger < FrameworkTagger
   private def check_handler_body(lines : Array(String), line_idx : Int32, vertx : Bool) : String?
     idx = line_idx + 1
     end_idx = [line_idx + 15, lines.size - 1].min
+    # Vert.x: the route's statement ends where its brackets close and no
+    # `.handler(..)` continues the chain on the next line.
+    depth = bracket_depth(lines[line_idx])
 
     while idx <= end_idx
       current = lines[idx].strip
+      break if vertx && depth <= 0 && !current.starts_with?('.')
       # The next route registration starts another route's handlers.
       break if vertx && current.matches?(VERTX_ROUTE)
+      current = with_handler_declarations(lines, current) if vertx
       ALL_PATTERNS.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end
+      depth += bracket_depth(current)
       idx += 1
     end
 
     nil
+  end
+
+  # `.handler(authHandler)` with the line that declares `authHandler`
+  # (`JWTAuthHandler authHandler = JWTAuthHandler.create(jwt)`) appended.
+  # ponytail: same-file declarations only.
+  private def with_handler_declarations(lines : Array(String), line : String) : String
+    line.scan(HANDLER_VARIABLE).reduce(line) do |text, found|
+      declared = /(?:\b(?:val|var)|[\w$.<>]+)\s+#{Regex.escape(found[1])}\s*(?::\s*[\w$.<>?]+\s*)?=(?!=)/
+      (declaration = lines.find(&.matches?(declared))) ? "#{text} #{declaration}" : text
+    end
+  end
+
+  # ponytail: brackets inside string literals count too.
+  private def bracket_depth(line : String) : Int32
+    line.count("({") - line.count(")}")
   end
 
   private def import_line?(line : String) : Bool

@@ -165,6 +165,41 @@ describe "JavaMiscAuthTagger" do
     endpoints[1].tags.map(&.description).should eq(["Protected by Vert.x BasicAuthHandler"])
   end
 
+  it "reads a Vert.x route's guards from the routes that cover it, not from nearby lines" do
+    tmpdir = File.tempname("vertx_window")
+    Dir.mkdir_p(tmpdir)
+    verticle = File.join(tmpdir, "MainVerticle.java")
+    File.write(verticle, [
+      "public class MainVerticle extends AbstractVerticle {",                          # 1
+      "  public void start() {",                                                       # 2
+      "    JWTAuth jwt = JWTAuth.create(vertx, options);",                             # 3
+      "    router.get(\"/api/token\").handler(ctx -> {",                               # 4
+      "      ctx.response().end(jwt.generateToken(claims));",                          # 5
+      "    });",                                                                       # 6
+      "    JWTAuthHandler authHandler = JWTAuthHandler.create(jwt);",                  # 7
+      "    router.route(\"/api/*\").handler(authHandler);",                            # 8
+      "    router.get(\"/api/items\").handler(ctx -> ctx.response().end(\"items\"));", # 9
+      "    router.get(\"/status\").handler(ctx -> ctx.response().end(\"ok\"));",       # 10
+      "  }",                                                                           # 11
+      "}",                                                                             # 12
+    ].join("\n"))
+    CodeLocator.instance.register_path(verticle)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    endpoints = {4 => "/api/token", 9 => "/api/items", 10 => "/status"}.map do |line, url|
+      details = Details.new(PathInfo.new(verticle, line))
+      details.technology = "java_vertx"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    JavaMiscAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+
+    endpoints[0].tags.should be_empty
+    endpoints[1].tags.map(&.description).should eq(["Protected by Vert.x AuthHandler"])
+    endpoints[2].tags.should be_empty
+  end
+
   it "handles empty code_paths gracefully" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
