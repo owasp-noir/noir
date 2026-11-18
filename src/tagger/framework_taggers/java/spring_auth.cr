@@ -635,6 +635,7 @@ class SpringAuthTagger < FrameworkTagger
     return unless close_brace_idx
 
     body = clean_content.byte_slice(open_brace_idx + 1, close_brace_idx - open_brace_idx - 1)
+    constants = file.ends_with?(".java") ? security_constants(content) : {Hash(String, String).new, Hash(String, Array(String)).new}
     reg_re = /(?:(?:InterceptorRegistration|val|var)\s+(\w+)\s*=\s*)?#{Regex.escape(reg_param)}\s*\.\s*addInterceptor\s*\(/m
 
     body.scan(reg_re) do |match|
@@ -661,13 +662,17 @@ class SpringAuthTagger < FrameworkTagger
       end
 
       add_patterns = [] of String
+      add_read = true
       chain_text.scan(/\.addPathPatterns\s*\(/) do |pmatch|
         p_open = pmatch.byte_end(0) - 1
         if p_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(chain_text, p_open)
-          p_args = chain_text.byte_slice(p_open + 1, p_close - p_open - 1)
-          p_args.scan(/"((?:[^"\\]|\\.)*)"/) { |sm| add_patterns << sm[1] }
+          found, read = interceptor_patterns(chain_text.byte_slice(p_open + 1, p_close - p_open - 1), constants)
+          add_patterns.concat(found)
+          add_read &&= read
         end
       end
+      # An include pattern noir cannot read covers what it does not know.
+      next unless add_read
 
       add_patterns = ["/**"] if add_patterns.empty?
 
@@ -675,8 +680,7 @@ class SpringAuthTagger < FrameworkTagger
       chain_text.scan(/\.excludePathPatterns\s*\(/) do |pmatch|
         p_open = pmatch.byte_end(0) - 1
         if p_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(chain_text, p_open)
-          p_args = chain_text.byte_slice(p_open + 1, p_close - p_open - 1)
-          p_args.scan(/"((?:[^"\\]|\\.)*)"/) { |sm| exclude_patterns << sm[1] }
+          exclude_patterns.concat(interceptor_patterns(chain_text.byte_slice(p_open + 1, p_close - p_open - 1), constants)[0])
         end
       end
 
@@ -695,6 +699,25 @@ class SpringAuthTagger < FrameworkTagger
         module_dir: module_dir
       )
     end
+  end
+
+  # The path patterns of an `addPathPatterns` / `excludePathPatterns`
+  # argument list, and whether every argument was read: literals, String /
+  # `String[]` constants and their concatenations, literal collections
+  # (`List.of("/a")`). Kotlin constants are not resolved.
+  private def interceptor_patterns(args : String, constants : {Hash(String, String), Hash(String, Array(String))}) : {Array(String), Bool}
+    patterns = [] of String
+    read = true
+    Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules.new).each do |part|
+      found = matcher_patterns(part, constants[0], constants[1])
+      if found.empty?
+        rest = part.gsub(STRING_LITERAL, " ")
+        found = part.scan(/"((?:[^"\\]|\\.)*)"/).map(&.[1]) unless rest.includes?('+') || rest.scan(/[A-Za-z_$][\w$]*/).any? { |word| !LIST_INIT_WORDS.includes?(word[0]) && word[0] != "arrayOf" }
+      end
+      read = false if found.empty?
+      patterns.concat(found)
+    end
+    {patterns, read}
   end
 
   private def resolve_interceptor_type(arg : String, content : String) : String?
