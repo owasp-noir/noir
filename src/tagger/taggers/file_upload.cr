@@ -36,7 +36,7 @@ class FileUploadTagger < Tagger
 
   # `file`/`files` is a generic REST noun, so on its own it only marks the
   # collection itself (`POST /files`), not an item or action under it
-  # (`PATCH /files/:id`, `POST /files/cleanup`) that renames or prunes.
+  # (`PATCH /files/:id`, `POST /files/purge`) that renames or prunes.
   COLLECTION_PATH_PARTS = Set{"file", "files"}
 
   # A read-side word in the path says the route sends a file out. A URL word

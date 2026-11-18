@@ -287,7 +287,7 @@ describe "FileUploadTagger" do
       tagger = FileUploadTagger.new(default_tagger_options)
 
       rename = Endpoint.new("/files/:id", "PATCH", [Param.new("name", "", "json")])
-      cleanup = Endpoint.new("/files/cleanup", "POST")
+      cleanup = Endpoint.new("/files/purge", "POST")
 
       tagger.perform([rename, cleanup])
 
@@ -310,7 +310,7 @@ describe "FileUploadTagger" do
     it "does not tag a download or export route from the URL word alone" do
       tagger = FileUploadTagger.new(default_tagger_options)
 
-      download = Endpoint.new("/api/file/download/:seq", "POST", [Param.new("reason", "", "json")])
+      download = Endpoint.new("/api/doc/download/:seq", "POST", [Param.new("reason", "", "json")])
       export = Endpoint.new("/api/export/file", "POST")
 
       tagger.perform([download, export])

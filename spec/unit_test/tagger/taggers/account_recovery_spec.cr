@@ -38,7 +38,7 @@ describe "AccountRecoveryTagger" do
     it "tags a Devise-style /users/password endpoint" do
       tagger = AccountRecoveryTagger.new(default_tagger_options)
 
-      endpoint = Endpoint.new("/users/password", "PUT")
+      endpoint = Endpoint.new("/accounts/password", "PUT")
 
       tagger.perform([endpoint])
 
@@ -214,7 +214,7 @@ describe "AccountRecoveryTagger" do
     it "still tags a bare password route and a verification email change" do
       tagger = AccountRecoveryTagger.new(default_tagger_options)
 
-      password = Endpoint.new("/users/password", "POST")
+      password = Endpoint.new("/accounts/password", "POST")
       change = Endpoint.new("/verification/change-email", "POST")
 
       tagger.perform([password, change])

@@ -147,7 +147,7 @@ describe "admin rule (src/tagger/rules/admin.yml)" do
     it "does not tag a static asset whose file name contains admin" do
       tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
-      assets = ["/static/css/admin.theme.css", "/js/admin-tools.js", "/js/admin/panel/main.js?v=2"].map do |url|
+      assets = ["/static/css/admin.theme.css", "/js/admin-panel.js", "/js/admin/panel/main.js?v=2"].map do |url|
         Endpoint.new(url, "GET")
       end
 
@@ -159,7 +159,7 @@ describe "admin rule (src/tagger/rules/admin.yml)" do
     it "still tags an admin route that returns data" do
       tagger = NoirTaggers.build("admin", default_tagger_options).not_nil!
 
-      endpoint = Endpoint.new("/admin/users.json", "GET")
+      endpoint = Endpoint.new("/admin/reports.json", "GET")
 
       tagger.perform([endpoint])
 
