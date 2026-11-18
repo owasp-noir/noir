@@ -527,7 +527,7 @@ module SpringModuleScope
   end
 
   # Ant patterns a matcher argument list names: string literals, String /
-  # `String[]` constants, inline `new String[]{...}` arrays, and matcher
+  # `String[]` constants and concatenations of those, inline `new String[]{...}` arrays, and matcher
   # factories over those (`antMatcher(X)`, `new AntPathRequestMatcher(X)`).
   # Anything else (`EndpointRequest.toAnyEndpoint()`, a computed list) names
   # nothing noir can read and is skipped.
@@ -578,6 +578,10 @@ module SpringModuleScope
         else
           patterns.concat(found)
         end
+      elsif (operands = Noir::TopLevelSplit.split(part, '+', Noir::TopLevelSplit::Rules.new)).size > 1
+        # `PREFIX + "/**"`: read only when every operand is a literal or a String constant.
+        values = operands.map { |operand| operand.match(JAVA_STRING_LITERAL).try(&.[1]) || (strings[operand]? if operand.matches?(CONSTANT_REFERENCE)) }
+        patterns << values.join if values.all?
       end
     end
     patterns
