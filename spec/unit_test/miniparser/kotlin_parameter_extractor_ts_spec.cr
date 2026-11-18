@@ -346,6 +346,49 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       ])
     end
 
+    it "resolves a qualified nested DTO type to the nested class, not the outer one" do
+      source = <<-KT
+        package com.example
+
+        @RestController
+        class OrderController(private val orderService: OrderService) {
+            data class CreateRequest(val itemId: Long, val quantity: Int)
+        }
+
+        class PaymentController {
+            data class CreateRequest(val cardNo: String)
+        }
+
+        class DemoController {
+            @PostMapping("/orders")
+            fun create(@RequestBody req: OrderController.CreateRequest): String = ""
+            @GetMapping("/orders")
+            fun search(req: OrderController.CreateRequest?): String = ""
+            @PostMapping("/orders/full")
+            fun full(@RequestBody req: com.example.OrderController.CreateRequest): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
+      extract(source, "DemoController", "create", "POST", fields: fields)
+        .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "json"}, {"quantity", "json"}])
+      extract(source, "DemoController", "search", "GET", fields: fields)
+        .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "query"}, {"quantity", "query"}])
+      # A package-qualified name resolves by its longest known suffix, not
+      # the simple name another nested class shares.
+      extract(source, "DemoController", "full", "POST", fields: fields)
+        .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "json"}, {"quantity", "json"}])
+
+      # A resolver that supplies the nested type (`== OrderController.CreateRequest::class.java`)
+      # is recorded by its simple name; the qualified parameter still matches it.
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
+          root, source, "DemoController", "search", "GET", nil, fields,
+          injected_types: Set{"CreateRequest"}
+        ).should be_empty
+      end
+    end
+
     it "names JSON body fields by @JsonProperty" do
       dto = <<-KT
         package com.example

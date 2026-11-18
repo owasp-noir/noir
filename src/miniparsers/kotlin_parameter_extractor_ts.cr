@@ -132,6 +132,11 @@ module Noir
         format == "json" ? @json_name : @name
       end
 
+      # A Kotlin property binds by its own name; Gson reads the same one.
+      def field_name : String
+        @name
+      end
+
       # The request-ready value of this field's initializer, or "" when the
       # initializer is an expression with no literal form.
       #
@@ -191,9 +196,23 @@ module Noir
             field
           end
         end
-        results[name] = fields unless fields.empty?
+        type_keys(decl, name, source).each { |key| results[key] = fields } unless fields.empty?
       end
       results
+    end
+
+    # Index keys for a class: its simple name, plus `Outer.Inner` when it is
+    # nested, the name a parameter written `Outer.Inner` resolves to.
+    private def type_keys(decl : LibTreeSitter::TSNode, name : String, source : String) : Array(String)
+      qualified = name
+      node = decl
+      while node = Noir::TreeSitter.parent(node)
+        ty = Noir::TreeSitter.node_type(node)
+        next unless ty == "class_declaration" || ty == "object_declaration"
+        outer = type_identifier_text(node, source)
+        qualified = "#{outer}.#{qualified}" unless outer.empty?
+      end
+      qualified == name ? [name] : [name, qualified]
     end
 
     # Apply a class-level Jackson naming strategy to the fields that have no
@@ -275,7 +294,7 @@ module Noir
         name = type_identifier_text(decl, source)
         next if name.empty?
         sup = superclass_name(decl, source)
-        results[name] = sup unless sup.empty?
+        type_keys(decl, name, source).each { |key| results[key] = sup } unless sup.empty?
       end
       results
     end
@@ -1101,6 +1120,14 @@ module Noir
           if type_name.empty?
             type_name = leaf_type_name(child, source)
             type_text = Noir::TreeSitter.node_text(child, source)
+            # `leaf_type_name` keeps the first segment of `Outer.Inner`,
+            # which names the outer class; bind the nested one it means.
+            segments = type_segments(child, source)
+            # The longest dotted suffix the index knows, else the simple name.
+            if segments.size > 1
+              type_name = (0...segments.size - 1).map { |i| segments[i..].join('.') }
+                .find { |key| class_fields.has_key?(key) } || segments.last
+            end
           end
         end
       end
@@ -1153,7 +1180,7 @@ module Noir
       return parameter_format if ann_kind.nil? && injected_param
       # A resolver keyed on the parameter's type supplies it too, unless
       # `@ModelAttribute`, whose resolver runs first, claims it.
-      return parameter_format if ann_kind.nil? && !model_attribute && injected_types.includes?(type_name)
+      return parameter_format if ann_kind.nil? && !model_attribute && injected_types.includes?(type_name.rpartition('.').last)
 
       effective_format = parameter_format
       # A carried-over "header"/"cookie" describes how the *previous*
@@ -1275,6 +1302,19 @@ module Noir
       # command object into json, so a body param leaves the carry
       # untouched (returns the incoming carry-over).
       ann_kind == :body ? parameter_format : carry_format
+    end
+
+    # `Outer.Inner?` -> `["Outer", "Inner"]`: the dotted segments of a
+    # declared type, not descending into its type arguments.
+    private def type_segments(node : LibTreeSitter::TSNode, source : String) : Array(String)
+      if Noir::TreeSitter.node_type(node) == "nullable_type"
+        node = Noir::TreeSitter.first_named_child(node) || node
+      end
+      segments = [] of String
+      Noir::TreeSitter.each_named_child(node) do |child|
+        segments << Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "type_identifier"
+      end
+      segments
     end
 
     # Types Spring fills from a multipart part: `MultipartFile`, servlet

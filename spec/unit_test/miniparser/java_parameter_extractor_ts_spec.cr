@@ -421,6 +421,106 @@ describe Noir::TreeSitterJavaParameterExtractor do
       method_params(controller, "ProfileController", "form", "POST", "form", class_fields)
         .map(&.name).should eq(["displayName", "email", "age"])
     end
+
+    it "names a primitive boolean isX field by its bean property x" do
+      # Lombok and hand-written accessors for `boolean isPaid` are
+      # `isPaid()` / `setPaid()`, so Jackson and WebDataBinder bind `paid`.
+      # A `Boolean` wrapper gets `getIsGift()` / `setIsGift()`, and
+      # `@JsonProperty` names the JSON key itself. `@Value` has no setters:
+      # its constructor binds the field name. An acronym (`isURL`) keeps
+      # its name, as `Introspector.decapitalize` would not lowercase it.
+      dto_source = <<-JAVA
+        import lombok.Data;
+        import com.fasterxml.jackson.annotation.JsonProperty;
+        @Data
+        class Order {
+            private boolean isPaid;
+            private Boolean isGift;
+            @JsonProperty("isPinned") private boolean isPinned;
+            private boolean active;
+            private boolean isURL;
+        }
+        @Value
+        class Badge {
+            boolean isActive;
+            String label;
+        }
+        class Item {
+            private boolean isHidden;
+            private boolean isFeatured;
+            public boolean isHidden() { return isHidden; }
+            public void setHidden(boolean v) { isHidden = v; }
+            public void setIsFeatured(boolean v) { isFeatured = v; }
+        }
+        JAVA
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(dto_source)
+
+      controller = <<-JAVA
+        class DemoController {
+            @PostMapping("/orders")
+            public String add(@RequestBody Order req) { return ""; }
+            @GetMapping("/orders")
+            public String list(Order req) { return ""; }
+            @GetMapping("/items")
+            public String items(Item req) { return ""; }
+            @PostMapping("/badges")
+            public String badges(@RequestBody Badge req) { return ""; }
+            @GetMapping("/badges")
+            public String findBadges(Badge req) { return ""; }
+        }
+        JAVA
+
+      method_params(controller, "DemoController", "add", "POST", "json", class_fields)
+        .map(&.name).should eq(["paid", "isGift", "isPinned", "active", "isURL"])
+      method_params(controller, "DemoController", "list", "GET", nil, class_fields)
+        .map(&.name).should eq(["paid", "isGift", "isPinned", "active", "isURL"])
+      method_params(controller, "DemoController", "items", "GET", nil, class_fields)
+        .map(&.name).should eq(["hidden", "isFeatured"])
+      method_params(controller, "DemoController", "badges", "POST", "json", class_fields)
+        .map(&.name).should eq(["isActive", "label"])
+      method_params(controller, "DemoController", "findBadges", "GET", nil, class_fields)
+        .map(&.name).should eq(["isActive", "label"])
+    end
+
+    it "resolves a qualified nested DTO type to the nested class it names" do
+      dto_source = <<-JAVA
+        public class UserDto {
+            public static class Request { public String userName; public String email; }
+        }
+        public class OrderDto {
+            public static class Request { public Long itemId; public int quantity; }
+        }
+        public class Model { public String secret; }
+        JAVA
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(dto_source)
+
+      controller = <<-JAVA
+        class DemoController {
+            @PostMapping("/users")
+            public String users(@RequestBody UserDto.Request req) { return ""; }
+            @PostMapping("/orders")
+            public String orders(@RequestBody OrderDto.Request req) { return ""; }
+            @PostMapping("/orders/bulk")
+            public String bulk(@RequestBody List<OrderDto.Request> reqs) { return ""; }
+            @GetMapping("/orders/search")
+            public String search(OrderDto.Request req) { return ""; }
+            @GetMapping("/model")
+            public String model(org.example.Model model) { return ""; }
+        }
+        JAVA
+
+      method_params(controller, "DemoController", "users", "POST", "json", class_fields)
+        .map(&.name).should eq(["userName", "email"])
+      method_params(controller, "DemoController", "orders", "POST", "json", class_fields)
+        .map(&.name).should eq(["itemId", "quantity"])
+      method_params(controller, "DemoController", "bulk", "POST", "json", class_fields)
+        .map(&.name).should eq(["itemId", "quantity"])
+      method_params(controller, "DemoController", "search", "GET", nil, class_fields)
+        .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "query"}, {"quantity", "query"}])
+      # A fully-qualified framework type does not bind a project class
+      # that only shares its simple name.
+      method_params(controller, "DemoController", "model", "GET", nil, class_fields).should be_empty
+    end
   end
 
   describe "implicit (un-annotated) parameter binding" do

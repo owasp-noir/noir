@@ -92,6 +92,9 @@ module Noir
     # field on such a class as settable — otherwise the extremely common
     # `@Data`-annotated Spring DTO yields zero body parameters.
     LOMBOK_FIELD_BINDING_ANNOTATIONS = Set{"Data", "Setter", "Value"}
+    # The subset that writes bean setters (`setFoo` for `boolean isFoo`);
+    # `@Value` binds through its constructor, by field name.
+    LOMBOK_SETTER_ANNOTATIONS = Set{"Data", "Setter"}
 
     # Spring `HttpHeaders` constant → canonical header name. Matches
     # the table the legacy analyzer maintained; necessary because
@@ -116,7 +119,11 @@ module Noir
     alias ImportDecl = Noir::ImportGraph::ImportRef
 
     struct FieldInfo
+      # The bean property Spring binds: the declared field name, except
+      # `boolean isFoo`, whose accessors make it `foo`.
       getter name : String
+      # The declared Java field name, which Gson reads JSON by.
+      getter field_name : String
       getter access_modifier : String # "public", "private", "protected", ""
       getter? has_setter : Bool
       getter init_value : String # "" when no initializer
@@ -142,7 +149,8 @@ module Noir
       property? json_ignored : Bool
 
       def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil, @type_name = "",
-                     @unwrap = nil, @json_ignored = false)
+                     @unwrap = nil, @json_ignored = false, field_name : String? = nil)
+        @field_name = field_name || @name
         @json_name = json_name || @name
         @json_name_fixed = !json_name.nil?
       end
@@ -190,10 +198,11 @@ module Noir
         class_name = Noir::TreeSitter.node_text(name_node, source)
         body = Noir::TreeSitter.field(decl, "body")
         next unless body
-        lombok_setters = lombok_field_binding?(decl, source)
-        fields = apply_json_naming(collect_class_fields(body, source, lombok_setters), json_naming_of(decl, source), json_root_of(decl, source))
+        lombok_setters = lombok_annotated?(decl, source, LOMBOK_FIELD_BINDING_ANNOTATIONS)
+        bean_setters = lombok_annotated?(decl, source, LOMBOK_SETTER_ANNOTATIONS)
+        fields = apply_json_naming(collect_class_fields(body, source, lombok_setters, bean_setters), json_naming_of(decl, source), json_root_of(decl, source))
         fields = apply_json_ignore_properties(fields, decl, source)
-        results[class_name] = fields unless fields.empty?
+        type_keys(decl, class_name, source).each { |key| results[key] = fields } unless fields.empty?
       end
       # Java records: the header components ARE the bindable fields (a
       # record can't declare extra instance state), bound through the
@@ -208,7 +217,8 @@ module Noir
           class_name = Noir::TreeSitter.node_text(name_node, source)
           fields = apply_json_naming(collect_record_fields(decl, source), json_naming_of(decl, source), json_root_of(decl, source))
           fields = apply_json_ignore_properties(fields, decl, source)
-          results[class_name] = fields unless fields.empty? || results.has_key?(class_name)
+          next if fields.empty?
+          type_keys(decl, class_name, source).each { |key| results[key] ||= fields }
         end
       end
       results
@@ -370,9 +380,39 @@ module Noir
         next unless super_node
         super_name = simple_superclass_name(Noir::TreeSitter.node_text(super_node, source))
         next if super_name.empty?
-        results[Noir::TreeSitter.node_text(name_node, source)] = super_name
+        type_keys(decl, Noir::TreeSitter.node_text(name_node, source), source).each { |key| results[key] = super_name }
       end
       results
+    end
+
+    TYPE_DECLARATIONS = Set{"class_declaration", "interface_declaration", "enum_declaration", "record_declaration"}
+
+    # Index keys for a type: its simple name, plus `Outer.Inner` when it is
+    # nested, the name a parameter written `Outer.Inner` resolves to.
+    private def type_keys(decl : LibTreeSitter::TSNode, name : String, source : String) : Array(String)
+      qualified = name
+      node = decl
+      while node = Noir::TreeSitter.parent(node)
+        next unless TYPE_DECLARATIONS.includes?(Noir::TreeSitter.node_type(node))
+        next unless outer = Noir::TreeSitter.field(node, "name")
+        qualified = "#{Noir::TreeSitter.node_text(outer, source)}.#{qualified}"
+      end
+      qualified == name ? [name] : [name, qualified]
+    end
+
+    # The DTO index key a written type resolves to: the longest dotted
+    # suffix the index knows (`com.ex.OrderDto.Request` -> `OrderDto.Request`
+    # -> `Request`). `qualified_only` never falls back to the bare simple
+    # name of a dotted type, so `org.example.Model` does not bind a project
+    # `Model`.
+    private def dto_key(class_fields : Hash(String, Array(FieldInfo)), type_name : String, qualified_only = false) : String?
+      parts = type_name.strip.split('.')
+      last = qualified_only && parts.size > 1 ? parts.size - 2 : parts.size - 1
+      (0..last).each do |i|
+        key = parts[i..].join('.')
+        return key if class_fields.has_key?(key)
+      end
+      nil
     end
 
     # `extends com.example.Base<T>` -> `Base`. The tree-sitter
@@ -822,7 +862,8 @@ module Noir
 
     private def collect_class_fields(body : LibTreeSitter::TSNode,
                                      source : String,
-                                     lombok_setters : Bool = false) : Array(FieldInfo)
+                                     lombok_setters : Bool = false,
+                                     bean_setters : Bool = false) : Array(FieldInfo)
       # First pass: collect field declarations.
       declared = [] of Tuple(String, String, String, String?, String, {String?, String?}?) # name, access, init_value, json_name, type, unwrap
       setter_targets = Set(String).new
@@ -907,23 +948,37 @@ module Noir
         end
       end
 
-      declared.map do |name, access, init, json_name, type_name, unwrap|
+      declared.map do |field_name, access, init, json_name, type_name, unwrap|
+        # Lombok and bean accessors for a primitive `boolean isFoo` are
+        # `isFoo()` / `setFoo()`, so Jackson and `WebDataBinder` both bind
+        # the property `foo`. A `Boolean isFoo` gets `setIsFoo()` and keeps
+        # its name; `@JsonProperty` on the field names the key itself. An
+        # acronym (`isURL`) keeps its name too: `Introspector` would not
+        # lowercase `URL`, while Jackson would.
+        name = field_name
+        if !json_name && type_name == "boolean" && field_name.matches?(/\Ais[A-Z](?![A-Z])/) && !setter_targets.includes?(field_name)
+          property = field_name[2].downcase.to_s + field_name[3..]
+          name = property if bean_setters || setter_targets.includes?(property)
+        end
+        # Field annotations are keyed by the field, accessor ones by the property.
+        keys = {field_name, name}
         has_setter = lombok_setters || setter_targets.includes?(name)
         json_name ||= renamed[name]?
-        ignored = json_ignored.includes?(name) && !json_kept.includes?(name) && !(json_name && json_kept.includes?(json_name))
-        ignored ||= transient_fields.includes?(name) && !has_setter && !json_kept.includes?(name)
-        ignored ||= read_only.includes?(name)
-        FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored)
+        kept = keys.any? { |key| json_kept.includes?(key) }
+        ignored = keys.any? { |key| json_ignored.includes?(key) } && !kept && !(json_name && json_kept.includes?(json_name))
+        ignored ||= transient_fields.includes?(field_name) && !has_setter && !kept
+        ignored ||= keys.any? { |key| read_only.includes?(key) }
+        FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored, field_name)
       end
     end
 
-    # True when `decl` carries a Lombok class annotation that synthesises
-    # field accessors (`@Data` / `@Setter` / `@Value`). Such a class
-    # exposes every instance field to request-body binding even though no
-    # `setX(...)` method is written out in source.
-    private def lombok_field_binding?(decl : LibTreeSitter::TSNode, source : String) : Bool
+    # True when `decl` carries one of the Lombok class annotations `names`.
+    # With `LOMBOK_FIELD_BINDING_ANNOTATIONS`, the class exposes every
+    # instance field to request-body binding even though no `setX(...)`
+    # method is written out in source.
+    private def lombok_annotated?(decl : LibTreeSitter::TSNode, source : String, names : Set(String)) : Bool
       each_annotation_on(decl, source) do |name|
-        return true if LOMBOK_FIELD_BINDING_ANNOTATIONS.includes?(name)
+        return true if names.includes?(name)
       end
       false
     end
@@ -1150,7 +1205,7 @@ module Noir
         # request body). Applying this per-parameter — rather than
         # pre-seeding the whole method — lets an explicit `@RequestBody` on
         # the same POST resolve to "json" instead of being dragged along.
-        bindable = simple_param || class_fields.has_key?(type_name) ||
+        bindable = simple_param || dto_key(class_fields, type_name, qualified_only: true) ||
                    SERVLET_REQUEST_TYPES.includes?(type_name) || pageable_type?(type_name)
         return parameter_format unless bindable
         effective_format = verb == "POST" ? "form" : "query"
@@ -1213,7 +1268,8 @@ module Noir
           sink << Param.new(name, pageable_default_value(pageable_default, name, source, constants, current_class) || "", "query")
         end
       elsif ann_kind.nil? || ann_kind == :body
-        return carry_format unless fields = class_fields[type_name]? || class_fields[collection_element_type(type_name)]?
+        return carry_format unless key = dto_key(class_fields, type_name) || dto_key(class_fields, collection_element_type(type_name))
+        fields = class_fields[key]
         # `@RequestBody` is deserialised by Jackson, which populates every
         # non-static instance field by reflection (and via
         # all-args/`@Builder` constructors) regardless of setter
@@ -1235,7 +1291,7 @@ module Noir
           # turns one value into it (`converted_types`). One level only;
           # JSON keeps the nested key.
           unless json_body || simple_bindable_param?(field.type_name) || converted_types.includes?(field.type_name)
-            nested = class_fields[field.type_name]?
+            nested = dto_key(class_fields, field.type_name, qualified_only: true).try { |nested_key| class_fields[nested_key] }
           end
           if nested
             nested.each do |sub|
@@ -1332,9 +1388,9 @@ module Noir
 
     # Case-preserving counterpart to `simple_param_base`: strips the same
     # single-argument collection/`Optional` wrapper and array/varargs
-    # brackets, but keeps the original casing so the result can be used
-    # as a `class_fields` DTO-index lookup key (which is indexed by the
-    # class's exact simple name, e.g. "ItemDto", not "itemdto"). Lets
+    # brackets, but keeps the original casing and any qualifier so
+    # `dto_key` can resolve the result against the `class_fields` DTO index
+    # (keyed by the class's exact name, e.g. "ItemDto", not "itemdto"). Lets
     # `@RequestBody List<ItemDto> items` / `@RequestBody ItemDto[] items`
     # resolve to the same field set as a bare `@RequestBody ItemDto item`.
     private def collection_element_type(type_name : String) : String
@@ -1343,11 +1399,7 @@ module Noir
         base = match[1].strip
       end
       base = base.gsub(/\[\s*\]/, "")
-      base = base.rstrip(". ")
-      if idx = base.rindex('.')
-        base = base[(idx + 1)..]
-      end
-      base
+      base.rstrip(". ")
     end
 
     private def resolve_annotation_string_value(node : LibTreeSitter::TSNode,

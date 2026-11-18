@@ -1432,33 +1432,58 @@ module Analyzer::Java
 
     @java_project_constants : Hash(String, Hash(String, String))? = nil
     @resolver_supplied : Hash(String, {Set(String), Set(String)})? = nil
-    @jackson_defaults = Hash(String, {String?, Bool}).new
+    @jackson_defaults = Hash(String, {String?, Bool, Bool}).new
+    @gson_bases : Set(String)? = nil
 
-    # The module's `spring.jackson.property-naming-strategy` (normalised) and
-    # `spring.jackson.deserialization.UNWRAP_ROOT_VALUE`.
-    private def jackson_defaults(path : String) : {String?, Bool}
+    GSON_MAPPER_KEYS = {"spring.mvc.converters.preferred-json-mapper", "spring.http.converters.preferred-json-mapper"}
+
+    # The module's `spring.jackson.property-naming-strategy` (normalised),
+    # `spring.jackson.deserialization.UNWRAP_ROOT_VALUE`, and whether it
+    # picks Gson as the JSON mapper.
+    private def jackson_defaults(path : String) : {String?, Bool, Bool}
       root = project_root_for(path)
       @jackson_defaults[root] ||= begin
         values = spring_config_values_for(root)
         {values["spring.jackson.property-naming-strategy"]?.try { |raw| Noir::JacksonNaming.strategy(raw) },
-         Noir::JacksonNaming.unwrap_root_value?(values)}
+         Noir::JacksonNaming.unwrap_root_value?(values),
+         GSON_MAPPER_KEYS.any? { |key| values[key]?.try(&.strip.downcase) == "gson" }}
       end
+    end
+
+    # True when a source under `path`'s scan base uses
+    # `GsonHttpMessageConverter`; converters usually live in a shared module.
+    # ponytail: any reference counts, even an outbound RestTemplate's.
+    private def gson_converter?(path : String) : Bool
+      bases = @gson_bases ||= begin
+        found = Set(String).new
+        (get_files_by_extension(".java") + get_files_by_extension(".kt")).each do |file|
+          next if JavaEngine.test_path?(base_relative_path(file))
+          found << configured_base_for(file) if read_file_content(file).includes?("GsonHttpMessageConverter")
+        end
+        found
+      end
+      bases.includes?(configured_base_for(path))
     end
 
     # `index` with the module's Jackson defaults applied: the naming strategy
     # renames every field that neither `@JsonProperty` nor a class
     # `@JsonNaming` renamed, and `UNWRAP_ROOT_VALUE` nests each class's keys
     # under its `@JsonRootName` (else its simple name, as Jackson does).
+    # Gson reads JSON by field name, so there a field whose bean property
+    # differs (`boolean isFoo`) keeps its field name as the JSON key.
     # Returns a copy: the DTO index is shared across files.
     private def with_jackson_defaults(index : Hash(String, Array(F)), path : String) : Hash(String, Array(F)) forall F
-      strategy, unwrap = jackson_defaults(path)
-      return index unless strategy || unwrap
+      strategy, unwrap, gson = jackson_defaults(path)
+      # Only a renamed field (`boolean isFoo` -> `foo`) cares, so skip the walk otherwise.
+      gson ||= index.any? { |_, fields| fields.any? { |field| field.field_name != field.name } } && gson_converter?(path)
+      return index unless strategy || unwrap || gson
       index.to_h do |cls, fields|
         # Own fields come first; a subclass without its own root inherits
         # its parent's, as Jackson reads class annotations up the hierarchy.
-        root = fields.compact_map(&.json_root).first? || cls
+        root = fields.compact_map(&.json_root).first? || cls.rpartition('.').last
         renamed = fields.map do |field|
-          field.json_name = Noir::JacksonNaming.translate(field.name, strategy) if strategy && !field.json_name_fixed?
+          field.json_name = field.field_name if gson && field.field_name != field.name
+          field.json_name = Noir::JacksonNaming.translate(field.json_name, strategy) if strategy && !field.json_name_fixed?
           field.json_name = "#{root}.#{field.json_name}" if unwrap
           field
         end

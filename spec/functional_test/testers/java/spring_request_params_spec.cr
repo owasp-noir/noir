@@ -23,9 +23,13 @@ require "../../func_spec.cr"
 #   bare type to Spring.
 # - paging_field: a `Pageable` / `PageRequest` / `Sort` field of a command
 #   object takes no single request value.
+# - bean_property: a Lombok `boolean isActive` binds as `active`; a `Boolean`
+#   wrapper keeps `isShared`.
+# - gson_mapper: `preferred-json-mapper=gson` reads JSON by field name, so the
+#   JSON key stays `isPinned` while the query name is `pinned`.
 tester = FunctionalTester.new("fixtures/java/spring_request_params/", {
   :techs     => 1,
-  :endpoints => 17,
+  :endpoints => 20,
 }, [] of Endpoint)
 tester.perform_tests
 
@@ -34,6 +38,7 @@ it "reports the wire names and locations Spring binds", tags: "functional" do
     {"#{endpoint.method} #{endpoint.url}", endpoint.params.map { |param| "#{param.name}:#{param.param_type}" }.sort!}
   end
   summary.sort!.should eq([
+    {"GET /flags", ["label:query", "pinned:query"]},
     {"GET /gadgets", ["computedLabel:query", "label:query", "nickname:query", "pinned:query"]},
     {"GET /gizmos/search", ["keyword:query", "page:query", "range.min:query", "size:query", "sort:query"]},
     {"GET /posts/{postId}", ["postId:path"]},
@@ -42,7 +47,9 @@ it "reports the wire names and locations Spring binds", tags: "functional" do
     {"GET /tenants/current", [] of String},
     {"GET /tenants/lookup", ["tenantCode:query"]},
     {"POST /articles", ["NewArticleParam.title:json"]},
+    {"POST /badges", ["active:json", "isShared:json"]},
     {"POST /events/{id}", ["id:path", "type:query", "userId:json"]},
+    {"POST /flags", ["isPinned:json", "label:json"]},
     {"POST /gadgets", ["label:json", "nickname:json", "pinned:json", "tag:json"]},
     {"POST /items", ["name:json", "price:json"]},
     {"POST /namespaced", ["named.a:json"]},
