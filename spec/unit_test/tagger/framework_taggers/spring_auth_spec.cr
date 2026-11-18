@@ -4781,12 +4781,12 @@ describe "SpringAuthTagger (Actuator routes)" do
       "src/main/java/com/example/App.java"        => app,
       "src/main/java/com/example/Controller.java" => "public class Controller {\n    @GetMapping(\"/health\")\n    public String health() { return \"\"; }\n}\n",
     }, {
-      "GET /actuator/health" => "build.gradle:3",
-      "GET /actuator/info"   => "build.gradle:3",
-      "GET /health"          => "src/main/java/com/example/Controller.java:2",
-    }, ["GET /actuator/health", "GET /actuator/info"])
-    auth_of.call(endpoints, "GET /actuator/health").should be_empty
-    auth_of.call(endpoints, "GET /actuator/info").should eq(boot_default)
+      "GET /manage/health" => "build.gradle:3",
+      "GET /manage/info"   => "build.gradle:3",
+      "GET /health"        => "src/main/java/com/example/Controller.java:2",
+    }, ["GET /manage/health", "GET /manage/info"])
+    auth_of.call(endpoints, "GET /manage/health").should be_empty
+    auth_of.call(endpoints, "GET /manage/info").should eq(boot_default)
     # The app's own /health is not the Actuator's.
     auth_of.call(endpoints, "GET /health").should eq(boot_default)
   end
@@ -4819,16 +4819,16 @@ describe "SpringAuthTagger (Actuator routes)" do
       "src/main/java/com/example/OpsSecurityConfig.java" => config,
       "src/main/java/com/example/Controller.java"        => SPRING_ITEMS_CONTROLLER,
     }
-    routes = {"GET /actuator/health" => "build.gradle:3", "GET /items" => "src/main/java/com/example/Controller.java:2"}
+    routes = {"GET /manage/health" => "build.gradle:3", "GET /items" => "src/main/java/com/example/Controller.java:2"}
     authenticated = ["Protected by Spring Security authenticated via anyRequest()"]
 
-    endpoints = run_spring_endpoints_map(files.merge({"src/main/resources/application.properties" => "management.server.port=${OPS_PORT:9091}\n"}), routes, ["GET /actuator/health"])
-    auth_of.call(endpoints, "GET /actuator/health").should be_empty
+    endpoints = run_spring_endpoints_map(files.merge({"src/main/resources/application.properties" => "management.server.port=${OPS_PORT:9091}\n"}), routes, ["GET /manage/health"])
+    auth_of.call(endpoints, "GET /manage/health").should be_empty
     auth_of.call(endpoints, "GET /items").should eq(authenticated)
 
     # Without its own port the Actuator answers on the app's port.
-    endpoints = run_spring_endpoints_map(files, routes, ["GET /actuator/health"])
-    auth_of.call(endpoints, "GET /actuator/health").should eq(authenticated)
+    endpoints = run_spring_endpoints_map(files, routes, ["GET /manage/health"])
+    auth_of.call(endpoints, "GET /manage/health").should eq(authenticated)
   end
 end
 

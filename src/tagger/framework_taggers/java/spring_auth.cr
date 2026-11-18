@@ -2182,7 +2182,7 @@ class SpringAuthTagger < FrameworkTagger
         return {"Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)", nil, nil}
       elsif (@boot_apps.empty? || @boot_apps.includes?(config_dir)) && !security_autoconfig_off?(config_dir)
         # Boot's management security permits the health endpoint and its
-        # groups (`/health/liveness`).
+        # groups (liveness, readiness).
         return if actuator_route?(endpoint) && (endpoint.url.ends_with?("/health") || endpoint.url.includes?("/health/"))
         return {"Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)", nil, nil}
       end
