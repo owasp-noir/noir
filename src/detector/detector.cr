@@ -64,6 +64,9 @@ module Noir::Detection
     # `.zig-cache` carry their own `@import("httpz")` etc. and would
     # otherwise make every Zig project look like it uses every framework.
     ".zig-cache", "zig-cache", ".zig-out", "zig-out",
+    # A project-local CRYSTAL_CACHE_DIR: tens of thousands of object files,
+    # plus the `macro_run` sources the compiler copied there.
+    ".crystal-cache",
     # Common build / dist / cache outputs
     ".cache",
     ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
@@ -240,7 +243,16 @@ module Noir::Detection
     return true if IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
     return true if scoped_names.includes?(entry)
     return true if entry == "vendor" && dependency_vendor_dir?(full_path)
+    return true if entry == "share" && crystal_toolchain_share?(full_path)
     entry == "lib" && dir_has_shard
+  end
+
+  # The `share/` of an unpacked Crystal toolchain (`crystal-X/share/crystal/
+  # src/prelude.cr`): the compiler and stdlib sources, which carry their
+  # own OptionParser CLIs and test keys. A checkout of the compiler repo
+  # keeps `src/prelude.cr` at its root, with no `share/` above it.
+  def crystal_toolchain_share?(full_path : String) : Bool
+    File.exists?(File.join(full_path, "crystal", "src", "prelude.cr"))
   end
 
   # Which `MANIFEST_SCOPED_DIR_NAMES` a directory's listing licenses the
