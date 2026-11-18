@@ -2087,7 +2087,12 @@ module Noir
           open_paren = content.byte_index('(', candidate_idx)
           if open_paren
             arg_window = offsets.window(open_paren, 300)
-            if quoted_substring?(arg_window, lookup_path)
+            # `lookup_path` is the path JSParser resolved; a route declared on
+            # a const (`${BASE}/a`, `BASE + '/a'`) never spells it in the
+            # source. The call sitting right at the route's own receiver is
+            # that route's declaration whatever its path text.
+            own_call = search_window.byte_slice(0, direct_match.byte_begin(0)).matches?(/\A[A-Za-z_$][\w$]*\s*\z/)
+            if own_call || quoted_substring?(arg_window, lookup_path)
               idx = candidate_idx
               found_declaration = "direct"
             end
