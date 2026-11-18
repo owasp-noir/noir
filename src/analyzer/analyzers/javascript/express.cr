@@ -98,10 +98,21 @@ module Analyzer::Javascript
 
       # Process static directories to create endpoints for static files
       process_js_static_dirs(static_dirs, result)
-      result.map! { |endpoint| Noir::JSMountPrefix.finish(endpoint) }
+      result.map! { |endpoint| drop_undeclared_path_params(Noir::JSMountPrefix.finish(endpoint)) }
       clear_ambiguous_template_handlers(result)
 
       result
+    end
+
+    # `req.params.X` reads a placeholder the final URL (mount prefix included)
+    # declares; any other name is always undefined. An unresolved prefix may
+    # have declared it, so those rows keep what they read.
+    private def drop_undeclared_path_params(endpoint : Endpoint) : Endpoint
+      return endpoint if endpoint.resolution.try(&.has_key?("prefix"))
+      endpoint.params.reject! do |param|
+        param.param_type == "path" && !endpoint.url.matches?(/(?:[:*]|\(\?<)#{Regex.escape(param.name)}(?!\w)/)
+      end
+      endpoint
     end
 
     # `/${name}` registered by several modules whose `name` comes from their
