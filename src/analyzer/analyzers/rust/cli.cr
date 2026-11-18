@@ -30,7 +30,7 @@ module Analyzer::Rust
     # clap/structopt field attribute, e.g. #[arg(short, long, env = "X")].
     CLAP_ATTR_RE = /#\[\s*(?:arg|structopt|clap)(?:\s*\((.*)\))?\s*\]\s*$/m
     ARGH_ATTR_RE = /#\[\s*argh(?:\s*\((.*)\))?\s*\]\s*$/m
-    FIELD_RE     = /^\s*(?:pub\s+)?(\w+)\s*:/
+    FIELD_RE     = /^\s*(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:(?!:)/
     # `#[command(subcommand)]` (clap 4) / `#[clap(subcommand)]` / `#[structopt(subcommand)]`.
     SUBCOMMAND_ATTR_RE = /#\[\s*(?:command|clap|structopt)\s*\([^\]]*\bsubcommand\b/
     QUOTED_RE          = /"(?:\\.|[^"\\])*"/
@@ -44,9 +44,13 @@ module Analyzer::Rust
       getter pending_derive : String?
       getter pending_command_name : String?
       getter? pending_subcommand = false
+      # A `#[command(flatten)]` / `#[command(subcommand)]` / `#[arg(skip)]`
+      # field is not an argument of its own struct.
+      getter? pending_non_arg = false
       getter pending_attrs : Array(Tuple(Symbol, String))
 
       @in_block_comment = false
+      @pending_non_arg = false
       @in_attr = false
       @attr_depth = 0
       @attr_buf = IO::Memory.new
@@ -157,6 +161,9 @@ module Analyzer::Rust
         if attr.matches?(SUBCOMMAND_ATTR_RE) && attr.gsub(QUOTED_RE, "").matches?(SUBCOMMAND_ATTR_RE)
           @pending_subcommand = true
         end
+        if attr.gsub(QUOTED_RE, "").matches?(/#\[\s*(?:command|clap|structopt|arg)\s*\([^\]]*\b(?:subcommand|flatten|skip)\b/)
+          @pending_non_arg = true
+        end
       end
 
       def consume_subcommand : Bool
@@ -179,12 +186,14 @@ module Analyzer::Rust
 
       def clear_attrs
         @pending_attrs.clear
+        @pending_non_arg = false
       end
 
       def reset_for_new_item
         @pending_attrs.clear
         @pending_command_name = nil
         @pending_subcommand = false
+        @pending_non_arg = false
       end
     end
 
@@ -446,6 +455,9 @@ module Analyzer::Rust
       current_enum_bases = [root_url]
       item_body_depth = -1
       item_entered = false
+      # clap/structopt make every plain field an argument; argh (`FromArgs`)
+      # needs an `#[argh(...)]` attribute on each one.
+      item_implicit_args = false
       current_cmds = [root_url]
       scanner = AttributeScanner.new
 
@@ -465,6 +477,7 @@ module Analyzer::Rust
           if (derive = scanner.pending_derive) && (im = code.match(ITEM_RE))
             if kind = classify_derive(derive)
               item_kind = kind
+              item_implicit_args = !derive.includes?("FromArgs")
               key = "#{path}::#{im[1]}"
               if kind == :subcommand
                 current_enum = key
@@ -511,11 +524,19 @@ module Analyzer::Rust
             end
           end
 
-          if (fm = code.match(FIELD_RE)) && !scanner.pending_attrs.empty?
-            scanner.pending_attrs.each do |attr|
-              current_cmds.each { |url| apply_field(attr, fm[1], url, path, line_no, endpoints) }
+          if fm = code.match(FIELD_RE)
+            if !scanner.pending_attrs.empty?
+              scanner.pending_attrs.each do |attr|
+                current_cmds.each { |url| apply_field(attr, fm[1], url, path, line_no, endpoints) }
+              end
+              scanner.clear_attrs
+            elsif item_implicit_args && item_entered && entry_depth == item_body_depth && item_kind != :subcommand
+              # A field with no attribute at all: an implicit positional.
+              unless scanner.pending_non_arg?
+                current_cmds.each { |url| fetch_endpoint(endpoints, url, path, line_no).push_param(Param.new(kebab(fm[1]), "", "argument")) }
+              end
+              scanner.clear_attrs
             end
-            scanner.clear_attrs
           end
         end
 
@@ -568,7 +589,7 @@ module Analyzer::Rust
                             path : String, line_no : Int32, endpoints : Hash(String, Endpoint))
       kind, body = attr
       unquoted_body = body.gsub(/"(?:\\.|[^"\\])*"/, "")
-      return if unquoted_body.matches?(/\bsubcommand\b/)
+      return if unquoted_body.matches?(/\b(?:subcommand|skip)\b/)
       ep = fetch_endpoint(endpoints, url, path, line_no)
 
       if kind == :argh
