@@ -19,10 +19,10 @@ require "../../../miniparsers/rails_callback_chain"
 #     writer like `Model.new(params[:user])`).
 #   * rate-limit — Rails 8 native `rate_limit` throttle on the action.
 #
-# Like `ruby_auth`, detection is single-file and line-based: it walks the
-# controller the action lives in. Cross-file concerns (a `null_session`
-# base controller inherited by children, a Rack::Attack initializer) are
-# out of scope by design — those live outside the action's own file.
+# CSRF macros are read along the controller's ancestry (a `null_session`
+# base controller or concern its children inherit); rate limits and mass
+# assignment are read in the action's own file. A Rack::Attack initializer
+# is out of scope.
 @[Noir::TaggerFor(key: "rails_security", name: "Rails Security Tagger", desc: "Identifies Rails controller security signals (CSRF protection, mass assignment, rate limiting)", order: 130)]
 class RailsSecurityTagger < FrameworkTagger
   # Class-level macros that turn CSRF verification OFF for (some) actions.
@@ -122,8 +122,12 @@ class RailsSecurityTagger < FrameworkTagger
       # Each concern is independent — an action can be CSRF-disabled AND
       # rate-limited AND mass-assigning — so collect all that apply rather
       # than returning on the first hit.
-      if csrf_checked && (desc = check_csrf(lines, line_idx, action_name, flags))
-        endpoint.add_tag(Tag.new("csrf-protection", desc, "rails_security"))
+      if csrf_checked
+        handler = endpoint.handler
+        dispatch = handler.try(&.dispatch_path) if handler.try(&.path) == path
+        leaf = rails_chain.controller_in(dispatch || path)
+        desc = leaf ? chain_csrf(leaf, action_name) : check_csrf(lines, line_idx, action_name, flags)
+        endpoint.add_tag(Tag.new("csrf-protection", desc, "rails_security")) if desc
       end
 
       if desc = check_rate_limit(lines, line_idx, action_name, flags)
@@ -160,6 +164,50 @@ class RailsSecurityTagger < FrameworkTagger
     end
 
     nil
+  end
+
+  @rails_chain : Noir::RailsCallbackChain? = nil
+
+  private def rails_chain : Noir::RailsCallbackChain
+    @rails_chain ||= begin
+      controllers, others = collect_files_by_extension(".rb").partition { |path| base_relative_path(path).includes?("controllers") }
+      Noir::RailsCallbackChain.build(controllers, others) { |path| read_file(path) }
+    end
+  end
+
+  # The CSRF state `leaf`'s ancestry leaves `action` in: its parents' class
+  # bodies run first, so the last macro that applies wins, and a plain
+  # `protect_from_forgery` re-registers the verification a parent skipped.
+  private def chain_csrf(leaf : Noir::RailsCallbackChain::Klass, action : String?) : String?
+    desc = nil
+    csrf_statements(leaf, [] of String, 0).each do |line|
+      next unless macro_applies?(line, action)
+      if label = CSRF_DISABLE_PATTERNS.find { |pattern, _| line.matches?(pattern) }.try(&.[1])
+        desc = "CSRF protection disabled (#{label}) — state-changing requests to this action are not CSRF-validated."
+      elsif line.matches?(CSRF_NULL_SESSION_PATTERN)
+        desc = "CSRF protection downgraded to null_session — forged requests proceed with an empty session instead of being rejected (typical for token/API controllers)."
+      elsif line.starts_with?("protect_from_forgery")
+        desc = nil
+      end
+    end
+    desc
+  end
+
+  # `klass`'s class-body statements in the order Ruby runs them: its
+  # parent's first, each `include`d module's where it is included.
+  private def csrf_statements(klass : Noir::RailsCallbackChain::Klass, acc : Array(String), depth : Int32) : Array(String)
+    return acc if depth > 16
+    if (parent = klass.parent) && (found = rails_chain.lookup(parent, klass.namespace, klass))
+      csrf_statements(found, acc, depth + 1)
+    end
+    klass.callbacks.each do |line|
+      if line.starts_with?("include")
+        line.scan(/[A-Z][\w:]*/) { |m| rails_chain.lookup(m[0], klass.namespace).try { |mod| csrf_statements(mod, acc, depth + 1) } }
+      else
+        acc << line
+      end
+    end
+    acc
   end
 
   # Rails 8 `rate_limit` is a class-level macro like before_action; walk
