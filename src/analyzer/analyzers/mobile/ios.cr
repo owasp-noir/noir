@@ -453,14 +453,20 @@ module Analyzer::Mobile
         content = read_file_content(path)
         depth = 0
         in_string = false
-        # ponytail: last `func` seen, not a brace-tracked scope; a miss
-        # finds no guarded call site and falls back to the old behaviour.
+        # The `func` whose body the line is in, closed when the brace depth
+        # drops back to where it was declared, so a computed property or
+        # closure after it is not credited to it.
         current_func = nil
+        func_depth = 0
+        func_opened = false
+        brace_depth = 0
         content.each_line do |line|
           break if enum_sites.size >= MAX_HOST_ENUMS
           stripped, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, depth, in_string)
           if func_match = stripped.match(SWIFT_FUNC_NAME_RE)
             current_func = func_match[1]
+            func_depth = brace_depth
+            func_opened = false
           end
 
           stripped.scan(HOST_ENUM_SITE_RE) do |m|
@@ -470,14 +476,19 @@ module Analyzer::Mobile
             compares = m[0].includes?("==") || m[0].includes?("!=") || m[0].includes?(".contains(")
             (enum_routers[enum_name] ||= Set(Tuple(String, String?, Bool)).new) << {path, current_func, compares}
           end
+
+          brace_depth += stripped.count('{') - stripped.count('}')
+          func_opened ||= stripped.includes?('{')
+          current_func = nil if brace_depth < func_depth || (func_opened && brace_depth <= func_depth)
         end
       rescue e
         @logger.debug "Failed scanning #{path} for scheme host enums: #{e.message}"
       end
 
-      declared = @result.compact_map do |ep|
-        ep.protocol == "mobile-scheme" && ep.url.ends_with?("://") ? ep.url.rchop("://") : nil
-      end.to_set
+      # Hitting the cap skips the remaining files, so an unguarded router
+      # there would go unseen: only ever add guarded schemes then.
+      capped = enum_sites.size >= MAX_HOST_ENUMS
+      declared = declared_bare_schemes.to_set
 
       enum_sites.each do |enum_name, site_path|
         cases = resolve_enum_cases(enum_name, swift_files)
@@ -496,7 +507,7 @@ module Analyzer::Mobile
             unguarded = true
           end
         end
-        schemes = if !guarded.empty? && !unguarded && (guarded & schemes).empty?
+        schemes = if !guarded.empty? && !unguarded && !capped && guarded.none? { |scheme| @primary_schemes.includes?(scheme) }
                     guarded.uniq
                   else
                     schemes | guarded
@@ -516,26 +527,44 @@ module Analyzer::Mobile
       end
     end
 
+    private def declared_bare_schemes : Array(String)
+      @result.compact_map do |ep|
+        ep.protocol == "mobile-scheme" && ep.url.ends_with?("://") ? ep.url.rchop("://") : nil
+      end.uniq!
+    end
+
     SWIFT_FUNC_NAME_RE    = /\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)/
     SCHEME_GUARD_EQ_RE    = /("[^"\n]*"|[A-Za-z_][A-Za-z0-9_.?]*)\s*==\s*("[^"\n]*"|[A-Za-z_][A-Za-z0-9_.?]*)/
     MAX_GUARD_RESOLVE_HOP = 3
 
     # The declared schemes `func_name` is dispatched under, or nil. One hop
-    # in the same file: every call site of `func_name` must sit in an `if`
+    # in the same file: `func_name` must not be called from any other file,
+    # and every call site of it must be unqualified (or `self.`) and sit in an `if`
     # block whose condition mentions a scheme and compares it (`==`) with
     # something that resolves to a declared scheme — the `{` opening that
     # block on the call line or ending the line before it. An `else {` or a
     # `guard ... else {` branch is the opposite of the comparison, so it
     # does not count.
     private def dispatcher_guard_schemes(path : String, func_name : String, declared : Set(String), swift_files : Array(String)) : Array(String)?
-      lines = read_file_content(path).lines
       call_re = /\b#{Regex.escape(func_name)}\(/
+      def_re = /\bfunc\s+#{Regex.escape(func_name)}\b/
+      # ponytail: any other-file mention gives up, even another type's
+      # same-named method; cross-file call resolution is out of scope.
+      return if swift_files.any? do |other|
+                  next false if other == path
+                  content = read_file_content(other)
+                  content.includes?("#{func_name}(") && content.each_line.any? { |line| line.matches?(call_re) && !line.matches?(def_re) }
+                end
+
+      lines = read_file_content(path).lines
       found = [] of String
       lines.each_with_index do |line, index|
         next unless call_at = line.index(call_re)
-        next if line.matches?(/\bfunc\s+#{Regex.escape(func_name)}\b/)
+        next if line.matches?(def_re)
 
         before = line[0, call_at]
+        # `x.name(` may be some other type's method of the same name.
+        return if before.matches?(/\.\s*$/) && !before.matches?(/\bself\??\.\s*$/)
         guard = if brace = before.rindex('{')
                   before[0, brace]
                 elsif index > 0 && (previous = lines[index - 1].rstrip).ends_with?('{')
@@ -732,9 +761,7 @@ module Analyzer::Mobile
       # (`"kakaotalk://gift"`), which are not schemes to search for and
       # would otherwise bloat the alternation below with ~300 branches
       # instead of ~15.
-      schemes = @result.compact_map do |ep|
-        ep.protocol == "mobile-scheme" && ep.url.ends_with?("://") ? ep.url.rchop("://") : nil
-      end.uniq!
+      schemes = declared_bare_schemes
       return if schemes.empty?
 
       escaped = schemes.map { |s| Regex.escape(s) }.join("|")
