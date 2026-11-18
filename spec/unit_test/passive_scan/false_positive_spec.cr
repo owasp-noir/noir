@@ -237,6 +237,8 @@ describe NoirPassiveScan::FalsePositive do
         %(  uri: ${DATABASE_URL:mongodb://admin:#{secret}@localhost:27017/demo}),
         %(  ORDER_DSN: ${DATABASE_URL:-postgres://admin:#{secret}@db.example.test/app}),
         %(cfg = {"DATABASE_URL" => ENV.fetch("DEMO_TEST_DATABASE_URL", "postgresql://demo:#{secret}@db.example.test:5432/demo")}),
+        # PHP / Perl assign through `$NAME`; only a read is an expansion.
+        %($DATABASE_URL = "postgres://admin:#{secret}@db.example.test/app";),
       ].each do |line|
         NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_false, "expected kept: #{line}"
       end
@@ -275,6 +277,8 @@ describe NoirPassiveScan::FalsePositive do
       [
         %(PRIVATE_KEY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"),
         %(DEMO_PRIVATE_KEY=MIIEvQIBADANBgkqhkiG9w0BAQEFAASC),
+        # A hex key is a number only in shape.
+        %(DEMO_PRIVATE_KEY=0x#{"ab" * 32}),
         %(# PRIVATE_KEY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"),
       ].each do |line|
         NoirPassiveScan::FalsePositive.suppress?(private_key_rule, line).should be_false, "expected kept: #{line}"
