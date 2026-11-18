@@ -238,7 +238,7 @@ module Analyzer::Java
                 constants: file_constants, index: param_index, injected_annotations: injected_annotations,
                 converted_types: converted_types, disallowed_fields: disallowed_fields, injected_types: injected_types
               )
-              merge_route_condition_params(parameters, route.params)
+              merge_route_condition_params(parameters, Noir::TreeSitterJavaRouteExtractor.request_params(route.params))
 
               base_path = is_internal_client ? "" : configured_base_path
 
@@ -298,7 +298,7 @@ module Analyzer::Java
                   implementation.paths.each do |implementation_path|
                     inherited_path = Noir::URLPath.join_rooted(implementation_path, entry_route.path)
                     parameters = entry_params[entry_index].dup
-                    merge_route_condition_params(parameters, implementation.params + entry_route.params)
+                    merge_route_condition_params(parameters, Noir::TreeSitterJavaRouteExtractor.request_params(implementation.params + entry_route.params))
 
                     details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
                     endpoint = Endpoint.new(

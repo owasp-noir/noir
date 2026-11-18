@@ -298,12 +298,43 @@ describe Noir::TreeSitterJavaRouteExtractor do
       JAVA
 
     routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
-    routes.map { |r| {r.verb, r.path, r.params} }.should eq([
+    routes.map { |r| {r.verb, r.path, Noir::TreeSitterJavaRouteExtractor.request_params(r.params)} }.should eq([
       {"GET", "/tenant/reports", [
         Param.new("tenant", "", "query"),
         Param.new("mode", "full", "query"),
         Param.new("X-Client", "mobile", "header"),
       ]},
+    ])
+  end
+
+  it "keeps presence, empty-value, negated and != conditions apart" do
+    source = <<-JAVA
+      public class C {
+          @GetMapping(value = "/x", params = {"a", "b="})
+          public String one() { return ""; }
+          @GetMapping(value = "/x", params = {"a=", "b"})
+          public String two() { return ""; }
+          @GetMapping(value = "/y", params = {"a", "!b"}, headers = "!X-Mode")
+          public String three() { return ""; }
+          @GetMapping(value = "/z", params = {"c=1", "d!=2"})
+          public String four() { return ""; }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJavaRouteExtractor.extract_routes(source)
+    # Same keys as the Kotlin extractor: `b` (present) is not `b=` (present
+    # and empty), and `!b` (absent) is not "no condition".
+    routes.map(&.params.map { |p| "#{p.param_type}:#{p.name}=#{p.value}" }).should eq([
+      ["query:a=", "query:b=="],
+      ["query:a==", "query:b="],
+      ["query:a=", "query:!b=", "header:!X-Mode="],
+      ["query:c=1", "query:d!=2="],
+    ])
+    routes.map { |r| Noir::TreeSitterJavaRouteExtractor.request_params(r.params).map { |p| "#{p.name}=#{p.value}" } }.should eq([
+      ["a=", "b="],
+      ["a=", "b="],
+      ["a="],
+      ["c=1", "d="],
     ])
   end
 
