@@ -173,6 +173,39 @@ describe "JsMiscAuthTagger" do
     end
   end
 
+  # nuxt-auth-utils: `requireUserSession(event)` answers 401 without a
+  # session; `getUserSession(event)` only reads one.
+  it "counts a Nuxt handler that requires the user session before anything else returns" do
+    dir = File.tempname("nuxt_user_session")
+    Dir.mkdir_p("#{dir}/server/api/items")
+    sources = {
+      "index.get.ts"  => "export default eventHandler(async (event) => {\n  const { user } = await requireUserSession(event)\n  return listItems(user.id)\n})\n",
+      "index.post.ts" => "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  // requireUserSession(event)\n  return createItem(body)\n})\n",
+      "mine.get.ts"   => "export default defineEventHandler(async (event) => {\n  if (getQuery(event).mine) {\n    await requireUserSession(event)\n  }\n  return listItems()\n})\n",
+      "peek.get.ts"   => "export default defineEventHandler(async (event) => {\n  const session = await getUserSession(event)\n  return listItems(session.user?.id)\n})\n",
+      "own.get.ts"    => "export default defineEventHandler(async (event) => {\n  if (getQuery(event).own)\n    await requireUserSession(event)\n  return listItems()\n})\n",
+    }
+    begin
+      endpoints = sources.map do |name, source|
+        file = "#{dir}/server/api/items/#{name}"
+        File.write(file, source)
+        details = Details.new(PathInfo.new(file, 1))
+        details.technology = "js_nuxtjs"
+        Endpoint.new("/api/items/#{name}", "GET", [] of Param, details)
+      end
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      verdicts = JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url.split('/').last, ep.tags.map(&.description)} }
+      verdicts["index.get.ts"].should eq(["Protected by Nuxt requireUserSession(event)"])
+      verdicts["index.post.ts"].should be_empty
+      verdicts["mine.get.ts"].should be_empty
+      verdicts["peek.get.ts"].should be_empty
+      verdicts["own.get.ts"].should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   # `ctx.assert(value, err)` throws `err` when `value` is falsy; http-errors
   # keeps the error's own 401/403 status.
   it "counts a Koa ctx.assert on the caller with an authentication error as a refusal" do

@@ -173,11 +173,36 @@ class JsMiscAuthTagger < FrameworkTagger
                       fastify_handler_check(path_info.path, line_idx, endpoint.method, endpoint.url)
       end
       description ||= koa_guard(path_info.path, line_idx) if endpoint.details.technology == "js_koa"
+      description ||= nuxt_session_guard(path_info.path) if endpoint.details.technology == "js_nuxtjs"
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "js_misc_auth"))
         return
       end
     end
+  end
+
+  NUXT_HANDLER         = /\b(?:defineEventHandler|eventHandler|defineCachedEventHandler)\s*\(/
+  NUXT_REQUIRE_SESSION = /(?<![\w$.])requireUserSession\s*\(\s*event\b/
+
+  # A Nuxt server handler that calls nuxt-auth-utils' `requireUserSession`
+  # (401 without a session) in its own body, not under an `if` or inside
+  # a nested function.
+  private def nuxt_session_guard(path : String) : String?
+    raw = read_file(path) || return
+    return unless raw.includes?("requireUserSession")
+    code = Noir::JSLiteralScanner.blank_literals(Noir::CComments.strip(raw, quotes: %("'`)))
+    head = code.match(NUXT_HANDLER) || return
+    open = code.index('{', head.end(0)) || return
+    close = Noir::JSLiteralScanner.find_matching_brace(code, open) || return
+    body = code[open + 1...close]
+    call = body.match(NUXT_REQUIRE_SESSION) || return
+    before = body[0...call.begin(0)]
+    return unless before.count('{') == before.count('}') && before.count('(') == before.count(')')
+    # An earlier `return` can answer first; a brace-less `if`, a ternary or a
+    # short-circuit in the call's own statement makes it conditional.
+    return if before.matches?(/\breturn\b/)
+    return if before[((before.rindex(/[;{}]/) || -1) + 1)..].matches?(/\b(?:if|else|while|for|case)\b|\?|&&|\|\|/)
+    "Nuxt requireUserSession(event)"
   end
 
   # What a Koa middleware's definition does to refuse a caller: throw
