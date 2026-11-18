@@ -368,6 +368,15 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "json"}, {"quantity", "json"}])
       extract(source, "DemoController", "search", "GET", fields: fields)
         .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "query"}, {"quantity", "query"}])
+
+      # A resolver that supplies the nested type (`== OrderController.CreateRequest::class.java`)
+      # is recorded by its simple name; the qualified parameter still matches it.
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
+          root, source, "DemoController", "search", "GET", nil, fields,
+          injected_types: Set{"CreateRequest"}
+        ).should be_empty
+      end
     end
 
     it "names JSON body fields by @JsonProperty" do
