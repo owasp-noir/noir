@@ -94,6 +94,10 @@ module Analyzer::Mobile
       component_name = substitute(attr(component, "name") || "", placeholders)
       handler_name = component_tag == "activity-alias" ? substitute(attr(component, "targetActivity") || component_name, placeholders) : component_name
 
+      # A guarding permission is recorded, not suppressed: whether another
+      # app can hold it is the reviewer's call.
+      permission = resolve(attr(component, "permission"), strings, placeholders)
+
       filters = [] of XML::Node
       each_child(component, "intent-filter") { |f| filters << f }
 
@@ -106,7 +110,7 @@ module Analyzer::Mobile
         # always declares a MAIN filter, so it never lands here.
         if exported
           emit_explicit_component_endpoint(component_name, handler_name, component_tag,
-            package, resolve(attr(component, "permission"), strings, placeholders), path, seen_urls)
+            package, permission, path, seen_urls)
         end
         return
       end
@@ -136,7 +140,7 @@ module Analyzer::Mobile
           # absent means "old manifest, exported".
           next if attr(component, "exported") == "false"
           emit_filter_endpoints(data_nodes, actions, categories, package, strings,
-            placeholders, path, auto_verify, handler_name, seen_urls)
+            placeholders, path, auto_verify, handler_name, permission, seen_urls)
         elsif attr(component, "exported") != "false"
           # Exported component with an action but no <data>: an IPC surface
           # reachable by explicit/implicit intent. The launcher (MAIN) is
@@ -146,7 +150,7 @@ module Analyzer::Mobile
           ipc_actions = actions.reject { |a| a == LAUNCHER_ACTION }
           unless ipc_actions.empty?
             emit_intent_endpoint(component_name, component_tag, ipc_actions, categories,
-              package, path, seen_urls)
+              package, permission, path, seen_urls)
           end
         end
       end
@@ -205,7 +209,8 @@ module Analyzer::Mobile
                                       actions : Array(String), categories : Array(String),
                                       package : String, strings : Hash(String, String),
                                       placeholders : Hash(String, String), path : String,
-                                      auto_verify : Bool, via : String, seen_urls : Set(String))
+                                      auto_verify : Bool, via : String, permission : String?,
+                                      seen_urls : Set(String))
       # Insertion-ordered sets: `Array#includes?` dedup was O(n^2) on a
       # filter with thousands of `<data>` elements.
       schemes = Set(String).new
@@ -241,7 +246,9 @@ module Analyzer::Mobile
         protocol = (web && auto_verify) ? "universal-link" : "mobile-scheme"
         endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
         endpoint.protocol = protocol
-        endpoint.metadata = build_metadata(via, actions, categories, host, package)
+        metadata = build_metadata(via, actions, categories, host, package)
+        add_permission(metadata, "permission", permission)
+        endpoint.metadata = metadata
         mark_unresolved(endpoint, url)
         @result << endpoint
       end
@@ -296,7 +303,8 @@ module Analyzer::Mobile
     # untouched.
     private def emit_intent_endpoint(component_name : String, component_tag : String,
                                      actions : Array(String), categories : Array(String),
-                                     package : String, path : String, seen_urls : Set(String))
+                                     package : String, permission : String?, path : String,
+                                     seen_urls : Set(String))
       component = component_name.empty? ? package : "#{package}/#{component_name}"
       url = "intent://#{component}"
       return unless seen_urls.add?(url)
@@ -306,6 +314,7 @@ module Analyzer::Mobile
       metadata = build_metadata("", actions, categories, "", package)
       # The kind picks the launch verb (`am startservice` / `am broadcast`).
       metadata["component_type"] = component_tag
+      add_permission(metadata, "permission", permission)
       endpoint.metadata = metadata
 
       @result << endpoint
