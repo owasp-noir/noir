@@ -63,11 +63,12 @@ module Analyzer::Mobile
       package = gradle.package_fallback if package.empty?
 
       seen_urls = Set(String).new
+      overlaid = main_filtered_components(path)
 
       if application = find_child(manifest, "application")
         {"activity", "activity-alias", "service", "receiver"}.each do |component_tag|
           each_child(application, component_tag) do |component|
-            process_component(component, component_tag, package, strings, placeholders, path, seen_urls)
+            process_component(component, component_tag, package, strings, placeholders, path, seen_urls, overlaid)
           end
         end
 
@@ -84,7 +85,8 @@ module Analyzer::Mobile
     private def process_component(component : XML::Node, component_tag : String,
                                   package : String, strings : Hash(String, String),
                                   placeholders : Hash(String, String),
-                                  path : String, seen_urls : Set(String))
+                                  path : String, seen_urls : Set(String),
+                                  overlaid : Set(String))
       # A component explicitly disabled in the manifest can't be launched
       # (until something re-enables it at runtime), so it isn't a live entry
       # point — skip it regardless of how it would otherwise be reached.
@@ -102,6 +104,9 @@ module Analyzer::Mobile
       each_child(component, "intent-filter") { |f| filters << f }
 
       if filters.empty?
+        # A source-set stub merging attributes into a src/main component
+        # whose filters live there; src/main reports it.
+        return if overlaid.includes?(attr(component, "name") || "")
         # No intent-filter: a filter-less component defaults to NOT exported,
         # so it is reachable from another app only when `exported="true"` is
         # set explicitly — and then an explicit intent naming `package/component`
@@ -154,6 +159,37 @@ module Analyzer::Mobile
           end
         end
       end
+    end
+
+    # Names of the components that the module's src/main manifest declares
+    # with an intent-filter, when `path` is another source set's manifest
+    # (`src/<variant>/AndroidManifest.xml`). The manifest merger folds such
+    # a variant into src/main, so a re-declared component there is an
+    # attribute overlay, not a filter-less component.
+    private def main_filtered_components(path : String) : Set(String)
+      names = Set(String).new
+      source_set = File.dirname(path)
+      src = File.dirname(source_set)
+      return names unless File.basename(src) == "src" && File.basename(source_set) != "main"
+
+      main_path = File.join(src, "main", "AndroidManifest.xml")
+      return names unless File.exists?(main_path)
+
+      main = find_child(Noir::XmlComments.parse(read_file_content(main_path)), "manifest")
+      application = main.try { |node| find_child(node, "application") }
+      return names unless application
+
+      {"activity", "activity-alias", "service", "receiver"}.each do |component_tag|
+        each_child(application, component_tag) do |component|
+          next unless has_child?(component, "intent-filter")
+          name = attr(component, "name")
+          names << name if name
+        end
+      end
+      names
+    rescue
+      # An unreadable src/main must not cost this source set its endpoints.
+      Set(String).new
     end
 
     # Generic/standard schemes carry no app-specific meaning on their own.
