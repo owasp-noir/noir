@@ -4565,6 +4565,17 @@ describe "SpringAuthTagger (Boot security auto-configuration excluded)" do
     tags["GET /items"].size.should eq(1)
     tags["GET /items"][0].should start_with("Protected by Spring Security default chain (@EnableWebSecurity")
   end
+
+  it "keeps the default chain when the exclusion sits under @Profile" do
+    app = "@SpringBootApplication\npublic class DemoApp {}\n"
+    local = "@Profile(\"local\")\n@Configuration\n@EnableAutoConfiguration(exclude = SecurityAutoConfiguration.class)\npublic class LocalConfig {}\n"
+    tags = run_spring_multi_module(base.merge({
+      "demo/src/main/java/com/example/DemoApp.java"     => app,
+      "demo/src/main/java/com/example/LocalConfig.java" => local,
+    }), route)
+    tags["GET /items"].size.should eq(1)
+    tags["GET /items"][0].should start_with("Protected by Spring Boot default security")
+  end
 end
 
 describe "SpringAuthTagger (concatenated matcher patterns)" do
@@ -4675,5 +4686,74 @@ describe "SpringAuthTagger (WebSecurity ignoring)" do
     tags["GET /error/404"].should be_empty
     tags["GET /favicon.ico"].should be_empty
     tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "keeps the guards when the customizer is registered only under @Profile or @ConditionalOn" do
+    chain = <<-JAVA
+      package com.example;
+
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain api(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(a -> a.anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    on_bean = <<-JAVA
+      package com.example;
+
+      @Configuration
+      public class LocalConfig {
+          @Profile("local")
+          @Bean
+          WebSecurityCustomizer openAll() {
+              return web -> web.ignoring().requestMatchers("/**");
+          }
+      }
+      JAVA
+    on_class = <<-JAVA
+      package com.example;
+
+      @Configuration
+      @ConditionalOnProperty(name = "demo.open", havingValue = "true")
+      public class LocalConfig {
+          @Bean
+          WebSecurityCustomizer openAll() {
+              return web -> {
+                  web.ignoring().requestMatchers("/**");
+              };
+          }
+      }
+      JAVA
+    [on_bean, on_class].each do |customizer|
+      tags = run_spring_security_config({"LocalConfig.java" => customizer, "SecurityConfig.java" => chain}, ["GET /items"])
+      tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+    end
+  end
+
+  it "leaves a Shiro filter in charge of an ignored path" do
+    config = <<-JAVA
+      package com.example;
+
+      public class SecurityConfig {
+          @Bean
+          WebSecurityCustomizer ignored() {
+              return web -> web.ignoring().requestMatchers("/items/**");
+          }
+
+          @Bean
+          ShiroFilterFactoryBean shiro() {
+              ShiroFilterFactoryBean bean = new ShiroFilterFactoryBean();
+              Map<String, String> chain = new LinkedHashMap<String, String>();
+              chain.put("/items/**", "authc");
+              bean.setFilterChainDefinitionMap(chain);
+              return bean;
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"SecurityConfig.java" => config}, ["GET /items/1"])
+    tags["GET /items/1"].size.should eq(1)
+    tags["GET /items/1"][0].should start_with("Protected by Shiro authc")
   end
 end
