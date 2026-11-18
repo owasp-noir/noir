@@ -49,6 +49,18 @@ describe "Detect JS Node http" do
     instance.detect("server.cjs", content).should be_true
   end
 
+  it "detects createServer that branches on the pathname without reading the method" do
+    content = <<-JS
+      const http = require('node:http');
+      http.createServer((req, res) => {
+        const u = new URL(req.url, 'http://localhost');
+        if (u.pathname === '/status') return res.end('ok');
+      });
+      JS
+
+    instance.detect("server.js", content).should be_true
+  end
+
   it "does not detect adapter-only createServer usage" do
     content = <<-TS
       import { createYoga } from 'graphql-yoga';
