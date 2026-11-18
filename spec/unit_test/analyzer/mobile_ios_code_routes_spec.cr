@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../spec_helper"
 require "../../../src/models/code_locator"
 require "../../../src/analyzer/analyzers/mobile/ios.cr"
@@ -50,5 +51,43 @@ describe "Analyzer::Mobile::Ios (code-level route harvesting)" do
 
   it "harvests a hardcoded full deep-link URL literal" do
     find.call("myapp://legacy/debug").not_nil!.protocol.should eq("mobile-scheme")
+  end
+end
+
+describe "Analyzer::Mobile::Ios (format-string literals)" do
+  dir = File.tempname("noir-ios-format-literals")
+  Dir.mkdir_p(dir)
+  plist = File.join(dir, "Info.plist")
+  swift = File.join(dir, "Links.swift")
+  File.write(plist, <<-XML)
+    <plist version="1.0"><dict>
+    <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLSchemes</key><array><string>demo</string></array></dict></array>
+    </dict></plist>
+    XML
+  File.write(swift, <<-SWIFT)
+    let media = String(format: "demo://media?action=play&id=%@&page=%lu", itemId, page)
+    let price = String(format: "demo://price?amount=%.2f&count=%zu", amount, count)
+    let search = "demo://search?q=hello%20world"
+    let plain = "demo://items/list"
+    SWIFT
+
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_ENTITLEMENTS)
+  CodeLocator.instance.reset_files
+  CodeLocator.instance.push(Noir::LocatorKeys::IOS_INFO_PLIST, plist)
+  CodeLocator.instance.register_file(swift, File.read(swift))
+  urls = Analyzer::Mobile::Ios.new(create_test_options).analyze.map(&.url)
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
+  CodeLocator.instance.reset_files
+  FileUtils.rm_rf(dir)
+
+  it "skips a Swift literal carrying printf format specifiers" do
+    urls.any?(&.starts_with?("demo://media")).should be_false
+    urls.any?(&.starts_with?("demo://price")).should be_false
+  end
+
+  it "keeps percent-escapes and plain literals" do
+    urls.should contain("demo://search?q=hello%20world")
+    urls.should contain("demo://items/list")
   end
 end

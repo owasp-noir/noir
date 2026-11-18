@@ -110,4 +110,19 @@ describe "OutputBuilderSimctl" do
 
     out.should be_empty
   end
+
+  # Android and iOS declaring the same link merge into one row whose winning
+  # `technology` may be either platform; both declared it.
+  it "launches a link that iOS shares with Android" do
+    shared = Endpoint.new("demo://open", "GET")
+    shared.protocol = "mobile-scheme"
+    details = shared.details
+    details.technology = "android"
+    details.technologies = ["android", "ios"]
+    shared.details = details
+
+    builder = build_simctl_builder
+    builder.print([shared])
+    builder.io.to_s.strip.should eq("xcrun simctl openurl booted 'demo://open'")
+  end
 end

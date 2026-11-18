@@ -190,4 +190,17 @@ describe "OutputBuilderAdb" do
     # an adb command — but they are accounted for in different skip buckets.
     out.strip.should be_empty
   end
+
+  it "launches a link that Android shares with iOS" do
+    shared = Endpoint.new("demo://open", "GET")
+    shared.protocol = "mobile-scheme"
+    details = shared.details
+    details.technology = "ios"
+    details.technologies = ["android", "ios"]
+    shared.details = details
+
+    builder = build_adb_builder
+    builder.print([shared])
+    builder.io.to_s.strip.should eq("adb shell am start -a 'android.intent.action.VIEW' -d 'demo://open'")
+  end
 end

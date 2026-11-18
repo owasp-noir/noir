@@ -11,19 +11,34 @@ module NoirMobileLinker
   private def self.link_ios(endpoints : Array(Endpoint), logger : NoirLogger)
     return unless endpoints.any? { |ep| ios_handler_target?(ep) }
 
-    handlers_by_scope = {} of String => Hash(Symbol, HandlerInfo)
+    handlers_by_scope = {} of {String, Array(String)}? => Hash(Symbol, HandlerInfo)
+
+    # Every app's Info.plist directory, and the configs that declare each
+    # scheme. A route harvested from a shared source file carries no config
+    # of its own; it is scoped to the app that declares its scheme.
+    app_dirs = Set(String).new
+    scheme_configs = {} of String => Array(String)
+    endpoints.each do |endpoint|
+      next unless ios_handler_target?(endpoint)
+      endpoint.details.code_paths.each do |path_info|
+        app_dirs << File.dirname(Noir::PathScope.expand(path_info.path)) if ios_plist?(path_info.path)
+      end
+      if endpoint.protocol == "mobile-scheme" && (config = ios_config_path(endpoint))
+        configs = scheme_configs[url_scheme(endpoint)] ||= [] of String
+        configs << config unless configs.includes?(config)
+      end
+    end
 
     endpoints.each_with_index do |endpoint, i|
       next unless ios_handler_target?(endpoint)
-      scope = ios_handler_scope(endpoint)
-      key = scope || ""
-      handlers = handlers_by_scope[key]?
+      scope = ios_handler_scope(endpoint, scheme_configs, app_dirs)
+      handlers = handlers_by_scope[scope]?
       unless handlers
         begin
-          handlers = IosHandlers.discover(scope)
-          handlers_by_scope[key] = handlers
+          handlers = scope ? IosHandlers.discover(*scope) : IosHandlers.discover
+          handlers_by_scope[scope] = handlers
         rescue e
-          logger.debug "Mobile linker (iOS) handler discovery failed#{scope ? " for #{scope}" : ""}: #{e.message}"
+          logger.debug "Mobile linker (iOS) handler discovery failed#{scope ? " for #{scope[0]}" : ""}: #{e.message}"
           next
         end
       end
@@ -38,13 +53,40 @@ module NoirMobileLinker
     endpoint.mobile? && endpoint.details.technology == "ios"
   end
 
-  private def self.ios_handler_scope(endpoint : Endpoint) : String?
-    config_path = endpoint.details.code_paths.find do |path_info|
-      File.basename(path_info.path) == "Info.plist" || path_info.path.ends_with?(".entitlements")
-    end || endpoint.details.code_paths.first?
+  # The handler scope root and the other apps' directories left out of it.
+  private def self.ios_handler_scope(endpoint : Endpoint, scheme_configs : Hash(String, Array(String)),
+                                     app_dirs : Set(String)) : {String, Array(String)}?
+    source = endpoint.details.code_paths.first?.try(&.path)
+    config_path = ios_config_path(endpoint) || scheme_config(scheme_configs[url_scheme(endpoint)]?, source) || source
     return unless config_path
 
-    IosHandlers.xcode_project_root(config_path.path) || IosHandlers.nearest_handler_source_root(config_path.path)
+    IosHandlers.xcode_project_root(config_path).try { |root| {root, [] of String} } ||
+      IosHandlers.nearest_handler_source_root(config_path, app_dirs)
+  end
+
+  # Of the configs declaring a scheme, the one whose app holds `source`,
+  # else the first.
+  private def self.scheme_config(configs : Array(String)?, source : String?) : String?
+    return unless configs
+    expanded = source.try { |path| Noir::PathScope.expand(path) }
+    owner = configs.select do |config|
+      expanded && Noir::PathScope.under_normalized_root?(expanded, File.dirname(Noir::PathScope.expand(config)))
+    end.max_by?(&.size)
+    owner || configs.first
+  end
+
+  private def self.ios_config_path(endpoint : Endpoint) : String?
+    endpoint.details.code_paths.find { |path_info| ios_plist?(path_info.path) || path_info.path.ends_with?(".entitlements") }.try(&.path)
+  end
+
+  # Only plists declaring CFBundleURLTypes reach code_paths, whatever their
+  # name (`Info.plist`, `<Target>-Info.plist`, `Info-Debug.plist`).
+  private def self.ios_plist?(path : String) : Bool
+    path.ends_with?(".plist")
+  end
+
+  private def self.url_scheme(endpoint : Endpoint) : String
+    endpoint.url.partition("://")[0]
   end
 
   # Scans .swift files once for the central deep-link dispatch handlers and
@@ -139,12 +181,12 @@ module NoirMobileLinker
 
     record ForwardedAction, receiver : String, method : String, action : String, action_type : String
 
-    def self.discover(scope_root : String? = nil) : Hash(Symbol, NoirMobileLinker::HandlerInfo)
+    def self.discover(scope_root : String? = nil, excluded : Array(String) = [] of String) : Hash(Symbol, NoirMobileLinker::HandlerInfo)
       url = NoirMobileLinker::HandlerInfo.new
       activity = NoirMobileLinker::HandlerInfo.new
       expanded_scope = scope_root.try { |root| Noir::PathScope.expand(root).rstrip('/') }
 
-      each_handler_source(expanded_scope) do |path, content, objc|
+      each_handler_source(expanded_scope, excluded) do |path, content, objc|
         if objc
           scan_file(path, content, url, activity,
             OBJC_URL_HANDLER_RES, OBJC_ACTIVITY_HANDLER_RES, OBJC_SIGNATURE_START_RE, expanded_scope, objc: true)
@@ -164,8 +206,22 @@ module NoirMobileLinker
       end
     end
 
-    def self.nearest_handler_source_root(path : String) : String?
-      nearest_ancestor(path) { |dir| ios_handler_source_under?(dir) }
+    # Without an Xcode project the scope climbs to the nearest directory
+    # holding a handler. It stops at the first directory that holds another
+    # app's Info.plist (`app_dirs`), with those apps' subtrees left out:
+    # their handlers serve them. Returns the root and the left-out dirs.
+    def self.nearest_handler_source_root(path : String, app_dirs : Set(String) = Set(String).new) : {String, Array(String)}?
+      start = File.dirname(Noir::PathScope.expand(path))
+      nearest_ancestor(path) do |dir|
+        others = app_dirs.select { |app| other_app_under?(app, dir, start) }
+        return {dir, others} unless others.empty?
+        ios_handler_source_under?(dir)
+      end.try { |dir| {dir, [] of String} }
+    end
+
+    private def self.other_app_under?(app_dir : String, dir : String, start : String) : Bool
+      Noir::PathScope.under_normalized_root?(app_dir, dir) &&
+        !Noir::PathScope.under_normalized_root?(start, app_dir)
     end
 
     # The closest of `path`'s first XCODE_PROJECT_SEARCH_DEPTH ancestor
@@ -189,15 +245,17 @@ module NoirMobileLinker
     end
 
     private def self.ios_handler_source_under?(root : String) : Bool
-      each_handler_source(Noir::PathScope.expand(root).rstrip('/')) { return true }
+      each_handler_source(Noir::PathScope.expand(root).rstrip('/'), [] of String) { return true }
       false
     end
 
     # Yields every in-scope, non-skipped Swift then Objective-C source that
     # carries a deep-link handler hint, and whether it is Objective-C.
-    private def self.each_handler_source(expanded_scope : String?, &)
+    # Sources under an `excluded` directory are left out.
+    private def self.each_handler_source(expanded_scope : String?, excluded : Array(String), &)
       CodeLocator.instance.files_by_extension(".swift").each do |path|
         next unless in_scope?(path, expanded_scope)
+        next if excluded.any? { |dir| in_scope?(path, dir) }
         next if skip_ios_source?(path, expanded_scope)
         content = NoirMobileLinker.read_content(path)
         next unless content
@@ -208,6 +266,7 @@ module NoirMobileLinker
       {".m", ".mm"}.each do |ext|
         CodeLocator.instance.files_by_extension(ext).each do |path|
           next unless in_scope?(path, expanded_scope)
+          next if excluded.any? { |dir| in_scope?(path, dir) }
           next if skip_ios_source?(path, expanded_scope)
           content = NoirMobileLinker.read_content(path)
           next unless content
