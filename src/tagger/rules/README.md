@@ -33,6 +33,7 @@ examples:
 | `not: {...}` | the child condition is false |
 | `at_least: { count: N, of: [...] }` | at least N of the listed conditions are true |
 | `path_segment: [...]` | a URL segment is in the list. The URL is lowercased and split on `/ - _ .`, so `/wp-admin` has an `admin` segment and `/badminton` does not |
+| `path_extension: [...]` | the last path segment ends in one of these extensions (`css`, `js`; no dot, query ignored) |
 | `url_contains: [...]` | the lowercased URL contains one of the strings |
 | `method: [...]` / `method_not: [...]` | the method is (not) in the list. `safe` stands for GET, HEAD, OPTIONS and QUERY |
 | `protocol: [...]` | the endpoint protocol (`http`, `ws`, …) is in the list |
