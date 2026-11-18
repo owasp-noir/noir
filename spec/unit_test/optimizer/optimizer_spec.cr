@@ -125,6 +125,83 @@ describe "EndpointOptimizer" do
         end
       end
 
+      # In a monorepo an Ingress fronts its own project: it does not land on
+      # another project's route at the same path, nor on a manifest-less
+      # script's. A rule outside every project (a root `deploy/`) folds only
+      # where one route serves the method at its path. Rules left unfolded
+      # merge as any two Ingress rows at one path do.
+      it "folds an Ingress only into a route of the project that holds it" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-ingress-scope-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        api = File.join(temp_dir, "api")
+        web = File.join(temp_dir, "web")
+        tools = File.join(temp_dir, "tools")
+
+        begin
+          {api, web}.each do |dir|
+            Dir.mkdir_p(File.join(dir, "deploy"))
+            File.write(File.join(dir, "pyproject.toml"), "[project]")
+          end
+          Dir.mkdir_p(tools)
+          options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+          ingress = ->(path : String) { tech_endpoint("/", "ANY", "k8s_ingress", path, 9) }
+          code = [
+            tech_endpoint("/items", "GET", "python_fastapi", File.join(api, "app.py"), 4),
+            tech_endpoint("/", "GET", "python_fastapi", File.join(web, "app.py"), 4),
+            tech_endpoint("/", "GET", "python_fastapi", File.join(tools, "server.py"), 4),
+          ]
+          own = File.join(api, "deploy/ingress.yaml")
+          web_own = File.join(web, "deploy/ingress.yaml")
+          root = File.join(temp_dir, "deploy/ingress.yaml")
+
+          result = optimizer.optimize_endpoints([ingress.call(own), ingress.call(web_own), ingress.call(root)] + code)
+          rows = result.map { |e| {e.method, e.url, e.details.code_paths.map(&.path).sort!} }.sort!
+          rows.should eq([
+            {"ANY", "/", [own, root].sort!},
+            {"GET", "/", [File.join(tools, "server.py")]},
+            {"GET", "/", [File.join(web, "app.py"), web_own]},
+            {"GET", "/items", [File.join(api, "app.py")]},
+          ])
+        ensure
+          options.delete("base")
+          FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+        end
+      end
+
+      # An Ingress in a `-b` base of its own, or in an infra dir whose
+      # manifest serves only scripts, fronts the app's route and folds into it.
+      it "folds an Ingress from a project with no routes into the app route" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-ingress-infra-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        app = File.join(temp_dir, "app")
+        infra = File.join(temp_dir, "infra")
+        code_file = File.join(app, "index.js")
+        rule_file = File.join(infra, "k8s/ingress.yaml")
+
+        begin
+          Dir.mkdir_p(File.join(infra, "k8s"))
+          Dir.mkdir_p(app)
+          scan = -> do
+            result = optimizer.optimize_endpoints([
+              tech_endpoint("/items", "ANY", "k8s_ingress", rule_file, 3),
+              tech_endpoint("/items", "GET", "js_express", code_file, 2),
+            ])
+            result.map { |e| {e.method, e.details.code_paths.map(&.path).sort!} }
+          end
+
+          options["base"] = YAML::Any.new([YAML::Any.new(app), YAML::Any.new(infra)])
+          scan.call.should eq([{"GET", [code_file, rule_file].sort!}])
+
+          File.write(File.join(infra, "requirements.txt"), "")
+          options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+          optimizer = EndpointOptimizer.new(logger, options)
+          scan.call.should eq([{"GET", [code_file, rule_file].sort!}])
+        ensure
+          options.delete("base")
+          FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+        end
+      end
+
       # A generator's global `security` also covers the login route the code
       # serves openly; the code's own guards decide.
       it "drops an OAS security guard once code serves the route" do
