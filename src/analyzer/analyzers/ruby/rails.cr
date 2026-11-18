@@ -66,11 +66,14 @@ module Analyzer::Ruby
     DEVISE_PATH_NAMES = {"sign_in" => "sign_in", "sign_out" => "sign_out", "sign_up" => "sign_up",
                          "password" => "password", "confirmation" => "confirmation", "unlock" => "unlock",
                          "registration" => "", "edit" => "edit", "cancel" => "cancel"}
+    # A Devise action override still reads Devise's params when it calls
+    # `super`, a sanitizer helper or `warden.authenticate`.
+    DEVISE_READS = /(?<![\w.:@])(?:super|sign_in_params|sign_up_params|account_update_params|resource_params)\b|\bwarden\.authenticate/
     # Parameters Devise's built-in controllers read per `{group, action}`,
     # paired with the helper method that sanitizes them (`user[...]` nesting
     # dropped, matching `permit` extraction). Attached when the action is
     # handled by Devise itself or by a subclass that does not redefine that
-    # helper.
+    # helper, and whose own action, if any, reaches them (`DEVISE_READS`).
     DEVISE_ACTION_PARAMS = {
       {"sessions", "create"}      => {"sign_in_params", %w[email password]},
       {"registrations", "create"} => {"sign_up_params", %w[email password password_confirmation]},
@@ -162,7 +165,9 @@ module Analyzer::Ruby
       callees_by_action : Hash(String, Array(Noir::RubyCalleeExtractor::Entry)),
       action_lines : Hash(String, Int32),
       # Per method, the helpers it reads only by `[:key]`, with those keys.
-      helper_keys_by_action : Hash(String, Hash(String, Set(String))) = Hash(String, Hash(String, Set(String))).new
+      helper_keys_by_action : Hash(String, Hash(String, Set(String))) = Hash(String, Hash(String, Set(String))).new,
+      # Methods whose body still runs Devise's param reads (see `DEVISE_READS`).
+      devise_reads : Set(String) = Set(String).new
 
     # A `concern :name do ... end` body: its routing lines, replayed wherever
     # `resources ..., concerns: :name` or `concerns :name` names it. Rails
@@ -968,6 +973,10 @@ module Analyzer::Ruby
           resolved_type = (param.param_type == "form" && param_type == "json") ? "json" : param.param_type
           push_unique_param(params, Param.new(param.name, param.value, resolved_type))
         end
+        return params
+      end
+      # An app action that overrides Devise's never runs its reads.
+      if ctrl_path && (owner = action_owner(ctrl_path, action)) && !owner.devise_reads.includes?(action)
         return params
       end
 
@@ -2265,8 +2274,11 @@ module Analyzer::Ruby
       helper_keys_by_action = Hash(String, Hash(String, Set(String))).new
       helper_calls_by_action = build_helper_call_map(method_bodies, defined_actions, helper_keys_by_action)
 
+      devise_reads = Set(String).new
+      method_bodies.each { |name, body| devise_reads << name if body.any?(&.matches?(DEVISE_READS)) }
+
       data = ControllerData.new(path, param_type, params_method, params_body_by_action, params_query_by_action,
-        defined_actions, helper_calls_by_action, callees_by_action, action_lines, helper_keys_by_action)
+        defined_actions, helper_calls_by_action, callees_by_action, action_lines, helper_keys_by_action, devise_reads)
       @controller_data_cache[path] = data
       data
     end
