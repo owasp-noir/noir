@@ -1666,6 +1666,8 @@ class FastAPIAuthTagger < FrameworkTagger
     end
     unless atom.matches?(/\Arequest\.method\b/) || atom.matches?(path_expr(klass))
       if atom.matches?(MW_CREDENTIAL_READ) || atom.matches?(MW_IDENTITY_CALL)
+        # A CSRF double-submit token is no identity.
+        return MwTri::Choice if atom.matches?(PythonGuardDefinitions::CREDENTIAL_LOOKALIKE)
         return atom.matches?(MW_CREDENTIAL_MISSING) ? MwTri::T : MwTri::F
       end
       return MwTri::Choice if atom.matches?(/(?<![\w.])request\./)
