@@ -11,8 +11,14 @@ match:
   any:
     # Whole segments only: /admin/users and /wp-admin match, /badminton
     # does not. `superadmin` has no separator, so it is listed itself.
-    - path_segment: [admin, admins, administrator, administration, administrative,
-                     superuser, superadmin, sysadmin, backoffice, impersonate, godmode]
+    # A static asset (`/css/admin.theme.css`, `/js/admin-panel.js`) is a file
+    # served to everyone, not an administrative handler, so it is exempt.
+    - all:
+        - path_segment: [admin, admins, administrator, administration, administrative,
+                         superuser, superadmin, sysadmin, backoffice, impersonate, godmode]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
     # A privilege grant on any route, e.g. PATCH /users/{id} with is_admin.
     - param:
         name: [is_admin, is_superuser, is_superadmin, is_staff, is_root, make_admin,
@@ -32,3 +38,5 @@ examples:
     - { url: /badminton/courts }
     - { url: /api/roles, params: [{ name: privilege }] }
     - { method: QUERY, url: /api/roles, params: [{ name: privilege, type: form }] }
+    - { url: /static/css/admin.theme.css }
+    - { url: /js/admin-panel.js?v=2 }
