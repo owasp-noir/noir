@@ -1241,3 +1241,38 @@ describe "GoAuthTagger caller checks beside path exemptions" do
     end
   end
 end
+
+describe "GoAuthTagger factories returning a library middleware" do
+  source = ->(body : String) do
+    <<-GO
+      package main
+
+      import (
+        "github.com/gofiber/fiber/v2"
+        "github.com/gofiber/fiber/v2/middleware/basicauth"
+        "github.com/gofiber/fiber/v2/middleware/logger"
+      )
+
+      func newMiddleware(users map[string]string) fiber.Handler {
+        #{body}
+      }
+
+      func main() {
+        app := fiber.New()
+        app.Use(newMiddleware(map[string]string{"admin": "secret"}))
+        app.Get("/api/items", func(c *fiber.Ctx) error { return nil })
+      }
+      GO
+  end
+
+  it "reads the library middleware the factory returns" do
+    lines = source.call("return basicauth.New(basicauth.Config{\nUsers: users,\n})").lines
+    endpoint = run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("app.Get")) + 1, "go_fiber")
+    endpoint.tags.map(&.name).should eq(["auth"])
+  end
+
+  it "does not tag a factory returning a library middleware that is no guard" do
+    lines = source.call("return logger.New()").lines
+    run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("app.Get")) + 1, "go_fiber").tags.should be_empty
+  end
+end

@@ -967,6 +967,12 @@ class GoAuthTagger < FrameworkTagger
         GuardEvidence.new(Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers#{waiver ? ";#{waiver}" : ""})", "go_auth"), followed && waiver.nil?)
       when Guard::Authz
         GuardEvidence.new(Tag.new("authz", "Protected by Go middleware #{shown} (verified from its body: permission check replies 403#{waiver ? ";#{waiver}" : ""})", "go_auth"), followed && waiver.nil?)
+      when Guard::None
+        # A factory that only returns a library's middleware
+        # (`return basicauth.New(basicauth.Config{...})`) is that middleware.
+        library_middleware(qualifier, name, file).try do |(expr, path)|
+          guard_evidence(expr, path, authish_name, shown).try { |found| GuardEvidence.new(found.tag, false) }
+        end
       when nil
         if display.nil? && (bound = local_binding(file, shown))
           evidence = guard_evidence(bound, file, authish_name, shown)
@@ -978,6 +984,20 @@ class GoAuthTagger < FrameworkTagger
         GuardEvidence.new(Tag.new("auth", "Protected by Go middleware #{shown}", "go_auth"), false) if authish_name && (delegating ? name : reference).matches?(AUTHISH_NAME)
       end
     end
+  end
+
+  FACTORY_RETURN = /\A[^{]*\{\s*return\s+(\w+)\s*\.\s*\w+\s*\((.*)\}\s*\z/m
+
+  # The call a same-package factory `name` returns as its whole body, when
+  # it is a constructor of an imported package outside the scan, with the
+  # factory's file.
+  private def library_middleware(qualifier : String, name : String, file : String) : {String, String}?
+    return unless qualifier.empty?
+    body = @bodies.functions_for(File.dirname(file))[name]? || return
+    source = Noir::CComments.strip(body.source, quotes: %("'`))
+    m = source.match(FACTORY_RETURN) || return
+    return unless file_imports(body.file_path).includes?(m[1]) && !@dirs_by_base.has_key?(m[1])
+    {source.partition("return")[2].strip.rchop('}').strip, body.file_path}
   end
 
   # The expression first bound to `name` in `file`.
