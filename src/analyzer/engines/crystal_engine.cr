@@ -3,6 +3,7 @@ require "../../models/skipped_files"
 require "./file_scan_engine"
 require "../../miniparsers/crystal_callee_extractor"
 require "../../utils/call_fold"
+require "../../utils/top_level_split"
 
 module Analyzer::Crystal
   abstract class CrystalEngine < FileScanEngine
@@ -132,6 +133,146 @@ module Analyzer::Crystal
     protected def normalize_crystal_interpolation(path : String) : String
       return path unless path.includes?("\#{")
       path.gsub(INTERPOLATION_RE) { |_| "{#{$~[1].strip}}" }
+    end
+
+    # `<collection>.each do |a|` / `do |key, value|`, where the collection is
+    # a tuple, array, `%w()` or hash literal of plain strings, or a constant
+    # the same file assigns one to. Kemal apps register a closed set of
+    # routes this way: `{"/a", "/a.json"}.each do |path| get(path) …`.
+    EACH_LOOP_RE       = /^(\s*)(.+?)\.each\s+do\s*\|\s*(\w+)(?:\s*,\s*(\w+))?\s*\|\s*$/
+    CONSTANT_ASSIGN_RE = /^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.+?)\s*$/
+    PERCENT_WORDS_RE   = /\A%w[(\[{<](.*)[)\]}>]\z/
+    STRING_LITERAL_RE  = /\A"((?:[^"\\#]|\\.|#(?!\{))*)"\z/
+    HASH_ENTRY_RE      = /\A("(?:[^"\\]|\\.)*")\s*=>\s*(.+)\z/
+    # What follows a bare identifier that is not a plain read of it.
+    LOOP_VAR_NOT_ARGUMENT_RE = /[?!:(.\[]|=[^=~>]/
+    LOOP_SPLIT_RULES         = Noir::TopLevelSplit::Rules.new(quotes: "\"", empties: Noir::TopLevelSplit::Empties::DropAll)
+    # ponytail: bindings per body line (nested loops multiply); a loop past
+    # the cap keeps the as-written scan.
+    LOOP_MAX_BINDINGS = 64
+
+    alias LoopBinding = Hash(String, String)
+
+    # Each loop body line's index => one binding of the loop variables per
+    # element. A variable whose element is not a plain string stays unbound.
+    protected def crystal_loop_bindings(lines : Array(String)) : Hash(Int32, Array(LoopBinding))
+      bindings = {} of Int32 => Array(LoopBinding)
+      return bindings unless lines.any?(&.includes?(".each"))
+
+      constants = {} of String => String
+      lines.each do |line|
+        next unless line.includes?('=') && (match = Noir::CrystalCalleeExtractor.strip_comment(line).match(CONSTANT_ASSIGN_RE))
+        constants[match[1]] = match[2]
+      end
+
+      lines.each_with_index do |line, index|
+        next unless line.includes?(".each") && (match = Noir::CrystalCalleeExtractor.strip_comment(line).match(EACH_LOOP_RE))
+        collection = match[2].strip
+        entries = crystal_literal_entries(constants[collection]? || collection, match[4]? ? 2 : 1)
+        next unless entries
+        indent = match[1].size
+        body_end = (index + 1...lines.size).find do |i|
+          (end_match = lines[i].match(/^(\s*)end\b/)) && end_match[1].size == indent
+        end
+        next unless body_end
+
+        names = [match[3], match[4]?]
+        (index + 1...body_end).each do |i|
+          outer = bindings[i]? || [LoopBinding.new]
+          next if outer.size * entries.size > LOOP_MAX_BINDINGS
+          bindings[i] = outer.flat_map do |binding|
+            entries.map do |entry|
+              bound = binding.dup
+              names.each_with_index { |name, n| (value = entry[n]?) && name && (bound[name] = value) }
+              bound
+            end
+          end
+        end
+      end
+      bindings
+    end
+
+    # The elements of a literal collection, each as the values its block
+    # variables bind (`arity` 2 only for a hash's key and value). nil when the
+    # text is anything else, or an element is not a plain string literal.
+    private def crystal_literal_entries(text : String, arity : Int32) : Array(Array(String?))?
+      if match = text.match(PERCENT_WORDS_RE)
+        return if arity != 1
+        words = match[1].split
+        return if words.empty? || words.size > LOOP_MAX_BINDINGS
+        return words.map { |word| [word.gsub('"', "\\\"").as(String?)] }
+      end
+      return unless (text.starts_with?('{') && text.ends_with?('}')) || (text.starts_with?('[') && text.ends_with?(']'))
+
+      parts = Noir::TopLevelSplit.split(text[1...-1], ',', LOOP_SPLIT_RULES)
+      return if parts.empty? || parts.size > LOOP_MAX_BINDINGS
+      parts.map do |part|
+        if arity == 1
+          literal = part.match(STRING_LITERAL_RE)
+          return unless literal
+          [literal[1].as(String?)]
+        else
+          entry = part.match(HASH_ENTRY_RE)
+          key = entry.try(&.[1].match(STRING_LITERAL_RE))
+          return unless entry && key
+          [key[1].as(String?), entry[2].strip.match(STRING_LITERAL_RE).try(&.[1])]
+        end
+      end
+    end
+
+    # `line` with every loop variable in `binding` replaced by its value:
+    # `#{var}` inside a string, and a bare `var` read as an argument
+    # (`get(path)`, `add_route(method, …)`) becomes a string literal. A
+    # `var.call`, `var[…]`, `var = …`, `@var` or `:var` is left alone.
+    protected def substitute_loop_vars(line : String, binding : LoopBinding) : String
+      return line if binding.empty?
+      chars = line.chars
+      String.build do |io|
+        i = 0
+        in_string = false
+        while i < chars.size
+          char = chars[i]
+          if in_string
+            if char == '\\' && i + 1 < chars.size
+              io << char << chars[i + 1]
+              i += 2
+              next
+            end
+            if char == '#' && chars[i + 1]? == '{' && (close = chars.index('}', i)) &&
+               (value = binding[chars[(i + 2)...close].join.strip]?)
+              io << value
+              i = close + 1
+              next
+            end
+            in_string = false if char == '"'
+            io << char
+            i += 1
+          elsif char == '"'
+            in_string = true
+            io << char
+            i += 1
+          elsif char == '#'
+            chars[i..].each { |rest| io << rest }
+            break
+          elsif char.letter? || char == '_'
+            j = i
+            while j < chars.size && (chars[j].alphanumeric? || chars[j] == '_')
+              j += 1
+            end
+            word = chars[i...j].join
+            if (value = binding[word]?) && !(i > 0 && chars[i - 1].in?('.', '@', ':', '$')) &&
+               !chars[j..].join.lstrip.starts_with?(LOOP_VAR_NOT_ARGUMENT_RE)
+              io << '"' << value << '"'
+            else
+              io << word
+            end
+            i = j
+          else
+            io << char
+            i += 1
+          end
+        end
+      end
     end
 
     # Comment-cut `lines` for the per-line param scan, with an accessor read

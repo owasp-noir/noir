@@ -183,10 +183,14 @@ module Analyzer::Crystal
 
       # Main scan with namespace stack
       namespace_stack = [] of NamedTuple(prefix: String, indent: Int32, router_var: String)
-      # {endpoint index, route path, further prefixes, line}
-      extra_mounts = [] of Tuple(Int32, String, Array(String), Int32)
+      # {endpoint index, another route its line registers, line}: a router
+      # mounted at several paths, or a route inside a loop over literals.
+      extra_routes = [] of Tuple(Int32, Endpoint, Int32)
       last_endpoint : Endpoint? = nil
+      # The route block's argument, which its param reads go through.
+      param_receiver = "env"
       param_lines = crystal_param_lines(lines)
+      loop_bindings = crystal_loop_bindings(lines)
 
       lines.each_with_index do |line, index|
         bind_router_name(line, routers)
@@ -239,23 +243,25 @@ module Analyzer::Crystal
 
         # Parse endpoint
         # `get "/x",` + `do |env|` puts the handler on the next line.
-        endpoint = line_to_endpoint(line.rstrip.ends_with?(',') ? "#{line} #{lines[index + 1]?}" : line)
-        receiver = ""
-        if endpoint.method.empty? && !routers.empty?
-          endpoint, receiver = router_line_to_endpoint(line, routers)
-        end
-        if !endpoint.method.empty? && valid_crystal_route_path?(endpoint.url)
-          # Build full path with namespace prefixes and mount path
-          route_path = endpoint.url
-          full_path = route_path
+        route_line = line.rstrip.ends_with?(',') ? "#{line} #{lines[index + 1]?}" : line
+        variants = loop_bindings[index]?.try(&.map { |binding| substitute_loop_vars(route_line, binding) }.uniq!) || [route_line]
+        routes = variants.compact_map do |variant|
+          endpoint = line_to_endpoint(variant)
+          receiver = ""
+          if endpoint.method.empty? && !routers.empty?
+            endpoint, receiver = router_line_to_endpoint(variant, routers)
+          end
+          next if endpoint.method.empty? || !valid_crystal_route_path?(endpoint.url)
 
+          # Build full path with namespace prefixes and mount path
+          full_path = endpoint.url
           unless namespace_stack.empty?
             # Combine all namespace prefixes
             ns_prefix = ""
             namespace_stack.each do |ns|
               ns_prefix = Noir::URLPath.join(ns_prefix, ns[:prefix])
             end
-            full_path = Noir::URLPath.join(ns_prefix, route_path)
+            full_path = Noir::URLPath.join(ns_prefix, full_path)
           end
 
           # Router prefix: the `router.get` receiver's, else that of the
@@ -263,19 +269,29 @@ module Analyzer::Crystal
           # mounted at several paths serves the route under each of them.
           router_var = receiver.presence || namespace_stack.first?.try(&.[:router_var]) || ""
           prefixes = router_var.empty? ? [""] : router_prefixes(router_var, wiring, project_wiring)
-          endpoint.url = Noir::URLPath.join(prefixes.first, full_path)
+          prefixes.map do |prefix|
+            route = endpoint
+            route.url = Noir::URLPath.join(prefix, full_path)
+            route
+          end
+        end.flatten
+        unless routes.empty?
+          endpoint = routes.first
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
           attach_route_callees(endpoint, lines, index, path, macro_vars) if include_callee
           endpoints << endpoint
           last_endpoint = endpoint
-          if prefixes.size > 1
-            extra_mounts << {endpoints.size - 1, full_path, prefixes[1..], index + 1}
-          end
+          param_receiver = route_line.match(BLOCK_ARG_RE).try(&.[1]) || "env"
+          routes[1..].each { |route| extra_routes << {endpoints.size - 1, route, index + 1} }
         end
 
+        # A method definition ends the route above it: its reads are the
+        # method's own, whichever route (if any) calls it.
+        last_endpoint = nil if line.matches?(DEF_LINE_RE)
+
         # Parse params
-        param = line_to_param(param_lines[index])
+        param = line_to_param(param_lines[index], param_receiver)
         unless param.name.empty?
           if le = last_endpoint
             unless le.method.empty?
@@ -285,19 +301,19 @@ module Analyzer::Crystal
         end
       end
 
-      # Copies for a router's other mounts, made after the scan so each
+      # Copies for a line's other routes, made after the scan so each
       # carries the params read below its route, in arrays of its own.
-      extra_mounts.each do |endpoint_index, route_path, prefixes, line|
+      extra_routes.each do |endpoint_index, route, line|
         original = endpoints[endpoint_index]
-        prefixes.each do |prefix|
-          copy = original
-          copy.url = Noir::URLPath.join(prefix, route_path)
-          copy.params = original.params.dup
-          copy.callees = original.callees.dup
-          copy.tags = original.tags.dup
-          copy.details = Details.new(PathInfo.new(path, line))
-          endpoints << copy
-        end
+        copy = original
+        copy.url = route.url
+        copy.method = route.method
+        copy.protocol = route.protocol
+        copy.params = original.params.dup
+        copy.callees = original.callees.dup
+        copy.tags = original.tags.dup
+        copy.details = Details.new(PathInfo.new(path, line))
+        endpoints << copy
       end
 
       endpoints
@@ -333,36 +349,36 @@ module Analyzer::Crystal
       line.gsub(/\{\{\s*(\w+)\s*\}\}/) { |whole| macro_vars[$~[1]]? || whole }
     end
 
-    def line_to_param(content : String) : Param
+    # `<receiver>.<accessor>["name"]` reads, in the order they are tried.
+    PARAM_ACCESSORS = {
+      {"params.query[", "query"}, {"params.json[", "json"}, {"params.body[", "form"},
+      {"request.headers[", "header"}, {"request.cookies[", "cookie"},
+    }
+    # `env.params.query.fetch_all("page")` / `env.params.body.fetch("name", "")`.
+    PARAM_FETCH_RE = /\b(\w+)\.params\.(query|json|body)\.fetch(?:_all)?\s*\(\s*["']([^"']+)["']/
+    DEF_LINE_RE    = /^\s*(?:(?:private|protected)\s+)?def\b/
+    # The block argument a route hands its handler: `do |ctx|`, `{ |ctx| … }`.
+    BLOCK_ARG_RE = /(?:\bdo|\{)\s*\|\s*(\w+)/
+
+    # `receiver` is the route block's argument name: Kemal passes the
+    # context under whatever name the block gives it.
+    def line_to_param(content : String, receiver : String = "env") : Param
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
 
       # Most source lines never touch params; bail before the chain of
       # includes?/split probes when none of the accessor prefixes appear.
-      return Param.new("", "", "") unless content.includes?("env.") || content.includes?("cookies.")
+      return Param.new("", "", "") unless content.includes?(receiver) || content.includes?("cookies.")
 
-      if content.includes? "env.params.query["
-        param = content.split("env.params.query[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-        return Param.new(param, "", "query")
+      PARAM_ACCESSORS.each do |accessor, type|
+        marker = "#{receiver}.#{accessor}"
+        if content.includes?(marker)
+          param = content.split(marker)[1].split("]")[0].gsub("\"", "").gsub("'", "")
+          return Param.new(param, "", type)
+        end
       end
 
-      if content.includes? "env.params.json["
-        param = content.split("env.params.json[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-        return Param.new(param, "", "json")
-      end
-
-      if content.includes? "env.params.body["
-        param = content.split("env.params.body[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-        return Param.new(param, "", "form")
-      end
-
-      if content.includes? "env.request.headers["
-        param = content.split("env.request.headers[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-        return Param.new(param, "", "header")
-      end
-
-      if content.includes? "env.request.cookies["
-        param = content.split("env.request.cookies[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-        return Param.new(param, "", "cookie")
+      if content.includes?(".fetch") && (match = content.match(PARAM_FETCH_RE)) && match[1] == receiver
+        return Param.new(match[3], "", match[2] == "body" ? "form" : match[2])
       end
 
       if content.includes? "cookies.get_raw("
@@ -418,8 +434,15 @@ module Analyzer::Crystal
     # but take none: `get("/items/7")`, `post "/x", headers: h, body: b`.
     ROUTE_HANDLER_RE = /['"]\s*\)?\s*(?:do\b|\{|,\s*(?:do\b|&|\{\{|[A-Z]\w*(?:::\w+)*\s*,\s*:\w))/
 
+    # `Kemal::RouteHandler::INSTANCE.add_route("GET", "/x") { … }`: the call
+    # the DSL verbs wrap. Group 1 = method, 2 = path.
+    ADD_ROUTE_RE = /\bRouteHandler::INSTANCE\.add_route\s*\(\s*"(\w+)"\s*,\s*"([^"]+)"/
+
     def line_to_endpoint(content : String) : Endpoint
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
+      if content.includes?("add_route") && (match = content.match(ADD_ROUTE_RE))
+        return Endpoint.new(normalize_crystal_interpolation(match[2]), match[1].upcase)
+      end
       return Endpoint.new("", "") unless content.matches?(ROUTE_HANDLER_RE)
       # Shared engine helper: precompiled per-verb patterns + includes?
       # gates. Replaces 8 sequential unguarded .scan calls per source line.
