@@ -633,7 +633,7 @@ class EndpointOptimizer
     # outside every project may front any of them. Where several rows
     # still serve a method at the path, it says nothing about which one it
     # fronts and stays apart.
-    scopes = held.map do |_, proxy|
+    entries = held.map do |key, proxy|
       scope = proxy.details.code_paths.first?.try { |path_info| source_project_scope(path_info.path) } || ""
       # A manifest-less `-b` base, or a project with no routes of its own (an
       # infra dir with a manifest for its scripts), fronts other projects.
@@ -642,22 +642,23 @@ class EndpointOptimizer
               holds_code.put_if_absent(scope) { files.values.any?(&.any? { |file| Noir::PathScope.under_normalized_root?(file, scope) }) }
         scope = "" unless own
       end
-      scope
+      {key, proxy, unify_path_placeholders(key[1]), scope}
     end
-    # Rules that send one path to different Services front different
-    # workloads, and nothing says which of them is the code: none folds.
+    # Ingress rules that send one path to different Services front different
+    # workloads, and nothing says which of them is the code: none folds. Only
+    # client-facing rules vote: a defaultBackend never serves a path a rule
+    # claims, and a rewrite row is the upstream path, not a competing route.
     # ponytail: no Service-to-code tie (a Service manifest beside the code
     # is not in the Ingress file set); add one to fold the matching rule.
     backends = Hash(Tuple(String, String), Set(String)).new
-    held.each_with_index do |(key, proxy), idx|
+    entries.each do |_, proxy, path, scope|
       backend = proxy_backend(proxy)
-      (backends[{unify_path_placeholders(key[1]), scopes[idx]}] ||= Set(String).new) << backend unless backend.empty?
+      next if backend.empty? || proxy.tags.none? { |tag| tag.name == "ingress-source" && tag.description == "rule" }
+      (backends[{path, scope}] ||= Set(String).new) << backend
     end
-    held.each_with_index do |(key, proxy), idx|
-      scope = scopes[idx]
-      path = unify_path_placeholders(key[1])
+    entries.each do |key, proxy, path, scope|
       targets = [] of Tuple(String, String, String)
-      unless backends[{path, scope}]?.try(&.size.> 1)
+      unless proxy.details.technology == "k8s_ingress" && backends[{path, scope}]?.try(&.size.> 1)
         targets = (code[path]? || targets)
           .select { |row| scope.empty? || files[row].any? { |file| Noir::PathScope.under_normalized_root?(file, scope) } }
           .group_by(&.[0]).values.compact_map { |rows| rows[0] if rows.size == 1 }

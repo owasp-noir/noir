@@ -135,6 +135,7 @@ describe "EndpointOptimizer" do
           endpoint = tech_endpoint("/", "ANY", "k8s_ingress", "deploy/ingress.yaml", 9)
           endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer"))
           endpoint.add_tag(Tag.new("ingress-backend", backend, "k8s_ingress_analyzer"))
+          endpoint.add_tag(Tag.new("ingress-source", "rule", "k8s_ingress_analyzer"))
           endpoint.protocol = "https" if tls
           endpoint
         end
@@ -159,6 +160,39 @@ describe "EndpointOptimizer" do
         same = -> { [rule.call("app.example.test", "app", false), rule.call("www.example.test", "app", false)] }
         rows.call(same.call + [code.call]).should eq([{"GET", "http", ["app.example.test", "www.example.test"]}])
         rows.call(same.call).should eq([{"ANY", "http", ["app.example.test", "www.example.test"]}])
+      end
+
+      # A defaultBackend never serves a path a rule claims, and a rewrite row
+      # is the upstream path: neither competes with the one rule at `/`, and
+      # an Envoy route at the path is not held back by Ingress Services.
+      it "folds the one Ingress rule at a path past its defaultBackend and rewrites" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        ingress = ->(backend : String, source : String, host : String) do
+          endpoint = tech_endpoint("/", "ANY", "k8s_ingress", "deploy/ingress.yaml", 9)
+          endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?
+          endpoint.add_tag(Tag.new("ingress-backend", backend, "k8s_ingress_analyzer"))
+          endpoint.add_tag(Tag.new("ingress-source", source, "k8s_ingress_analyzer"))
+          endpoint.protocol = "https" unless host.empty?
+          endpoint
+        end
+        result = optimizer.optimize_endpoints([
+          ingress.call("default-service", "default-backend", ""),
+          ingress.call("app", "rule", "app.example.test"),
+          ingress.call("api", "rewrite", "api.example.test"),
+          tech_endpoint("/", "GET", "js_express", "app.js", 3),
+        ])
+        result.size.should eq(1)
+        result[0].method.should eq("GET")
+        result[0].protocol.should eq("https")
+        result[0].tags.select(&.name.==("ingress-host")).map(&.description).sort!.should eq(["api.example.test", "app.example.test"])
+
+        result = optimizer.optimize_endpoints([
+          ingress.call("app", "rule", "app.example.test"),
+          ingress.call("other-tool", "rule", "tool.example.test"),
+          tech_endpoint("/", "ANY", "envoy", "deploy/envoy.yaml", 5),
+          tech_endpoint("/", "GET", "js_express", "app.js", 3),
+        ])
+        result.find! { |e| e.method == "GET" }.details.technologies.should contain("envoy")
       end
 
       # Each project's own Ingress names its own Service: the two Services at
