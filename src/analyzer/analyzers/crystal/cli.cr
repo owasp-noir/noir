@@ -37,6 +37,10 @@ module Analyzer::Crystal
     ARGV_ARRAY_EQ  = /\bARGV\s*[!=]=\s*\[([^\]]*)\]/
     ARGV_TAKE      = /\bARGV\.(?:first|shift)\b/
     ARGV_SPLAT     = /^\s*(\w+(?:\s*,\s*\w+)+)\s*=\s*ARGV\s*$/
+    # `sync = ARGV[0]? == "sync"` names a subcommand that `if sync` /
+    # `elsif sync && ready` later selects.
+    GUARD_ASSIGN = /^\s*([a-z_]\w*)\s*=[^=~]/
+    GUARD_BRANCH = /^\s*(?:if|elsif)\s+([a-z_]\w*)(?:\s*&&[^|]*)?(?:\s+then)?\s*$/
 
     MARKERS = Detector::Crystal::Cli::MARKERS
     WEB_RE  = /\brequire\s+"(?:kemal|amber|lucky|grip|marten)"|HTTP::Server\.new|\bKemal\b|Amber::Server/
@@ -66,13 +70,17 @@ module Analyzer::Crystal
 
     # A `case` on an ARGV selector being walked. `column` is its `when`
     # column (the first `when` sets it), `arm` the URLs the current arm
-    # names, `named` whether any arm named a subcommand.
+    # names, `named` whether any arm named a subcommand. An `if` chain on
+    # comparison variables is walked the same way, with `guards` set.
     private class ArgvCase
       property column : Int32? = nil
       property arm : Array(String)
       property? named = false
+      property guards : Hash(String, Array(String))? = nil
       getter parent : Array(String)
       getter line : Int32
+
+      getter? shifts : Bool
 
       def initialize(@parent, @shifts : Bool, @line)
         @arm = @parent
@@ -89,6 +97,7 @@ module Analyzer::Crystal
     private def scan(lines, path, root_url, endpoints, emit_env)
       current_url = root_url
       cases = [] of ArgvCase
+      guards = {} of String => Array(String)
       lines.each_with_index do |line, index|
         line_no = index + 1
 
@@ -101,8 +110,12 @@ module Analyzer::Crystal
             frame.column = indent if frame.column.nil? && line.matches?(/^\s*when\b/)
             column = frame.column
             break if column && indent > column
-            if column == indent && (m = line.match(/^\s*(when|else)\b/))
-              frame.arm = m[1] == "else" ? frame.parent : case_arm(line, frame.parent, endpoints, path, line_no)
+            if column == indent && (m = line.match(/^\s*(when|else|elsif)\b/))
+              frame.arm = if m[1] == "when"
+                            case_arm(line, frame.parent, endpoints, path, line_no)
+                          else
+                            line.match(GUARD_BRANCH).try { |g| frame.guards.try(&.[]?(g[1])) } || frame.parent
+                          end
               frame.named = true if frame.arm != frame.parent
               break
             end
@@ -111,6 +124,18 @@ module Analyzer::Crystal
         end
         targets = cases.last?.try(&.arm) || [root_url]
         offset = cases.last?.try(&.offset) || 0
+        # ponytail: a chain is picked up at the first branch on a known
+        # variable; earlier branches on other conditions stay unscoped.
+        if (m = line.match(GUARD_BRANCH)) && (subs = guards[m[1]]?) && cases.last?.try(&.column) != line.size - line.lstrip.size
+          chain = ArgvCase.new(targets, false, line_no)
+          chain.column = line.size - line.lstrip.size
+          chain.guards = guards
+          chain.named = true
+          chain.arm = subs
+          cases << chain
+          targets = subs
+          offset = chain.offset
+        end
 
         if m = line.match(CLIM_SUB)
           current_url = "#{root_url}/#{m[1]}"
@@ -141,7 +166,14 @@ module Analyzer::Crystal
           if line.matches?(ARGV_CASE)
             cases << ArgvCase.new(targets, !line.matches?(ARGV_CASE_PEEK), line_no)
           else
-            argv_reads(line, targets, offset, endpoints, path, line_no)
+            # ARGV comparisons spell the whole argv, so under a peeking
+            # selector they name subcommands of its parent.
+            frame = cases.last?
+            compared = frame && !frame.shifts? ? frame.parent : targets
+            subs = argv_reads(line, targets, compared, offset, endpoints, path, line_no)
+            if !subs.empty? && (m = line.match(GUARD_ASSIGN))
+              guards[m[1]] = subs
+            end
           end
         end
         if emit_env
@@ -152,9 +184,17 @@ module Analyzer::Crystal
       cases.reverse_each { |frame| close_case(frame, endpoints, path) }
     end
 
-    private def argv_reads(line, targets, offset, endpoints, path, line_no)
-      line.scan(ARGV_SUB_EQ) { |em| argv_words([em[1]], targets, endpoints, path, line_no) }
-      line.scan(ARGV_ARRAY_EQ) { |em| argv_words(em[1].scan(/"([^"]*)"/).map(&.[1]), targets, endpoints, path, line_no) }
+    # The subcommands the line's ARGV comparisons name. A positional read
+    # beside an `ARGV[0]? == "x"` test is that subcommand's, which still
+    # sits at ARGV[0].
+    private def argv_reads(line, targets, compared, offset, endpoints, path, line_no) : Array(String)
+      subs = [] of String
+      line.scan(ARGV_SUB_EQ) { |em| subs.concat(argv_words([em[1]], compared, endpoints, path, line_no)) }
+      line.scan(ARGV_ARRAY_EQ) { |em| subs.concat(argv_words(em[1].scan(/"([^"]*)"/).map(&.[1]), compared, endpoints, path, line_no)) }
+      if line.matches?(ARGV_SUB_EQ) && !subs.empty?
+        targets = subs
+        offset = -1
+      end
       # An `ARGV[0]? == "x"` test names a subcommand, not a positional.
       rest = line.gsub(ARGV_SUB_EQ, "")
       positions = if m = rest.match(ARGV_INDEX)
@@ -169,6 +209,7 @@ module Analyzer::Crystal
       positions.each do |position|
         push_params(endpoints, targets, path, line_no, "arg#{position + offset}", "argument") if position + offset >= 0
       end
+      subs
     end
 
     # A case that never named a subcommand (`when nil`, `when /re/`, flags
@@ -190,12 +231,15 @@ module Analyzer::Crystal
 
     # The words an ARGV comparison spells out: a leading non-flag word is a
     # subcommand, every `--flag` a flag of it (or of `targets` without one).
-    private def argv_words(words, targets, endpoints, path, line_no)
+    # Returns the subcommand URLs it names, if any.
+    private def argv_words(words, targets, endpoints, path, line_no) : Array(String)
+      subs = [] of String
       if (first = words.first?) && !first.empty? && !first.starts_with?('-')
-        targets = targets.map { |url| "#{url}/#{first}" }
+        subs = targets = targets.map { |url| "#{url}/#{first}" }
         targets.each { |url| fetch_endpoint(endpoints, url, path, line_no) }
       end
       words.select(&.starts_with?('-')).each { |flag| push_params(endpoints, targets, path, line_no, flag.lstrip('-'), "flag") }
+      subs
     end
 
     private def push_params(endpoints, urls, path, line_no, name, type)
