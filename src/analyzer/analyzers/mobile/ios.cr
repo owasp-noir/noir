@@ -488,7 +488,9 @@ module Analyzer::Mobile
       # Hitting the cap skips the remaining files, so an unguarded router
       # there would go unseen: only ever add guarded schemes then.
       capped = enum_sites.size >= MAX_HOST_ENUMS
-      declared = declared_bare_schemes.to_set
+      declared = @result.compact_map do |ep|
+        ep.protocol == "mobile-scheme" && ep.url.ends_with?("://") ? ep.url.rchop("://") : nil
+      end.to_set
 
       enum_sites.each do |enum_name, site_path|
         cases = resolve_enum_cases(enum_name, swift_files)
@@ -525,12 +527,6 @@ module Analyzer::Mobile
           end
         end
       end
-    end
-
-    private def declared_bare_schemes : Array(String)
-      @result.compact_map do |ep|
-        ep.protocol == "mobile-scheme" && ep.url.ends_with?("://") ? ep.url.rchop("://") : nil
-      end.uniq!
     end
 
     SWIFT_FUNC_NAME_RE    = /\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)/
@@ -761,7 +757,9 @@ module Analyzer::Mobile
       # (`"kakaotalk://gift"`), which are not schemes to search for and
       # would otherwise bloat the alternation below with ~300 branches
       # instead of ~15.
-      schemes = declared_bare_schemes
+      schemes = @result.compact_map do |ep|
+        ep.protocol == "mobile-scheme" && ep.url.ends_with?("://") ? ep.url.rchop("://") : nil
+      end.uniq!
       return if schemes.empty?
 
       escaped = schemes.map { |s| Regex.escape(s) }.join("|")
