@@ -341,13 +341,20 @@ module SpringModuleScope
   # file (unless it is the module's own) or the build logic.
   private def gradle_opaque?(root : String, module_dir : String) : Bool
     (root != module_dir && gradle_build_script(root).try(&.mentions_project)) ||
-      gradle_build_logic.any? { |path, script| script.mentions_project && path.starts_with?("#{root}/") }
+      gradle_build_logic.any? { |path, script| script.mentions_project && build_logic_of?(path, root) }
   end
 
   # Whether the root build file or the build logic of `root` names Spring
   # Security (a `subprojects {}` dependency, a convention plugin).
   private def gradle_root_security?(root : String) : Bool
-    gradle_build_script(root).try(&.security) || gradle_build_logic.any? { |path, script| script.security && path.starts_with?("#{root}/") }
+    gradle_build_script(root).try(&.security) || gradle_build_logic.any? { |path, script| script.security && build_logic_of?(path, root) }
+  end
+
+  # Whether build logic script `path` belongs to the build rooted at `root`.
+  # One under a dot directory (`.github/`, a CI init script passed with
+  # `-I`) is not applied by the build.
+  private def build_logic_of?(path : String, root : String) : Bool
+    path.starts_with?("#{root}/") && !path[root.size..].includes?("/.")
   end
 
   @gradle_build_logic : Array({String, GradleScript})? = nil
