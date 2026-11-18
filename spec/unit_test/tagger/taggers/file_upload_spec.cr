@@ -328,5 +328,19 @@ describe "FileUploadTagger" do
 
       endpoint.tags.size.should eq(1)
     end
+
+    it "keeps explicit upload words and raw-body item uploads tagged" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      zip = Endpoint.new("/upload/zip", "POST")
+      archive = Endpoint.new("/import/export-archive", "POST")
+      put_item = Endpoint.new("/files/:name", "PUT")
+      compound = Endpoint.new("/user-files", "POST")
+      suffixed = Endpoint.new("/api/files.json", "POST")
+
+      tagger.perform([zip, archive, put_item, compound, suffixed])
+
+      [zip, archive, put_item, compound, suffixed].each(&.tags.size.should(eq(1)))
+    end
   end
 end

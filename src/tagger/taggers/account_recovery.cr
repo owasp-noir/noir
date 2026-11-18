@@ -72,10 +72,11 @@ class AccountRecoveryTagger < Tagger
     url_segments.each do |part|
       weak_tokens << part if WEAK_PATH_PARTS.includes?(part)
     end
-    # `change`/`update` are action verbs, not evidence on their own: they
-    # only count beside the thing being changed (`/change-email`), never
-    # beside `verification` or `account` alone (`/verification/1/update_file`).
-    unless weak_tokens.any? { |t| CHANGED_THINGS.includes?(t) }
+    # Beside `verification`, `change`/`update` are not evidence unless they
+    # name the thing being changed (`/verification/1/update_file`, but still
+    # `/verification/change-email`).
+    if (weak_tokens.includes?("verification") || weak_tokens.includes?("verify")) &&
+       weak_tokens.none? { |t| CHANGED_THINGS.includes?(t) }
       weak_tokens.subtract(ACTION_VERBS)
     end
 

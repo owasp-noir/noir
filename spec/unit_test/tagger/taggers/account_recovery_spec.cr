@@ -222,5 +222,17 @@ describe "AccountRecoveryTagger" do
       password.tags.size.should eq(1)
       change.tags.size.should eq(1)
     end
+
+    it "keeps account update and confirm-change tagged" do
+      tagger = AccountRecoveryTagger.new(default_tagger_options)
+
+      update = Endpoint.new("/account/update", "POST")
+      confirm = Endpoint.new("/confirm-change", "POST")
+
+      tagger.perform([update, confirm])
+
+      update.tags.size.should eq(1)
+      confirm.tags.size.should eq(1)
+    end
   end
 end
