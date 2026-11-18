@@ -13,7 +13,6 @@ class JavaMiscAuthTagger < FrameworkTagger
     {/BasicAuthHandler/, "Vert.x BasicAuthHandler"},
     {/OAuth2AuthHandler/, "Vert.x OAuth2AuthHandler"},
     {/RedirectAuthHandler/, "Vert.x RedirectAuthHandler"},
-    {/SessionHandler/, "Vert.x SessionHandler"},
     {/routingContext\.user\(\)/, "Vert.x user() check"},
   ]
 

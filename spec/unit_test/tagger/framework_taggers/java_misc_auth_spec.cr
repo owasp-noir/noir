@@ -135,6 +135,36 @@ describe "JavaMiscAuthTagger" do
     endpoints[1].tags[0].description.should contain("AuthHandler")
   end
 
+  it "does not read a Vert.x SessionHandler as authentication" do
+    tmpdir = File.tempname("vertx_session")
+    Dir.mkdir_p(tmpdir)
+    verticle = File.join(tmpdir, "MainVerticle.java")
+    File.write(verticle, [
+      "public class MainVerticle extends AbstractVerticle {",                                # 1
+      "  public void start() {",                                                             # 2
+      "    router.route().handler(SessionHandler.create(LocalSessionStore.create(vertx)));", # 3
+      "    router.get(\"/api/items\").handler(ctx -> ctx.response().end(\"items\"));",       # 4
+      "    router.route(\"/private/*\").handler(BasicAuthHandler.create(provider));",        # 5
+      "    router.get(\"/private/page\").handler(ctx -> ctx.response().end(\"secret\"));",   # 6
+      "  }",                                                                                 # 7
+      "}",                                                                                   # 8
+    ].join("\n"))
+    CodeLocator.instance.register_path(verticle)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    endpoints = {4 => "/api/items", 6 => "/private/page"}.map do |line, url|
+      details = Details.new(PathInfo.new(verticle, line))
+      details.technology = "java_vertx"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    JavaMiscAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+
+    endpoints[0].tags.should be_empty
+    endpoints[1].tags.map(&.description).should eq(["Protected by Vert.x BasicAuthHandler"])
+  end
+
   it "handles empty code_paths gracefully" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
