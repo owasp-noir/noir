@@ -40,7 +40,7 @@ module Analyzer::Specification
       @result
     end
 
-    private def process_doc(doc : YAML::Any, details : Details, path_lines : Hash(String, Int32), snippet_lines : Array(Int32))
+    private def process_doc(doc : YAML::Any, details : Details, path_lines : Hash(String, Array(Int32)), snippet_lines : Array(Int32))
       root = doc.as_h?
       return unless root
 
@@ -96,21 +96,32 @@ module Analyzer::Specification
 
     # The line each `server-snippet` value starts on, in the order the Ingress
     # documents give them: the next line for a block scalar (`|`), else the
-    # key's own line. Comments and other kinds' documents are skipped.
+    # key's own line. Comments are skipped.
     private def snippet_lines(content : String) : Array(Int32)
       lines = [] of Int32
-      doc = [] of Int32
+      ingress_lines(content).each do |line, number|
+        next unless line.includes?(SNIPPET_ANNOTATION)
+        next if line.lstrip.starts_with?('#')
+        value = line.split(SNIPPET_ANNOTATION, 2)[1].lchop('"').lchop('\'').lchop(':').strip
+        lines << (value.starts_with?('|') || value.starts_with?('>') ? number + 1 : number)
+      end
+      lines
+    end
+
+    # The lines of the file's Ingress documents (other kinds' documents
+    # skipped), with their numbers.
+    private def ingress_lines(content : String) : Array(Tuple(String, Int32))
+      lines = [] of Tuple(String, Int32)
+      doc = [] of Tuple(String, Int32)
       ingress = false
       content.each_line.with_index(1) do |line, number|
         if line.starts_with?("---")
           lines.concat(doc) if ingress
           doc.clear
           ingress = false
-        elsif line.matches?(KIND_LINE)
-          ingress = true
-        elsif line.includes?(SNIPPET_ANNOTATION) && !line.lstrip.starts_with?('#')
-          value = line.split(SNIPPET_ANNOTATION, 2)[1].lchop('"').lchop('\'').lchop(':').strip
-          doc << (value.starts_with?('|') || value.starts_with?('>') ? number + 1 : number)
+        else
+          ingress ||= line.matches?(KIND_LINE)
+          doc << {line, number}
         end
       end
       lines.concat(doc) if ingress
@@ -173,7 +184,7 @@ module Analyzer::Specification
       hosts_set
     end
 
-    private def process_rule(rule : YAML::Any, tls_hosts : Set(String), rewrite_target : String?, details : Details, path_lines : Hash(String, Int32), access : Tag?)
+    private def process_rule(rule : YAML::Any, tls_hosts : Set(String), rewrite_target : String?, details : Details, path_lines : Hash(String, Array(Int32)), access : Tag?)
       rule_h = rule.as_h?
       return unless rule_h
 
@@ -191,7 +202,7 @@ module Analyzer::Specification
         next if path.empty?
 
         path_type = path_h[YAML::Any.new("pathType")]?.try(&.as_s?) || DEFAULT_PATH_TYPE
-        rule_details = line_details(details, path_lines[path]?)
+        rule_details = line_details(details, path_lines[path]?.try(&.shift?))
         backend = backend_service(path_h[YAML::Any.new("backend")]?)
         emit_endpoint(path, path_type, host, tls_hosts, rule_details, access: access, backend: backend)
 
@@ -289,14 +300,14 @@ module Analyzer::Specification
       emit_endpoint(path, path_type, host, tls_hosts, details, origin)
     end
 
-    # Line of each `path:` value. `YAML::Any` keeps no positions, so the
-    # parsed rule is matched back to the text by value.
-    # ponytail: a path repeated across rules gets its first line.
-    private def path_lines(content : String) : Hash(String, Int32)
-      lines = {} of String => Int32
-      content.each_line.with_index(1) do |line, number|
+    # Lines of each `path:` value in the Ingress documents, in file order.
+    # `YAML::Any` keeps no positions, so the parsed rules, read in the same
+    # order, take them back by value one at a time.
+    private def path_lines(content : String) : Hash(String, Array(Int32))
+      lines = {} of String => Array(Int32)
+      ingress_lines(content).each do |line, number|
         next unless (match = line.match(PATH_LINE)) && (path = clean_template_path(match[1]))
-        lines[path] ||= number
+        (lines[path] ||= [] of Int32) << number
       end
       lines
     end

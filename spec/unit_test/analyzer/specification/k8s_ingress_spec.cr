@@ -253,7 +253,7 @@ describe "Kubernetes Ingress Analyzer" do
       YAML
 
     endpoints.map { |e| {tag_descriptions(e, "ingress-host").first, e.details.code_paths.first.line} }.should eq([
-      {"items.example.test", 23}, {"orders.example.test", 33}, {"demo.example.test", 44},
+      {"items.example.test", 23}, {"orders.example.test", 33}, {"demo.example.test", 45},
     ])
   end
 
