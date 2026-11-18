@@ -4530,3 +4530,39 @@ describe "SpringAuthTagger (rules below the context path)" do
     tags["GET /app/items"].should be_empty
   end
 end
+
+describe "SpringAuthTagger (Boot security auto-configuration excluded)" do
+  controller = "public class ItemController {\n    @GetMapping(\"/items\")\n    public String items() { return \"\"; }\n}\n"
+  base = {
+    "demo/pom.xml"                                       => spring_module_pom("demo", ["spring-boot-starter-web", "spring-boot-starter-security"]),
+    "demo/src/main/java/com/example/ItemController.java" => controller,
+  }
+  route = {"GET /items" => "demo/src/main/java/com/example/ItemController.java:2"}
+
+  it "reports no Boot default chain when the app excludes SecurityAutoConfiguration" do
+    app = "@SpringBootApplication(exclude = {SecurityAutoConfiguration.class, ManagementWebSecurityAutoConfiguration.class})\npublic class DemoApp {}\n"
+    run_spring_multi_module(base.merge({"demo/src/main/java/com/example/DemoApp.java" => app}), route)["GET /items"].should be_empty
+
+    kotlin = "@SpringBootApplication(excludeName = [\"org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration\"])\nclass DemoApp\n"
+    run_spring_multi_module(base.merge({"demo/src/main/kotlin/com/example/DemoApp.kt" => kotlin}), route)["GET /items"].should be_empty
+
+    property = "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration\n"
+    run_spring_multi_module(base.merge({
+      "demo/src/main/java/com/example/DemoApp.java"    => "@SpringBootApplication\npublic class DemoApp {}\n",
+      "demo/src/main/resources/application.properties" => property,
+    }), route)["GET /items"].should be_empty
+  end
+
+  it "keeps the default chain when only another auto-configuration is excluded, or @EnableWebSecurity switches it on" do
+    # A comment naming the auto-configuration excludes nothing.
+    app = "// SecurityAutoConfiguration stays on\n@SpringBootApplication(exclude = {DataSourceAutoConfiguration.class, ManagementWebSecurityAutoConfiguration.class})\npublic class DemoApp {}\n"
+    tags = run_spring_multi_module(base.merge({"demo/src/main/java/com/example/DemoApp.java" => app}), route)
+    tags["GET /items"].size.should eq(1)
+    tags["GET /items"][0].should start_with("Protected by Spring Boot default security")
+
+    enabled = "@EnableWebSecurity\n@SpringBootApplication(exclude = SecurityAutoConfiguration.class)\npublic class DemoApp {}\n"
+    tags = run_spring_multi_module(base.merge({"demo/src/main/java/com/example/DemoApp.java" => enabled}), route)
+    tags["GET /items"].size.should eq(1)
+    tags["GET /items"][0].should start_with("Protected by Spring Security default chain (@EnableWebSecurity")
+  end
+end
