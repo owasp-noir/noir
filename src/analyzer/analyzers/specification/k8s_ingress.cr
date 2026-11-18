@@ -192,12 +192,13 @@ module Analyzer::Specification
 
         path_type = path_h[YAML::Any.new("pathType")]?.try(&.as_s?) || DEFAULT_PATH_TYPE
         rule_details = line_details(details, path_lines[path]?)
-        emit_endpoint(path, path_type, host, tls_hosts, rule_details, access: access)
+        backend = backend_service(path_h[YAML::Any.new("backend")]?)
+        emit_endpoint(path, path_type, host, tls_hosts, rule_details, access: access, backend: backend)
 
         if rewrite_target && !rewrite_target.empty?
           rewritten = strip_capture_groups(rewrite_target)
           if rewritten != path
-            emit_endpoint(rewritten, path_type, host, tls_hosts, rule_details, "rewrite", access)
+            emit_endpoint(rewritten, path_type, host, tls_hosts, rule_details, "rewrite", access, backend)
           end
         end
       end
@@ -206,14 +207,23 @@ module Analyzer::Specification
     private def process_default_backend(default_backend : YAML::Any?, tls_hosts : Set(String), details : Details, access : Tag?)
       return unless backend_present?(default_backend)
 
-      emit_endpoint("/", DEFAULT_PATH_TYPE, "", tls_hosts, details, "default-backend", access)
+      emit_endpoint("/", DEFAULT_PATH_TYPE, "", tls_hosts, details, "default-backend", access, backend_service(default_backend))
+    end
+
+    # The Service a rule routes to: `service.name` (v1) or `serviceName`
+    # (v1beta1). Empty for a `resource` backend.
+    private def backend_service(backend : YAML::Any?) : String
+      h = backend.try(&.as_h?)
+      return "" unless h
+      name = h[YAML::Any.new("service")]?.try(&.as_h?).try(&.[YAML::Any.new("name")]?) || h[YAML::Any.new("serviceName")]?
+      name.try(&.as_s?) || ""
     end
 
     private def backend_present?(backend : YAML::Any?) : Bool
       backend.try(&.as_h?) != nil
     end
 
-    private def emit_endpoint(path : String, path_type : String, host : String, tls_hosts : Set(String), details : Details, origin : String = "rule", access : Tag? = nil)
+    private def emit_endpoint(path : String, path_type : String, host : String, tls_hosts : Set(String), details : Details, origin : String = "rule", access : Tag? = nil, backend : String = "")
       # ingress-nginx reads `ImplementationSpecific` paths as regexes when
       # `use-regex` is on; `Exact` / `Prefix` paths are literal.
       # GCE / ALB spell a prefix as `/static/*` under the same path type.
@@ -224,6 +234,7 @@ module Analyzer::Specification
       endpoint.add_tag(Tag.new("ingress-path-type", path_type.downcase, "k8s_ingress_analyzer"))
       endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty? || Nginx.template_token?(host)
       endpoint.add_tag(Tag.new("ingress-source", origin, "k8s_ingress_analyzer"))
+      endpoint.add_tag(Tag.new("ingress-backend", backend, "k8s_ingress_analyzer")) unless backend.empty? || Nginx.template_token?(backend)
       endpoint.add_tag(access) if access
       endpoint.protocol = "https" if !host.empty? && tls_hosts.includes?(host)
       @result << endpoint
