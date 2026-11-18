@@ -122,6 +122,11 @@ class SpringAuthTagger < FrameworkTagger
   # Spring Security switched on without a chain of the app's own: its
   # default chain authenticates every request.
   ENABLE_SECURITY = /@Enable(?:Web|WebFlux|RSocket)Security\b/
+  # Boot's default chain comes from this auto-configuration, not from the
+  # dependency: an app that excludes it (`@SpringBootApplication(exclude =
+  # SecurityAutoConfiguration.class)`, `spring.autoconfigure.exclude`) has none.
+  SECURITY_AUTOCONFIG   = /\bSecurityAutoConfiguration\b/
+  AUTOCONFIG_ANNOTATION = /@(?:SpringBootApplication|EnableAutoConfiguration)\s*\(/
   # An XML `<http>` element in the Spring Security namespace.
   XML_SECURITY_NAMESPACE = "springframework.org/schema/security"
   XML_HTTP_ELEMENT       = /<(?:[\w-]+:)?http[\s>]/
@@ -169,6 +174,8 @@ class SpringAuthTagger < FrameworkTagger
     # whose authorization rules it cannot read).
     @security_enabled = Set(String?).new
     @unread_configs = [] of UnreadConfig
+    # Boot apps => whether they exclude SecurityAutoConfiguration.
+    @security_autoconfig_off = Hash(String, Bool).new
     @security_meta_annotations = Hash(String, MetaAnnotation).new
     @annotation_aliases = Hash(String, Set(String)).new
     @method_readers = Hash(String, {Set(String), Bool}).new
@@ -231,6 +238,7 @@ class SpringAuthTagger < FrameworkTagger
     @chain_modules.clear
     @security_enabled.clear
     @unread_configs.clear
+    @security_autoconfig_off.clear
     @boot_apps.clear
     @security_meta_annotations.clear
     @annotation_aliases.clear
@@ -283,6 +291,7 @@ class SpringAuthTagger < FrameworkTagger
 
         unless test_source?(file)
           @security_enabled << module_dir if content.matches?(ENABLE_SECURITY) && Noir::CComments.strip(content).matches?(ENABLE_SECURITY)
+          @security_autoconfig_off[module_dir] = true if module_dir && content.includes?("SecurityAutoConfiguration") && excludes_security_autoconfig?(content)
           scan_servlet_filter_defs(content, file, module_dir) if content.includes?("doFilter")
           scan_filter_registrations(content, file, module_dir) if content.includes?("FilterRegistrationBean")
           scan_bean_types(content, module_dir) if content.includes?("@Bean")
@@ -2060,7 +2069,7 @@ class SpringAuthTagger < FrameworkTagger
       # and switched on: its default chain authenticates every request.
       if @security_enabled.any? { |owner| reaches.call(owner) }
         return {"Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)", nil, nil}
-      elsif @boot_apps.empty? || @boot_apps.includes?(config_dir)
+      elsif (@boot_apps.empty? || @boot_apps.includes?(config_dir)) && !security_autoconfig_off?(config_dir)
         return {"Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)", nil, nil}
       end
     end
@@ -2136,6 +2145,24 @@ class SpringAuthTagger < FrameworkTagger
     return unless best && best[:protected_rule]
 
     {"#{best[:description]}#{note}", best[:path], best[:line]}
+  end
+
+  private def excludes_security_autoconfig?(content : String) : Bool
+    code = Noir::CComments.strip(content)
+    code.scan(AUTOCONFIG_ANNOTATION).any? do |match|
+      open = match.byte_end(0) - 1
+      next false unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(code, open)
+      args = code.byte_slice(open + 1, close - open - 1)
+      args.matches?(/\bexclude(?:Name)?\s*=/) && args.matches?(SECURITY_AUTOCONFIG)
+    end
+  end
+
+  # An exclusion through the app's configuration counts only when no
+  # profile or import can change it (`module_config_list`).
+  private def security_autoconfig_off?(app : String) : Bool
+    @security_autoconfig_off.fetch(app) do
+      @security_autoconfig_off[app] = module_config_list(app, "spring.autoconfigure.exclude")[0].try(&.any?(&.matches?(SECURITY_AUTOCONFIG))) || false
+    end
   end
 
   CONFIG_DIRS           = {"src/main/resources", "src/main/resources/config"}
