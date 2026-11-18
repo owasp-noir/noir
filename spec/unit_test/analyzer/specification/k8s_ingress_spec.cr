@@ -288,6 +288,7 @@ describe "Kubernetes Ingress Analyzer" do
     endpoints.size.should eq 1
     endpoints[0].url.should eq "/legacy"
     tag_descriptions(endpoints[0], "ingress-host").should eq ["legacy.example.com"]
+    tag_descriptions(endpoints[0], "ingress-backend").should eq ["legacy"]
   end
 
   it "uses root path for defaultBackend and backend paths without explicit path" do
@@ -315,6 +316,8 @@ describe "Kubernetes Ingress Analyzer" do
     endpoints.map(&.method).should eq ["ANY", "ANY"]
     tag_descriptions(endpoints[0], "ingress-source").should eq ["default-backend"]
     tag_descriptions(endpoints[1], "ingress-source").should eq ["rule"]
+    tag_descriptions(endpoints[0], "ingress-backend").should eq ["default-service"]
+    tag_descriptions(endpoints[1], "ingress-backend").should eq ["api"]
   end
 
   it "extracts templated Helm ingress paths with safe defaults" do

@@ -125,6 +125,100 @@ describe "EndpointOptimizer" do
         end
       end
 
+      # Rules at one path that route to different Services front different
+      # workloads, and nothing says which of them is the scanned code: none
+      # folds into the code route, and each Service keeps its own row, with
+      # its own hosts and TLS. Rules for one Service still fold.
+      it "keeps Ingress rules for different backend Services apart" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        rule = ->(host : String, backend : String, tls : Bool) do
+          endpoint = tech_endpoint("/", "ANY", "k8s_ingress", "deploy/ingress.yaml", 9)
+          endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer"))
+          endpoint.add_tag(Tag.new("ingress-backend", backend, "k8s_ingress_analyzer"))
+          endpoint.add_tag(Tag.new("ingress-source", "rule", "k8s_ingress_analyzer"))
+          endpoint.protocol = "https" if tls
+          endpoint
+        end
+        code = -> { tech_endpoint("/", "GET", "js_express", "app.js", 3) }
+        rows = ->(endpoints : Array(Endpoint)) do
+          optimizer.optimize_endpoints(endpoints).map do |e|
+            {e.method, e.protocol, e.tags.select(&.name.==("ingress-host")).map(&.description).sort!}
+          end.sort!
+        end
+
+        two = -> { [rule.call("app.example.test", "app", false), rule.call("tool.example.test", "other-tool", true)] }
+        rows.call(two.call + [code.call]).should eq([
+          {"ANY", "http", ["app.example.test"]},
+          {"ANY", "https", ["tool.example.test"]},
+          {"GET", "http", [] of String},
+        ])
+        rows.call(two.call).should eq([
+          {"ANY", "http", ["app.example.test"]},
+          {"ANY", "https", ["tool.example.test"]},
+        ])
+
+        same = -> { [rule.call("app.example.test", "app", false), rule.call("www.example.test", "app", false)] }
+        rows.call(same.call + [code.call]).should eq([{"GET", "http", ["app.example.test", "www.example.test"]}])
+        rows.call(same.call).should eq([{"ANY", "http", ["app.example.test", "www.example.test"]}])
+      end
+
+      # A defaultBackend never serves a path a rule claims, and a rewrite row
+      # is the upstream path: neither competes with the one rule at `/`, and
+      # an Envoy route at the path is not held back by Ingress Services.
+      it "folds the one Ingress rule at a path past its defaultBackend and rewrites" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        ingress = ->(backend : String, source : String, host : String) do
+          endpoint = tech_endpoint("/", "ANY", "k8s_ingress", "deploy/ingress.yaml", 9)
+          endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?
+          endpoint.add_tag(Tag.new("ingress-backend", backend, "k8s_ingress_analyzer"))
+          endpoint.add_tag(Tag.new("ingress-source", source, "k8s_ingress_analyzer"))
+          endpoint.protocol = "https" unless host.empty?
+          endpoint
+        end
+        result = optimizer.optimize_endpoints([
+          ingress.call("default-service", "default-backend", ""),
+          ingress.call("app", "rule", "app.example.test"),
+          ingress.call("api", "rewrite", "api.example.test"),
+          tech_endpoint("/", "GET", "js_express", "app.js", 3),
+        ])
+        result.size.should eq(1)
+        result[0].method.should eq("GET")
+        result[0].protocol.should eq("https")
+        result[0].tags.select(&.name.==("ingress-host")).map(&.description).sort!.should eq(["api.example.test", "app.example.test"])
+
+        result = optimizer.optimize_endpoints([
+          ingress.call("app", "rule", "app.example.test"),
+          ingress.call("other-tool", "rule", "tool.example.test"),
+          tech_endpoint("/", "ANY", "envoy", "deploy/envoy.yaml", 5),
+          tech_endpoint("/", "GET", "js_express", "app.js", 3),
+        ])
+        result.find! { |e| e.method == "GET" }.details.technologies.should contain("envoy")
+      end
+
+      # Each project's own Ingress names its own Service: the two Services at
+      # one path are told apart by project, so each still folds.
+      it "folds the Ingress of each project for its own Service" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-ingress-backend-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        begin
+          endpoints = %w[api web].flat_map do |name|
+            dir = File.join(temp_dir, name)
+            Dir.mkdir_p(File.join(dir, "deploy"))
+            File.write(File.join(dir, "package.json"), "{}")
+            rule = tech_endpoint("/", "ANY", "k8s_ingress", File.join(dir, "deploy/ingress.yaml"), 9)
+            rule.add_tag(Tag.new("ingress-backend", name, "k8s_ingress_analyzer"))
+            [rule, tech_endpoint("/", "GET", "js_express", File.join(dir, "app.js"), 3)]
+          end
+          options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+          result = optimizer.optimize_endpoints(endpoints)
+          result.map { |e| {e.method, e.tags.select(&.name.==("ingress-backend")).map(&.description)} }.sort!
+            .should eq([{"GET", ["api"]}, {"GET", ["web"]}])
+        ensure
+          options.delete("base")
+          FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+        end
+      end
+
       # In a monorepo an Ingress fronts its own project: it does not land on
       # another project's route at the same path, nor on a manifest-less
       # script's. A rule outside every project (a root `deploy/`) folds only
