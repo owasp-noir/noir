@@ -76,7 +76,7 @@ class DjangoAuthTagger < FrameworkTagger
     @drf_default_permissions = [] of String
     @permission_classes = {} of String => Array(PermissionClass)
     @method_def_res = {} of String => Regex
-    @dispatch_guards = {} of {String, Int32, String} => String | Symbol?
+    @dispatch_guards = {} of {String, Int32, String, Hash(String, String)} => String | Symbol?
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -230,6 +230,7 @@ class DjangoAuthTagger < FrameworkTagger
   private def check_view_guards(endpoint : Endpoint)
     contexts = read_source_context(endpoint)
     return if contexts.empty?
+    urlconf = urlconf_entries(contexts)
     # A view served by a base class's method lists the view class itself
     # among its code paths (its `class` line): that class's MRO, not the
     # base's, decides what its `dispatch` and permissions do.
@@ -263,7 +264,7 @@ class DjangoAuthTagger < FrameworkTagger
         class_line = class_ctx.line || line
 
         # Check enclosing class for mixins
-        description = check_enclosing_class_mixins(class_ctx.lines, class_line, class_ctx.path, endpoint.method)
+        description = check_enclosing_class_mixins(class_ctx.lines, class_line, class_ctx.path, endpoint.method, urlconf)
         if description
           endpoint.add_tag(Tag.new("auth", description, "django_auth"))
           return
@@ -283,6 +284,34 @@ class DjangoAuthTagger < FrameworkTagger
         end
       end
     end
+  end
+
+  URLCONF_ENTRY = /\A\s*(?:re_path|path|url)\s*(?=\()/
+
+  # The `path(...)` / `re_path(...)` / `url(...)` call each code path that
+  # points at a URLconf entry starts, through its closing parenthesis.
+  private def urlconf_entries(contexts : Array(SourceContext)) : Array(String)
+    contexts.compact_map do |ctx|
+      line = ctx.line || next
+      next unless line >= 1 && line <= ctx.lines.size && ctx.lines[line - 1].matches?(URLCONF_ENTRY)
+      text = ctx.lines[line - 1, 20].map { |raw| Analyzer::Python::Helper.strip_python_comment(raw) }.join('\n')
+      bracketed_after(text, URLCONF_ENTRY)
+    end
+  end
+
+  # The `name=value` arguments `ClassName.as_view(...)` passes in every
+  # entry that builds the view; none when the entries disagree.
+  private def as_view_kwargs(urlconf : Array(String), class_name : String) : Hash(String, String)
+    call = /\b#{Regex.escape(class_name)}\s*\.\s*as_view\s*(?=\()/
+    found = urlconf.compact_map { |entry| bracketed_after(entry, call) }.uniq!
+    kwargs = {} of String => String
+    return kwargs unless found.size == 1
+    Noir::TopLevelSplit.split(found.first[1...-1], ',', Noir::TopLevelSplit::Rules::PYTHON).each do |arg|
+      if m = arg.strip.match(/\A(\w+)\s*=(?!=)\s*(.+)\z/m)
+        kwargs[m[1]] = m[2].strip
+      end
+    end
+    kwargs
   end
 
   private def check_decorators(lines : Array(String), endpoint_line : Int32, path : String) : String?
@@ -505,7 +534,8 @@ class DjangoAuthTagger < FrameworkTagger
     body_guard(file, lines, def_idx + 1, method, 1).try { |own| "#{own} (via #{def_name})" }
   end
 
-  private def check_enclosing_class_mixins(lines : Array(String), endpoint_line : Int32, path : String, method : String) : String?
+  private def check_enclosing_class_mixins(lines : Array(String), endpoint_line : Int32, path : String, method : String,
+                                           urlconf : Array(String)) : String?
     idx = enclosing_class(lines, endpoint_line).try(&.[0]) || return
     # `@method_decorator(..., name=...)` above the class decorates the
     # handler it names (or all of them, via `dispatch`).
@@ -518,8 +548,9 @@ class DjangoAuthTagger < FrameworkTagger
     end
     # Its bases, wherever the header wraps.
     header = class_header(lines, idx)
-    key = {path, idx, method.upcase}
-    verdict = @dispatch_guards.has_key?(key) ? @dispatch_guards[key] : (@dispatch_guards[key] = dispatch_guard(path, lines, idx, method.upcase))
+    kwargs = as_view_kwargs(urlconf, header.match(/\bclass\s+(\w+)/).try(&.[1]) || "")
+    key = {path, idx, method.upcase, kwargs}
+    verdict = @dispatch_guards.has_key?(key) ? @dispatch_guards[key] : (@dispatch_guards[key] = dispatch_guard(path, lines, idx, method.upcase, kwargs))
     return "Protected by #{verdict}" if verdict.is_a?(String)
     # The walk saw where the request is served without these mixins.
     return if verdict == :stop
@@ -651,9 +682,18 @@ class DjangoAuthTagger < FrameworkTagger
   # found nothing either way. A base the scan does not hold is judged by
   # its name (`MIXIN_PATTERNS`), unless a class overrides
   # `handle_no_permission` with one that does not refuse.
-  private def dispatch_guard(path : String, lines : Array(String), class_idx : Int32, method : String) : String | Symbol?
+  private def dispatch_guard(path : String, lines : Array(String), class_idx : Int32, method : String,
+                             kwargs : Hash(String, String)) : String | Symbol?
     mro = class_mro(path, lines, class_idx)
     soft = soft_no_permission?(mro)
+    # The view's attributes as `dispatch` reads them off `self`: the first
+    # class in the MRO to set one, unless `as_view(name=...)` overrides it.
+    attrs = kwargs.dup
+    mro.each do |klass|
+      file = klass.path || next
+      class_lines = read_file_lines(file) || next
+      class_attributes(class_lines, klass.idx).each { |name, value| attrs[name] = value unless attrs.has_key?(name) }
+    end
     mro.each do |klass|
       unless file = klass.path
         if pattern = MIXIN_PATTERNS.find { |mixin| klass.name.matches?(mixin) }
@@ -664,7 +704,7 @@ class DjangoAuthTagger < FrameworkTagger
       end
       class_lines = read_file_lines(file) || next
       body = method_body(class_lines, klass.idx, "dispatch") || next
-      if setting = dispatch_refusal(body, file, class_lines, klass.idx, method, soft)
+      if setting = dispatch_refusal(body, file, class_lines, klass.idx, method, soft, attrs)
         return setting.empty? ? "#{klass.name}.dispatch" : "#{klass.name}.dispatch (settings.#{setting} decides; a setting can make it public)"
       end
       return :stop unless body.matches?(/\bsuper\s*\(/)
@@ -740,7 +780,7 @@ class DjangoAuthTagger < FrameworkTagger
   # `if` holds for an anonymous caller of `method` and its block refuses;
   # nil when none does.
   private def dispatch_refusal(body : String, path : String, lines : Array(String), class_idx : Int32,
-                               method : String, soft : Bool) : String?
+                               method : String, soft : Bool, attrs : Hash(String, String)) : String?
     code = body.lines.map { |line| Analyzer::Python::Helper.strip_python_comment(line).rstrip }
     code.each_with_index do |line, k|
       m = line.strip.match(/\A(?:if|elif)\s+(.+?):(.*)\z/) || next
@@ -754,7 +794,7 @@ class DjangoAuthTagger < FrameworkTagger
       refuses = (!soft && text.matches?(NO_PERMISSION)) || text.matches?(DJANGO_REFUSAL) || text.matches?(FORBIDDEN) ||
                 text.matches?(UNAUTHENTICATED) || text.matches?(LOGIN_REDIRECT)
       next unless refuses
-      if setting = anonymous_condition(m[1], method, path, lines, class_idx)
+      if setting = anonymous_condition(m[1], method, path, lines, class_idx, attrs)
         return setting
       end
     end
@@ -771,7 +811,8 @@ class DjangoAuthTagger < FrameworkTagger
   # does: a negated identity test (`not request.user.is_authenticated`,
   # `not self.has_permission()`), `is_anonymous`, a verb test naming
   # `method`, or a setting; a positive identity test fails for anonymous.
-  private def anonymous_condition(cond : String, method : String, path : String, lines : Array(String), class_idx : Int32) : String?
+  private def anonymous_condition(cond : String, method : String, path : String, lines : Array(String), class_idx : Int32,
+                                  attrs : Hash(String, String)) : String?
     # Grouping parentheses are not parsed; a verb tuple is no grouping.
     return if cond.gsub(/\bin\s*\([^()]*\)/, "in _").matches?(/(?:\A|[\s!])\(/)
     cond.split(/\s+or\s+/).each do |disjunct|
@@ -788,6 +829,8 @@ class DjangoAuthTagger < FrameworkTagger
           anonymous = true
         elsif conjunct.matches?(POSITIVE_IDENTITY) || conjunct.matches?(/\bself\.\w+\s*\(/)
           false
+        elsif (flag = conjunct.match(/\A(not\s+)?self\.(\w+)\z/)) && !(value = literal_truth(attrs[flag[2]]?)).nil?
+          value != !flag[1]?.nil?
         elsif verb = conjunct.match(METHOD_CONDITION)
           verbs = verb[2].scan(/['"](\w+)['"]/).map(&.[1].upcase)
           next false if verbs.empty?
@@ -804,6 +847,14 @@ class DjangoAuthTagger < FrameworkTagger
       return setting if holds && anonymous
     end
     nil
+  end
+
+  # The truth of a literal attribute value; nil for anything else.
+  private def literal_truth(value : String?) : Bool?
+    case value
+    when "True"                                         then true
+    when "False", "None", "0", "[]", "()", "''", "\"\"" then false
+    end
   end
 
   private def chain_method_body(path : String, lines : Array(String), class_idx : Int32, name : String, depth : Int32) : String?

@@ -2378,4 +2378,52 @@ describe "DjangoAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "reads a dispatch gated by a view flag from the class attribute and the as_view() arguments" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_dispatch_flag")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    urls = File.join(tmpdir, "urls.py")
+    File.write(views, <<-PY)
+      class PageView(TemplateView):
+          login_required = False
+
+          def dispatch(self, request, *args, **kwargs):
+              if self.login_required and not request.user.is_authenticated:
+                  return redirect_to_login(request.path)
+              return super().dispatch(request, *args, **kwargs)
+
+      class PrivatePageView(PageView):
+          login_required = True
+      PY
+    File.write(urls, <<-PY)
+      urlpatterns = [
+          path("open/", PageView.as_view()),
+          path("closed/", PageView.as_view(login_required=True)),
+          path("private/", PrivatePageView.as_view()),
+          path("reopened/", PrivatePageView.as_view(login_required=False)),
+      ]
+      PY
+    [views, urls].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(view_line : Int32, url_line : Int32) do
+        details = Details.new(PathInfo.new(views, view_line))
+        details.add_path(PathInfo.new(urls, url_line))
+        Endpoint.new("/#{url_line}", "GET", [] of Param, details)
+      end
+      open, closed, private_page, reopened = at.call(1, 2), at.call(1, 3), at.call(9, 4), at.call(9, 5)
+      DjangoAuthTagger.new(noir_options).perform([open, closed, private_page, reopened])
+      open.tags.should be_empty
+      closed.tags.map(&.description).should eq(["Protected by PageView.dispatch"])
+      private_page.tags.map(&.description).should eq(["Protected by PageView.dispatch"])
+      reopened.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
