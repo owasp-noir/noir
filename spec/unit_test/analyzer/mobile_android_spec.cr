@@ -423,3 +423,48 @@ describe "Analyzer::Mobile::Android (legacy manifest)" do
     urls.should_not contain("intent://com.ex.legacy/.Hidden")
   end
 end
+
+describe "Analyzer::Mobile::Android (filter-bearing component metadata)" do
+  dir = File.tempname("noir-android-filtered")
+  Dir.mkdir_p(dir)
+  manifest = File.join(dir, "AndroidManifest.xml")
+  File.write(manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.ex.filtered">
+      <application>
+        <service android:name=".SyncService" android:exported="true"
+                 android:permission="com.ex.filtered.permission.SYNC">
+          <intent-filter><action android:name="com.ex.filtered.SYNC"/></intent-filter>
+        </service>
+        <receiver android:name=".PingReceiver" android:exported="true">
+          <intent-filter><action android:name="com.ex.filtered.PING"/></intent-filter>
+        </receiver>
+        <activity android:name=".LinkActivity" android:exported="true"
+                  android:permission="com.ex.filtered.permission.OPEN">
+          <intent-filter>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="filtered" android:host="open"/>
+          </intent-filter>
+        </activity>
+      </application>
+    </manifest>
+    XML
+
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, manifest)
+  endpoints = Analyzer::Mobile::Android.new(create_test_options).analyze
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  FileUtils.rm_rf(dir)
+
+  metadata = ->(url : String) { endpoints.find! { |e| e.url == url }.metadata.not_nil! }
+
+  it "records the component kind of a service / receiver with an intent-filter" do
+    metadata.call("intent://com.ex.filtered/.SyncService")["component_type"].should eq("service")
+    metadata.call("intent://com.ex.filtered/.PingReceiver")["component_type"].should eq("receiver")
+  end
+
+  it "records the guarding android:permission of a component with an intent-filter" do
+    metadata.call("intent://com.ex.filtered/.SyncService")["permission"].should eq("com.ex.filtered.permission.SYNC")
+    metadata.call("filtered://open")["permission"].should eq("com.ex.filtered.permission.OPEN")
+    metadata.call("intent://com.ex.filtered/.PingReceiver").has_key?("permission").should be_false
+  end
+end
