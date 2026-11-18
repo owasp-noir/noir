@@ -14,6 +14,9 @@ module Detector::Javascript
     METHOD_REF           = /\b[A-Za-z_$]\w*\s*\.\s*method\b/
     URL_REF              = /\b[A-Za-z_$]\w*\s*\.\s*url\b|new\s+URL\s*\(/
     PATH_LITERAL         = /['"`]\/[^'"`]*['"`]/
+    # Branching on the path alone (`pathname === '/x'`, `startsWith('/x')`,
+    # `case '/x':`) is request branching too: such a router accepts any method.
+    PATH_BRANCH = /(?:===|==)\s*['"`]\/|['"`]\/[^'"`]*['"`]\s*(?:===|==)|\.\s*startsWith\s*\(\s*['"`]\/|\bcase\s+['"`]\//
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless source_file?(filename)
@@ -27,7 +30,7 @@ module Detector::Javascript
       # Adapter use such as `createServer(yoga)` imports node:http but has no
       # direct request branching. Keep js_http scoped to the bare stdlib router
       # shape requested in #2144.
-      content_matches?(file_contents, METHOD_REF) &&
+      (content_matches?(file_contents, METHOD_REF) || content_matches?(file_contents, PATH_BRANCH)) &&
         content_matches?(file_contents, URL_REF) &&
         content_matches?(file_contents, PATH_LITERAL)
     end
