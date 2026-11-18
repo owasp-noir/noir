@@ -4601,3 +4601,79 @@ describe "SpringAuthTagger (concatenated matcher patterns)" do
     tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
   end
 end
+
+describe "SpringAuthTagger (WebSecurity ignoring)" do
+  it "leaves paths that web.ignoring() takes out of every chain unguarded" do
+    config = <<-JAVA
+      package com.example;
+
+      public class SecurityConfig {
+          @Bean
+          WebSecurityCustomizer ignored() {
+              return web -> web.ignoring().requestMatchers(antMatcher("/login"), antMatcher("/static/**"));
+          }
+
+          @Bean
+          SecurityFilterChain api(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(a -> a.anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"SecurityConfig.java" => config}, ["GET /login", "POST /login", "GET /static/app.js", "GET /items"])
+    tags["GET /login"].should be_empty
+    tags["POST /login"].should be_empty
+    tags["GET /static/app.js"].should be_empty
+    tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "reads a WebSecurityCustomizer declared apart from the chain, per HTTP method" do
+    customizer = <<-JAVA
+      package com.example;
+
+      @Configuration
+      public class WebIgnoreConfig {
+          @Bean
+          public WebSecurityCustomizer webSecurityCustomizer() {
+              return (web) -> web.ignoring().requestMatchers(HttpMethod.GET, "/docs/**");
+          }
+      }
+      JAVA
+    chain = <<-JAVA
+      package com.example;
+
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain api(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(a -> a.anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"WebIgnoreConfig.java" => customizer, "SecurityConfig.java" => chain}, ["GET /docs/index.html", "POST /docs/upload"])
+    tags["GET /docs/index.html"].should be_empty
+    tags["POST /docs/upload"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+
+  it "reads the legacy configure(WebSecurity) form" do
+    config = <<-JAVA
+      package com.example;
+
+      public class LegacyConfig extends WebSecurityConfigurerAdapter {
+          @Override
+          public void configure(WebSecurity web) {
+              web.ignoring().antMatchers("/error/**").antMatchers("/favicon.ico");
+          }
+
+          @Override
+          protected void configure(HttpSecurity http) throws Exception {
+              http.authorizeRequests().anyRequest().authenticated();
+          }
+      }
+      JAVA
+    tags = run_spring_security_config({"LegacyConfig.java" => config}, ["GET /error/404", "GET /favicon.ico", "GET /items"])
+    tags["GET /error/404"].should be_empty
+    tags["GET /favicon.ico"].should be_empty
+    tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+end
