@@ -159,15 +159,18 @@ module Analyzer::Crystal
       bindings = {} of Int32 => Array(LoopBinding)
       return bindings unless lines.any?(&.includes?(".each"))
 
-      constants = {} of String => String
+      # A name assigned twice (two classes' `ROUTES`) is ambiguous: dropped,
+      # so its loops keep the as-written scan.
+      constants = {} of String => String?
       lines.each do |line|
         next unless line.includes?('=') && (match = Noir::CrystalCalleeExtractor.strip_comment(line).match(CONSTANT_ASSIGN_RE))
-        constants[match[1]] = match[2]
+        constants[match[1]] = constants.has_key?(match[1]) ? nil : match[2]
       end
 
       lines.each_with_index do |line, index|
         next unless line.includes?(".each") && (match = Noir::CrystalCalleeExtractor.strip_comment(line).match(EACH_LOOP_RE))
         collection = match[2].strip
+        next if constants.has_key?(collection) && constants[collection].nil?
         entries = crystal_literal_entries(constants[collection]? || collection, match[4]? ? 2 : 1)
         next unless entries
         indent = match[1].size

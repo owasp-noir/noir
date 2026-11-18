@@ -358,7 +358,8 @@ module Analyzer::Crystal
     PARAM_FETCH_RE = /\b(\w+)\.params\.(query|json|body)\.fetch(?:_all)?\s*\(\s*["']([^"']+)["']/
     DEF_LINE_RE    = /^\s*(?:(?:private|protected)\s+)?def\b/
     # The block argument a route hands its handler: `do |ctx|`, `{ |ctx| … }`.
-    BLOCK_ARG_RE = /(?:\bdo|\{)\s*\|\s*(\w+)/
+    # The last one: `ws "/s" do |socket, ctx|` passes the context second.
+    BLOCK_ARG_RE = /(?:\bdo|\{)\s*\|[^|]*?(\w+)\s*\|/
 
     # `receiver` is the route block's argument name: Kemal passes the
     # context under whatever name the block gives it.

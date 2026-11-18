@@ -94,12 +94,14 @@ module Analyzer::Crystal
     # `lines` with each handler argument's `<name>.request.` read as
     # `context.request.`.
     private def as_context_receiver(lines : Array(String)) : Array(String)
+      # A `Kemal::Handler#call(env)` is middleware: its path compares are guards.
+      kemal_middleware = lines.any?(&.includes?("Kemal::Handler"))
       names = Set(String).new
       lines.each do |line|
         next if !line.includes?("HTTP::Server") && !line.includes?("call") && (names.empty? || !line.includes?('='))
         stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
         if match = stripped.match(HANDLER_ARG_RE)
-          names << (match[1]? || match[2])
+          names << (match[1]? || match[2]) unless kemal_middleware && match[1]?.nil?
         elsif (match = stripped.match(HANDLER_ALIAS_RE)) && names.includes?(match[2])
           names << match[1]
         end
