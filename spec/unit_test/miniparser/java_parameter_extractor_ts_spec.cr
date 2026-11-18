@@ -168,6 +168,57 @@ describe Noir::TreeSitterJavaParameterExtractor do
       fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)["Category"]
       fields.map(&.name).should eq(["id", "name"])
     end
+
+    it "marks the keys a class-level @JsonIgnoreProperties names as JSON-ignored, unless allowSetters keeps them" do
+      source = <<-JAVA
+        @JsonIgnoreProperties({"secret", "internalNote"})
+        class ItemDto {
+            public String name;
+            public String secret;
+            public String internalNote;
+        }
+
+        @JsonIgnoreProperties(value = {"cached_label"}, ignoreUnknown = true)
+        @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+        class OrderDto {
+            public String title;
+            public String cachedLabel;
+        }
+
+        @JsonIgnoreProperties("token")
+        record LoginDto(String user, String token) {}
+
+        @JsonIgnoreProperties(value = {"password"}, allowSetters = true)
+        class SignupDto {
+            public String user;
+            public String password;
+        }
+        JAVA
+
+      fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)
+      fields["ItemDto"].select(&.json_ignored?).map(&.name).should eq(["secret", "internalNote"])
+      fields["OrderDto"].select(&.json_ignored?).map(&.name).should eq(["cachedLabel"])
+      fields["LoginDto"].select(&.json_ignored?).map(&.name).should eq(["token"])
+      fields["SignupDto"].select(&.json_ignored?).map(&.name).should eq([] of String)
+    end
+
+    it "marks a @JsonProperty(access = READ_ONLY) property as JSON-ignored, but not a WRITE_ONLY one" do
+      source = <<-JAVA
+        class ItemDto {
+            public String title;
+            @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+            public String stamp;
+            @JsonProperty(value = "pin", access = Access.WRITE_ONLY)
+            public String pin;
+            private String revision;
+            @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+            public String getRevision() { return revision; }
+        }
+        JAVA
+
+      fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)["ItemDto"]
+      fields.select(&.json_ignored?).map(&.name).should eq(["stamp", "revision"])
+    end
   end
 
   describe ".extract_consumes_from" do

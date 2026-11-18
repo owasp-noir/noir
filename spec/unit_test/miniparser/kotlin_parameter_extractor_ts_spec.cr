@@ -816,6 +816,57 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         {"q", "query"},
       ])
     end
+
+    it "indexes methods of a controller parsed as an infix expression after a one-line class" do
+      # tree-sitter-kotlin reads `@RequestMapping("/r") class Api { ... }`
+      # after a one-line class as prefix_expression(annotation,
+      # infix_expression(class, Api, lambda_literal)), but only when the
+      # file ends in a newline, as a source file does.
+      source = <<-KT
+        package com.example
+
+        class Other { var z: String? = null }
+
+        @RestController
+        @RequestMapping("/r")
+        class Api {
+            @GetMapping("/a") fun a(q: String?) = ""
+        }
+
+        KT
+
+      params = [] of Param
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        method = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, source)["Api#a"]
+        params = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from_method(
+          method, source, "GET", nil, {} of String => Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo)
+        )
+      end
+
+      params.map { |p| {p.name, p.param_type} }.should eq([{"q", "query"}])
+    end
+
+    it "skips Spring Data paging-typed fields of a command object" do
+      dto = <<-KT
+        class SearchCmd {
+            var keyword: String? = null
+            var pageable: Pageable? = null
+            var sort: org.springframework.data.domain.Sort? = null
+            var request: PageRequest? = null
+        }
+        KT
+      source = <<-KT
+        @RestController
+        class C {
+            @GetMapping("/search")
+            fun search(cmd: SearchCmd): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      params = extract(source, "C", "search", "GET", nil, fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([{"keyword", "query"}])
+    end
   end
 
   describe "#extract_consumes_from" do
@@ -982,6 +1033,32 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       # `id` is a stored field; `isNew` (sibling getter) and
       # `inlineComputed` (inline getter) are derived, not bindable.
       fields["BaseEntity"].map(&.name).should eq(["id"])
+    end
+
+    it "drops the keys a class-level @JsonIgnoreProperties names, unless allowSetters keeps them" do
+      source = <<-KT
+        @JsonIgnoreProperties(value = ["secret"], ignoreUnknown = true)
+        data class ItemDto(
+            val name: String,
+            val secret: String? = null,
+        )
+
+        @JsonIgnoreProperties("internalNote")
+        class OrderDto {
+            var title: String? = null
+            var internalNote: String? = null
+        }
+
+        @JsonIgnoreProperties(value = ["password"], allowSetters = true)
+        class SignupDto {
+            var user: String? = null
+            var password: String? = null
+        }
+        KT
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
+      fields["ItemDto"].select(&.server_managed?).map(&.name).should eq(["secret"])
+      fields["OrderDto"].select(&.server_managed?).map(&.name).should eq(["internalNote"])
+      fields["SignupDto"].select(&.server_managed?).map(&.name).should eq([] of String)
     end
   end
 
