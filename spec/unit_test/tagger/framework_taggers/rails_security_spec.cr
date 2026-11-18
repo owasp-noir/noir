@@ -77,6 +77,21 @@ describe "RailsSecurityTagger" do
       tag_named(update_ep, "csrf-protection").not_nil!.description.should contain("null_session")
     end
 
+    it "reads the controller through the handler when the route is anchored in routes.rb" do
+      routes = "#{fixture_base}/config/routes.rb"
+      endpoint = build_endpoint(routes, 4)
+      endpoint.handler = Handler.new("webhooks#create", webhooks, 5)
+      RailsSecurityTagger.new(options).perform([endpoint])
+      tag_named(endpoint, "csrf-protection").should_not be_nil
+      tag_named(endpoint, "rate-limit").should_not be_nil
+    end
+
+    it "does not flag a GET action, which Rails never CSRF-verifies" do
+      endpoint = build_endpoint(webhooks, 10, "GET") # index
+      RailsSecurityTagger.new(options).perform([endpoint])
+      tag_named(endpoint, "csrf-protection").should be_nil
+    end
+
     it "does not flag a controller relying on the Rails default" do
       endpoint = build_endpoint(posts, 2) # index
       RailsSecurityTagger.new(options).perform([endpoint])

@@ -6,6 +6,11 @@ require "../../func_spec.cr"
 # `permitted_attributes_for_create`), the leaf of `params.dig(:page, :x)`,
 # and a nested `resources ..., to: "ctrl#action"`. The local's name and the
 # permit root (`article`, read whole by a guard line) are not fields.
+# A permit list may also hang off a helper that returns
+# `params.require(key)` (`params_for(:item).permit(...)`) or off a
+# local bound to `params.require(:order)` / `params[:note]`; the container
+# key is not a field then either. A Devise sessions override that never
+# calls `super` reads none of Devise's sign-in params.
 article_fields = [
   Param.new("id", "", "path"),
   Param.new("title", "", "form"),
@@ -33,6 +38,24 @@ expected_endpoints = [
     Param.new("id", "", "path"),
     Param.new("slug_suffix", "", "form"),
   ]),
+  Endpoint.new("/items", "POST", [
+    Param.new("name", "", "form"),
+    Param.new("price", "", "form"),
+  ]),
+  Endpoint.new("/items/:id", "PATCH", [
+    Param.new("id", "", "path"),
+    Param.new("name", "", "form"),
+    Param.new("price", "", "form"),
+  ]),
+  Endpoint.new("/orders", "POST", [
+    Param.new("quantity", "", "form"),
+    Param.new("note", "", "form"),
+  ]),
+  Endpoint.new("/notes", "POST", [
+    Param.new("text", "", "form"),
+    Param.new("color", "", "form"),
+  ]),
+  Endpoint.new("/accounts/sign_in", "POST"),
   Endpoint.new("/organizations/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/organizations/:organization_id/users", "GET", [
     Param.new("organization_id", "", "path"),
@@ -42,7 +65,7 @@ expected_endpoints = [
 
 tester = FunctionalTester.new("fixtures/ruby/rails_strong_params/", {
   :techs     => 1,
-  :endpoints => 10,
+  :endpoints => 18,
 }, expected_endpoints)
 tester.perform_tests
 
@@ -57,4 +80,19 @@ it "drops permit-list holders and roots, and routes `to:` on nested resources", 
 
   users = tester.app.endpoints.find! { |e| e.url == "/organizations/:organization_id/users" }
   users.handler.not_nil!.name.should eq("organizations#users")
+end
+
+private def param_names(tester : FunctionalTester, method : String, url : String) : Array(String)
+  tester.app.endpoints.find! { |e| e.method == method && e.url == url }.params.map(&.name)
+end
+
+it "reads permit lists and keys through a params helper or local, not the container key", tags: "functional" do
+  param_names(tester, "POST", "/items").should eq(["name", "price"])
+  param_names(tester, "PUT", "/items/:id").should eq(["id", "name", "price"])
+  param_names(tester, "POST", "/orders").should eq(["quantity", "note"])
+  param_names(tester, "POST", "/notes").should eq(["text", "color"])
+end
+
+it "gives a Devise action overridden without super none of Devise's params", tags: "functional" do
+  param_names(tester, "POST", "/accounts/sign_in").should be_empty
 end
