@@ -307,9 +307,11 @@ describe NoirPassiveScan::FalsePositive do
       end
       [
         %(ITEM_PRIVATE_KEY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"),
+        %(PRIVATE_KEY = "my-private-key-for-ci"),
       ].each do |line|
         NoirPassiveScan::FalsePositive.suppress?(private_key_rule, line).should be_false, "expected kept: #{line}"
       end
+      NoirPassiveScan::FalsePositive.suppress?(github_rule, %(GITHUB_TOKEN = "my-github-token-for-ci")).should be_false
     end
 
     it "keeps a PEM marker (literal secret, not a variable name)" do

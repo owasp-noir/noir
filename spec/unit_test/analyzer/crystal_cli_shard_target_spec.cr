@@ -81,4 +81,37 @@ describe "crystal_cli subcommands named by an ARGV comparison" do
     CodeLocator.instance.reset_files
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
+
+  it "keeps reads on the root when the guard is not a plain equality" do
+    temp_dir = File.tempname("crystal_cli_guard_other")
+    Dir.mkdir_p(File.join(temp_dir, "src"))
+    File.write(File.join(temp_dir, "src", "jobs.cr"), <<-CRYSTAL)
+      require "option_parser"
+
+      interactive = ARGV[0]? != "batch"
+      if interactive
+        puts ARGV[0]
+      end
+      mode = ARGV[0]? == "sync" ? :sync : :async
+      if mode
+        puts ARGV[1]
+      end
+      verbose = ARGV[0]? == "verbose"
+      verbose = false
+      if verbose
+        puts ARGV[2]
+      end
+      CRYSTAL
+
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+    runner = NoirRunner.new(options)
+    runner.detect
+    runner.analyze
+    params = runner.endpoints.select(&.method.==("CLI")).to_h { |e| {e.url, e.params.map(&.name).sort!} }
+    params["cli://jobs"].should eq(["arg0", "arg1", "arg2"])
+  ensure
+    CodeLocator.instance.reset_files
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
 end

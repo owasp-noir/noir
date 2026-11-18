@@ -257,6 +257,34 @@ describe "Kubernetes Ingress Analyzer" do
     ])
   end
 
+  it "leaves the line of a `/` rule to that rule, not to an earlier path-less one" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: demo
+      spec:
+        rules:
+        - host: items.example.test
+          http:
+            paths:
+            - pathType: Prefix
+              backend:
+                service:
+                  name: items
+                  port:
+                    number: 80
+        - host: orders.example.test
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+      YAML
+
+    orders = endpoints.find! { |e| tag_descriptions(e, "ingress-host").first == "orders.example.test" }
+    orders.details.code_paths.first.line.should eq(19)
+  end
+
   it "tags every row of an Ingress whose annotation answers with a redirect" do
     endpoints = analyze_ingress <<-YAML
       apiVersion: networking.k8s.io/v1
@@ -303,6 +331,20 @@ describe "Kubernetes Ingress Analyzer" do
       apiVersion: networking.k8s.io/v1
       kind: Ingress
       metadata:
+        name: odd-code
+        annotations:
+          nginx.ingress.kubernetes.io/permanent-redirect: https://demo.example.test/items
+          nginx.ingress.kubernetes.io/permanent-redirect-code: "200"
+      spec:
+        rules:
+        - http:
+            paths:
+            - path: /legacy
+              pathType: Prefix
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
         name: served
       spec:
         rules:
@@ -316,6 +358,7 @@ describe "Kubernetes Ingress Analyzer" do
       {"/old", ["301 https://cdn.example.test/items"]},
       {"/orders", ["308 https://orders.example.test/new"]},
       {"/promo", ["302 https://demo.example.test/promo"]},
+      {"/legacy", ["301 https://demo.example.test/items"]},
       {"/served", [] of String},
     ])
   end

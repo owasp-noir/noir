@@ -24,6 +24,10 @@ describe "swift_cli ArgumentParser names" do
           var dryRun = false
           @Flag var includeOrderID = false
 
+          static let note = """
+              @Flag var archived: Bool marks an archived item.
+              """
+
           func run() throws {
               print("Each @Flag var *: Bool is an item column.")
           }
