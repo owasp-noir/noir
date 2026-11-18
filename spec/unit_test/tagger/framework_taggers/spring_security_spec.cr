@@ -493,6 +493,9 @@ describe "SpringSecurityTagger (scope of a rule)" do
     spring_security_tags(files, {"GET /" => "api/build.gradle:1"})["GET /"].should eq(["cors"])
     # The worker app has no WebSocket endpoint of its own.
     spring_security_tags(files, {"GET /" => "worker/build.gradle:1"})["GET /"].should be_empty
+    # A parent build that is no Boot app names no serving app: every app's settings may apply.
+    parent = files.merge({"build.gradle" => "subprojects { apply plugin: 'java' }\n"})
+    spring_security_tags(parent, {"GET /" => "build.gradle:1"})["GET /"].should eq(["cors"])
   end
 
   it "matches a CSRF or CORS path pattern as a whole path, not a prefix" do
