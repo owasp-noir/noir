@@ -421,6 +421,51 @@ describe Noir::TreeSitterJavaParameterExtractor do
       method_params(controller, "ProfileController", "form", "POST", "form", class_fields)
         .map(&.name).should eq(["displayName", "email", "age"])
     end
+
+    it "names a primitive boolean isX field by its bean property x" do
+      # Lombok and hand-written accessors for `boolean isPaid` are
+      # `isPaid()` / `setPaid()`, so Jackson and WebDataBinder bind `paid`.
+      # A `Boolean` wrapper gets `getIsGift()` / `setIsGift()`, and
+      # `@JsonProperty` names the JSON key itself.
+      dto_source = <<-JAVA
+        import lombok.Data;
+        import com.fasterxml.jackson.annotation.JsonProperty;
+        @Data
+        class Order {
+            private boolean isPaid;
+            private Boolean isGift;
+            @JsonProperty("isPinned") private boolean isPinned;
+            private boolean active;
+        }
+        class Item {
+            private boolean isHidden;
+            private boolean isFeatured;
+            public boolean isHidden() { return isHidden; }
+            public void setHidden(boolean v) { isHidden = v; }
+            public void setIsFeatured(boolean v) { isFeatured = v; }
+        }
+        JAVA
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(dto_source)
+
+      controller = <<-JAVA
+        class DemoController {
+            @PostMapping("/orders")
+            public String add(@RequestBody Order req) { return ""; }
+            @GetMapping("/orders")
+            public String list(Order req) { return ""; }
+            @GetMapping("/items")
+            public String items(Item req) { return ""; }
+        }
+        JAVA
+
+      method_params(controller, "DemoController", "add", "POST", "json", class_fields)
+        .map(&.name).should eq(["paid", "isGift", "isPinned", "active"])
+      method_params(controller, "DemoController", "list", "GET", nil, class_fields)
+        .map(&.name).should eq(["paid", "isGift", "isPinned", "active"])
+      method_params(controller, "DemoController", "items", "GET", nil, class_fields)
+        .map(&.name).should eq(["hidden", "isFeatured"])
+    end
+
   end
 
   describe "implicit (un-annotated) parameter binding" do
