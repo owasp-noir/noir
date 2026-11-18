@@ -468,3 +468,48 @@ describe "Analyzer::Mobile::Android (filter-bearing component metadata)" do
     metadata.call("intent://com.ex.filtered/.PingReceiver").has_key?("permission").should be_false
   end
 end
+
+# A flavor source set re-declares a component only to merge attributes into
+# src/main; the overlay stub carries no intent-filter of its own.
+describe "Analyzer::Mobile::Android (source-set overlay manifest)" do
+  dir = File.tempname("noir-android-overlay")
+  main_manifest = File.join(dir, "app", "src", "main", "AndroidManifest.xml")
+  beta_manifest = File.join(dir, "app", "src", "beta", "AndroidManifest.xml")
+  Dir.mkdir_p(File.dirname(main_manifest))
+  Dir.mkdir_p(File.dirname(beta_manifest))
+  File.write(main_manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.ex.overlay">
+      <application>
+        <activity android:name=".EntryActivity" android:exported="true">
+          <intent-filter>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+          </intent-filter>
+        </activity>
+      </application>
+    </manifest>
+    XML
+  File.write(beta_manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.ex.overlay">
+      <application>
+        <activity android:name=".EntryActivity" android:exported="true" android:screenOrientation="portrait"/>
+        <activity android:name=".BetaOnlyActivity" android:exported="true"/>
+      </application>
+    </manifest>
+    XML
+
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, main_manifest)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, beta_manifest)
+  urls = Analyzer::Mobile::Android.new(create_test_options).analyze.map(&.url)
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  FileUtils.rm_rf(dir)
+
+  it "does not report an overlay stub of a filter-bearing main component as filter-less" do
+    urls.should_not contain("intent://com.ex.overlay/.EntryActivity")
+  end
+
+  it "still reports a filter-less component the overlay declares on its own" do
+    urls.should contain("intent://com.ex.overlay/.BetaOnlyActivity")
+  end
+end
