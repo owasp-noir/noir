@@ -342,5 +342,53 @@ describe "FileUploadTagger" do
 
       [zip, archive, put_item, compound, suffixed].each(&.tags.size.should(eq(1)))
     end
+
+    it "does not tag JSON reference fields named like files as uploads" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      # A JSON payload cannot carry a multipart file: `files` here is a
+      # list of stored-file references, `attachment` a message attachment
+      # object.
+      files = Endpoint.new("/api/orders/:id/report", "POST", [Param.new("files", "", "json")])
+      attachment = Endpoint.new("/api/orders/:id/messages", "POST", [Param.new("attachment", "", "json")])
+      documents = Endpoint.new("/api/orders/:id/reviews", "PUT", [Param.new("document_files", "", "json")])
+
+      tagger.perform([files, attachment, documents])
+
+      [files, attachment, documents].each(&.tags.size.should(eq(0)))
+    end
+
+    it "does not tag file-metadata names as uploads" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      json_name = Endpoint.new("/api/items", "POST", [Param.new("fileName", "", "json")])
+      download = Endpoint.new("/api/items/zip/password/download", "POST", [
+        Param.new("seq", "", "form"),
+        Param.new("fileName", "", "form"),
+      ])
+      content_type = Endpoint.new("/api/items", "PUT", [Param.new("contentType", "", "json")])
+
+      tagger.perform([json_name, download, content_type])
+
+      [json_name, download, content_type].each(&.tags.size.should(eq(0)))
+    end
+
+    it "still tags multipart file fields and a bare file param" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      form_files = Endpoint.new("/api/items", "POST", [Param.new("files", "", "form")])
+      form_attachment = Endpoint.new("/api/items", "POST", [Param.new("attachment", "", "form")])
+      video_part = Endpoint.new("/api/items/:id/videos/parts", "POST", [
+        Param.new("fileName", "", "form"),
+        Param.new("video", "", "form"),
+      ])
+      # Rails reports permitted params as json whenever the controller
+      # renders json, though they may arrive as multipart form data.
+      json_file = Endpoint.new("/items/:id", "PATCH", [Param.new("file", "", "json")])
+
+      tagger.perform([form_files, form_attachment, video_part, json_file])
+
+      [form_files, form_attachment, video_part, json_file].each(&.tags.size.should(eq(1)))
+    end
   end
 end
