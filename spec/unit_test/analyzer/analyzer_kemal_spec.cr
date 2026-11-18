@@ -535,12 +535,12 @@ describe "kemal routes registered in a loop over literals" do
     temp_dir = File.tempname("kemal_loops")
     Dir.mkdir_p(temp_dir)
     temp_file = File.join(temp_dir, "app.cr")
-    File.write(temp_file, <<-CRYSTAL)
+    File.write(temp_file, <<-'CRYSTAL')
       KINDS = {"widgets", "gadgets"}
 
       def register
         %w(decode encode).each do |action|
-          post("/tool/\#{action}") { |ctx| action }
+          post("/tool/#{action}") { |ctx| action }
         end
         {"/status", "/status.json"}.each do |path|
           get(path) do |ctx|
@@ -553,7 +553,7 @@ describe "kemal routes registered in a loop over literals" do
           end
         end
         KINDS.each do |kind|
-          get "/\#{kind}/:id" do |env|
+          get "/#{kind}/:id" do |env|
             kind
           end
           get "/fixed" do |env|
@@ -561,7 +561,7 @@ describe "kemal routes registered in a loop over literals" do
           end
         end
         dynamic_names.each do |name|
-          get "/dyn/\#{name}" do |env|
+          get "/dyn/#{name}" do |env|
             name
           end
         end

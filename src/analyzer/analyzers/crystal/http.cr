@@ -96,7 +96,7 @@ module Analyzer::Crystal
     private def as_context_receiver(lines : Array(String)) : Array(String)
       names = Set(String).new
       lines.each do |line|
-        next unless line.includes?("HTTP::Server") || line.includes?("call") || (!names.empty? && line.includes?('='))
+        next if !line.includes?("HTTP::Server") && !line.includes?("call") && (names.empty? || !line.includes?('='))
         stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
         if match = stripped.match(HANDLER_ARG_RE)
           names << (match[1]? || match[2])
