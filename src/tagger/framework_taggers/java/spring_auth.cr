@@ -1689,13 +1689,16 @@ class SpringAuthTagger < FrameworkTagger
   IGNORED_MATCHERS = /\A\s*\.\s*(?:antMatchers|requestMatchers|mvcMatchers)\s*\(/
 
   # `web.ignoring().requestMatchers(..)`, chained calls included
-  # (`.antMatchers("/a").antMatchers("/b")`).
+  # (`.antMatchers("/a").antMatchers("/b")`). One registered only under a
+  # `@Profile` / `@ConditionalOn…` is skipped: a setting decides whether it
+  # takes the paths out, so the chains' guards stand.
   private def scan_ignored_paths(content : String, java : Bool, module_dir : String?)
     code = Noir::CComments.strip(content)
     return unless code.matches?(IGNORING_CALL)
     strings, arrays = java ? security_constants(content) : {Hash(String, String).new, Hash(String, Array(String)).new}
     code.scan(IGNORING_CALL) do |match|
       position = match.byte_end(0)
+      next if conditionally_registered?(code, match.byte_begin(0))
       while call = Noir::TextFile.byte_window(code, position, 64).match(IGNORED_MATCHERS)
         open = position + call.byte_end(0) - 1
         break unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(code, open)
@@ -1705,6 +1708,19 @@ class SpringAuthTagger < FrameworkTagger
         position = close + 1
       end
     end
+  end
+
+  # Whether a declaration enclosing `position` (the bean method, its
+  # lambda, the configuration class) carries `@Profile` / `@ConditionalOn…`.
+  private def conditionally_registered?(code : String, position : Int32) : Bool
+    return false unless code.includes?("@Profile") || code.includes?("@ConditionalOn")
+    offset = 0
+    while (open = code.byte_index('{'.ord.to_u8, offset)) && open < position
+      close = Noir::JSLiteralScanner.find_matching_brace_at_byte(code, open)
+      return true if (close.nil? || close >= position) && declaration_lead(code.byte_slice(0, open)).matches?(CONDITIONAL_REGISTRATION)
+      offset = open + 1
+    end
+    false
   end
 
   private def scan_security_config(content : String, java : Bool, module_dir : String?, file_path : String)
@@ -2092,10 +2108,12 @@ class SpringAuthTagger < FrameworkTagger
     # A security configuration or switch outside any build unit (an example
     # under `docs/`) reaches only endpoints whose classpath is unknown.
     reaches = ->(owner : String?) { owner ? applies.call(owner) : classpath.nil? }
-    return if @ignored_paths.any? do |ignored|
-                applies.call(ignored[:module]) && ignored[:method].in?(nil, endpoint.method.upcase) && matches_ant_pattern?(url, ignored[:pattern])
-              end
-    if config_dir && classpath && @chain_modules.none? { |owner| applies.call(owner) } && @unread_configs.none? { |config| reaches.call(config[:module]) } &&
+    # `web.ignoring()` takes the path out of Spring Security's chains only:
+    # a Shiro filter still decides it.
+    ignored = @ignored_paths.any? do |path|
+      reaches.call(path[:module]) && path[:method].in?(nil, endpoint.method.upcase) && matches_ant_pattern?(url, path[:pattern])
+    end
+    if !ignored && config_dir && classpath && @chain_modules.none? { |owner| applies.call(owner) } && @unread_configs.none? { |config| reaches.call(config[:module]) } &&
        module_classpath(config_dir).try(&.[1])
       # The app declares no chain, yet Spring Security is on its classpath
       # and switched on: its default chain authenticates every request.
@@ -2107,7 +2125,9 @@ class SpringAuthTagger < FrameworkTagger
     end
     scoped = @scoped_chains.select { |chain| applies.call(chain[:module]) && chain[:scope].any? { |pattern| matches_ant_pattern?(url, pattern) } }
     rules =
-      if chain = scoped.min_by? { |candidate| {candidate[:order], -candidate[:scope].max_of { |pattern| matches_ant_pattern?(url, pattern) ? pattern_specificity(pattern) : 0 }} }
+      if ignored
+        [] of SecurityRule
+      elsif chain = scoped.min_by? { |candidate| {candidate[:order], -candidate[:scope].max_of { |pattern| matches_ant_pattern?(url, pattern) ? pattern_specificity(pattern) : 0 }} }
         chain[:rules]
       else
         @security_rules.select { |rule| applies.call(rule[:module]) }
@@ -2169,7 +2189,7 @@ class SpringAuthTagger < FrameworkTagger
         return {"#{reasons}, for #{verbs} only#{note}", first_guard.try(&.[:path]) || best.try(&.[:path]), first_guard.try(&.[:line]) || best.try(&.[:line])}
       end
     end
-    if best.nil? && (unread = @unread_configs.find { |config| reaches.call(config[:module]) })
+    if best.nil? && !ignored && (unread = @unread_configs.find { |config| reaches.call(config[:module]) })
       # No rule noir reads decides the request, but a configuration it does
       # not read can.
       return {"Protected by Spring Security, configured by #{unread[:what]}, which noir does not read#{note}", unread[:path], unread[:line]}
@@ -2185,7 +2205,11 @@ class SpringAuthTagger < FrameworkTagger
       open = match.byte_end(0) - 1
       next false unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(code, open)
       args = code.byte_slice(open + 1, close - open - 1)
-      args.matches?(/\bexclude(?:Name)?\s*=/) && args.matches?(SECURITY_AUTOCONFIG)
+      next false unless args.matches?(/\bexclude(?:Name)?\s*=/) && args.matches?(SECURITY_AUTOCONFIG)
+      # Under `@Profile` / `@ConditionalOn…` a setting decides the exclusion.
+      body = code.byte_index('{'.ord.to_u8, close) || code.bytesize
+      lead = declaration_lead(code.byte_slice(0, match.byte_begin(0))) + code.byte_slice(close, body - close)
+      !lead.matches?(CONDITIONAL_REGISTRATION)
     end
   end
 
