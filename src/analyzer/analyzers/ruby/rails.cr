@@ -226,6 +226,8 @@ module Analyzer::Ruby
     alias EngineMountKey = Tuple(String, String)
 
     @controller_data_cache = Hash(String, ControllerData).new
+    # Per file, its helpers that return `params.require(key)`; see `params_wrappers`.
+    @params_wrappers = Hash(String, Set(String)).new
     # Maps a mountable-engine constant (e.g. `DiscoursePoll::Engine`) to the
     # path it is mounted at (`/polls`). A Rails engine's `routes.draw` block
     # holds engine-relative paths; the `mount` that anchors them usually
@@ -2089,9 +2091,18 @@ module Analyzer::Ruby
       # Subscript reads wrapped over lines (`request.headers[` / `"X-Key"` /
       # `]`) are read off this folded view; see the `'['` scans below.
       folded_lines = Noir::CallFold.fold(controller_lines) { |l| strip_inline_comment(l) }
+      # Names that stand for `params` (see `spell_out_params`): helpers
+      # returning `params.require(key)`, and the current method's locals
+      # bound to `params.require(:x)` / `params[:x]`. A binding's own read of
+      # `x` waits in `bound_reads` until the local is used as a container
+      # (`local_roots`) or not.
+      wrappers = controller_content.matches?(WRAPPER_USE) ? params_wrappers(path) : Set(String).new
+      locals = Hash(String, String).new
+      bound_reads = Set({String, String}).new
+      local_roots = Set({String, String}).new
 
       controller_lines.each_with_index do |raw_line, index|
-        line = strip_inline_comment(raw_line)
+        line = spell_out_params(strip_inline_comment(raw_line), wrappers, locals) { |key| local_roots << {this_method, key} }
 
         if line.includes?("def ")
           func_name = line.split("def ", 2)[1].split("(")[0].split(";")[0].strip
@@ -2100,6 +2111,7 @@ module Analyzer::Ruby
             this_method = func_name
             # An unclosed `permit(` must not swallow the next action's permits.
             permit_buf = nil
+            locals.clear
             defined_actions << func_name
             action_lines[func_name] = index + 1
             method_bodies[this_method] ||= [] of String
@@ -2159,7 +2171,15 @@ module Analyzer::Ruby
         # `params` only: `sign_in_params[:x]` / `source_params.fetch(:x)` read
         # a nested key). A line with none cannot match any of them, so skip
         # the regex ops — this runs on every line of every controller in the app.
-        line = folded_lines[index]
+        line = spell_out_params(folded_lines[index], wrappers, locals) { |key| local_roots << {this_method, key} }
+        bound = nil
+        if !this_method.empty? && line.includes?('=')
+          if bind = line.match(LOCAL_BINDING)
+            locals[bind[1]] = bound = (bind[2]? || bind[3]).to_s
+          elsif !locals.empty?
+            line.scan(LOCAL_ASSIGN) { |assign| locals.delete(assign[1]) }
+          end
+        end
         # The http_accept_language gem's controller helper parses the
         # `Accept-Language` header.
         if !this_method.empty? && line.includes?("http_accept_language") && line.matches?(/(?<![\w.@:])http_accept_language\b/)
@@ -2191,7 +2211,14 @@ module Analyzer::Ruby
             end
             # `params[:controller]` / `params[:action]` are the router's own keys.
             next if name.empty? || this_method.empty? || name == "controller" || name == "action"
-            (tail.matches?(CONTAINER_USE) ? container_reads : plain_reads) << {this_method, name}
+            read = {this_method, name}
+            if name == bound
+              bound_reads << read
+            elsif tail.matches?(CONTAINER_USE)
+              container_reads << read
+            else
+              plain_reads << read
+            end
             params_body_by_action[this_method] ||= [] of Param
             params_body_by_action[this_method] << Param.new(name, "", param_type)
             params_query_by_action[this_method] ||= [] of Param
@@ -2222,11 +2249,14 @@ module Analyzer::Ruby
         end
       end
 
-      unless permit_roots.empty?
+      bound_reads.each { |read| (local_roots.includes?(read) ? container_reads : plain_reads) << read }
+      unless permit_roots.empty? && local_roots.empty?
         {params_body_by_action, params_query_by_action}.each do |by_action|
           by_action.each do |method, list|
             list.reject! do |param|
-              permit_roots.includes?(param.name) && container_reads.includes?({method, param.name}) && !plain_reads.includes?({method, param.name})
+              read = {method, param.name}
+              next false if plain_reads.includes?(read)
+              local_roots.includes?(read) || (permit_roots.includes?(param.name) && container_reads.includes?(read))
             end
           end
         end
@@ -2247,6 +2277,63 @@ module Analyzer::Ruby
       return line unless index > 0 && line.matches?(/\A\s*\.\s*(?:permit|expect)\s*\(/)
       previous = strip_inline_comment(lines[index - 1]).strip
       previous.matches?(/(?<![\w.])params(?:\.(?:require|fetch)\s*\([^)]*\))?\z/) ? "#{previous}#{line.lstrip}" : line
+    end
+
+    # A helper call `params_for(:post)` or a local `post` read as params
+    # (`.permit(` / `[`); see `spell_out_params`.
+    PARAMS_ALIAS = /(?<![\w.@:$])([a-z_]\w*[!?]?)(?:\s*\(\s*(?::(\w+)|['"](\w+)['"])\s*\))?(?=\s*(?:\.\s*permit\s*\(|\[))/
+    WRAPPER_USE  = /[\w!?]\s*\(\s*(?::\w+|['"]\w+['"])\s*\)\s*(?:\.\s*permit\s*\(|\[)/
+    WRAPPER_DEF  = /\bdef\s+(?:self\.)?([a-z_]\w*[!?]?)\s*\(\s*(\w+)/
+    # `post = params.require(:post)` / `post = params[:post]`, alone on its line.
+    LOCAL_BINDING = /\A\s*([a-z_]\w*)\s*=\s*params(?:\[|\.require\s*\()\s*(?::(\w+)|['"](\w+)['"])\s*[\])]\s*\z/
+    LOCAL_ASSIGN  = /(?<![\w.@:$])([a-z_]\w*)\s*(?:\|\||&&|[-+*\/])?=(?![=~>])/
+
+    # `line` with what stands for `params` spelled out as the read it is:
+    # `params_for(:post).permit(` (a helper of `wrappers`) and `post.permit(`
+    # / `post[:title]` (a local of `locals`, bound to `:post`) become
+    # `params.require(:post).permit(` / `params.require(:post)[:title]`, so
+    # the permit and subscript scans read them like the plain spelling.
+    # Yields the key of each local used.
+    private def spell_out_params(line : String, wrappers : Set(String), locals : Hash(String, String), & : String ->) : String
+      return line if wrappers.empty? && locals.empty?
+      line.gsub(PARAMS_ALIAS) do |text, m|
+        if key = m[2]? || m[3]?
+          next text unless wrappers.includes?(m[1])
+        else
+          next text unless key = locals[m[1]]?
+          yield key
+        end
+        "params.require(:#{key})"
+      end
+    end
+
+    # Helpers returning `params.require(key)` for the key they are passed
+    # (`def params_for(key) = params.require(key)`), defined by the
+    # controller at `path`, its ancestors or their concerns.
+    private def params_wrappers(path : String) : Set(String)
+      files = callback_chain.controller_in(path).try { |leaf| callback_chain.resolve(leaf, nil).paths } || [] of String
+      wrappers = Set(String).new
+      (files << path).uniq!.each do |file|
+        wrappers.concat(@params_wrappers[file] ||= file_params_wrappers(file))
+      end
+      wrappers
+    end
+
+    private def file_params_wrappers(path : String) : Set(String)
+      found = Set(String).new
+      return found unless known_file?(path)
+      name = nil
+      returns = nil
+      ruby_source(path).each_line do |raw|
+        line = strip_inline_comment(raw)
+        if line.includes?("def ")
+          m = line.match(WRAPPER_DEF)
+          name = m.try(&.[1])
+          returns = m.try { |d| /(?<![\w.])params\.require\s*\(\s*#{d[2]}\s*\)/ }
+        end
+        found << name if name && returns && line.includes?("params.require") && line.matches?(returns)
+      end
+      found
     end
 
     PERMIT_MAX_LINES = 200
