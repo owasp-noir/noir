@@ -1508,7 +1508,7 @@ module Noir
 
     # `"name=value"` → `{"name", "value"}`. `"name"` and `"name!=value"`
     # → `{"name", ""}`. A negated `"!name"` demands the input's absence,
-    # so it names nothing to send: nil (matches the Java extractor).
+    # so it names nothing to send: nil (matches Java `request_params`).
     private def split_constraint(raw : String) : Tuple(String, String)?
       return if raw.starts_with?('!')
       idx = raw.index('=')
