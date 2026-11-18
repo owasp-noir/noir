@@ -2207,6 +2207,56 @@ describe "DjangoAuthTagger" do
     end
   end
 
+  it "judges a Django mixin imported under another name by the name it was imported as" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_mixin_alias")
+    Dir.mkdir_p(tmpdir)
+    mixins = File.join(tmpdir, "mixins.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(mixins, <<-PY)
+      from django.contrib.auth.mixins import (
+          AccessMixin,
+          LoginRequiredMixin as LoginRequiredMixInBase,
+      )
+      from django.views.generic import View as PlainBase
+
+
+      class LoginRequiredMixin(LoginRequiredMixInBase):
+          pass
+
+
+      class PlainMixin(PlainBase):
+          pass
+      PY
+    File.write(views, <<-PY)
+      from mixins import LoginRequiredMixin, PlainMixin
+
+
+      class AccountView(LoginRequiredMixin, View):
+          def get(self, request):
+              return HttpResponse("ok")
+
+
+      class PublicView(PlainMixin):
+          def get(self, request):
+              return HttpResponse("ok")
+      PY
+    [mixins, views].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      account = Endpoint.new("/account/", "GET", [] of Param, Details.new(PathInfo.new(views, 5)))
+      public_view = Endpoint.new("/public/", "GET", [] of Param, Details.new(PathInfo.new(views, 10)))
+      DjangoAuthTagger.new(noir_options).perform([account, public_view])
+      account.tags.map(&.description).should eq(["Protected by Django LoginRequiredMixin"])
+      public_view.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "judges a permission helper only when it is the whole verdict, and same-named classes only when they agree" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_drf_helper_scope")

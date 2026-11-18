@@ -703,12 +703,25 @@ class DjangoAuthTagger < FrameworkTagger
       if (site = class_site(path, base)) && (base_lines = read_file_lines(site[0]))
         class_mro(site[0], base_lines, site[1], depth + 1)
       else
-        [MroClass.new(base.rpartition('.')[2], nil, -1)]
+        [MroClass.new(imported_as(path, base.rpartition('.')[2]), nil, -1)]
       end
     end
     heads = bases.map(&.first)
     mro = [own] + (c3_merge(bases + [heads]) || bases.flatten.uniq!)
     @mro_cache[key] = mro
+  end
+
+  # The name a library class bound to `name` in `path` was imported as:
+  # `from django.contrib.auth.mixins import LoginRequiredMixin as Base`.
+  private def imported_as(path : String, name : String) : String
+    source = read_file(path) || return name
+    alias_re = /\b(\w+)\s+as\s+#{Regex.escape(name)}\b/
+    source.scan(/^[ \t]*from[ \t]+[\w.]+[ \t]+import[ \t]+(\([^)]*\)|[^\n]*)/m) do |statement|
+      if found = statement[1].match(alias_re)
+        return found[1]
+      end
+    end
+    name
   end
 
   private def c3_merge(seqs : Array(Array(MroClass))) : Array(MroClass)?
