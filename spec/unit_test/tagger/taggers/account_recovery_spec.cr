@@ -38,7 +38,7 @@ describe "AccountRecoveryTagger" do
     it "tags a Devise-style /users/password endpoint" do
       tagger = AccountRecoveryTagger.new(default_tagger_options)
 
-      endpoint = Endpoint.new("/accounts/password", "PUT")
+      endpoint = Endpoint.new("/users/password", "PUT")
 
       tagger.perform([endpoint])
 

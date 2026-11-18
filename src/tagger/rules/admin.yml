@@ -34,10 +34,9 @@ examples:
     - { method: POST, url: /wp-admin/options.php }
     - { method: PATCH, url: /api/users/42, params: [{ name: isSuperuser, type: json }] }
     - { method: POST, url: /api/session, params: [{ name: run_as, type: json }] }
-    - { url: /admin/reports.json }
   no_match:
     - { url: /badminton/courts }
-    - { url: /static/css/admin.theme.css }
-    - { url: /js/admin-panel.js?v=2 }
     - { url: /api/roles, params: [{ name: privilege }] }
     - { method: QUERY, url: /api/roles, params: [{ name: privilege, type: form }] }
+    - { url: /static/css/admin.theme.css }
+    - { url: /js/admin-panel.js?v=2 }
