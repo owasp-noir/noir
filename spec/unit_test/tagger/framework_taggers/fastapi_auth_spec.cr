@@ -535,4 +535,65 @@ describe "FastAPIAuthTagger" do
     verdicts["/open"].should be_empty
     verdicts["/limited"].should be_empty
   end
+
+  # fastapi_middleware_auth: an `@app.middleware("http")` function that
+  # refuses a caller who is not signed in guards every route of that app
+  # outside the paths it lets through first.
+  it "applies an http middleware's sign-in check to the routes of its app" do
+    base = File.expand_path("../../../functional_test/fixtures/python/fastapi_middleware_auth", __DIR__)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(base)
+    routes = [
+      {"main.py", 38, "GET", "/api/orders"}, {"main.py", 43, "GET", "/api/ping"},
+      {"main.py", 48, "POST", "/api/session/start"}, {"main.py", 53, "GET", "/home"},
+      {"main.py", 58, "GET", "/api/orders"},
+      {"main.py", 67, "GET", "/api/orders/{order_id}"}, {"main.py", 72, "GET", "/api/invoices/daily"},
+      {"factory.py", 26, "GET", "/assets/{name}"}, {"factory.py", 30, "GET", "/signin"},
+      {"factory.py", 34, "GET", "/dashboard"}, {"local_only.py", 14, "GET", "/status"},
+      {"csrf.py", 15, "POST", "/notes"}, {"main.py", 86, "GET", "/api/orders/live"},
+      {"user_check.py", 24, "GET", "/profile"}, {"user_check.py", 29, "GET", "/files/{*file_path}"},
+      {"user_check.py", 34, "GET", "/reports"},
+    ]
+    endpoints = routes.map do |file, line, method, url|
+      endpoint = Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new("#{base}/#{file}", line)))
+      endpoint.protocol = "ws" if url.ends_with?("/live")
+      endpoint
+    end
+
+    CodeLocator.instance.clear_all
+    Dir.glob("#{base}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+    begin
+      endpoints = FastAPIAuthTagger.new(noir_options).perform(endpoints)
+    ensure
+      CodeLocator.instance.clear_all
+    end
+
+    verdicts = endpoints.map { |ep| {"#{File.basename(ep.details.code_paths[0].path)}:#{ep.details.code_paths[0].line}", ep.tags.map { |tag| "#{tag.name}: #{tag.description}" }} }.to_h
+    # Passed through when `login_enabled()` is false, which the scan cannot read.
+    verdicts["main.py:38"].should eq(["auth: Protected by FastAPI middleware require_sign_in (whether it lets the request through depends on `login_enabled()`, which this cannot tell)"])
+    verdicts["main.py:43"].should be_empty
+    verdicts["main.py:48"].should be_empty
+    verdicts["main.py:53"].should be_empty
+    # Declared on another app instance.
+    verdicts["main.py:58"].should be_empty
+    # An APIRouter the app includes (here in a loop) is behind it too; one
+    # also mounted on the open app is not.
+    verdicts["main.py:67"].should eq(verdicts["main.py:38"])
+    verdicts["main.py:72"].should be_empty
+    verdicts["factory.py:34"].should eq(["auth: Protected by FastAPI middleware gate (refuses unauthenticated requests outside its exempt paths)"])
+    verdicts["factory.py:26"].should be_empty
+    verdicts["factory.py:30"].should be_empty
+    # A host check refuses by network origin, not by who the caller is.
+    verdicts["local_only.py:14"].should be_empty
+    # A CSRF token check refuses a forged request, not an anonymous one.
+    verdicts["csrf.py:15"].should be_empty
+    # Starlette runs an http middleware for HTTP requests only.
+    verdicts["main.py:86"].should be_empty
+    # `request.user.is_authenticated` is false for an anonymous caller.
+    verdicts["user_check.py:24"].should_not be_empty
+    # `{*file_path}` reaches `/files/public/...` too, which is exempt.
+    verdicts["user_check.py:29"].should be_empty
+    # A credential header tested with the name first.
+    verdicts["user_check.py:34"].should_not be_empty
+  end
 end

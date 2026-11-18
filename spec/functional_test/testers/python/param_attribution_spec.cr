@@ -23,6 +23,22 @@ describe "Python param attribution", tags: "functional" do
     rows["POST /bulk"].should eq(["names:json"])
     # The dependency's own params, not an `ids` body field.
     rows["GET /picked"].should eq(["raw:query"])
+    # A lone dict body is not nested under its parameter name.
+    rows["POST /orders"].should eq(["label:json", "lines:json"])
+    rows["POST /orders/{order_id}/notes"].should eq(["note:json", "order_id:path"])
+    rows["POST /orders/raw"].should eq(["payload:json"])
+  end
+
+  it "keeps a FastAPI body whose model is imported from outside the scan" do
+    rows = params_for.call("fastapi_unresolved_model")
+    rows["POST /acks/{item_id}"].should eq(["item_id:path", "payload:json"])
+    # Stdlib and local Enum types add no body.
+    day = rows["GET /days/{day_id}"]
+    day.should contain("color:query")
+    day.should contain("day_id:path")
+    day.none?(&.ends_with?(":json")).should be_true
+    # Beside a body model from outside the scan, a dict body stays embedded.
+    rows["POST /acks/{item_id}/meta"].should eq(["item:json", "item_id:path", "meta:json"])
   end
 
   it "reads Flask fields through a request.form / request.args alias" do

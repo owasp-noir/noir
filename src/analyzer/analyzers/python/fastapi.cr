@@ -1425,6 +1425,19 @@ module Analyzer::Python
           end
         end
 
+        # A lone `dict[str, Any]` body is the body itself: FastAPI nests a
+        # body under its parameter name only beside another one (or with
+        # `embed=True`). Its fields are the keys the handler reads.
+        if param_type == "json" && fastapi_peeled_type(param.type).try(&.matches?(DICT_BODY_TYPE_RE)) &&
+           !fastapi_param_declaration(param).matches?(BODY_EMBED_RE) &&
+           fastapi_lone_body?(param, function_definition.params, path_param_names, source, path, base_path)
+          keys = parse_code_block(codelines[def_line..]).try { |block| find_dictionary_params(block, FunctionParameter.new(param.name, "dict", param.default)) }
+          if keys && !keys.empty?
+            params.concat(keys)
+            next
+          end
+        end
+
         if param_type.nil?
           next unless model
           if model.in?(%w[Request dict])
@@ -1432,7 +1445,12 @@ module Analyzer::Python
             next if function_codeblock.nil?
             params.concat(find_dictionary_params(function_codeblock, FunctionParameter.new(param.name, model, param.default)))
           else
-            params.concat(model_params_for(model, param.name, source, path, base_path))
+            fields = model_params_for(model, param.name, source, path, base_path)
+            # A model from a package the scan does not hold (a sibling
+            # project scanned alone) is still the body: one opaque field,
+            # as an unresolved `Body()` model is kept.
+            fields << Param.new(param.name, default_value, "json") if fields.empty? && foreign_project_model?(model, source, path, base_path)
+            params.concat(fields)
           end
         else
           params << Param.new(fastapi_wire_name(param, param_type), default_value, param_type)
@@ -1440,6 +1458,44 @@ module Analyzer::Python
       end
 
       params
+    end
+
+    NON_BODY_MODULES = %w[typing typing_extensions uuid datetime decimal enum pathlib ipaddress fastapi starlette pydantic]
+    FROM_IMPORT_RE   = /^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]*))/m
+
+    # Whether bare class `model` is imported (`from pkg.schemas import
+    # Model`) from a module the scan cannot resolve and that is no stdlib or
+    # framework module whose classes FastAPI reads as query values or injects.
+    # ponytail: an Enum from such a package is a query value, read as json.
+    private def foreign_project_model?(model : ::String, source : ::String, path : ::String, base_path : ::String) : Bool
+      return false unless VAR_NAME_FULL_RE.matches?(model)
+      return false if resolve_model_reference(model, source, path, base_path)
+      source.scan(FROM_IMPORT_RE) do |m|
+        names = (m[2]? || m[3]? || "").split(',').map(&.split(/\s+as\s+/).last.strip)
+        next unless names.includes?(model)
+        return !NON_BODY_MODULES.includes?(m[1].split('.').first)
+      end
+      false
+    end
+
+    # Whether no parameter but `param` is a body: a `Body()`, a container
+    # type, a bare `dict`, or a model the scan resolves or that is imported
+    # from outside it.
+    private def fastapi_lone_body?(param : FunctionParameter, all : Array(FunctionParameter), path_param_names : Array(::String),
+                                   source : ::String, path : ::String, base_path : ::String) : Bool
+      all.none? do |other|
+        next false if other.name == param.name || other.name == "*" || other.name.in?(%w[self cls]) || path_param_names.includes?(other.name)
+        next false if fastapi_dependency_param?(other)
+        next true if "#{other.type} #{other.default}".matches?(/\bBody\s*\(/)
+        next false if other.type.matches?(LOCATION_MARKER_RE) || other.default.matches?(LOCATION_MARKER_RE)
+        next false if other.type.empty?
+        # A union of several types: unsure, so taken for a body.
+        peeled = fastapi_peeled_type(other.type) || next true
+        next true if peeled.matches?(BODY_CONTAINER_TYPE_RE) || peeled.matches?(DICT_BODY_TYPE_RE)
+        !!fastapi_model_name(peeled, qualified: true).try do |model|
+          resolve_model_reference(model, source, path, base_path) || foreign_project_model?(model, source, path, base_path)
+        end
+      end
     end
 
     private def fastapi_path_param_names(route_path : ::String) : Array(::String)
@@ -1728,6 +1784,7 @@ module Analyzer::Python
     SCALAR_TYPE_RE = /\b(?:str|int|float|bool|EmailStr)\b/
     # A bare `dict` keeps reading the keys the handler takes from it.
     BODY_CONTAINER_TYPE_RE = /\A(?:typing\.)?(?:dict\[|(?:Dict|list|List|set|Set|frozenset|FrozenSet|tuple|Tuple|Sequence)(?:\[|\z))/
+    DICT_BODY_TYPE_RE      = /\A(?:typing\.)?(?:dict|Dict)(?:\[|\z)/
     LOCATION_MARKER_RE     = /\b(?:Query|Header|Cookie|Body|Form|File|UploadFile|Path|WebSocket|Depends|Security)\b/
     STAR_IMPORT_RE         = /^from\s+([\w.]+)\s+import\s+\*/m
     ALIAS_GENERATOR_RE     = /\balias_generator\s*=\s*([\w.]+)/

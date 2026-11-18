@@ -2,9 +2,12 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../analyzer/analyzers/python/python_helper"
 require "./python_guard_definitions"
+require "./django_middleware_guard"
 
 @[Noir::TaggerFor(key: "fastapi_auth", name: "FastAPI Auth Tagger", desc: "Identifies FastAPI authentication patterns (Depends, Security, OAuth2)", order: 100)]
 class FastAPIAuthTagger < FrameworkTagger
+  include DjangoMiddlewareGuard
+
   # Depends() with auth-related callables
   DEPENDS_AUTH_PATTERNS = [
     {/Depends\s*\(\s*get_current_user\b/, "FastAPI Depends(get_current_user)"},
@@ -96,6 +99,11 @@ class FastAPIAuthTagger < FrameworkTagger
     @include_calls = [] of IncludeCall
     @includes_by_site = nil.as(Hash({String, String}, Array(IncludeCall))?)
     @include_scopes = Hash({String, String}, Array({String, String})).new
+    @http_middlewares = Hash(String, Array(HttpMiddleware)).new
+    @mw_locals = Hash(String, String).new
+    @mw_file = ""
+    @mw_expansions = 0
+    @mw_unknown_atom = nil.as(String?)
   end
 
   # `parent.include_router(target, ..., dependencies=[...])` in `file`.
@@ -121,6 +129,7 @@ class FastAPIAuthTagger < FrameworkTagger
     @include_calls.clear
     @includes_by_site = nil
     @include_scopes.clear
+    @http_middlewares.clear
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
       next unless content
@@ -205,6 +214,10 @@ class FastAPIAuthTagger < FrameworkTagger
 
       endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "fastapi_auth")) if description
       endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "fastapi_auth")) if authz
+      return
+    end
+    if guard = http_middleware_guard(endpoint)
+      endpoint.add_tag(Tag.new("auth", guard, "fastapi_auth"))
       return
     end
     if soft = @soft_auth
@@ -1346,8 +1359,26 @@ class FastAPIAuthTagger < FrameworkTagger
                parts.find { |part| !part.empty? && !part.includes?('=') }
       next unless target && target.matches?(/\A[\w.]+\z/)
       dependencies = parts.find(&.matches?(/\Adependencies\s*=/))
-      @include_calls << IncludeCall.new(path, parent, target, dependencies, idx)
+      (loop_items(lines, idx, target) || [target]).each do |item|
+        @include_calls << IncludeCall.new(path, parent, item, dependencies, idx)
+      end
     end
+  end
+
+  # The names `for name in (a, b, ...):` around line `idx` walks, when
+  # `name` is its loop variable.
+  # ponytail: the nearest such header above at a smaller indent; a loop
+  # variable reused by a later sibling block is not told apart.
+  private def loop_items(lines : Array(String), idx : Int32, name : String) : Array(String)?
+    indent = lines[idx].size - lines[idx].lstrip.size
+    header = /\A(\s*)for\s+#{Regex.escape(name)}\s+in\s*[(\[]/
+    (idx - 1).downto(Math.max(0, idx - 200)) do |j|
+      m = lines[j].match(header) || next
+      return if m[1].size >= indent
+      items = joined_statement(lines, j).strip.sub(/\Afor\s+\w+\s+in\s*/, "").rchop(':').strip[1...-1]
+      return items.split(',').map(&.strip).reject(&.empty?).select(&.matches?(/\A[\w.]+\z/))
+    end
+    nil
   end
 
   # The `dependencies=[...]` of every `include_router(...)` that mounts the
@@ -1363,12 +1394,7 @@ class FastAPIAuthTagger < FrameworkTagger
       return cached
     end
     @include_scopes[key] = [] of {String, String} # cycle guard
-    by_site = @includes_by_site ||= @include_calls.each_with_object(Hash({String, String}, Array(IncludeCall)).new) do |call, index|
-      if site = include_target_site(call)
-        (index[site] ||= [] of IncludeCall) << call
-      end
-    end
-    chains = (by_site[key]? || [] of IncludeCall).map do |call|
+    chains = (includes_by_site[key]? || [] of IncludeCall).map do |call|
       chain = include_dependencies(call.file, call.parent).dup
       call.dependencies.try { |dependencies| chain.unshift({dependencies, call.file}) }
       read_file_lines(call.file).try { |lines| chain.concat(router_statement(lines, call.parent, call.file, call.line)) }
@@ -1378,6 +1404,16 @@ class FastAPIAuthTagger < FrameworkTagger
     guarded = chains.all? { |chain| chain.any? { |text, file| auth_desc(text, file) || authz_desc(text, file) } }
     @soft_auth = soft
     @include_scopes[key] = guarded ? chains.flat_map(&.itself) : [] of {String, String}
+  end
+
+  # The `include_router(...)` calls by the `{file, name}` of the router each
+  # mounts.
+  private def includes_by_site : Hash({String, String}, Array(IncludeCall))
+    @includes_by_site ||= @include_calls.each_with_object(Hash({String, String}, Array(IncludeCall)).new) do |call, index|
+      if site = include_target_site(call)
+        (index[site] ||= [] of IncludeCall) << call
+      end
+    end
   end
 
   # `{file, name}` of the router an include call's target refers to.
@@ -1478,5 +1514,186 @@ class FastAPIAuthTagger < FrameworkTagger
       break
     end
     scopes
+  end
+
+  # An `@<app>.middleware("http")` function: the app it is registered on,
+  # the locals its body assigns once, and its body for the evaluator.
+  private record HttpMiddleware, receiver : String, klass : MwClass, locals : Hash(String, String)
+
+  HTTP_MIDDLEWARE           = /^\s*@\s*(\w+)\s*\.\s*middleware\s*\(\s*["']http["']\s*\)/
+  STARLETTE_PATH_EXPR       = /(?<![\w.])request\.url\.path\b/
+  MW_MODULE_CONSTANT        = /^([A-Z_][A-Z0-9_]*)\s*(?::[^=\n]+)?=\s*(?:frozenset|set|tuple|list)?\s*\(?\s*[\[({]/
+  MW_LOCAL_ASSIGNMENT       = /\A([A-Za-z_]\w*)\s*(?::[^=]+)?=(?!=)\s*(.+)\z/m
+  MW_CREDENTIAL_SOURCE_HTTP = /\brequest\.(?:headers|cookies)\b/
+  MW_CREDENTIAL_NAME_HTTP   = /['"][\w-]*(?:key|token|secret|signature|password|authorization|session|auth)[\w-]*['"]/i
+  MW_IDENTITY_CALL          = /\A(?:await\s+)?[\w.]*(?:user|session|principal|identity|caller)\w*\s*\(/i
+  # A name read (not called, not assigned), or a string literal to step over.
+  MW_LOCAL_NAME         = /#{PythonGuardDefinitions::STRING_LITERAL.source}|(?<![\w.])[A-Za-z_]\w*\b(?!\s*\()(?!\s*=(?!=))/
+  MW_CREDENTIAL_MISSING = /\bnot\s+in\b|\bis\s+None\b|==\s*None\b|!=(?!\s*None\b)/
+
+  # An `@app.middleware("http")` function runs before every route of
+  # `app`, the routes of the APIRouters it includes among them: it guards a
+  # route when, walked for an anonymous caller at the route's path and
+  # verb, it refuses and never hands the request on (`call_next`). Exempt
+  # paths (`path.startswith("/public")`, `path in {...}`) are read the way
+  # DjangoMiddlewareGuard reads them.
+  # ponytail: `app.add_middleware(BaseHTTPMiddleware subclass)` is not
+  # followed; a class middleware's `dispatch` would read the same way.
+  # Starlette runs an http middleware for HTTP requests, never websockets.
+  private def http_middleware_guard(endpoint : Endpoint) : String?
+    return if endpoint.protocol == "ws"
+    # `{*name}` (a `:path` param) reaches every path below it, as `<path:name>` does.
+    url = endpoint.url.sub(/\A[a-zA-Z][\w+.-]*:\/\/[^\/]*/, "").gsub(/\{\*(\w+)\}/, "<path:\\1>")
+    sample = mw_sample(url, endpoint.method.upcase)
+    endpoint.details.code_paths.each do |path_info|
+      lines = read_file_lines(path_info.path) || next
+      idx = (path_info.line || next) - 1
+      next unless 0 <= idx < lines.size
+      receiver = handler_header(lines, idx).match(ROUTE_DECORATOR).try(&.[1]) || next
+      if guard = app_middleware_guard(path_info.path, receiver, sample, 0)
+        return guard
+      end
+    end
+    nil
+  end
+
+  # The guard of an http middleware registered on `receiver` in `file`, or
+  # on every app or router that includes it (a router mounted on an open
+  # app as well is served open there).
+  private def app_middleware_guard(file : String, receiver : String, sample : MwSample, depth : Int32) : String?
+    return if depth > 6
+    http_middlewares(file).each do |middleware|
+      next unless middleware.receiver == receiver
+      if guard = judge_http_middleware(middleware, file, sample)
+        return guard
+      end
+    end
+    mounts = includes_by_site[{file, receiver}]? || return
+    mounts.map { |call| app_middleware_guard(call.file, call.parent, sample, depth + 1) || return }.first?
+  end
+
+  private def judge_http_middleware(middleware : HttpMiddleware, file : String, sample : MwSample) : String?
+    @mw_locals, @mw_file, @mw_expansions = middleware.locals, file, 0
+    @mw_unresolved = @mw_last_unknown = @mw_unknown_atom = nil
+    outcomes = mw_block(middleware.klass.body, middleware.klass, sample, nil)
+    return if !outcomes.includes?(MwOutcome::Refuse) || outcomes.includes?(MwOutcome::Pass)
+    name = middleware.klass.name
+    if outcomes.includes?(MwOutcome::PassUnresolved)
+      why = (@mw_unknown_atom || @mw_unresolved || "a condition")[0, 80]
+      return "Protected by FastAPI middleware #{name} (whether it lets the request through depends on `#{why}`, which this cannot tell)"
+    end
+    "Protected by FastAPI middleware #{name} (refuses unauthenticated requests outside its exempt paths)"
+  end
+
+  private def http_middlewares(file : String) : Array(HttpMiddleware)
+    @http_middlewares[file] ||= begin
+      found = [] of HttpMiddleware
+      lines = read_file_lines(file) || [] of String
+      lists = Hash(String, Array(String)?).new
+      lines.each_with_index do |line, idx|
+        if constant = line.match(MW_MODULE_CONSTANT)
+          value = joined_statement(lines, idx).partition('=')[2].strip
+          value = value.sub(/\A(?:frozenset|set|tuple|list)\s*\(/, "").rchop(')') if value.matches?(/\A[a-z]/)
+          lists[constant[1]] = mw_strict_literals(value)
+        end
+        receiver = line.match(HTTP_MIDDLEWARE).try(&.[1]) || next
+        def_idx = ((idx + 1)...lines.size).find { |i| !lines[i].blank? && !lines[i].lstrip.starts_with?('@') } || next
+        name = lines[def_idx].match(/^\s*(?:async\s+)?def\s+(\w+)/).try(&.[1]) || next
+        indent = lines[def_idx].size - lines[def_idx].lstrip.size
+        # Past the signature, which may wrap.
+        start = def_idx
+        while start < lines.size - 1 && !Analyzer::Python::Helper.strip_python_comment(lines[start]).rstrip.ends_with?(':')
+          start += 1
+        end
+        body = lines[(start + 1)..].take_while { |text| text.blank? || text.size - text.lstrip.size > indent }
+          .join('\n').gsub(PythonGuardDefinitions::DOCSTRING, "")
+        tree = mw_tree(body)
+        path_vars = body.scan(/^[ \t]*(\w+)[ \t]*=[ \t]*#{STARLETTE_PATH_EXPR.source}[ \t]*$/m).map(&.[1])
+        response_vars = body.scan(/^\s*(\w+)\s*=\s*(?:await\s+)?call_next\s*\(/m).map(&.[1])
+        klass = MwClass.new(name, name, file, tree, lists, path_vars, response_vars, false, false)
+        found << HttpMiddleware.new(receiver, klass, single_assignments(tree, path_vars + response_vars))
+      end
+      found
+    end
+  end
+
+  # `name = expr` statements of the body whose name is assigned only once.
+  private def single_assignments(stmts : Array(MwStmt), skip : Array(String)) : Hash(String, String)
+    seen = Hash(String, String?).new
+    collect_assignments(stmts, seen)
+    locals = Hash(String, String).new
+    seen.each { |name, expr| locals[name] = expr if expr && !skip.includes?(name) && !expr.gsub(PythonGuardDefinitions::STRING_LITERAL, "''").matches?(/(?<![\w.])#{Regex.escape(name)}\b/) }
+    locals
+  end
+
+  private def collect_assignments(stmts : Array(MwStmt), seen : Hash(String, String?))
+    stmts.each do |stmt|
+      if m = stmt.text.match(MW_LOCAL_ASSIGNMENT)
+        seen[m[1]] = seen.has_key?(m[1]) ? nil : m[2].strip
+      end
+      collect_assignments(stmt.children, seen)
+    end
+  end
+
+  # `text` with each local the middleware assigns once replaced by its
+  # parenthesized value (`if not authed:` reads `not (<the check>)`); nil
+  # when it names none.
+  private def mw_expand_locals(text : String) : String?
+    # Two locals naming each other would expand forever.
+    return if @mw_locals.empty? || @mw_expansions > 64
+    changed = false
+    expanded = text.gsub(MW_LOCAL_NAME) do |name|
+      next name unless value = @mw_locals[name]?
+      changed = true
+      "(#{value})"
+    end
+    return unless changed
+    @mw_expansions += 1
+    expanded
+  end
+
+  private def path_expr(klass : MwClass) : Regex
+    return STARLETTE_PATH_EXPR if klass.path_vars.empty?
+    mw_re("#{STARLETTE_PATH_EXPR.source}|(?<![\\w.])(?:#{klass.path_vars.map { |var| Regex.escape(var) }.join('|')})\\b")
+  end
+
+  private def mw_view_call : Regex
+    /\bcall_next\b/
+  end
+
+  # An anonymous caller sends no credential and has no user: a cookie or
+  # credential header compared or present is false for it, missing is true.
+  # Any other read of the request (its host, client address) is the
+  # caller's choice, not who the caller is.
+  private def mw_atom(atom : String, klass : MwClass, sample : MwSample) : MwTri
+    if expanded = mw_expand_locals(atom)
+      return mw_eval(expanded, klass, sample)
+    end
+    unless atom.matches?(/\Arequest\.method\b/) || atom.matches?(path_expr(klass))
+      # `request.user.is_authenticated` and the like.
+      return super if atom.matches?(/\buser\.is_anonymous\b/) || atom.matches?(MW_ANONYMOUS_FAILS)
+      if (atom.matches?(MW_CREDENTIAL_SOURCE_HTTP) && atom.matches?(MW_CREDENTIAL_NAME_HTTP)) || atom.matches?(MW_IDENTITY_CALL)
+        # A CSRF double-submit token is no identity.
+        return MwTri::Choice if atom.matches?(PythonGuardDefinitions::CREDENTIAL_LOOKALIKE)
+        return atom.matches?(MW_CREDENTIAL_MISSING) ? MwTri::T : MwTri::F
+      end
+      return MwTri::Choice if atom.matches?(/(?<![\w.])request\./)
+    end
+    verdict = super
+    @mw_unknown_atom ||= atom if verdict.unknown?
+    verdict
+  end
+
+  private def mw_return(expr : String, klass : MwClass, why : String?) : MwOutcome
+    super(mw_expand_locals(expr) || expr, klass, why)
+  end
+
+  # A 401/403 answer, written in place or returned by a helper
+  # (`return deny()` where `deny` builds the 401 response).
+  private def mw_refusal?(text : String) : Bool
+    return true if text.matches?(REFUSAL_MARKER) || super
+    callee = text.match(/\A(?:return|raise)\s+\(?\s*(?:await\s+)?([A-Za-z_][\w.]*)\s*\(/).try(&.[1]) || return false
+    site = callable_site(@mw_file, callee) || return false
+    definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/).try(&.matches?(REFUSAL_MARKER)) || false
   end
 end

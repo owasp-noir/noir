@@ -12,6 +12,10 @@ require "../../../utils/top_level_split"
 # parameter, or a path test the endpoint's `<path:...>` placeholder may or
 # may not satisfy) or `Unknown` (a setting, a test this cannot read). A
 # view served only behind an `Unknown` keeps the guard, with a note.
+#
+# FastAPIAuthTagger walks `@app.middleware("http")` functions with the same
+# evaluator, overriding the hooks that differ (`path_expr`, `mw_view_call`,
+# `mw_atom`, `mw_return`, `mw_refusal?`).
 module DjangoMiddlewareGuard
   private record MwStmt, text : String, children : Array(MwStmt)
 
@@ -172,7 +176,7 @@ module DjangoMiddlewareGuard
   # string literal; nil otherwise.
   private def mw_strict_literals(text : String) : Array(String)?
     text = text.strip
-    return unless text.size >= 2 && text[0].in?('[', '(') && text[-1].in?(']', ')')
+    return unless text.size >= 2 && text[0].in?('[', '(', '{') && text[-1].in?(']', ')', '}')
     Noir::TopLevelSplit.split(text[1...-1], ',', Noir::TopLevelSplit::Rules::PYTHON).compact_map do |item|
       item = item.strip
       next if item.empty?
@@ -268,11 +272,11 @@ module DjangoMiddlewareGuard
     body.each_line do |raw|
       line = Analyzer::Python::Helper.strip_python_comment(raw).rstrip
       next if line.strip.empty? && depth == 0
-      if depth == 0
+      if depth == 0 && !pending.ends_with?('\\')
         pending_indent = line.size - line.lstrip.size
         pending = line.strip
       else
-        pending += " " + line.strip
+        pending = pending.rchop('\\').rstrip + " " + line.strip
       end
       depth = mw_mask(pending)[1]
       next if depth > 0 || pending.ends_with?('\\')
@@ -399,7 +403,7 @@ module DjangoMiddlewareGuard
       elsif text.starts_with?("raise ")
         outcomes << (mw_refusal?(text) ? MwOutcome::Refuse : MwOutcome::Other)
         return outcomes
-      elsif text.matches?(/\bget_response\s*\(/)
+      elsif text.matches?(mw_view_call)
         # `response = self.get_response(request)`: the view has run, so a
         # refusal after it only replaces the response.
         outcomes << (why ? MwOutcome::PassUnresolved : MwOutcome::Pass)
@@ -440,8 +444,13 @@ module DjangoMiddlewareGuard
     taken > 0 || rest > 0 ? 1 : 0
   end
 
+  # A call that hands the request on to the view.
+  private def mw_view_call : Regex
+    /\bget_response\s*\(/
+  end
+
   private def mw_return(expr : String, klass : MwClass, why : String?) : MwOutcome
-    passes = expr.matches?(/\bget_response\s*\(|\bsuper\s*\(\s*\)\s*\.__call__\s*\(/) || klass.response_vars.includes?(expr) ||
+    passes = expr.matches?(mw_view_call) || expr.matches?(/\bsuper\s*\(\s*\)\s*\.__call__\s*\(/) || klass.response_vars.includes?(expr) ||
              (klass.process_request && (expr.empty? || expr == "None"))
     if passes
       return MwOutcome::Pass unless why
@@ -581,7 +590,7 @@ module DjangoMiddlewareGuard
     if m = expr.match(/\A(?:tuple|list|set)\s*\(\s*((?:settings\.)?\w+)\s*\)\z/)
       return mw_list(m[1], klass.lists)
     end
-    return mw_strict_literals(expr) if expr.matches?(/\A[(\[]/)
+    return mw_strict_literals(expr) if expr.matches?(/\A[(\[{]/)
     parts = Noir::TopLevelSplit.split(expr, '+', Noir::TopLevelSplit::Rules::PYTHON).map(&.strip)
     results = [""]
     parts.each_with_index do |part, idx|
