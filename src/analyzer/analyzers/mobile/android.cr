@@ -123,8 +123,9 @@ module Analyzer::Mobile
 
       if filters.empty?
         # A source-set stub merging attributes into a src/main component
-        # whose filters live there; src/main reports it.
-        return if overlaid.includes?(attr(component, "name") || "")
+        # whose filters live there; src/main reports it. `tools:node="replace"`
+        # drops those filters, so that one is filter-less in its variant.
+        return if overlaid.includes?(attr(component, "name") || "") && attr(component, "node") != "replace"
         # No intent-filter: a filter-less component defaults to NOT exported,
         # so it is reachable from another app only when `exported="true"` is
         # set explicitly — and then an explicit intent naming `package/component`
@@ -667,6 +668,9 @@ module Analyzer::Mobile
     # `com.android.application`, or a plugin alias / convention plugin named
     # after it (`libs.plugins.android.application`).
     APPLICATION_PLUGIN_RE = /android[._-]application\b/
+    # An applicationId assignment statement, whatever its value: only an
+    # application module sets one, even to a value the scan can't read.
+    APPLICATION_ID_SET_RE = /(?:^|[{;])[ \t]*applicationId\b(?:\s*[=(]|[ \t]+["'\w$])/m
     SETTINGS_INCLUDE_RE   = /["']:([\w.\-]+(?::[\w.\-]+)*)["']/
     SETTINGS_SEARCH_DEPTH = 6
 
@@ -675,7 +679,7 @@ module Analyzer::Mobile
     # only one whose build script names this module (`project(":lib")`).
     # Nil for an application module or when the consumer is ambiguous.
     private def consuming_application_id(gradle_path : String, content : String) : String?
-      return if content.matches?(APPLICATION_PLUGIN_RE)
+      return if content.matches?(APPLICATION_PLUGIN_RE) || content.matches?(APPLICATION_ID_SET_RE)
 
       module_dir = File.dirname(gradle_path)
       settings_dir = module_dir
