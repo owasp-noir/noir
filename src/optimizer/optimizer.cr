@@ -612,16 +612,23 @@ class EndpointOptimizer
 
     opened = Set(Tuple(String, String, String)).new
     code = Hash(String, Array(Tuple(String, String, String))).new
+    # Expanded code paths of each row, read before any proxy folds into it.
+    files = Hash(Tuple(String, String, String), Array(String)).new
     final_map.each do |key, endpoint|
       next if endpoint.non_http? || !code_technology_contributed?(endpoint)
       (code[unify_path_placeholders(key[1])] ||= [] of Tuple(String, String, String)) << key
+      files[key] = endpoint.details.code_paths.map { |path_info| Noir::PathScope.expand(path_info.path) }
     end
     held.each do |key, proxy|
-      # Like the dedup's cross-technology rule: where several projects serve
-      # a method at the path, only their merged (unscoped) row takes it; a
-      # project-scoped one says nothing about which project the proxy fronts.
+      # A proxy declared inside a project fronts that project, so only its
+      # routes are candidates (one merged across technologies included); one
+      # outside every project may front any of them. Where several rows
+      # still serve a method at the path, it says nothing about which one it
+      # fronts and stays apart.
+      scope = proxy.details.code_paths.first?.try { |path_info| source_project_scope(path_info.path) } || ""
       targets = (code[unify_path_placeholders(key[1])]? || [] of Tuple(String, String, String))
-        .group_by(&.[0]).values.compact_map { |rows| rows.size == 1 ? rows[0] : rows.find(&.[2].empty?) }
+        .select { |row| scope.empty? || files[row].any? { |file| Noir::PathScope.under_normalized_root?(file, scope) } }
+        .group_by(&.[0]).values.compact_map { |rows| rows[0] if rows.size == 1 }
       targets = [key] if targets.empty?
       open = proxy.tags.none? { |tag| tag.name == "auth" && tag.tagger == Tag.declared_access_tagger(proxy.details.technology || "") }
       targets.each do |target|

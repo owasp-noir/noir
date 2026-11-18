@@ -128,7 +128,8 @@ describe "EndpointOptimizer" do
       # In a monorepo an Ingress fronts its own project: it does not land on
       # another project's route at the same path, nor on a manifest-less
       # script's. A rule outside every project (a root `deploy/`) folds only
-      # where one route serves the method at its path.
+      # where one route serves the method at its path. Rules left unfolded
+      # merge as any two Ingress rows at one path do.
       it "folds an Ingress only into a route of the project that holds it" do
         optimizer = EndpointOptimizer.new(logger, options)
         temp_dir = File.join(Dir.tempdir, "noir-optimizer-ingress-scope-#{Process.pid}-#{Time.utc.to_unix_ms}")
@@ -156,8 +157,7 @@ describe "EndpointOptimizer" do
           result = optimizer.optimize_endpoints([ingress.call(own), ingress.call(web_own), ingress.call(root)] + code)
           rows = result.map { |e| {e.method, e.url, e.details.code_paths.map(&.path).sort!} }.sort!
           rows.should eq([
-            {"ANY", "/", [own]},
-            {"ANY", "/", [root]},
+            {"ANY", "/", [own, root].sort!},
             {"GET", "/", [File.join(tools, "server.py")]},
             {"GET", "/", [File.join(web, "app.py"), web_own]},
             {"GET", "/items", [File.join(api, "app.py")]},
