@@ -2864,10 +2864,11 @@ module Noir
             endpoint.push_param(Param.new(clean_param, "", param_type)) unless clean_param.empty?
           end
         end
-        handler_body.scan(/(?<![.\w$])#{escaped}\??\.(\w++)(?!\s*\()/) do |match|
+        # `headers['accept'] = …` writes through the alias; `==`, `=>` and `||=` still read.
+        handler_body.scan(/(?<![.\w$])#{escaped}\??\.(\w++)(?!\s*\()(?!\s*=(?![=>]))/) do |match|
           endpoint.push_param(Param.new(match[1], "", param_type))
         end
-        handler_body.scan(/(?<![.\w$])#{escaped}(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
+        handler_body.scan(/(?<![.\w$])#{escaped}(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\](?!\s*=(?![=>]))/) do |match|
           endpoint.push_param(Param.new(match[1], "", param_type))
         end
       end
