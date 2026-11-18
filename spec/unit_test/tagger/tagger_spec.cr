@@ -58,7 +58,7 @@ describe "Tagger" do
         endpoints = paths.map do |path|
           details = Details.new(PathInfo.new(path, 204))
           details.technology = "ruby_rails"
-          Endpoint.new("/things", "GET", [] of Param, details)
+          Endpoint.new("/things", "POST", [] of Param, details)
         end
         NoirTaggers.run_tagger(endpoints, options, "rails_security,ruby_auth")
         endpoints.map(&.tags.map(&.name)).uniq!.should eq([["auth", "csrf-protection"]])

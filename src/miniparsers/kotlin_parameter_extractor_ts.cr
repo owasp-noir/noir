@@ -112,12 +112,17 @@ module Noir
       # The declaring class's `@JsonRootName`: the key the body is wrapped
       # in under `UNWRAP_ROOT_VALUE`.
       property json_root : String? = nil
+      # Simple name of the declared type (`Sort` for `org.x.Sort?`), "" when unwritten.
+      getter type_name : String
+      # Named by the class-level `@JsonIgnoreProperties`: a JSON body never
+      # binds it, form/query binding (`WebDataBinder`) still does.
+      property? json_ignored : Bool = false
 
       def initialize(@name, @access_modifier, @has_setter, @init_value,
                      @null_validation_groups = [] of String, @server_managed = false,
                      @validation_annotations = [] of String,
                      @init_string_literal = false,
-                     json_name : String? = nil)
+                     json_name : String? = nil, @type_name = "")
         @json_name = json_name || @name
         @json_name_fixed = !json_name.nil?
       end
@@ -178,8 +183,14 @@ module Noir
       walk_class_containers(root) do |decl|
         name = type_identifier_text(decl, source)
         next if name.empty?
-        strategy, root_name = jackson_class_annotations(decl, source)
+        strategy, root_name, ignored = jackson_class_annotations(decl, source)
         fields = apply_json_naming(collect_class_fields(decl, source), strategy, root_name)
+        unless ignored.empty?
+          fields = fields.map do |field|
+            field.json_ignored = true if ignored.includes?(field.json_name)
+            field
+          end
+        end
         results[name] = fields unless fields.empty?
       end
       results
@@ -203,19 +214,30 @@ module Noir
     # Not the `::class` inside the header's own annotations.
     CLASS_KEYWORD_RE = /(?<!::)(?<!\.)\b(?:class|object|interface)\b/
 
-    # `{@JsonNaming strategy, @JsonRootName}` of a class, from its own
-    # annotations or the lines directly above it.
-    private def jackson_class_annotations(decl : LibTreeSitter::TSNode, source : String) : {String?, String?}
+    # `@JsonIgnoreProperties("a", ...)` / `(value = ["a", ...])`. Its only
+    # String-valued attribute is `value`.
+    JSON_IGNORE_PROPERTIES_RE = /@(?:\w+\.)*JsonIgnoreProperties\s*\(([^)]*)\)/
+
+    # `{@JsonNaming strategy, @JsonRootName, @JsonIgnoreProperties keys}` of a
+    # class, from its own annotations or the lines directly above it. The keys
+    # are empty under `allowSetters = true`, which still reads them.
+    private def jackson_class_annotations(decl : LibTreeSitter::TSNode, source : String) : {String?, String?, Array(String)}
       text = Noir::TreeSitter.node_text(decl, source)
       header = text[0, mask_strings(text).index(CLASS_KEYWORD_RE) || 0]
       strategy = Noir::JacksonNaming.annotation_strategy(header)
       root = Noir::JacksonNaming.annotation_root_name(header)
-      unless strategy && root
+      ignore_args = header.match(JSON_IGNORE_PROPERTIES_RE).try(&.[1])
+      unless strategy && root && ignore_args
         leading = leading_annotation_lines(decl, source)
         strategy ||= Noir::JacksonNaming.annotation_strategy(leading)
         root ||= Noir::JacksonNaming.annotation_root_name(leading)
+        ignore_args ||= leading.match(JSON_IGNORE_PROPERTIES_RE).try(&.[1])
       end
-      {strategy, root}
+      ignored = [] of String
+      if ignore_args && !ignore_args.matches?(/\ballowSetters\s*=\s*true\b/)
+        ignore_args.scan(/"([^"\\]*)"/) { |match| ignored << match[1] }
+      end
+      {strategy, root, ignored}
     end
 
     # tree-sitter-kotlin leaves an annotation on its own line outside the
@@ -337,7 +359,7 @@ module Noir
                                              string_constants = Hash(String, String).new,
                                              local_string_constants = Hash(String, String).new) : Array(Param)
       conditions = [] of Param
-      append_constraint_params(method, source, verb, conditions, string_constants, local_string_constants)
+      append_constraint_params(method, source, verb, conditions, string_constants, local_string_constants, as_conditions: true)
       conditions
     end
 
@@ -502,6 +524,9 @@ module Noir
         when "prefix_expression"
           if class_name = split_constructor_class_name(child, source)
             collect_orphan_function_nodes(child, source, class_name, result)
+          elsif infix = infix_class_expression(child, source)
+            class_name = Noir::TreeSitter.node_text(LibTreeSitter.ts_node_named_child(infix, 1_u32), source)
+            collect_orphan_function_nodes(LibTreeSitter.ts_node_named_child(infix, 2_u32), source, class_name, result)
           end
           orphan_class = nil
         when "annotation", "line_comment", "multiline_comment"
@@ -737,6 +762,11 @@ module Noir
 
     # ---- DTO field collection ----------------------------------------
 
+    # `org.x.Sort?` -> `Sort`, `List<Item>` -> `List`.
+    private def simple_declared_type(node : LibTreeSitter::TSNode, source : String) : String
+      Noir::TreeSitter.node_text(node, source).split('<').first.rchop('?').split('.').last.strip
+    end
+
     # `private` / `protected` / `internal` from a property's modifiers;
     # Kotlin's default is public. `has_setter` stays true for every field,
     # so binders that accept "public or settable" are unaffected.
@@ -762,6 +792,7 @@ module Noir
           name = ""
           init = ""
           init_string = false
+          type_name = ""
           Noir::TreeSitter.each_named_child(param) do |child|
             case Noir::TreeSitter.node_type(child)
             when "simple_identifier"
@@ -769,7 +800,9 @@ module Noir
             when "string_literal"
               init = decode_string_literal(child, source)
               init_string = true
-            when "user_type", "nullable_type", "binding_pattern_kind",
+            when "user_type", "nullable_type"
+              type_name = simple_declared_type(child, source)
+            when "binding_pattern_kind",
                  "modifiers", "parameter_modifiers", "annotation"
               # type / val|var marker / property annotations — not a
               # default value. `modifiers` carries `@field:Email`-style
@@ -785,7 +818,7 @@ module Noir
           fields << FieldInfo.new(
             name, field_visibility(param, source), true, init, null_validation_groups(param, source),
             server_managed_field?(param, source, name, init, class_name, class_text), validation_annotations(param, source),
-            init_string, json_property_name(param, source)
+            init_string, json_property_name(param, source), type_name
           )
         end
       end
@@ -818,13 +851,16 @@ module Noir
             name = ""
             init = ""
             init_string = false
+            type_name = ""
             Noir::TreeSitter.each_named_child(member) do |child|
               case Noir::TreeSitter.node_type(child)
               when "variable_declaration"
                 Noir::TreeSitter.each_named_child(child) do |sub|
-                  if Noir::TreeSitter.node_type(sub) == "simple_identifier"
-                    name = Noir::TreeSitter.node_text(sub, source)
-                    break
+                  case Noir::TreeSitter.node_type(sub)
+                  when "simple_identifier"
+                    name = Noir::TreeSitter.node_text(sub, source) if name.empty?
+                  when "user_type", "nullable_type"
+                    type_name = simple_declared_type(sub, source)
                   end
                 end
               when "simple_identifier"
@@ -849,7 +885,7 @@ module Noir
             fields << FieldInfo.new(
               name, visibility, true, init, null_validation_groups(member, source),
               server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source),
-              init_string, wire_name
+              init_string, wire_name, type_name
             )
             last_prop_name = name
           else
@@ -1211,8 +1247,10 @@ module Noir
           json_body = effective_format == "json"
           fields.each do |field|
             next if field.server_managed?
+            next if json_body && field.json_ignored?
             next if field.null_for_any_group?(validation_groups)
             next unless json_body || field.access_modifier == "public" || field.has_setter?
+            next if !json_body && JvmTsHelpers::PAGING_TYPES.includes?(field.type_name)
             # `default_value` is an annotation-supplied value
             # (`@RequestParam(defaultValue = "all")`) and is already literal.
             # A field initialiser only becomes a value when it is one —
@@ -1337,6 +1375,7 @@ module Noir
       if fields = class_fields[type_name]?
         fields.each do |field|
           next if field.server_managed?
+          next if format == "json" && field.json_ignored?
           # `literal_default`, not `init_value`: this inferred-body path
           # (`req.awaitBody<Post>()`) fed the raw initialiser straight into
           # `Param#value`, so it published `{"addedAt":"LocalDateTime.now()"}`
@@ -1421,7 +1460,8 @@ module Noir
                                          verb : String,
                                          sink : Array(Param),
                                          string_constants : Hash(String, String),
-                                         local_string_constants : Hash(String, String))
+                                         local_string_constants : Hash(String, String),
+                                         as_conditions : Bool = false)
       ann = mapping_annotation_on(method, source)
       return unless ann
       args = annotation_args(ann)
@@ -1441,7 +1481,7 @@ module Noir
           # one format (mirrors the legacy `||=` quirk).
           format = QUERY_VERB_PARAMS.includes?(verb.upcase) ? "query" : "form"
           string_values_in(value, source, string_constants, local_string_constants).each do |raw|
-            next unless pair = split_constraint(raw)
+            next unless pair = as_conditions ? condition_constraint(raw) : split_constraint(raw)
             name, default = pair
             # Already bound by a `@RequestParam` of the same name.
             next if name.empty? || sink.any? { |param| param.name == name }
@@ -1449,13 +1489,21 @@ module Noir
           end
         when "headers"
           string_values_in(value, source, string_constants, local_string_constants).each do |raw|
-            next unless pair = split_constraint(raw)
+            next unless pair = as_conditions ? condition_constraint(raw) : split_constraint(raw)
             name, default = pair
             next if name.empty?
             sink << Param.new(name, default, "header")
           end
         end
       end
+    end
+
+    # A route condition's identity. Spring keeps `!name`, `name=` (present and
+    # empty) and `name!=value` apart from `name` (present), so they key as
+    # written; `split_constraint` folds them into what a request would send.
+    private def condition_constraint(raw : String) : Tuple(String, String)?
+      return {raw, ""} if raw.starts_with?('!') || raw.ends_with?('=') || raw.includes?("!=")
+      split_constraint(raw)
     end
 
     # `"name=value"` → `{"name", "value"}`. `"name"` and `"name!=value"`

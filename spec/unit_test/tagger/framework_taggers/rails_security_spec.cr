@@ -18,6 +18,10 @@ require "../../../../src/tagger/tagger"
 #   9:   def create   ->  user = User.new(params[:user])
 #  15:   def update   ->  user.update(params.permit!)
 #
+# exports_controller.rb (rate_limit with its only: on the next line)
+#   5:   def show
+#   8:   def create
+#
 # posts_controller.rb (control: default CSRF + Strong Parameters)
 #   2:   def index
 #   6:   def create   ->  Post.new(post_params)
@@ -37,6 +41,7 @@ describe "RailsSecurityTagger" do
   webhooks = "#{fixture_base}/app/controllers/webhooks_controller.rb"
   users = "#{fixture_base}/app/controllers/users_controller.rb"
   posts = "#{fixture_base}/app/controllers/posts_controller.rb"
+  exports = "#{fixture_base}/app/controllers/exports_controller.rb"
 
   options = create_test_options
   options["base"] = YAML::Any.new(fixture_base)
@@ -77,6 +82,21 @@ describe "RailsSecurityTagger" do
       tag_named(update_ep, "csrf-protection").not_nil!.description.should contain("null_session")
     end
 
+    it "reads the controller through the handler when the route is anchored in routes.rb" do
+      routes = "#{fixture_base}/config/routes.rb"
+      endpoint = build_endpoint(routes, 4)
+      endpoint.handler = Handler.new("webhooks#create", webhooks, 5)
+      RailsSecurityTagger.new(options).perform([endpoint])
+      tag_named(endpoint, "csrf-protection").should_not be_nil
+      tag_named(endpoint, "rate-limit").should_not be_nil
+    end
+
+    it "does not flag a GET action, which Rails never CSRF-verifies" do
+      endpoint = build_endpoint(webhooks, 10, "GET") # index
+      RailsSecurityTagger.new(options).perform([endpoint])
+      tag_named(endpoint, "csrf-protection").should be_nil
+    end
+
     it "does not flag a controller relying on the Rails default" do
       endpoint = build_endpoint(posts, 2) # index
       RailsSecurityTagger.new(options).perform([endpoint])
@@ -99,6 +119,14 @@ describe "RailsSecurityTagger" do
       RailsSecurityTagger.new(options).perform([endpoint])
       tag_named(endpoint, "rate-limit").should be_nil
     end
+  end
+
+  it "reads a rate_limit only: continued on the next line" do
+    show = build_endpoint(exports, 5, "GET")
+    create = build_endpoint(exports, 8)
+    RailsSecurityTagger.new(options).perform([show, create])
+    tag_named(show, "rate-limit").should be_nil
+    tag_named(create, "rate-limit").should_not be_nil
   end
 
   describe "mass-assignment" do
