@@ -975,9 +975,12 @@ module Analyzer::Ruby
         end
         return params
       end
-      # An app action that overrides Devise's never runs its reads.
-      if ctrl_path && (owner = action_owner(ctrl_path, action)) && !owner.devise_reads.includes?(action)
-        return params
+      # An app action that overrides Devise's runs its reads only when it, or
+      # a helper of its file it calls, reaches them.
+      if ctrl_path && (owner = action_owner(ctrl_path, action))
+        reaches = false
+        each_helper(owner, action) { |name, _| reaches ||= owner.devise_reads.includes?(name) }
+        return params unless reaches
       end
 
       names.each do |name|
@@ -2294,7 +2297,7 @@ module Analyzer::Ruby
     # A helper call `params_for(:post)` or a local `post` read as params
     # (`.permit(` / `[`); see `spell_out_params`.
     PARAMS_ALIAS = /(?<![\w.@:$])([a-z_]\w*[!?]?)(?:\s*\(\s*(?::(\w+)|['"](\w+)['"])\s*\))?(?=\s*(?:\.\s*permit\s*\(|\[))/
-    WRAPPER_USE  = /[\w!?]\s*\(\s*(?::\w+|['"]\w+['"])\s*\)\s*(?:\.\s*permit\s*\(|\[)/
+    WRAPPER_USE  = /(?<![\w.])[a-z_]\w*[!?]?\s*\(\s*(?::\w+|['"]\w+['"])\s*\)\s*(?:\.\s*permit\s*\(|\[)/
     WRAPPER_DEF  = /\bdef\s+(?:self\.)?([a-z_]\w*[!?]?)\s*\(\s*(\w+)/
     # `post = params.require(:post)` / `post = params[:post]`, alone on its line.
     LOCAL_BINDING = /\A\s*([a-z_]\w*)\s*=\s*params(?:\[|\.require\s*\()\s*(?::(\w+)|['"](\w+)['"])\s*[\])]\s*\z/
