@@ -68,7 +68,7 @@ module Analyzer::Javascript
       end
 
       if content.includes?("@nuxtjs/proxy")
-        config_entries(content, /\bproxy\s*:\s*([\[{])/) do |body, array, offset|
+        config_entries(content, /\bproxy\s*:\s*([\[{])/, top_level: true) do |body, array, offset|
           contexts = [] of String
           if array
             body.scan(/\[\s*(['"`])(\/[^'"`]*)\1/) { |e| contexts << e[2] }
@@ -105,8 +105,11 @@ module Analyzer::Javascript
 
     # Yields the body of each `[...]` / `{...}` value the pattern opens, whether
     # it is an array, and where it starts.
-    private def config_entries(content : String, pattern : Regex, & : String, Bool, Int32 -> Nil)
+    # `top_level` keeps only keys of the config object itself, so a dev-server
+    # `vite: { server: { proxy: ... } }` map is not read as a served forward.
+    private def config_entries(content : String, pattern : Regex, top_level : Bool = false, & : String, Bool, Int32 -> Nil)
       content.scan(pattern) do |m|
+        next if top_level && content[0...m.begin(0)].count('{') - content[0...m.begin(0)].count('}') > 1
         open = m.end(0) - 1
         array = m[1] == "["
         close = array ? Noir::JSLiteralScanner.find_matching_bracket(content, open) : Noir::JSLiteralScanner.find_matching_brace(content, open)

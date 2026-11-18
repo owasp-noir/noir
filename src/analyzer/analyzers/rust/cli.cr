@@ -589,7 +589,7 @@ module Analyzer::Rust
                             path : String, line_no : Int32, endpoints : Hash(String, Endpoint))
       kind, body = attr
       unquoted_body = body.gsub(/"(?:\\.|[^"\\])*"/, "")
-      return if unquoted_body.matches?(/\b(?:subcommand|skip)\b/)
+      return if unquoted_body.matches?(/\b(?:subcommand|flatten|skip)\b/)
       ep = fetch_endpoint(endpoints, url, path, line_no)
 
       if kind == :argh
