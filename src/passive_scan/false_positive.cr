@@ -78,9 +78,10 @@ module NoirPassiveScan
     CODE_OPERAND    = %q([A-Za-z_][\w.]*(?:\([^'"`]*\))?)
     CODE_EXPRESSION = /\A(?:[A-Za-z_][\w.]*\([^'"`]*\)|#{CODE_OPERAND}(?:\s*(?:\bor\b|\|\||\?\?)\s*#{CODE_OPERAND})+)\s*[;,]?\z/
 
-    # An integer constant (`4242`, `4242_u32`, `0x1F`): a key, token or
-    # connection string is never a bare number.
-    NUMBER_LITERAL = /\A[-+]?(?:0x[0-9a-f_]+|\d[\d_]*)(?:_?(?:[uif](?:8|16|32|64|128)|u?l{1,2}))?\z/i
+    # A machine-word integer constant (`4242`, `4242_u32`, `0x1F`): a key,
+    # token or connection string is never one. Capped at 64 bits so a hex
+    # key (`0x` + 64 hex digits) is still a literal.
+    NUMBER_LITERAL = /\A[-+]?(?:0x[0-9a-f_]{1,16}|\d[\d_]{0,18})(?:_?(?:[uif](?:8|16|32|64|128)|u?l{1,2}))?\z/i
 
     # Text right after a variable name, past its closing quote and
     # bracket: `"K"] = "…"`, `K"] ||= "…"`, `K || "…"`.
@@ -325,7 +326,7 @@ module NoirPassiveScan
       offset = 0
       while idx = line.byte_index(name, offset)
         offset = idx + name.bytesize
-        if shell_expansion?(line, idx)
+        if shell_expansion?(line, idx, offset)
           # The expansion's default can still be a credentialed URL.
           default = EXPANSION_DEFAULT.match_at_byte_index(line, offset)
           return true if default && embeds_credential_url?(default[1])
@@ -383,15 +384,20 @@ module NoirPassiveScan
     end
 
     # True when the identifier holding the name at byte `idx` is expanded,
-    # not assigned: `$NAME`, `${APP_NAME:-}`.
-    private def self.shell_expansion?(line : String, idx : Int32) : Bool
+    # not assigned: `$NAME`, `${APP_NAME:-}`. A bare `$NAME =` is a PHP /
+    # Perl assignment, not a read.
+    private def self.shell_expansion?(line : String, idx : Int32, offset : Int32) : Bool
       i = idx
       while i > 0 && (line.byte_at(i - 1).unsafe_chr.ascii_alphanumeric? || line.byte_at(i - 1) == '_'.ord)
         i -= 1
       end
-      i -= 1 if i > 0 && line.byte_at(i - 1) == '{'.ord
-      i > 0 && line.byte_at(i - 1) == '$'.ord
+      braced = i > 0 && line.byte_at(i - 1) == '{'.ord
+      i -= 1 if braced
+      return false unless i > 0 && line.byte_at(i - 1) == '$'.ord
+      braced || !BARE_ASSIGNMENT.match_at_byte_index(line, offset)
     end
+
+    BARE_ASSIGNMENT = /\G\s*=(?![=~>])/
 
     # The value assigned right after a name, quoted or not: `NAME=v`,
     # `NAME: "v"`, `"NAME" => 'v'`. Group 1 is the value.
