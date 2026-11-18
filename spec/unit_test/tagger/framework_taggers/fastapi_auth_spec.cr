@@ -550,10 +550,14 @@ describe "FastAPIAuthTagger" do
       {"main.py", 67, "GET", "/api/orders/{order_id}"}, {"main.py", 72, "GET", "/api/invoices/daily"},
       {"factory.py", 26, "GET", "/assets/{name}"}, {"factory.py", 30, "GET", "/signin"},
       {"factory.py", 34, "GET", "/dashboard"}, {"local_only.py", 14, "GET", "/status"},
-      {"csrf.py", 15, "POST", "/notes"},
+      {"csrf.py", 15, "POST", "/notes"}, {"main.py", 86, "GET", "/api/orders/live"},
+      {"user_check.py", 24, "GET", "/profile"}, {"user_check.py", 29, "GET", "/files/{*file_path}"},
+      {"user_check.py", 34, "GET", "/reports"},
     ]
     endpoints = routes.map do |file, line, method, url|
-      Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new("#{base}/#{file}", line)))
+      endpoint = Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new("#{base}/#{file}", line)))
+      endpoint.protocol = "ws" if url.ends_with?("/live")
+      endpoint
     end
 
     CodeLocator.instance.clear_all
@@ -583,5 +587,13 @@ describe "FastAPIAuthTagger" do
     verdicts["local_only.py:14"].should be_empty
     # A CSRF token check refuses a forged request, not an anonymous one.
     verdicts["csrf.py:15"].should be_empty
+    # Starlette runs an http middleware for HTTP requests only.
+    verdicts["main.py:86"].should be_empty
+    # `request.user.is_authenticated` is false for an anonymous caller.
+    verdicts["user_check.py:24"].should_not be_empty
+    # `{*file_path}` reaches `/files/public/...` too, which is exempt.
+    verdicts["user_check.py:29"].should be_empty
+    # A credential header tested with the name first.
+    verdicts["user_check.py:34"].should_not be_empty
   end
 end

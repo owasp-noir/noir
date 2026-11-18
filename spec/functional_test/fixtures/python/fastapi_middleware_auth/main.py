@@ -80,3 +80,9 @@ for router in (
 ):
     app.include_router(router)
 other.include_router(invoices)
+
+
+# An http middleware never runs for a websocket connection.
+@app.websocket("/api/orders/live")
+async def orders_live(websocket):
+    await websocket.accept()

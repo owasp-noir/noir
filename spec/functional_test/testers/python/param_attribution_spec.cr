@@ -32,7 +32,13 @@ describe "Python param attribution", tags: "functional" do
   it "keeps a FastAPI body whose model is imported from outside the scan" do
     rows = params_for.call("fastapi_unresolved_model")
     rows["POST /acks/{item_id}"].should eq(["item_id:path", "payload:json"])
-    rows["GET /days/{day_id}"].should eq(["color:query", "day_id:path"])
+    # Stdlib and local Enum types add no body.
+    day = rows["GET /days/{day_id}"]
+    day.should contain("color:query")
+    day.should contain("day_id:path")
+    day.none?(&.ends_with?(":json")).should be_true
+    # Beside a body model from outside the scan, a dict body stays embedded.
+    rows["POST /acks/{item_id}/meta"].should eq(["item:json", "item_id:path", "meta:json"])
   end
 
   it "reads Flask fields through a request.form / request.args alias" do

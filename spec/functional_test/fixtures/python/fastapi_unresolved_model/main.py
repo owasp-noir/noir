@@ -25,3 +25,9 @@ def ack(item_id: str, payload: AckRequest, tasks: BackgroundTasks, request: Requ
 @app.get("/days/{day_id}")
 def day(day_id: UUID, on: date, color: Color):
     return {}
+
+
+# Two bodies: FastAPI embeds both under their names.
+@app.post("/acks/{item_id}/meta")
+def ack_meta(item_id: str, meta: dict[str, str], item: AckRequest):
+    return {"tag": meta["tag"]}
