@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../miniparsers/rails_callback_chain"
 
 # Rails-specific security tagger.
 #
@@ -92,11 +93,23 @@ class RailsSecurityTagger < FrameworkTagger
     end
   end
 
+  # The action's `def` from the resolved handler first, then the code
+  # paths: a route drawn in routes.rb (`post "x", to: "c#a"`, member and
+  # collection routes) has the routes file as its code path.
+  private def locations(endpoint : Endpoint) : Array({String, Int32?})
+    locations = endpoint.details.code_paths.map { |info| {info.path, info.line} }
+    if (handler = endpoint.handler) && (path = handler.path)
+      locations.unshift({path, handler.line})
+    end
+    locations.uniq
+  end
+
   private def check_endpoint(endpoint : Endpoint)
-    endpoint.details.code_paths.each do |path_info|
-      lines = read_file_lines(path_info.path)
+    # Rails never CSRF-verifies GET or HEAD.
+    csrf_checked = !endpoint.method.in?("GET", "HEAD")
+    locations(endpoint).each do |path, line_num|
+      lines = read_file_lines(path)
       next if lines.nil?
-      line_num = path_info.line
       next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we read
       # would crash the lines[idx] walks below with IndexError.
@@ -104,12 +117,12 @@ class RailsSecurityTagger < FrameworkTagger
       line_idx = line_num - 1
 
       action_name = extract_action_name(lines, line_idx)
-      flags = class_macro_flags(path_info.path, lines)
+      flags = class_macro_flags(path, lines)
 
       # Each concern is independent — an action can be CSRF-disabled AND
       # rate-limited AND mass-assigning — so collect all that apply rather
       # than returning on the first hit.
-      if desc = check_csrf(lines, line_idx, action_name, flags)
+      if csrf_checked && (desc = check_csrf(lines, line_idx, action_name, flags))
         endpoint.add_tag(Tag.new("csrf-protection", desc, "rails_security"))
       end
 
@@ -129,7 +142,7 @@ class RailsSecurityTagger < FrameworkTagger
     idx = action_line
     while idx >= 0
       if flags[idx] & CSRF_LINE != 0
-        current = lines[idx].strip
+        current = Noir::RailsCallbackChain.statement(lines, idx)
 
         CSRF_DISABLE_PATTERNS.each do |pattern, label|
           if current.matches?(pattern) && macro_applies?(current, action_name)
@@ -155,7 +168,7 @@ class RailsSecurityTagger < FrameworkTagger
     idx = action_line
     while idx >= 0
       if flags[idx] & RATE_LIMIT_LINE != 0
-        current = lines[idx].strip
+        current = Noir::RailsCallbackChain.statement(lines, idx)
         if macro_applies?(current, action_name)
           return "Rate limited by Rails rate_limit — request volume to this action is throttled per client."
         end

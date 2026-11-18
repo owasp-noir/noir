@@ -66,11 +66,14 @@ module Analyzer::Ruby
     DEVISE_PATH_NAMES = {"sign_in" => "sign_in", "sign_out" => "sign_out", "sign_up" => "sign_up",
                          "password" => "password", "confirmation" => "confirmation", "unlock" => "unlock",
                          "registration" => "", "edit" => "edit", "cancel" => "cancel"}
+    # A Devise action override still reads Devise's params when it calls
+    # `super`, a sanitizer helper or `warden.authenticate`.
+    DEVISE_READS = /(?<![\w.:@])(?:super|sign_in_params|sign_up_params|account_update_params|resource_params)\b|\bwarden\.authenticate/
     # Parameters Devise's built-in controllers read per `{group, action}`,
     # paired with the helper method that sanitizes them (`user[...]` nesting
     # dropped, matching `permit` extraction). Attached when the action is
     # handled by Devise itself or by a subclass that does not redefine that
-    # helper.
+    # helper, and whose own action, if any, reaches them (`DEVISE_READS`).
     DEVISE_ACTION_PARAMS = {
       {"sessions", "create"}      => {"sign_in_params", %w[email password]},
       {"registrations", "create"} => {"sign_up_params", %w[email password password_confirmation]},
@@ -162,7 +165,9 @@ module Analyzer::Ruby
       callees_by_action : Hash(String, Array(Noir::RubyCalleeExtractor::Entry)),
       action_lines : Hash(String, Int32),
       # Per method, the helpers it reads only by `[:key]`, with those keys.
-      helper_keys_by_action : Hash(String, Hash(String, Set(String))) = Hash(String, Hash(String, Set(String))).new
+      helper_keys_by_action : Hash(String, Hash(String, Set(String))) = Hash(String, Hash(String, Set(String))).new,
+      # Methods whose body still runs Devise's param reads (see `DEVISE_READS`).
+      devise_reads : Set(String) = Set(String).new
 
     # A `concern :name do ... end` body: its routing lines, replayed wherever
     # `resources ..., concerns: :name` or `concerns :name` names it. Rails
@@ -226,6 +231,8 @@ module Analyzer::Ruby
     alias EngineMountKey = Tuple(String, String)
 
     @controller_data_cache = Hash(String, ControllerData).new
+    # Per file, its helpers that return `params.require(key)`; see `params_wrappers`.
+    @params_wrappers = Hash(String, Set(String)).new
     # Maps a mountable-engine constant (e.g. `DiscoursePoll::Engine`) to the
     # path it is mounted at (`/polls`). A Rails engine's `routes.draw` block
     # holds engine-relative paths; the `mount` that anchors them usually
@@ -967,6 +974,13 @@ module Analyzer::Ruby
           push_unique_param(params, Param.new(param.name, param.value, resolved_type))
         end
         return params
+      end
+      # An app action that overrides Devise's runs its reads only when it, or
+      # a helper of its file it calls, reaches them.
+      if ctrl_path && (owner = action_owner(ctrl_path, action))
+        reaches = false
+        each_helper(owner, action) { |name, _| reaches ||= owner.devise_reads.includes?(name) }
+        return params unless reaches
       end
 
       names.each do |name|
@@ -2089,9 +2103,18 @@ module Analyzer::Ruby
       # Subscript reads wrapped over lines (`request.headers[` / `"X-Key"` /
       # `]`) are read off this folded view; see the `'['` scans below.
       folded_lines = Noir::CallFold.fold(controller_lines) { |l| strip_inline_comment(l) }
+      # Names that stand for `params` (see `spell_out_params`): helpers
+      # returning `params.require(key)`, and the current method's locals
+      # bound to `params.require(:x)` / `params[:x]`. A binding's own read of
+      # `x` waits in `bound_reads` until the local is used as a container
+      # (`local_roots`) or not.
+      wrappers = controller_content.matches?(WRAPPER_USE) ? params_wrappers(path) : Set(String).new
+      locals = Hash(String, String).new
+      bound_reads = Set({String, String}).new
+      local_roots = Set({String, String}).new
 
       controller_lines.each_with_index do |raw_line, index|
-        line = strip_inline_comment(raw_line)
+        line = spell_out_params(strip_inline_comment(raw_line), wrappers, locals) { |key| local_roots << {this_method, key} }
 
         if line.includes?("def ")
           func_name = line.split("def ", 2)[1].split("(")[0].split(";")[0].strip
@@ -2100,6 +2123,7 @@ module Analyzer::Ruby
             this_method = func_name
             # An unclosed `permit(` must not swallow the next action's permits.
             permit_buf = nil
+            locals.clear
             defined_actions << func_name
             action_lines[func_name] = index + 1
             method_bodies[this_method] ||= [] of String
@@ -2159,7 +2183,15 @@ module Analyzer::Ruby
         # `params` only: `sign_in_params[:x]` / `source_params.fetch(:x)` read
         # a nested key). A line with none cannot match any of them, so skip
         # the regex ops — this runs on every line of every controller in the app.
-        line = folded_lines[index]
+        line = spell_out_params(folded_lines[index], wrappers, locals) { |key| local_roots << {this_method, key} }
+        bound = nil
+        if !this_method.empty? && line.includes?('=')
+          if bind = line.match(LOCAL_BINDING)
+            locals[bind[1]] = bound = (bind[2]? || bind[3]).to_s
+          elsif !locals.empty?
+            line.scan(LOCAL_ASSIGN) { |assign| locals.delete(assign[1]) }
+          end
+        end
         # The http_accept_language gem's controller helper parses the
         # `Accept-Language` header.
         if !this_method.empty? && line.includes?("http_accept_language") && line.matches?(/(?<![\w.@:])http_accept_language\b/)
@@ -2191,7 +2223,14 @@ module Analyzer::Ruby
             end
             # `params[:controller]` / `params[:action]` are the router's own keys.
             next if name.empty? || this_method.empty? || name == "controller" || name == "action"
-            (tail.matches?(CONTAINER_USE) ? container_reads : plain_reads) << {this_method, name}
+            read = {this_method, name}
+            if name == bound
+              bound_reads << read
+            elsif tail.matches?(CONTAINER_USE)
+              container_reads << read
+            else
+              plain_reads << read
+            end
             params_body_by_action[this_method] ||= [] of Param
             params_body_by_action[this_method] << Param.new(name, "", param_type)
             params_query_by_action[this_method] ||= [] of Param
@@ -2222,11 +2261,14 @@ module Analyzer::Ruby
         end
       end
 
-      unless permit_roots.empty?
+      bound_reads.each { |read| (local_roots.includes?(read) ? container_reads : plain_reads) << read }
+      unless permit_roots.empty? && local_roots.empty?
         {params_body_by_action, params_query_by_action}.each do |by_action|
           by_action.each do |method, list|
             list.reject! do |param|
-              permit_roots.includes?(param.name) && container_reads.includes?({method, param.name}) && !plain_reads.includes?({method, param.name})
+              read = {method, param.name}
+              next false if plain_reads.includes?(read)
+              local_roots.includes?(read) || (permit_roots.includes?(param.name) && container_reads.includes?(read))
             end
           end
         end
@@ -2235,8 +2277,11 @@ module Analyzer::Ruby
       helper_keys_by_action = Hash(String, Hash(String, Set(String))).new
       helper_calls_by_action = build_helper_call_map(method_bodies, defined_actions, helper_keys_by_action)
 
+      devise_reads = Set(String).new
+      method_bodies.each { |name, body| devise_reads << name if body.any?(&.matches?(DEVISE_READS)) }
+
       data = ControllerData.new(path, param_type, params_method, params_body_by_action, params_query_by_action,
-        defined_actions, helper_calls_by_action, callees_by_action, action_lines, helper_keys_by_action)
+        defined_actions, helper_calls_by_action, callees_by_action, action_lines, helper_keys_by_action, devise_reads)
       @controller_data_cache[path] = data
       data
     end
@@ -2247,6 +2292,64 @@ module Analyzer::Ruby
       return line unless index > 0 && line.matches?(/\A\s*\.\s*(?:permit|expect)\s*\(/)
       previous = strip_inline_comment(lines[index - 1]).strip
       previous.matches?(/(?<![\w.])params(?:\.(?:require|fetch)\s*\([^)]*\))?\z/) ? "#{previous}#{line.lstrip}" : line
+    end
+
+    # A helper call `params_for(:post)` or a local `post` read as params
+    # (`.permit(` / `[`); see `spell_out_params`.
+    PARAMS_ALIAS = /(?<![\w.@:$])([a-z_]\w*[!?]?)(?:\s*\(\s*(?::(\w+)|['"](\w+)['"])\s*\))?(?=\s*(?:\.\s*permit\s*\(|\[))/
+    WRAPPER_USE  = /(?<![\w.])[a-z_]\w*[!?]?\s*\(\s*(?::\w+|['"]\w+['"])\s*\)\s*(?:\.\s*permit\s*\(|\[)/
+    WRAPPER_DEF  = /\bdef\s+(?:self\.)?([a-z_]\w*[!?]?)\s*\(\s*(\w+)/
+    # `post = params.require(:post)` / `post = params[:post]`, alone on its line.
+    LOCAL_BINDING = /\A\s*([a-z_]\w*)\s*=\s*params(?:\[|\.require\s*\()\s*(?::(\w+)|['"](\w+)['"])\s*[\])]\s*\z/
+    LOCAL_ASSIGN  = /(?<![\w.@:$])([a-z_]\w*)\s*(?:\|\||&&|[-+*\/])?=(?![=~>])/
+
+    # `line` with what stands for `params` spelled out as the read it is:
+    # `params_for(:post).permit(` (a helper of `wrappers`) and `post.permit(`
+    # / `post[:title]` (a local of `locals`, bound to `:post`) become
+    # `params.require(:post).permit(` / `params.require(:post)[:title]`, so
+    # the permit and subscript scans read them like the plain spelling.
+    # Yields the key of each local used.
+    private def spell_out_params(line : String, wrappers : Set(String), locals : Hash(String, String), & : String ->) : String
+      return line if wrappers.empty? && locals.empty?
+      line.gsub(PARAMS_ALIAS) do |text, m|
+        if key = m[2]? || m[3]?
+          next text unless wrappers.includes?(m[1])
+        else
+          next text unless key = locals[m[1]]?
+          yield key
+        end
+        "params.require(:#{key})"
+      end
+    end
+
+    # Helpers returning `params.require(key)` for the key they are passed
+    # (`def params_for(key) = params.require(key)`), defined by the
+    # controller at `path`, its ancestors or their concerns.
+    private def params_wrappers(path : String) : Set(String)
+      files = callback_chain.controller_in(path).try { |leaf| callback_chain.resolve(leaf, nil).paths } || [] of String
+      wrappers = Set(String).new
+      (files << path).uniq!.each do |file|
+        own = @params_wrappers[file] ||= file_params_wrappers(file)
+        wrappers.concat(own)
+      end
+      wrappers
+    end
+
+    private def file_params_wrappers(path : String) : Set(String)
+      found = Set(String).new
+      return found unless known_file?(path)
+      name = nil
+      returns = nil
+      ruby_source(path).each_line do |raw|
+        line = strip_inline_comment(raw)
+        if line.includes?("def ")
+          m = line.match(WRAPPER_DEF)
+          name = m.try(&.[1])
+          returns = m.try { |d| /(?<![\w.])params\.require\s*\(\s*#{d[2]}\s*\)/ }
+        end
+        found << name if name && returns && line.includes?("params.require") && line.matches?(returns)
+      end
+      found
     end
 
     PERMIT_MAX_LINES = 200

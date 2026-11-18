@@ -66,6 +66,43 @@ private def env_names_rule
     YAML
 end
 
+# A mongodb-connection-string-shaped rule: the env names plus a regex for
+# a URL with userinfo, whatever the password is.
+private def mongodb_rule
+  PassiveScan.new(YAML.parse(<<-'YAML'))
+    id: mongodb-connection-string
+    info: {name: mongodb, author: [test], severity: high, description: ., reference: []}
+    matchers-condition: or
+    matchers:
+      - type: word
+        patterns: [MONGODB_URI, MONGO_URL]
+        condition: or
+      - type: regex
+        patterns: ['mongodb(?:\+srv)?://[^:/\s]+:[^@/\s]+@[^/\s]+']
+        condition: or
+    category: secret
+    techs: ['*']
+    YAML
+end
+
+# A private-key-shaped rule whose regex is a name assignment with any value.
+private def private_key_rule
+  PassiveScan.new(YAML.parse(<<-'YAML'))
+    id: private-key
+    info: {name: private key, author: [test], severity: critical, description: ., reference: []}
+    matchers-condition: or
+    matchers:
+      - type: word
+        patterns: [PRIVATE_KEY]
+        condition: or
+      - type: regex
+        patterns: ['PRIVATE_KEY\s*=\s*[''"]?[^''"]+[''"]?']
+        condition: or
+    category: secret
+    techs: ['*']
+    YAML
+end
+
 describe NoirPassiveScan::FalsePositive do
   describe ".suppress?(rule, line)" do
     it "keeps a line whose value-shape regex matches (real literal)" do
@@ -164,6 +201,97 @@ describe NoirPassiveScan::FalsePositive do
         %(mongo = os.environ.get("MONGO_URL", "mongodb://localhost:27017")),
       ].each do |line|
         NoirPassiveScan::FalsePositive.suppress?(env_names_rule, line).should be_true, "expected suppressed: #{line}"
+      end
+    end
+
+    it "suppresses a name assigned a reference or a code expression, not a literal" do
+      [
+        # Shell handoffs: the value is another variable, whatever follows it.
+        %(  DEMO_DATABASE_URL="$ORDER_DSN" \\),
+        %(DATABASE_URL="$ORDER_DSN" ./migrate),
+        %(ORDER_DSN="${DEMO_DATABASE_URL:-}"),
+        %(export DATABASE_URL=${ORDER_DSN:-}),
+        %q(export DATABASE_URL="postgresql://\${PGUSER}:\${PGPASS}@\${PGHOST}/demo"),
+        %(DATABASE_URL=... cargo run),
+        # Code that types or reads the name.
+        %(    DATABASE_URL: str | None = None),
+        %(cfg = {"DATABASE_URL": demo_db.DATABASE_URL}),
+        %(demo_db.DATABASE_URL = self._state["DATABASE_URL"]),
+        %(    DATABASE_URL = explicit or build_url()),
+        %(    DATABASE_URL = explicit or build_url(read_secret())),
+        %(    const val DATABASE_URL = "DATABASE_URL"),
+      ].each do |line|
+        NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_true, "expected suppressed: #{line}"
+      end
+    end
+
+    it "keeps a literal assigned next to the same shapes" do
+      secret = "S3cret"
+      [
+        %(DATABASE_URL="${ORDER_DSN:-postgres://admin:#{secret}@db.example.test/app}"),
+        %(DATABASE_URL=postgres://admin:#{secret}@db.example.test/app ./migrate),
+        %(    DATABASE_URL: str = "postgres://admin:#{secret}@db.example.test/app"),
+        %(demo_db.DATABASE_URL = "sqlite:///:memory:"),
+        # A credential default inside an expansion or a call is still a literal.
+        %(  uri: ${DATABASE_URL:mongodb://admin:#{secret}@localhost:27017/demo}),
+        %(  ORDER_DSN: ${DATABASE_URL:-postgres://admin:#{secret}@db.example.test/app}),
+        %(cfg = {"DATABASE_URL" => ENV.fetch("DEMO_TEST_DATABASE_URL", "postgresql://demo:#{secret}@db.example.test:5432/demo")}),
+        # PHP / Perl assign through `$NAME`; only a read is an expansion.
+        %($DATABASE_URL = "postgres://admin:#{secret}@db.example.test/app";),
+        # A first quoted token that holds nothing does not hide a later literal.
+        %(DATABASE_URL = """postgres://admin:#{secret}@db.example.test/app"""),
+        %(DATABASE_URL = "" if DEBUG else "postgres://admin:#{secret}@db.example.test/app"),
+        %(DATABASE_URL = "${ORDER_DSN}" || "postgres://admin:#{secret}@db.example.test/app"),
+      ].each do |line|
+        NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_false, "expected kept: #{line}"
+      end
+      NoirPassiveScan::FalsePositive.suppress?(github_rule, "GITHUB_TOKEN=demo.token.value").should be_false
+    end
+
+    it "judges a long chain of calls without hitting the regex match limit" do
+      ["f(a)||", "f(g(a))||"].each do |operand|
+        line = "DATABASE_URL = #{operand * 30}'x'"
+        NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_false
+      end
+    end
+
+    it "suppresses a credentialed-URL regex hit whose password is a stand-in" do
+      [
+        %(MONGODB_URI=mongodb://<user>:<password>@host:port/database?options),
+        %(or use `mongodb://<user>:<password>@localhost:27017/demo`),
+        %(uri = "mongodb://{}:{}@{}/demo".format(user, pw, host)),
+        %(MONGO_URL=mongodb://demo:${MONGO_PASSWORD}@db.example.test/app),
+      ].each do |line|
+        NoirPassiveScan::FalsePositive.suppress?(mongodb_rule, line).should be_true, "expected suppressed: #{line}"
+      end
+      # `pass` is not a placeholder: a short password is still a password.
+      ["pass", "R3alPw"].each do |password|
+        [
+          %(uri = "mongodb://admin:#{password}@db.example.test/app"),
+          %(MONGODB_URI=mongodb://user:#{password}@localhost:27017/app),
+          %(see mongodb://<user>:<password>@host or mongodb://admin:#{password}@db.example.test),
+        ].each do |line|
+          NoirPassiveScan::FalsePositive.suppress?(mongodb_rule, line).should be_false, "expected kept: #{line}"
+        end
+      end
+    end
+
+    it "suppresses a name-assignment regex hit whose value is a number or code" do
+      [
+        %(  ERROR_DEMO_NO_PRIVATE_KEY = 4242_u32),
+        %(ITEM_PRIVATE_KEY = 0x1F),
+        %(DEMO_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)),
+      ].each do |line|
+        NoirPassiveScan::FalsePositive.suppress?(private_key_rule, line).should be_true, "expected suppressed: #{line}"
+      end
+      [
+        %(PRIVATE_KEY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"),
+        %(DEMO_PRIVATE_KEY=MIIEvQIBADANBgkqhkiG9w0BAQEFAASC),
+        # A hex key is a number only in shape.
+        %(DEMO_PRIVATE_KEY=0x#{"ab" * 32}),
+        %(# PRIVATE_KEY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"),
+      ].each do |line|
+        NoirPassiveScan::FalsePositive.suppress?(private_key_rule, line).should be_false, "expected kept: #{line}"
       end
     end
 
