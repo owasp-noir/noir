@@ -26,7 +26,7 @@ module Analyzer::Python
     # argparse
     ARGPARSE_NEW_RE     = /(\w+)\s*=\s*(?:argparse\.)?ArgumentParser\s*\(/
     ARGPARSE_PROG_RE    = /ArgumentParser\([^)]*\bprog\s*=\s*[rf]?["']([^"']+)["']/
-    ADD_PARSER_RE       = /(\w+)\s*=\s*(\w+)\.add_parser\s*\(\s*[rf]?["']([^"']+)["']/
+    ADD_PARSER_RE       = /(?:(\w+)\s*=\s*)?(\w+)\.add_parser\s*\(\s*[rf]?["']([^"']+)["']/
     ADD_ARGUMENT_RE     = /(\w+)\s*\.\s*add_argument\s*\(([^)]*)/
     ARGPARSE_PARENTS_RE = /\bparents\s*=\s*[\[(]([^\])]*)[\])]/
     ARGPARSE_GROUP_RE   = /(\w+)\s*=\s*(\w+)\s*\.\s*add_(?:argument|mutually_exclusive)_group\s*\(/
@@ -208,12 +208,15 @@ module Analyzer::Python
       end
 
       last_urls = {} of String => String
+      has_command = false
       calls.each do |_, call|
-        if (target = argparse_parser_target(call, root_url)) && !templates.includes?(target[0])
-          last_urls[target[0]] = target[1]
-        end
+        next unless target = argparse_parser_target(call, root_url)
+        var, url = target
+        next if var && templates.includes?(var)
+        has_command = true
+        last_urls[var] = url if var
       end
-      return if last_urls.empty?
+      return unless has_command
 
       # Each assignment builds a new parser: {command URL (nil for a
       # template), its arguments so far}. Variables and argument groups point
@@ -225,10 +228,11 @@ module Analyzer::Python
         if target = argparse_parser_target(call, root_url)
           var, url = target
           inherited = argparse_parents(call).flat_map { |name| var_parser[name]?.try { |id| parsers[id][1] } || [] of Param }
-          url = nil if templates.includes?(var)
-          var_parser[var] = parsers.size
+          url = nil if var && templates.includes?(var)
+          var_parser[var] = parsers.size if var
           parsers << {url, inherited.dup}
-          if url && !inherited.empty?
+          # A subcommand is a command even when it takes no arguments.
+          if url && (!inherited.empty? || call.matches?(ADD_PARSER_RE))
             ep = fetch_endpoint(endpoints, url, path, line_no)
             inherited.each { |param| ep.push_param(param) }
           end
@@ -267,9 +271,9 @@ module Analyzer::Python
 
     # `{variable, command URL}` for a `x = ArgumentParser(...)` or
     # `x = sub.add_parser("name", ...)` assignment.
-    private def argparse_parser_target(call : String, root_url : String) : Tuple(String, String)?
+    private def argparse_parser_target(call : String, root_url : String) : Tuple(String?, String)?
       if m = call.match(ADD_PARSER_RE)
-        {m[1], "#{root_url}/#{m[3]}"}
+        {m[1]?, "#{root_url}/#{m[3]}"}
       elsif m = call.match(ARGPARSE_NEW_RE)
         {m[1], root_url}
       end
