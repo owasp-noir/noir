@@ -290,9 +290,28 @@ describe NoirPassiveScan::FalsePositive do
         # A hex key is a number only in shape.
         %(DEMO_PRIVATE_KEY=0x#{"ab" * 32}),
         %(# PRIVATE_KEY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"),
+        # A value that spells the name next to key material is still a literal.
+        %(ITEM_PRIVATE_KEY = "demo-private-key-7f3a9c2e81"),
       ].each do |line|
         NoirPassiveScan::FalsePositive.suppress?(private_key_rule, line).should be_false, "expected kept: #{line}"
       end
+    end
+
+    it "suppresses a quoted value that only spells the name it is assigned to" do
+      [
+        %(    private const val ITEM_PRIVATE_KEY = "ITEM_PRIVATE_KEY"),
+        %(    const val EXTRA_ORDER_PRIVATE_KEY = "extra_order_private_key"),
+        %(    "demo.secretKeyRef.PRIVATE_KEY": "demo-secret:PRIVATE_KEY",),
+      ].each do |line|
+        NoirPassiveScan::FalsePositive.suppress?(private_key_rule, line).should be_true, "expected suppressed: #{line}"
+      end
+      [
+        %(ITEM_PRIVATE_KEY = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"),
+        %(PRIVATE_KEY = "my-private-key-for-ci"),
+      ].each do |line|
+        NoirPassiveScan::FalsePositive.suppress?(private_key_rule, line).should be_false, "expected kept: #{line}"
+      end
+      NoirPassiveScan::FalsePositive.suppress?(github_rule, %(GITHUB_TOKEN = "my-github-token-for-ci")).should be_false
     end
 
     it "keeps a PEM marker (literal secret, not a variable name)" do

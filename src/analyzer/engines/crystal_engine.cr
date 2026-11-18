@@ -162,9 +162,9 @@ module Analyzer::Crystal
       # A name assigned twice (two classes' `ROUTES`) is ambiguous: dropped,
       # so its loops keep the as-written scan.
       constants = {} of String => String?
-      lines.each do |line|
+      lines.each_with_index do |line, index|
         next unless line.includes?('=') && (match = Noir::CrystalCalleeExtractor.strip_comment(line).match(CONSTANT_ASSIGN_RE))
-        constants[match[1]] = constants.has_key?(match[1]) ? nil : match[2]
+        constants[match[1]] = constants.has_key?(match[1]) ? nil : crystal_constant_value(lines, index, match[2])
       end
 
       lines.each_with_index do |line, index|
@@ -193,6 +193,47 @@ module Analyzer::Crystal
         end
       end
       bindings
+    end
+
+    # A constant's value, joined onto one line when its literal opens on the
+    # assignment line and closes on a later one (`NAMES = {` … `}`).
+    # ponytail: gives up past LOOP_MAX_BINDINGS * 4 lines.
+    private def crystal_constant_value(lines : Array(String), index : Int32, value : String) : String
+      depth = crystal_bracket_depth(value)
+      return value unless depth > 0
+      parts = [value]
+      (index + 1...Math.min(index + 1 + LOOP_MAX_BINDINGS * 4, lines.size)).each do |i|
+        part = Noir::CrystalCalleeExtractor.strip_comment(lines[i]).strip
+        parts << part
+        depth += crystal_bracket_depth(part)
+        return parts.join(' ') if depth <= 0
+      end
+      value
+    end
+
+    # Opening minus closing brackets outside `"…"` strings.
+    private def crystal_bracket_depth(text : String) : Int32
+      depth = 0
+      quoted = false
+      escaped = false
+      text.each_char do |char|
+        if quoted
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == '"'
+            quoted = false
+          end
+        elsif char == '"'
+          quoted = true
+        elsif char.in?('{', '[', '(')
+          depth += 1
+        elsif char.in?('}', ']', ')')
+          depth -= 1
+        end
+      end
+      depth
     end
 
     # The elements of a literal collection, each as the values its block
