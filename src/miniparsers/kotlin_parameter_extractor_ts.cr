@@ -98,7 +98,7 @@ module Noir
       getter? has_setter : Bool
       getter init_value : String
       getter null_validation_groups : Array(String)
-      getter? server_managed : Bool
+      property? server_managed : Bool
       getter validation_annotations : Array(String)
       # True when `init_value` came from a `string_literal` node and was
       # therefore already decoded (quotes stripped) on the way in.
@@ -178,8 +178,16 @@ module Noir
       walk_class_containers(root) do |decl|
         name = type_identifier_text(decl, source)
         next if name.empty?
-        strategy, root_name = jackson_class_annotations(decl, source)
+        strategy, root_name, ignored = jackson_class_annotations(decl, source)
         fields = apply_json_naming(collect_class_fields(decl, source), strategy, root_name)
+        # Like a member `@JsonIgnore`, a key the class-level
+        # `@JsonIgnoreProperties` names is no client input.
+        unless ignored.empty?
+          fields = fields.map do |field|
+            field.server_managed = true if ignored.includes?(field.json_name)
+            field
+          end
+        end
         results[name] = fields unless fields.empty?
       end
       results
@@ -203,19 +211,30 @@ module Noir
     # Not the `::class` inside the header's own annotations.
     CLASS_KEYWORD_RE = /(?<!::)(?<!\.)\b(?:class|object|interface)\b/
 
-    # `{@JsonNaming strategy, @JsonRootName}` of a class, from its own
-    # annotations or the lines directly above it.
-    private def jackson_class_annotations(decl : LibTreeSitter::TSNode, source : String) : {String?, String?}
+    # `@JsonIgnoreProperties("a", ...)` / `(value = ["a", ...])`. Its only
+    # String-valued attribute is `value`.
+    JSON_IGNORE_PROPERTIES_RE = /@(?:\w+\.)*JsonIgnoreProperties\s*\(([^)]*)\)/
+
+    # `{@JsonNaming strategy, @JsonRootName, @JsonIgnoreProperties keys}` of a
+    # class, from its own annotations or the lines directly above it. The keys
+    # are empty under `allowSetters = true`, which still reads them.
+    private def jackson_class_annotations(decl : LibTreeSitter::TSNode, source : String) : {String?, String?, Array(String)}
       text = Noir::TreeSitter.node_text(decl, source)
       header = text[0, mask_strings(text).index(CLASS_KEYWORD_RE) || 0]
       strategy = Noir::JacksonNaming.annotation_strategy(header)
       root = Noir::JacksonNaming.annotation_root_name(header)
-      unless strategy && root
+      ignore_args = header.match(JSON_IGNORE_PROPERTIES_RE).try(&.[1])
+      unless strategy && root && ignore_args
         leading = leading_annotation_lines(decl, source)
         strategy ||= Noir::JacksonNaming.annotation_strategy(leading)
         root ||= Noir::JacksonNaming.annotation_root_name(leading)
+        ignore_args ||= leading.match(JSON_IGNORE_PROPERTIES_RE).try(&.[1])
       end
-      {strategy, root}
+      ignored = [] of String
+      if ignore_args && !ignore_args.matches?(/\ballowSetters\s*=\s*true\b/)
+        ignore_args.scan(/"([^"\\]*)"/) { |match| ignored << match[1] }
+      end
+      {strategy, root, ignored}
     end
 
     # tree-sitter-kotlin leaves an annotation on its own line outside the

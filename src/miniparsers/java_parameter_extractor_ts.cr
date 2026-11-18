@@ -146,7 +146,7 @@ module Noir
       # Jackson `@JsonIgnore` on the field or one of its accessors, or a
       # `transient` field nothing else names: a JSON body never binds it. Form/query binding (`WebDataBinder`) ignores
       # Jackson annotations, so it still binds there.
-      getter? json_ignored : Bool
+      property? json_ignored : Bool
 
       def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil, @type_name = "",
                      @unwrap = nil, @json_ignored = false)
@@ -199,6 +199,7 @@ module Noir
         next unless body
         lombok_setters = lombok_field_binding?(decl, source)
         fields = apply_json_naming(collect_class_fields(body, source, lombok_setters), json_naming_of(decl, source), json_root_of(decl, source))
+        fields = apply_json_ignore_properties(fields, decl, source)
         results[class_name] = fields unless fields.empty?
       end
       # Java records: the header components ARE the bindable fields (a
@@ -213,6 +214,7 @@ module Noir
           next unless name_node
           class_name = Noir::TreeSitter.node_text(name_node, source)
           fields = apply_json_naming(collect_record_fields(decl, source), json_naming_of(decl, source), json_root_of(decl, source))
+          fields = apply_json_ignore_properties(fields, decl, source)
           results[class_name] = fields unless fields.empty? || results.has_key?(class_name)
         end
       end
@@ -232,6 +234,31 @@ module Noir
         field.json_root = root
         field
       end
+    end
+
+    # A class-level `@JsonIgnoreProperties({"a", "b"})` names JSON keys a body
+    # never binds. Matched against the wire name, after any `@JsonNaming`.
+    private def apply_json_ignore_properties(fields : Array(FieldInfo), decl : LibTreeSitter::TSNode, source : String) : Array(FieldInfo)
+      ignored = json_ignored_properties(decl, source)
+      return fields if ignored.empty?
+      fields.map do |field|
+        field.json_ignored = true if ignored.includes?(field.json_name)
+        field
+      end
+    end
+
+    # The keys of a `@JsonIgnoreProperties` on a class: every string literal
+    # in its arguments, the only String-valued attribute being `value`.
+    # `allowSetters = true` still reads them from a request body.
+    private def json_ignored_properties(decl : LibTreeSitter::TSNode, source : String) : Set(String)
+      names = Set(String).new
+      return names unless ann = annotation_node_on(decl, source, "JsonIgnoreProperties")
+      return names if annotation_text(ann, source).matches?(/\ballowSetters\s*=\s*true\b/)
+      return names unless args = Noir::TreeSitter.field(ann, "arguments")
+      Noir::TreeSitter.walk(args) do |node|
+        names << decode_string_literal(node, source) if Noir::TreeSitter.node_type(node) == "string_literal"
+      end
+      names
     end
 
     private def json_naming_of(decl : LibTreeSitter::TSNode, source : String) : String?
