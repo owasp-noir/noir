@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../miniparsers/rails_callback_chain"
 
 # Rails-specific security tagger.
 #
@@ -141,7 +142,7 @@ class RailsSecurityTagger < FrameworkTagger
     idx = action_line
     while idx >= 0
       if flags[idx] & CSRF_LINE != 0
-        current = lines[idx].strip
+        current = Noir::RailsCallbackChain.statement(lines, idx)
 
         CSRF_DISABLE_PATTERNS.each do |pattern, label|
           if current.matches?(pattern) && macro_applies?(current, action_name)
@@ -167,7 +168,7 @@ class RailsSecurityTagger < FrameworkTagger
     idx = action_line
     while idx >= 0
       if flags[idx] & RATE_LIMIT_LINE != 0
-        current = lines[idx].strip
+        current = Noir::RailsCallbackChain.statement(lines, idx)
         if macro_applies?(current, action_name)
           return "Rate limited by Rails rate_limit — request volume to this action is throttled per client."
         end
