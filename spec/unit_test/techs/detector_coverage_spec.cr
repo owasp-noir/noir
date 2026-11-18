@@ -52,7 +52,6 @@ end
 UNTESTED_DETECTORS = [
   "clojure/cli",
   "cpp/cli",
-  "crystal/cli",
   "csharp/cli",
   "dart/cli",
   "dart/shelf",
