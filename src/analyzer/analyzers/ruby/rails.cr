@@ -2326,7 +2326,8 @@ module Analyzer::Ruby
       files = callback_chain.controller_in(path).try { |leaf| callback_chain.resolve(leaf, nil).paths } || [] of String
       wrappers = Set(String).new
       (files << path).uniq!.each do |file|
-        wrappers.concat(@params_wrappers[file] ||= file_params_wrappers(file))
+        own = @params_wrappers[file] ||= file_params_wrappers(file)
+        wrappers.concat(own)
       end
       wrappers
     end
