@@ -64,6 +64,14 @@ class SpringSecurityTagger < FrameworkTagger
   # Clickjacking protection off: `frameOptions().disable()`,
   # `frameOptions(f -> f.disable())`, Kotlin `frameOptions { disable() }`.
   FRAME_OPTIONS_DISABLE = /frameOptions\s*(?:\(\s*\)\s*\.\s*disable\b|\([^)]*\bdisable|\{[^}]*\bdisable)/
+  # The chain writes a protective X-Frame-Options (DENY, SAMEORIGIN) itself,
+  # the usual reason to turn the built-in writer off. ALLOWALL and
+  # ALLOW-FROM leave the page framable.
+  #
+  # ponytail: a writer wrapped in a request matcher
+  # (`DelegatingRequestMatcherHeaderWriter`) is read as covering every path;
+  # read its matcher if one turns up covering only some.
+  FRAME_OPTIONS_WRITER = /\bXFrameOptionsHeaderWriter\s*\(\s*(?:\)|(?:[\w.]*\.)?(?:DENY|SAMEORIGIN)\s*\))|\bStaticHeadersWriter\s*\(\s*"X-Frame-Options"\s*,\s*"(?:DENY|SAMEORIGIN)"/i
 
   # Whole default header writer off. Restricted to the unambiguous forms —
   # empty-paren fluent `headers().disable()` and the method-ref
@@ -143,7 +151,7 @@ class SpringSecurityTagger < FrameworkTagger
       #     over the frameOptions-only case when both somehow appear.
       kind = if block.matches?(HEADERS_FULLY_DISABLED)
                :all
-             elsif block.matches?(FRAME_OPTIONS_DISABLE)
+             elsif block.matches?(FRAME_OPTIONS_DISABLE) && !block.matches?(FRAME_OPTIONS_WRITER)
                :frame
              end
       record_scoped(scope).each { |pattern| @header_weak_scopes << {pattern: pattern, kind: kind, module: module_dir} } if kind
