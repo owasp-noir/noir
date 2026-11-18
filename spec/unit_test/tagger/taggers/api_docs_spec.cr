@@ -174,7 +174,8 @@ describe "ApiDocsTagger" do
       tagger = ApiDocsTagger.new(default_tagger_options)
 
       endpoints = ["/openapi", "/q/openapi", "/openapi.yaml", "/openapi/v1.json",
-                   "/api/openapi3.json", "/openapi/schema"].map { |path| Endpoint.new(path, "GET") }
+                   "/api/openapi3.json", "/openapi/schema", "/openapi/json", "/openapi/yaml",
+                   "/openapi/{name}", "/openapi/:file"].map { |path| Endpoint.new(path, "GET") }
 
       tagger.perform(endpoints)
 

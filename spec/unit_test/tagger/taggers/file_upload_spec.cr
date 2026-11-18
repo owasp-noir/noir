@@ -390,5 +390,40 @@ describe "FileUploadTagger" do
 
       [form_files, form_attachment, video_part, json_file].each(&.tags.size.should(eq(1)))
     end
+
+    it "still tags file words on a body param" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      # NestJS `@UploadedFiles()`, tsoa `@UploadedFile('document')` and
+      # Scotty `files()` report the multipart part as `body`.
+      endpoints = [
+        Endpoint.new("/items/:id/gallery", "POST", [Param.new("files", "", "body")]),
+        Endpoint.new("/items/:id/manual", "POST", [Param.new("document", "", "body")]),
+        Endpoint.new("/items/:id/cover", "POST", [Param.new("cover_file", "", "body")]),
+      ]
+
+      tagger.perform(endpoints)
+
+      endpoints.each(&.tags.size.should(eq(1)))
+    end
+
+    it "keeps Rails json file words tagged" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      # Rails reports permitted params as json whenever the controller
+      # renders json, so `permit(attachments: [], files: [])` stays an upload
+      # there, while the same json field elsewhere is a reference.
+      rails = %w[attachments files document cover_file].map do |name|
+        details = Details.new(PathInfo.new("app/controllers/items_controller.rb", 1))
+        details.technology = "ruby_rails"
+        Endpoint.new("/items", "POST", [Param.new(name, "", "json")], details)
+      end
+      other = Endpoint.new("/items", "POST", [Param.new("attachments", "", "json")])
+
+      tagger.perform(rails + [other])
+
+      rails.each(&.tags.size.should(eq(1)))
+      other.tags.size.should eq(0)
+    end
   end
 end
