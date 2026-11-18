@@ -92,7 +92,7 @@ module Analyzer::Mobile
       # Only the first array entry that resolves to any real scheme is
       # treated as "primary" — this is the app's main scheme plus whatever
       # aliases it lists alongside it (e.g. `myapp` + `myapp-alt` in one
-      # entry, or KakaoTalk's real vs. alpha-flavor build of the same
+      # entry, or an app's release and alpha-flavor schemes in the same
       # entry). Later entries are almost always narrow, single-purpose
       # schemes (auth callback, QR code, bot) that don't share the main
       # scheme's routing surface.
@@ -750,11 +750,11 @@ module Analyzer::Mobile
     # allowed for). `(?:[^"\\ ]|\\.)*` stops at an unescaped quote *or* a
     # raw space, which both terminates the literal correctly and rejects
     # descriptive test-assertion strings that happen to start with a
-    # scheme (`"kakaoopen:// without host should return false"`).
+    # scheme (`"myapp:// without host should return false"`).
     private def harvest_literal_scheme_routes
-      # Bare-scheme entries only (`"kakaotalk://"`) — by this point `@result`
+      # Bare-scheme entries only (`"myapp://"`) — by this point `@result`
       # also holds host-level routes from `harvest_enum_host_routes`
-      # (`"kakaotalk://gift"`), which are not schemes to search for and
+      # (`"myapp://gift"`), which are not schemes to search for and
       # would otherwise bloat the alternation below with ~300 branches
       # instead of ~15.
       schemes = @result.compact_map do |ep|
