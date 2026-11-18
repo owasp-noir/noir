@@ -12,14 +12,10 @@ class PythonMiscAuthTagger < FrameworkTagger
     {/\@auth\.login_required/, "Sanic auth login_required"},
   ]
 
-  # Tornado auth patterns. These are scanned only in the decorator window
-  # above a handler, so they must be decorators. The body/class signals
-  # (`self.current_user`, a `def get_current_user` override) are handled
-  # separately by `check_class_auth`; a bare `current_user` / a
-  # `get_current_user(` *call* in the decorator window is not an auth
-  # decorator and only produced false positives, so they're omitted here.
+  # Tornado auth decorators. A `get_current_user` override only computes
+  # `current_user`; `@tornado.web.authenticated` is what refuses.
   TORNADO_PATTERNS = [
-    {/\@tornado\.web\.authenticated/, "Tornado @authenticated decorator"},
+    {/\@(?:tornado\.)?web\.authenticated\b/, "Tornado @authenticated decorator"},
     {/\@authenticated/, "Tornado @authenticated"},
   ]
 
@@ -32,6 +28,14 @@ class PythonMiscAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
+    # A Tornado route sits in a handler list; the method it dispatches to,
+    # when the analyzer resolved it, carries the decorators.
+    if endpoint.details.technology == "python_tornado" && (handler = endpoint.handler)
+      if description = handler_decorator_guard(handler)
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "python_misc_auth"))
+      end
+      return
+    end
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path)
       next if lines.nil?
@@ -56,14 +60,17 @@ class PythonMiscAuthTagger < FrameworkTagger
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "python_misc_auth"))
         return
       end
-
-      # Check class for Tornado auth mixin/method
-      description = check_class_auth(lines, line_idx)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "python_misc_auth"))
-        return
-      end
     end
+  end
+
+  private def handler_decorator_guard(handler : Handler) : String?
+    lines = read_file_lines(handler.path || return) || return
+    idx = (handler.line || return) - 2
+    while idx >= 0 && (current = lines[idx].strip).starts_with?('@')
+      TORNADO_PATTERNS.each { |pattern, desc| return desc if current.matches?(pattern) }
+      idx -= 1
+    end
+    nil
   end
 
   private def check_decorators(lines : Array(String), func_line : Int32) : String?
@@ -126,33 +133,6 @@ class PythonMiscAuthTagger < FrameworkTagger
         end
         return
       end
-      idx -= 1
-    end
-    nil
-  end
-
-  private def check_class_auth(lines : Array(String), method_line : Int32) : String?
-    # Walk backwards to find class definition with Tornado's get_current_user override
-    idx = method_line
-    while idx >= 0
-      current = lines[idx].strip
-
-      if current.starts_with?("class ")
-        # Found class — scan class body for get_current_user
-        scan_idx = idx + 1
-        while scan_idx < lines.size && scan_idx < idx + 30
-          scan_line = lines[scan_idx].strip
-          break if scan_line.starts_with?("class ")
-
-          if scan_line.includes?("def get_current_user")
-            return "Tornado get_current_user override"
-          end
-
-          scan_idx += 1
-        end
-        break
-      end
-
       idx -= 1
     end
     nil

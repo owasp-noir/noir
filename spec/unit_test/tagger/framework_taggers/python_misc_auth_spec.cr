@@ -67,31 +67,6 @@ describe "PythonMiscAuthTagger" do
     endpoint.tags[0].description.should contain("authenticated")
   end
 
-  it "detects get_current_user override in class" do
-    noir_options = create_test_options
-    noir_options["base"] = YAML::Any.new(fixture_base)
-
-    locator = CodeLocator.instance
-    Dir.glob("#{fixture_base}/**/*").each do |file|
-      next if File.directory?(file)
-      locator.register_path(file)
-    end
-
-    # MainHandler has get_current_user inherited from BaseHandler
-    # but here we test the class-level check by pointing to a line inside BaseHandler
-    details = Details.new(PathInfo.new(app_path, 6))
-    details.technology = "python_tornado"
-    endpoint = Endpoint.new("/base", "GET", [] of Param, details)
-
-    tagger = PythonMiscAuthTagger.new(noir_options)
-    tagger.perform([endpoint])
-
-    # get_current_user is defined on the class at line 5, check_class_auth walks backwards
-    endpoint.tags.empty?.should be_false
-    endpoint.tags[0].name.should eq("auth")
-    endpoint.tags[0].description.should contain("get_current_user")
-  end
-
   it "does not tag unprotected routes" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
@@ -147,6 +122,74 @@ describe "PythonMiscAuthTagger" do
     endpoint.tags.empty?.should be_true
 
     FileUtils.rm_rf(tmpdir)
+  end
+
+  describe "Tornado route tables" do
+    # The route sits in a handler list; the handler class lives in another module.
+    write_tornado_app = ->(handlers : String) do
+      tmpdir = File.tempname("tornado_table")
+      Dir.mkdir_p(tmpdir)
+      urls = File.join(tmpdir, "urls.py")
+      api = File.join(tmpdir, "api.py")
+      File.write(urls, "from api import ItemHandler, LoginHandler\n\nhandlers = [\n    (r\"/api/items\", ItemHandler),\n    (r\"/login\", LoginHandler),\n]\n")
+      File.write(api, handlers)
+      {urls, api}
+    end
+    tag = ->(urls : String, route_line : Int32, handler : Handler) do
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(File.dirname(urls))
+      details = Details.new(PathInfo.new(urls, route_line))
+      details.technology = "python_tornado"
+      endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+      endpoint.handler = handler
+      PythonMiscAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags
+    end
+
+    it "reads the decorators on the handler method the route dispatches to" do
+      urls, api = write_tornado_app.call([
+        "from tornado import web",
+        "",
+        "class ItemHandler(web.RequestHandler):",
+        "    @web.authenticated",
+        "    def get(self):",
+        "        self.write('items')",
+      ].join("\n"))
+      tags = tag.call(urls, 4, Handler.new("ItemHandler.get", api, 5))
+      FileUtils.rm_rf(File.dirname(urls))
+      tags.map(&.name).should eq(["auth"])
+      tags[0].description.should contain("authenticated")
+    end
+
+    it "does not guard a handler for a get_current_user override alone" do
+      # Tornado's get_current_user only computes current_user;
+      # @tornado.web.authenticated is what turns an anonymous caller away.
+      _, api = write_tornado_app.call([
+        "import tornado.web",
+        "",
+        "class LoginHandler(tornado.web.RequestHandler):",
+        "    def get(self):",
+        "        self.redirect('/')",
+        "",
+        "class ItemHandler(tornado.web.RequestHandler):",
+        "    def get_current_user(self):",
+        "        return self.get_secure_cookie('user')",
+        "",
+        "    def get(self):",
+        "        self.write('items')",
+        "",
+        "def main():",
+        "    app = tornado.web.Application([",
+        "        ('/login', LoginHandler),",
+        "        ('/', ItemHandler),",
+        "    ])",
+      ].join("\n"))
+      login = tag.call(api, 16, Handler.new("LoginHandler.get", api, 4))
+      item = tag.call(api, 17, Handler.new("ItemHandler.get", api, 11))
+      FileUtils.rm_rf(File.dirname(api))
+      login.should be_empty
+      item.should be_empty
+    end
   end
 
   it "returns correct target_techs" do
