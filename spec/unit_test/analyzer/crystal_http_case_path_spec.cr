@@ -72,3 +72,43 @@ describe "crystal_http case request.path" do
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
 end
+
+describe "crystal_http handler argument name" do
+  it "reads routes and params on whatever the handler names its argument" do
+    temp_dir = File.tempname("crystal_http_arg")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "server.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      server = HTTP::Server.new do |ctx|
+        if ctx.request.method == "POST" && ctx.request.path == "/items"
+          token = ctx.request.headers["X-Token"]
+        elsif ctx.request.path == "/orders"
+          page = ctx.request.query_params["page"]
+        end
+      end
+
+      class Health
+        include HTTP::Handler
+
+        def call(context : HTTP::Server::Context)
+          c = context
+          return call_next(c) unless c.request.path.starts_with?("/api/")
+          if c.request.path == "/ready"
+            "ok"
+          end
+        end
+      end
+
+      def guard(env : HTTP::Server::Context)
+        raise "no" if env.request.path == "/not-a-route"
+      end
+      CRYSTAL
+
+    endpoints = Analyzer::Crystal::Http.new(create_test_options).analyze_file(temp_file)
+    endpoints.map { |e| "#{e.method} #{e.url}" }.should eq(["POST /items", "GET /orders", "GET /ready"])
+    endpoints[0].params.map(&.name).should eq(["X-Token"])
+    endpoints[1].params.map(&.name).should eq(["page"])
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+end
