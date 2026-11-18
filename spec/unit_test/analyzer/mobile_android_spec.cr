@@ -513,3 +513,77 @@ describe "Analyzer::Mobile::Android (source-set overlay manifest)" do
     urls.should contain("intent://com.ex.overlay/.BetaOnlyActivity")
   end
 end
+
+# A library module has only a namespace; the manifest merger folds its
+# components into the consuming application, whose applicationId is the
+# package the merged components live in.
+describe "Analyzer::Mobile::Android (library module)" do
+  dir = File.tempname("noir-android-library")
+  app_manifest = File.join(dir, "app", "src", "main", "AndroidManifest.xml")
+  lib_manifest = File.join(dir, "lib", "src", "main", "AndroidManifest.xml")
+  Dir.mkdir_p(File.dirname(app_manifest))
+  Dir.mkdir_p(File.dirname(lib_manifest))
+  File.write(File.join(dir, "settings.gradle.kts"), %(include(":app", ":lib")\n))
+  File.write(File.join(dir, "app", "build.gradle.kts"), <<-KTS)
+    plugins { id("com.android.application") }
+    android {
+        namespace = "com.example.app"
+        defaultConfig { applicationId = "com.example.app" }
+    }
+    dependencies { implementation(project(":lib")) }
+    KTS
+  File.write(File.join(dir, "lib", "build.gradle.kts"), <<-KTS)
+    plugins { alias(libs.plugins.demo.feature) }
+    android { namespace = "com.example.lib" }
+    KTS
+  File.write(app_manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+      <application>
+        <activity android:name=".AppOnlyActivity" android:exported="true"/>
+      </application>
+    </manifest>
+    XML
+  File.write(lib_manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+      <application>
+        <activity android:name=".LibLinkActivity" android:exported="true">
+          <intent-filter>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="demo" android:host="lib"/>
+          </intent-filter>
+        </activity>
+        <activity android:name=".LibExplicitActivity" android:exported="true"/>
+        <provider android:name=".LibFilesProvider" android:exported="true"
+                  android:authorities="${applicationId}.files"/>
+      </application>
+    </manifest>
+    XML
+
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, app_manifest)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, lib_manifest)
+  endpoints = Analyzer::Mobile::Android.new(create_test_options).analyze
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  FileUtils.rm_rf(dir)
+
+  urls = endpoints.map(&.url)
+
+  it "puts library deep links in the consuming application's package" do
+    metadata = endpoints.find! { |e| e.url == "demo://lib" }.metadata.not_nil!
+    metadata["package"].should eq("com.example.app")
+    metadata["via"].should eq("com.example.lib.LibLinkActivity")
+  end
+
+  it "names library components by their fully qualified class in the application package" do
+    urls.should contain("intent://com.example.app/com.example.lib.LibExplicitActivity")
+    urls.should_not contain("intent://com.example.lib/.LibExplicitActivity")
+  end
+
+  it "resolves ${applicationId} in a library manifest to the application id" do
+    urls.should contain("content://com.example.app.files")
+  end
+
+  it "leaves the application module's own components unchanged" do
+    urls.should contain("intent://com.example.app/.AppOnlyActivity")
+  end
+end
