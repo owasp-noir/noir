@@ -1356,3 +1356,57 @@ describe "GoAuthTagger factories returning a library middleware" do
     run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("app.Get")) + 1, "go_fiber").tags.should be_empty
   end
 end
+
+describe "GoAuthTagger cross-origin request checks" do
+  source = ->(test : String) do
+    <<-GO
+      package main
+
+      import (
+        "net/http"
+        "strings"
+
+        "github.com/gorilla/mux"
+      )
+
+      func requestOriginHost(r *http.Request) (string, bool) {
+        origin := r.Header.Get("Origin")
+        return origin, origin != ""
+      }
+
+      func protect(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          authHeader := strings.ToLower(r.Header.Get("Authorization"))
+          if strings.Contains(authHeader, "bearer") {
+            next.ServeHTTP(w, r)
+            return
+          }
+          #{test}
+            http.Error(w, "denied", http.StatusForbidden)
+            return
+          }
+          next.ServeHTTP(w, r)
+        })
+      }
+
+      func items(w http.ResponseWriter, r *http.Request) {}
+
+      func main() {
+        r := mux.NewRouter()
+        api := r.PathPrefix("/api").Subrouter()
+        api.Use(protect)
+        api.HandleFunc("/items", items).Methods("GET")
+      }
+      GO
+  end
+
+  it "does not read a refusal of cross-origin requests as a guard" do
+    lines = source.call(%(if origin, ok := requestOriginHost(r); ok && origin != r.Host {)).lines
+    run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("api.HandleFunc")) + 1, "go_mux").tags.should be_empty
+  end
+
+  it "keeps the refusal of a request without a session" do
+    lines = source.call(%(if _, err := r.Cookie("session"); err != nil {)).lines
+    run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("api.HandleFunc")) + 1, "go_mux").tags.map(&.name).should eq(["auth"])
+  end
+end

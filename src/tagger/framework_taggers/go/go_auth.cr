@@ -1561,7 +1561,9 @@ class GoAuthTagger < FrameworkTagger
 
   # A test of a CSRF token: a call named for it (`!csrfOK(r)`) or a read of
   # a request key named for it (`Header.Get("X-CSRF-Token")`).
-  CSRF_TEST = /csrf|xsrf/i
+  # An `Origin` / `Referer` test refuses cross-site requests, whoever sends
+  # them.
+  CSRF_TEST = /csrf|xsrf|origin(?!al)|referr?er/i
   CSRF_KEY  = /\.\s*(?:Get|GetHeader|FormValue|PostFormValue|PostForm|Query|QueryParam|Cookie)\s*\(\s*"[^"]*(?:csrf|xsrf)[^"]*"\s*\)/i
 
   # A test of the caller's credential or session, as written.
