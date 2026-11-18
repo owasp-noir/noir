@@ -84,13 +84,6 @@ module Noir
     # Request parameters `PageableHandlerMethodArgumentResolver` reads.
     PAGEABLE_PARAMS = {"page", "size", "sort"}
 
-    # Spring Data paging types. No single request value converts to one, so
-    # a command-object field of such a type binds nothing. Wider than
-    # `pageable_type?` on purpose: a `Sort` handler argument binds `sort`
-    # through its own resolver, and a `PageRequest` one is not resolved as a
-    # `Pageable` at all.
-    PAGING_TYPES = Set{"Pageable", "PageRequest", "Sort"}
-
     # Lombok class-level annotations that synthesise setters (or an
     # all-args constructor) for every instance field at compile time.
     # The generated members never appear in source, so a DTO annotated
@@ -146,7 +139,7 @@ module Noir
       # Jackson `@JsonIgnore` on the field or one of its accessors, or a
       # `transient` field nothing else names: a JSON body never binds it. Form/query binding (`WebDataBinder`) ignores
       # Jackson annotations, so it still binds there.
-      getter? json_ignored : Bool
+      property? json_ignored : Bool
 
       def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil, @type_name = "",
                      @unwrap = nil, @json_ignored = false)
@@ -199,6 +192,7 @@ module Noir
         next unless body
         lombok_setters = lombok_field_binding?(decl, source)
         fields = apply_json_naming(collect_class_fields(body, source, lombok_setters), json_naming_of(decl, source), json_root_of(decl, source))
+        fields = apply_json_ignore_properties(fields, decl, source)
         results[class_name] = fields unless fields.empty?
       end
       # Java records: the header components ARE the bindable fields (a
@@ -213,6 +207,7 @@ module Noir
           next unless name_node
           class_name = Noir::TreeSitter.node_text(name_node, source)
           fields = apply_json_naming(collect_record_fields(decl, source), json_naming_of(decl, source), json_root_of(decl, source))
+          fields = apply_json_ignore_properties(fields, decl, source)
           results[class_name] = fields unless fields.empty? || results.has_key?(class_name)
         end
       end
@@ -232,6 +227,31 @@ module Noir
         field.json_root = root
         field
       end
+    end
+
+    # A class-level `@JsonIgnoreProperties({"a", "b"})` names JSON keys a body
+    # never binds. Matched against the wire name, after any `@JsonNaming`.
+    private def apply_json_ignore_properties(fields : Array(FieldInfo), decl : LibTreeSitter::TSNode, source : String) : Array(FieldInfo)
+      ignored = json_ignored_properties(decl, source)
+      return fields if ignored.empty?
+      fields.map do |field|
+        field.json_ignored = true if ignored.includes?(field.json_name)
+        field
+      end
+    end
+
+    # The keys of a `@JsonIgnoreProperties` on a class: every string literal
+    # in its arguments, the only String-valued attribute being `value`.
+    # `allowSetters = true` still reads them from a request body.
+    private def json_ignored_properties(decl : LibTreeSitter::TSNode, source : String) : Set(String)
+      names = Set(String).new
+      return names unless ann = annotation_node_on(decl, source, "JsonIgnoreProperties")
+      return names if annotation_text(ann, source).matches?(/\ballowSetters\s*=\s*true\b/)
+      return names unless args = Noir::TreeSitter.field(ann, "arguments")
+      Noir::TreeSitter.walk(args) do |node|
+        names << decode_string_literal(node, source) if Noir::TreeSitter.node_type(node) == "string_literal"
+      end
+      names
     end
 
     private def json_naming_of(decl : LibTreeSitter::TSNode, source : String) : String?
@@ -267,7 +287,7 @@ module Noir
         next if name.empty?
         type_name = Noir::TreeSitter.field(component, "type").try { |node| Noir::TreeSitter.node_text(node, source) } || ""
         fields << FieldInfo.new(name, "public", true, "", json_property_name(component, source), type_name,
-          json_unwrap(component, source), json_ignore?(component, source))
+          json_unwrap(component, source), json_ignore?(component, source) || json_read_only?(component, source))
       end
       fields
     end
@@ -277,6 +297,13 @@ module Noir
     private def json_property_name(decl : LibTreeSitter::TSNode, source : String) : String?
       return unless ann = annotation_node_on(decl, source, "JsonProperty")
       annotation_string_arg(ann, source).presence
+    end
+
+    # `@JsonProperty(access = READ_ONLY)`: serialized only, never read from a
+    # request body. `WRITE_ONLY` is the opposite and still binds.
+    private def json_read_only?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless ann = annotation_node_on(decl, source, "JsonProperty")
+      annotation_text(ann, source).matches?(/\baccess\s*=\s*(?:[\w.]*\.)?READ_ONLY\b/)
     end
 
     # `@JsonIgnore` (not `@JsonIgnore(false)`) on a field or accessor.
@@ -804,6 +831,7 @@ module Noir
       # `@JsonIgnore` getter, `@JsonProperty` setter).
       json_ignored = Set(String).new
       json_kept = Set(String).new
+      read_only = Set(String).new
       # Jackson does not read a `transient` field as a property; a setter
       # (written or Lombok) or `@JsonProperty` still binds it.
       transient_fields = Set(String).new
@@ -833,7 +861,11 @@ module Noir
           end
           declared << {name, access, init, json_property_name(member, source), type_name, json_unwrap(member, source)}
           json_ignored << name if json_ignore?(member, source)
-          json_kept << name if annotation_node_on(member, source, "JsonProperty")
+          if json_read_only?(member, source)
+            read_only << name
+          elsif annotation_node_on(member, source, "JsonProperty")
+            json_kept << name
+          end
           if field_modifier?(member, source, "transient") && !annotation_node_on(member, source, "Setter")
             transient_fields << name
           end
@@ -849,10 +881,17 @@ module Noir
           if parameters = Noir::TreeSitter.field(member, "parameters")
             Noir::TreeSitter.each_named_child(parameters) { arity += 1 }
           end
-          json_ignored << property if property && arity == (name.starts_with?("set") ? 1 : 0) && json_ignore?(member, source)
+          read_only_member = false
+          if property && arity == (name.starts_with?("set") ? 1 : 0)
+            json_ignored << property if json_ignore?(member, source)
+            read_only_member = json_read_only?(member, source)
+            read_only << property if read_only_member
+          end
           # `@JsonSetter("encryptedValue") setEncryptedValueBase64(..)` binds
-          # the key it names, whatever the method is called.
+          # the key it names, whatever the method is called. A READ_ONLY
+          # `@JsonProperty` binds nothing; its setter still serves form binding.
           {"JsonProperty", "JsonSetter"}.each do |binding|
+            next if read_only_member
             next unless ann = annotation_node_on(member, source, binding)
             named = annotation_string_arg(ann, source).presence
             json_kept << named if named
@@ -873,6 +912,7 @@ module Noir
         json_name ||= renamed[name]?
         ignored = json_ignored.includes?(name) && !json_kept.includes?(name) && !(json_name && json_kept.includes?(json_name))
         ignored ||= transient_fields.includes?(name) && !has_setter && !json_kept.includes?(name)
+        ignored ||= read_only.includes?(name)
         FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored)
       end
     end
@@ -1185,7 +1225,7 @@ module Noir
         fields.each do |field|
           next unless json_body || field.access_modifier == "public" || field.has_setter?
           next if json_body && field.json_ignored?
-          next if !json_body && PAGING_TYPES.includes?(simple_type_name(field.type_name))
+          next if !json_body && JvmTsHelpers::PAGING_TYPES.includes?(simple_type_name(field.type_name))
           # `default_value` comes from an annotation and is already literal;
           # `init_value` is raw Java source and only becomes a value when it
           # is one. See `Noir::JvmLiteral`.
@@ -1200,7 +1240,7 @@ module Noir
           if nested
             nested.each do |sub|
               next unless sub.access_modifier == "public" || sub.has_setter?
-              next if PAGING_TYPES.includes?(simple_type_name(sub.type_name))
+              next if JvmTsHelpers::PAGING_TYPES.includes?(simple_type_name(sub.type_name))
               next if disallowed_field?("#{field.name}.#{sub.name}", disallowed_fields)
               sink << Param.new("#{field.name}.#{sub.name}", Noir::JvmLiteral.value_of(sub.init_value), effective_format)
             end

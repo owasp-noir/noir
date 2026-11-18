@@ -816,6 +816,94 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         {"q", "query"},
       ])
     end
+
+    it "indexes methods of a controller parsed as an infix expression after a one-line class" do
+      # tree-sitter-kotlin reads `@RequestMapping("/r") class Api { ... }`
+      # after a one-line class as prefix_expression(annotation,
+      # infix_expression(class, Api, lambda_literal)), but only when the
+      # file ends in a newline, as a source file does.
+      source = <<-KT
+        package com.example
+
+        class Other { var z: String? = null }
+
+        @RestController
+        @RequestMapping("/r")
+        class Api {
+            @GetMapping("/a") fun a(q: String?) = ""
+        }
+
+        KT
+
+      params = [] of Param
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        # The shape under test: no `class_declaration` for `Api` at all.
+        top_level = [] of String
+        Noir::TreeSitter.each_named_child(root) { |child| top_level << Noir::TreeSitter.node_type(child) }
+        top_level.should eq(["package_header", "class_declaration", "annotation", "prefix_expression"])
+
+        method = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, source)["Api#a"]
+        params = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from_method(
+          method, source, "GET", nil, {} of String => Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo)
+        )
+      end
+
+      params.map { |p| {p.name, p.param_type} }.should eq([{"q", "query"}])
+    end
+
+    it "skips Spring Data paging-typed fields of a command object" do
+      dto = <<-KT
+        class SearchCmd {
+            var keyword: String? = null
+            var pageable: Pageable? = null
+            var sort: org.springframework.data.domain.Sort? = null
+            var request: PageRequest? = null
+        }
+        KT
+      source = <<-KT
+        @RestController
+        class C {
+            @GetMapping("/search")
+            fun search(cmd: SearchCmd): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      params = extract(source, "C", "search", "GET", nil, fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([{"keyword", "query"}])
+    end
+  end
+
+  describe "#extract_route_conditions_from_method" do
+    it "keeps presence, empty-value, negated and != conditions apart" do
+      source = <<-KT
+        class C {
+            @GetMapping("/x", params = ["a", "b="])
+            fun one(): String = ""
+            @GetMapping("/x", params = ["a=", "b"])
+            fun two(): String = ""
+            @GetMapping("/y", params = ["a", "!b"], headers = ["!X-Mode"])
+            fun three(): String = ""
+            @GetMapping("/z", params = ["c=1", "d!=2"])
+            fun four(): String = ""
+        }
+        KT
+
+      conditions = Hash(String, Array(String)).new
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, source).each do |key, method|
+          conditions[key] = Noir::TreeSitterKotlinParameterExtractor.extract_route_conditions_from_method(method, source, "GET")
+            .map { |p| "#{p.param_type}:#{p.name}=#{p.value}" }
+        end
+      end
+
+      # Spring tells `b` (present) from `b=` (present and empty), and `!b`
+      # (absent) from no condition; each is a separate handler.
+      conditions["C#one"].should eq(["query:a=", "query:b=="])
+      conditions["C#two"].should eq(["query:a==", "query:b="])
+      conditions["C#three"].should eq(["query:a=", "query:!b=", "header:!X-Mode="])
+      conditions["C#four"].should eq(["query:c=1", "query:d!=2="])
+    end
   end
 
   describe "#extract_consumes_from" do
@@ -982,6 +1070,45 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       # `id` is a stored field; `isNew` (sibling getter) and
       # `inlineComputed` (inline getter) are derived, not bindable.
       fields["BaseEntity"].map(&.name).should eq(["id"])
+    end
+
+    it "drops the keys a class-level @JsonIgnoreProperties names, unless allowSetters keeps them" do
+      source = <<-KT
+        @JsonIgnoreProperties(value = ["secret"], ignoreUnknown = true)
+        data class ItemDto(
+            val name: String,
+            val secret: String? = null,
+        )
+
+        @JsonIgnoreProperties("internalNote")
+        class OrderDto {
+            var title: String? = null
+            var internalNote: String? = null
+        }
+
+        @JsonIgnoreProperties(value = ["password"], allowSetters = true)
+        class SignupDto {
+            var user: String? = null
+            var password: String? = null
+        }
+        KT
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
+      fields["ItemDto"].select(&.json_ignored?).map(&.name).should eq(["secret"])
+      fields["OrderDto"].select(&.json_ignored?).map(&.name).should eq(["internalNote"])
+      fields["SignupDto"].select(&.json_ignored?).map(&.name).should eq([] of String)
+
+      # Jackson only: form/query binding (`WebDataBinder`) still binds the key.
+      controller = <<-KT
+        @RestController
+        class C {
+            @PostMapping("/orders")
+            fun create(@RequestBody body: OrderDto): String = ""
+            @GetMapping("/orders")
+            fun search(cmd: OrderDto): String = ""
+        }
+        KT
+      extract(controller, "C", "create", "POST", nil, fields).map(&.name).should eq(["title"])
+      extract(controller, "C", "search", "GET", nil, fields).map(&.name).should eq(["title", "internalNote"])
     end
   end
 

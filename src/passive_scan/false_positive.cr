@@ -63,8 +63,29 @@ module NoirPassiveScan
     LITERAL_AFTER_ACCESSOR = /\G[\w.]*+\s*[(\[]?\s*(?:(?:'[^']*'|"[^"]*"|`[^`]*`|[\w.]+)\s*)?[)\]]?\s*(?:,|#{HANDOFF_OPERATOR})\s*(['"`])/
 
     # `NAME=…`, `NAME: …`, `"NAME": …`, `NAME => …` with a non-empty value,
-    # read from just after the name.
-    NAME_ASSIGNMENT = /\G['"]?\s*(?::|=>?)\s*\S/
+    # read from just after the name. Group 1 is the separator; the match
+    # ends where the value starts (see `literal_value?`).
+    NAME_ASSIGNMENT = /\G['"]?\s*(:|=>?)\s*(?=\S)/
+
+    # A Python type annotation in value position: `NAME: str | None = None`,
+    # `NAME: Optional[str] = "…"`. Group 1 is the default, judged on its own.
+    TYPE_NAME       = %q([A-Za-z_][\w.]*(?:\[[^\]]*\])?)
+    TYPE_ANNOTATION = /\A#{TYPE_NAME}(?:\s*\|\s*#{TYPE_NAME})*\s*(?:=(?![=>])\s*(\S.*))?\z/
+
+    # Unquoted code with no literal in it: a call (`build_url()`), or
+    # operands joined by a fallback (`explicit or build_url()`). A bare word
+    # is not enough — in `.env` / YAML it is the literal itself. An
+    # operand's argument list is balanced, one level deep (`f(g())`): one
+    # that could span `)` split a chain like `f(a)||g(b)||…` exponentially
+    # many ways and hit the match limit, which dropped the rule for the
+    # rest of the file.
+    CODE_OPERAND    = %q([A-Za-z_][\w.]*(?:\((?:[^'"`()]|\([^'"`()]*\))*\))?)
+    CODE_EXPRESSION = /\A(?:[A-Za-z_][\w.]*\([^'"`]*\)|#{CODE_OPERAND}(?:\s*(?:\bor\b|\|\||\?\?)\s*#{CODE_OPERAND})+)\s*[;,]?\z/
+
+    # A machine-word integer constant (`4242`, `4242_u32`, `0x1F`): a key,
+    # token or connection string is never one. Capped at 64 bits so a hex
+    # key (`0x` + 64 hex digits) is still a literal.
+    NUMBER_LITERAL = /\A[-+]?(?:0x[0-9a-f_]{1,16}|\d[\d_]{0,18})(?:_?(?:[uif](?:8|16|32|64|128)|u?l{1,2}))?\z/i
 
     # Text right after a variable name, past its closing quote and
     # bracket: `"K"] = "…"`, `K"] ||= "…"`, `K || "…"`.
@@ -137,12 +158,14 @@ module NoirPassiveScan
     # `${{ … }}`, `$(…)`, `%VAR%`, `{{ … }}`), angle-bracket placeholders
     # (`<your-token>`), and single-argument env-helper calls
     # (`env('AWS_ACCESS_KEY_ID')`, common in Laravel/Symfony/Rails config).
+    # A shell default is allowed only when empty (`${VAR:-}`), and the `$`
+    # may be escaped (`\${VAR}` inside a double-quoted heredoc or script).
     # Anchored so it only fires when the *entire* value is a reference — a
     # real secret that merely contains a `$` (e.g. `P$ssw0rd…`) is not
     # matched. The env-call form is deliberately single-argument: a
     # two-argument `env('K', 'default')` could hide a literal default, so
     # it is left to fall through.
-    PURE_REFERENCE = /\A(?:\$\{?\{?[A-Za-z_][\w.\- ]*\}?\}?|\$\(.+\)|%[A-Za-z_]\w*%|\{\{.+\}\}|<[^>]+>|env\(\s*['"][^'",]+['"]\s*\))\z/
+    PURE_REFERENCE = /\A(?:\\?\$\{?\{?[A-Za-z_][\w.\- ]*(?::?[-=?])?\}?\}?|\$\(.+\)|%[A-Za-z_]\w*%|\{\{.+\}\}|<[^>]+>|env\(\s*['"][^'",]+['"]\s*\))\z/
 
     # Documentation/template placeholder *values* — what a reader is told
     # to replace, never a real secret. Matched at the *start* of the value
@@ -152,10 +175,10 @@ module NoirPassiveScan
     #   - `your-…` / `your_…` (`your-access-key-id`, `your_api_key`)
     #   - explicit "replace this" / "insert your" prose
     #   - bare null / dummy tokens (`nil`, `null`, `none`, `changeme`,
-    #     `placeholder`, `redacted`, `xxxx…`, `****`)
+    #     `placeholder`, `redacted`, `xxxx…`, `****`) and an ellipsis (`...`)
     # All are forms a genuine high-entropy literal can never take, so this
     # only removes false positives.
-    PLACEHOLDER_VALUE = /\A(?:<[^>]*>|your[-_ ]|insert[-_ ]your|replace[-_ ](?:me|this|with)|(?:changeme|change[-_]me|replaceme|replace[-_]me|placeholder|redacted|dummy|todo|fixme|none|null|nil|undefined|x{4,}|\*{4,})\b)/i
+    PLACEHOLDER_VALUE = /\A(?:<[^>]*>|your[-_ ]|insert[-_ ]your|replace[-_ ](?:me|this|with)|(?:changeme|change[-_]me|replaceme|replace[-_]me|placeholder|redacted|dummy|todo|fixme|none|null|nil|undefined|x{4,}|\*{4,})\b|\.{3}|…)/i
 
     # True when `line` exposes its secret-bearing value only through an
     # indirection (env read / templating) or a placeholder — i.e. there
@@ -188,7 +211,9 @@ module NoirPassiveScan
     #
     # - If a value-shape `regex` matcher hits the line, a real secret
     #   literal is present (`ghp_…`, `AKIA…`, a credentialed URL) — high
-    #   confidence, never suppressed.
+    #   confidence, never suppressed. The exception is a match that holds
+    #   only a stand-in (see `stand_in_match?`): it is judged like a word
+    #   hit, and dropped when nothing else on the line backs it.
     # - Otherwise the finding is backed only by a `word` matcher on a
     #   variable *name*. When that name is merely *mentioned* — in a
     #   comment, a string literal, prose, a dependency list — rather than
@@ -197,7 +222,11 @@ module NoirPassiveScan
       return false unless rule.category == "secret"
 
       # A value-shape regex match is the strongest signal — keep it.
-      return false if regex_value_hit?(rule, line)
+      stand_in_only = false
+      if regex_value_hit?(rule, line)
+        return false unless regex_stand_ins_only?(rule, line)
+        stand_in_only = true
+      end
 
       # Runtime indirections / placeholders (env reads, `${{ }}`, empty
       # stubs, `env('NAME')`, `<placeholder>`).
@@ -211,7 +240,40 @@ module NoirPassiveScan
         return true unless assigns_literal?(line, name)
       end
 
-      false
+      # Only stand-ins fired, and no name on the line backs them.
+      stand_in_only && !word_pattern_on_line?(rule, line)
+    end
+
+    # True when every regex match on the line is a stand-in.
+    private def self.regex_stand_ins_only?(rule : PassiveScan, line : String) : Bool
+      rule.matchers.all? do |matcher|
+        next true if matcher.type != "regex" || matcher.regex_compile_failed?
+        (matcher.compiled_regexes || [] of Regex).all? do |regex|
+          line.scan(regex).all? { |match| stand_in_match?(rule, line, match) }
+        end
+      end
+    end
+
+    # A regex match that holds no secret: a credentialed URL whose password
+    # is a reference, placeholder or format slot (`mongodb://<user>:<pw>@…`),
+    # or a match that starts with one of the rule's variable names — the
+    # regex is then a name assignment (`PRIVATE_KEY\s*=…`), not a value
+    # shape — whose assigned value is not a literal (`= 4242_u32`).
+    private def self.stand_in_match?(rule : PassiveScan, line : String, match : Regex::MatchData) : Bool
+      if url = match[0].match(CREDENTIAL_URL)
+        return !real_password?(url[1])
+      end
+      return false unless name = secret_names(rule).find { |n| match[0].starts_with?(n) }
+      return false unless assignment = NAME_ASSIGNMENT.match_at_byte_index(line, match.byte_begin(0) + name.bytesize)
+      !literal_value?(line.byte_slice(assignment.byte_end(0)), name, assignment[1])
+    end
+
+    private def self.secret_names(rule : PassiveScan) : Array(String)
+      rule.matchers.select { |matcher| matcher.type == "word" }.flat_map(&.string_patterns).select(&.matches?(SECRET_NAME))
+    end
+
+    private def self.word_pattern_on_line?(rule : PassiveScan, line : String) : Bool
+      rule.matchers.any? { |matcher| matcher.type == "word" && matcher.string_patterns.any? { |pattern| line.includes?(pattern) } }
     end
 
     # True when any value-shape (`regex`) matcher of `rule` matches the
@@ -268,12 +330,81 @@ module NoirPassiveScan
       offset = 0
       while idx = line.byte_index(name, offset)
         offset = idx + name.bytesize
-        return true if NAME_ASSIGNMENT.match_at_byte_index(line, offset)
+        if shell_expansion?(line, idx, offset)
+          # The expansion's default can still be a credentialed URL.
+          default = EXPANSION_DEFAULT.match_at_byte_index(line, offset)
+          return true if default && embeds_credential_url?(default[1])
+          next
+        end
+        if assignment = NAME_ASSIGNMENT.match_at_byte_index(line, offset)
+          return true if literal_value?(line.byte_slice(assignment.byte_end(0)), name, assignment[1])
+        end
         return true if credential_url_at?(line, LITERAL_AFTER_NAME, offset)
         return true if first_call_argument?(line, idx) && credential_url_at?(line, LITERAL_SECOND_ARGUMENT, offset)
       end
       false
     end
+
+    # True when `value` — the text right after `name` and its separator —
+    # starts with something that can hold a secret. Not a literal: a
+    # reference, placeholder or empty string (`"$DSN" ./migrate`), the name
+    # itself (`const val NAME = "NAME"`, `cfg.NAME`, `x["NAME"]`), a type
+    # annotation (`NAME: str | None = None`), code (`build_url()`), a number,
+    # or a credentialed URL whose password is a stand-in.
+    private def self.literal_value?(value : String, name : String, separator : String) : Bool
+      if QUOTE_BYTES.includes?(value.byte_at(0))
+        close = value.index(value[0], 1)
+        content = close ? value[1...close] : value[1..]
+        return true if content != name && !content.empty? && literal_token?(content)
+        # An empty or stand-in first string can sit before a real one:
+        # `""" … """`, `"" if DEBUG else "…"`, `"${REF}" || "…"`.
+        return embeds_credential_url?(value)
+      end
+      if separator == ":" && (typed = value.match(TYPE_ANNOTATION))
+        if default = typed[1]?
+          return literal_value?(default, name, "=")
+        end
+        return false if value.includes?('|')
+      end
+      token = value[/\A\S+/].rstrip(";,")
+      # Code can still pass a credentialed URL as a default argument.
+      return embeds_credential_url?(value) if value.matches?(CODE_EXPRESSION) || token.includes?(name)
+      !token.matches?(NUMBER_LITERAL) && literal_token?(token)
+    end
+
+    # The default of a shell / Spring expansion, read from just after the
+    # name: `:-…}`, `-…}`, `:=…}`, `:…}`. Group 1 is the default.
+    EXPANSION_DEFAULT = /\G(?::[-=?]?|[-=?])([^}]*)/
+
+    # A URL anywhere in a run of text, quoted or not.
+    EMBEDDED_URL = /[A-Za-z][A-Za-z0-9+.\-]*:\/\/[^\s'"`]+/
+
+    # True when `text` holds a credentialed URL with a real password.
+    private def self.embeds_credential_url?(text : String) : Bool
+      text.scan(EMBEDDED_URL).any? { |match| (url = match[0].match(CREDENTIAL_URL)) && real_password?(url[1]) }
+    end
+
+    private def self.literal_token?(value : String) : Bool
+      return false if value.matches?(PURE_REFERENCE) || value.matches?(PLACEHOLDER_VALUE)
+      return false if (url = value.match(CREDENTIAL_URL)) && !real_password?(url[1])
+      true
+    end
+
+    # True when the identifier holding the name at byte `idx` is expanded,
+    # not assigned: `$NAME`, `${APP_NAME:-}`. A bare `$NAME =` is a PHP /
+    # Perl assignment, not a read.
+    private def self.shell_expansion?(line : String, idx : Int32, offset : Int32) : Bool
+      i = idx
+      while i > 0 && (line.byte_at(i - 1).unsafe_chr.ascii_alphanumeric? || line.byte_at(i - 1) == '_'.ord)
+        i -= 1
+      end
+      braced = i > 0 && line.byte_at(i - 1) == '{'.ord
+      i -= 1 if braced
+      return false unless i > 0 && line.byte_at(i - 1) == '$'.ord
+      braced || !BARE_ASSIGNMENT.match_at_byte_index(line, offset)
+    end
+
+    BARE_ASSIGNMENT = /\G\s*=(?![=~>])/
 
     # The value assigned right after a name, quoted or not: `NAME=v`,
     # `NAME: "v"`, `"NAME" => 'v'`. Group 1 is the value.

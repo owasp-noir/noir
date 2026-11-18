@@ -11,6 +11,13 @@ module Noir
   # module's own methods, so a local definition would be silently
   # ignored, by the mixer's own calls too.
   module JvmTsHelpers
+    # Spring Data paging types. No single request value converts to one, so
+    # a command-object field of such a type binds nothing. Wider than the
+    # Java extractor's `pageable_type?` on purpose: a `Sort` handler argument
+    # binds `sort` through its own resolver, and a `PageRequest` one is not
+    # resolved as a `Pageable` at all.
+    PAGING_TYPES = Set{"Pageable", "PageRequest", "Sort"}
+
     # Java route and parameter literals. Unlike TreeSitter.decode_string_literal,
     # an empty decoded buffer stays empty; there is no raw-source fallback.
     module JavaStringLiterals
@@ -354,6 +361,35 @@ module Noir
           end
         end
         ""
+      end
+
+      # The `infix_expression` at the end of a `prefix_expression` chain
+      # when it reads as `class Name { ... }`: tree-sitter-kotlin can parse
+      # `@A class Name { ... }` after another class that way, with no ERROR node.
+      private def infix_class_expression(node : LibTreeSitter::TSNode, source : String, depth : Int32 = 0) : LibTreeSitter::TSNode?
+        return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+        count = LibTreeSitter.ts_node_named_child_count(node)
+        count.times do |i|
+          child = LibTreeSitter.ts_node_named_child(node, i.to_u32)
+          case Noir::TreeSitter.node_type(child)
+          when "prefix_expression"
+            return infix_class_expression(child, source, depth + 1)
+          when "infix_expression"
+            return child if class_infix?(child, source)
+          end
+        end
+        nil
+      end
+
+      private def class_infix?(node : LibTreeSitter::TSNode, source : String) : Bool
+        return false unless LibTreeSitter.ts_node_named_child_count(node) == 3
+        keyword = LibTreeSitter.ts_node_named_child(node, 0_u32)
+        name = LibTreeSitter.ts_node_named_child(node, 1_u32)
+        body = LibTreeSitter.ts_node_named_child(node, 2_u32)
+        Noir::TreeSitter.node_type(keyword) == "simple_identifier" &&
+          Noir::TreeSitter.node_text(keyword, source) == "class" &&
+          Noir::TreeSitter.node_type(name) == "simple_identifier" &&
+          Noir::TreeSitter.node_type(body) == "lambda_literal"
       end
 
       private def leaf_type_name(node : LibTreeSitter::TSNode, source : String) : String
