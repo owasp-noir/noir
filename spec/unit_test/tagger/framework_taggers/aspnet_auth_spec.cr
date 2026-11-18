@@ -555,6 +555,112 @@ describe "AspnetAuthTagger" do
     end
   end
 
+  it "reads a helper extension that authorizes the group it returns as RequireAuthorization" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("aspnet_group_helper")
+    Dir.mkdir_p(tmpdir)
+    wiring = File.join(tmpdir, "ApiEndpoints.cs")
+    routes = File.join(tmpdir, "Routes.cs")
+    File.write(wiring, <<-CS)
+      public static class ApiEndpoints
+      {
+          public static void MapApi(this IEndpointRouteBuilder endpoints)
+          {
+              endpoints.MapGroup("/orders").WithApiDefaults().MapOrderEndpoints();
+              var admin = endpoints.MapGroup("/orgs/{orgId}/admin").WithAdminDefaults();
+              admin.MapGroup("/users").MapUserEndpoints();
+              endpoints.MapGroup("/public").WithTags("public").MapPublicEndpoints();
+          }
+
+          private static RouteGroupBuilder WithApiDefaults(this RouteGroupBuilder group) =>
+              group.WithApiDefaults("Application");
+
+          private static RouteGroupBuilder WithApiDefaults(this RouteGroupBuilder group, string policy)
+          {
+              group.RequireAuthorization(policy);
+              group.WithGroupName("internal");
+              return group;
+          }
+
+          private static RouteGroupBuilder WithAdminDefaults(this RouteGroupBuilder group)
+          {
+              group.WithApiDefaults("Admin");
+              return group;
+          }
+
+          public static RouteGroupBuilder MapScopedGroup(this IEndpointRouteBuilder endpoints)
+          {
+              var group = endpoints.MapGroup("");
+              group.RequireAuthorization("Application");
+              return group;
+          }
+      }
+      CS
+    File.write(routes, <<-CS)
+      public static class Routes
+      {
+          public static RouteGroupBuilder MapOrderEndpoints(this RouteGroupBuilder group)
+          {
+              group.MapGet("", () => "orders");
+              return group;
+          }
+
+          public static RouteGroupBuilder MapUserEndpoints(this RouteGroupBuilder group)
+          {
+              group.MapGet("", () => "users");
+              return group;
+          }
+
+          public static RouteGroupBuilder MapPublicEndpoints(this RouteGroupBuilder group)
+          {
+              group.MapGet("", () => "public");
+              return group;
+          }
+
+          public static RouteGroupBuilder MapBillingEndpoints(this IEndpointRouteBuilder endpoints)
+          {
+              var group = endpoints.MapScopedGroup();
+              group.MapPost("preview", () => "preview");
+              return group;
+          }
+
+          public static RouteGroupBuilder MapReportEndpoints(this IEndpointRouteBuilder endpoints)
+          {
+              var group = endpoints.MapGroup("/reports");
+              group.MapGet("a", () => "a").RequireAuthorization();
+              group.MapGet("b", () => "b");
+              return group;
+          }
+
+          public static void MapStatus(this IEndpointRouteBuilder endpoints)
+          {
+              var reports = endpoints.MapReportEndpoints();
+              reports.MapGet("c", () => "c");
+          }
+      }
+      CS
+    {wiring, routes}.each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) do
+        details = Details.new(PathInfo.new(routes, line))
+        details.technology = "cs_aspnet_core_minimal_api"
+        Endpoint.new("/#{line}", "GET", [] of Param, details)
+      end
+      endpoints = {order: 5, user: 11, public: 17, billing: 24, report_b: 32, report_c: 39}.to_h.transform_values { |line| at.call(line) }
+
+      AspnetAuthTagger.new(noir_options).perform(endpoints.values)
+
+      guarded = endpoints.select { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys
+      guarded.should eq([:order, :user, :billing])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   describe "filter attributes, inherited attributes and in-action refusals" do
     filters_base = File.expand_path("../../../functional_test/fixtures/csharp/aspnet_auth_filters", __DIR__)
     controllers = "#{filters_base}/Controllers/Controllers.cs"

@@ -135,17 +135,21 @@ class AspnetAuthTagger < FrameworkTagger
   # extension maps; one after it covers only the builder it returns.
   private def collect_extension_auth
     @extension_auth.clear
+    @auth_call = MINIMAL_API_REQUIRE_AUTH
+    @group_declaration = GROUP_DECLARATION_RE
     sources = [] of Tuple(String, String)
     names = Set(String).new
     collect_files_by_extension(".cs").each do |path|
       content = read_file(path)
       next unless content && content.includes?("Map")
       next if base_relative_path(path).matches?(TEST_PATH)
-      code = Noir::CComments.strip(content)
+      # Strings blanked: a route template's `{orgId}` must not split a statement.
+      code = lexer_for(path).try(&.masked_source) || next
       sources << {path, code}
       code.scan(ROUTE_BUILDER_EXTENSION) { |m| names << m[1] }
     end
     return if names.empty?
+    collect_authorizing_helpers(sources.map(&.[0]))
 
     sites = Hash(String, Array(Tuple(Bool, Bool))).new
     call_re = /\.\s*(#{names.map { |n| Regex.escape(n) }.join('|')})\s*\(/
@@ -157,18 +161,135 @@ class AspnetAuthTagger < FrameworkTagger
           before = statement[0...m.begin]
           after = statement[m.end..]
           next if after.matches?(MINIMAL_API_ALLOW_ANON)
-          before_auth = before.matches?(MINIMAL_API_REQUIRE_AUTH)
-          if !before_auth && (receiver = before.match(/\A\s*(\w+)\s*\z/))
+          before_auth = before.matches?(@auth_call)
+          # `admin.MapGroup("/users").MapUsers()`: a child group takes `admin`'s conventions.
+          if !before_auth && (receiver = before.match(/\A\s*(\w+)\s*(?:\z|\.\s*MapGroup\s*\()/))
             declaration = /\b#{Regex.escape(receiver[1])}\s*=[^=]/
-            before_auth = statements.any? { |s| s.matches?(declaration) && s.matches?(MINIMAL_API_REQUIRE_AUTH) && !s.matches?(MINIMAL_API_ALLOW_ANON) }
+            before_auth = statements.any? { |s| s.matches?(declaration) && s.matches?(@auth_call) && !s.matches?(MINIMAL_API_ALLOW_ANON) }
           end
-          (sites[m[1]] ||= [] of Tuple(Bool, Bool)) << {before_auth || after.matches?(MINIMAL_API_REQUIRE_AUTH), before_auth}
+          (sites[m[1]] ||= [] of Tuple(Bool, Bool)) << {before_auth || after.matches?(@auth_call), before_auth}
         end
       end
     end
     sites.each do |name, calls|
       @extension_auth[name] = {calls.all?(&.[0]), calls.all?(&.[1])}
     end
+  end
+
+  @auth_call : Regex = MINIMAL_API_REQUIRE_AUTH
+  @group_declaration : Regex = GROUP_DECLARATION_RE
+
+  # Route-builder extensions whose returned builder carries authorization,
+  # so a call to one reads like `.RequireAuthorization()` on the chain:
+  #
+  #   static RouteGroupBuilder WithApiDefaults(this RouteGroupBuilder group)
+  #   { group.RequireAuthorization(policy); return group; }
+  #   static RouteGroupBuilder MapScopedGroup(this IEndpointRouteBuilder e)
+  #   { var group = e.MapGroup(""); group.RequireAuthorization(); return group; }
+  #
+  # Helpers built on helpers are found by iterating to a fixpoint.
+  private def collect_authorizing_helpers(paths : Array(String)) : Nil
+    bodies = [] of Tuple(String, String, Bool)
+    paths.each do |path|
+      masked = lexer_for(path).try(&.masked_source) || next
+      next unless masked.includes?("this")
+      masked.scan(ROUTE_BUILDER_EXTENSION) do |m|
+        open = masked.match(/\G[^)]*\)\s*(?:where\s[^{=;]*)?(\{|=>)/, m.end(0)) || next
+        start = open.end(0)
+        if open[1] == "=>"
+          bodies << {m[1], masked[start...(masked.index(';', start) || masked.size)], true}
+        elsif close = closing_brace(masked, start - 1)
+          bodies << {m[1], masked[start...close], false}
+        end
+      end
+    end
+    helpers = Set(String).new
+    5.times do
+      found = bodies.select { |name, body, expression| !helpers.includes?(name) && authorizes_result?(body, expression, helpers) }
+      break if found.empty?
+      found.each { |entry| helpers << entry[0] }
+    end
+    return if helpers.empty?
+    names = helpers.map { |name| Regex.escape(name) }.join('|')
+    @auth_call = /\.\s*(?:RequireAuthorization|#{names})\s*\(/
+    @group_declaration = /\b(\w+)\s*=\s*[\w.]*(?:MapGroup|#{names})\s*\(/
+  end
+
+  private def closing_brace(text : String, open : Int32) : Int32?
+    depth = 0
+    (open...text.size).each do |i|
+      case text[i]
+      when '{' then depth += 1
+      when '}'
+        depth -= 1
+        return i if depth == 0
+      end
+    end
+    nil
+  end
+
+  # Whether the builder an extension body returns is authorized: the
+  # returned chain ends authorized, or the returned variable was declared
+  # authorized or had an authorizing call as the first link of a statement
+  # of its own. Only top-level statements count; a conditional one does not.
+  private def authorizes_result?(body : String, expression : Bool, helpers : Set(String)) : Bool
+    return chain_result_authorized?(body, helpers) if expression
+    statements = top_level_statements(body)
+    returned = statements.reverse_each.compact_map(&.match(/\A\s*return\s+(.+)\z/m).try(&.[1])).first? || return false
+    variable = returned.strip
+    return chain_result_authorized?(returned, helpers) unless variable.matches?(/\A\w+\z/)
+    statements.any? do |statement|
+      if declared = statement.match(/\A\s*(?:var|[\w<>]+)\s+#{variable}\s*=\s*(.+)\z/m)
+        chain_result_authorized?(declared[1], helpers)
+      elsif statement.matches?(/\A\s*#{variable}\s*\./)
+        links = chain_links(statement)
+        first_map = links.index(&.starts_with?("Map")) || links.size
+        links.first(first_map).any? { |link| authorizing_link?(link, helpers) }
+      else
+        false
+      end
+    end
+  end
+
+  # An authorizing link after the last route or group map of the chain.
+  private def chain_result_authorized?(chain : String, helpers : Set(String)) : Bool
+    links = chain_links(chain)
+    last_auth = links.rindex { |link| authorizing_link?(link, helpers) } || return false
+    last_map = links.rindex { |link| link.starts_with?("Map") && !helpers.includes?(link) }
+    last_map.nil? || last_auth > last_map
+  end
+
+  private def authorizing_link?(link : String, helpers : Set(String)) : Bool
+    link == "RequireAuthorization" || helpers.includes?(link)
+  end
+
+  private def chain_links(chain : String) : Array(String)
+    chain.scan(/\.\s*(\w+)\s*(?:<[^<>;]*>\s*)?\(/).map(&.[1])
+  end
+
+  private def top_level_statements(body : String) : Array(String)
+    statements = [] of String
+    depth = 0
+    start = 0
+    body.each_char_with_index do |char, i|
+      case char
+      when '(', '{', '[' then depth += 1
+      when ')', ']' then depth -= 1
+      when '}'
+        depth -= 1
+        # A block statement (`if (x) { ... }`) ends at its brace.
+        if depth == 0
+          statements << body[start..i]
+          start = i + 1
+        end
+      when ';'
+        if depth == 0
+          statements << body[start...i]
+          start = i + 1
+        end
+      end
+    end
+    statements
   end
 
   private def check_endpoint(endpoint : Endpoint)
@@ -934,7 +1055,7 @@ class AspnetAuthTagger < FrameworkTagger
     statement = statement_at(lines, route_line)
 
     return "" if statement.matches?(MINIMAL_API_ALLOW_ANON)
-    return "ASP.NET .RequireAuthorization()" if statement.matches?(MINIMAL_API_REQUIRE_AUTH)
+    return "ASP.NET .RequireAuthorization()" if statement.matches?(@auth_call)
     return if depth >= 5
 
     receiver = (statement.match(MINIMAL_API_RECEIVER) || statement.match(GROUP_DECLARATION_RECEIVER)).try(&.[1])
@@ -974,7 +1095,7 @@ class AspnetAuthTagger < FrameworkTagger
         level += line.count('{') - line.count('}')
         members << idx if line.matches?(MEMBER_DECLARATION)
         line.match(GROUP_STATEMENT_RE).try { |m| (statements[m[1]] ||= [] of Int32) << idx }
-        line.scan(GROUP_DECLARATION_RE) { |m| (groups[m[1]] ||= [] of Int32) << idx }
+        line.scan(@group_declaration) { |m| (groups[m[1]] ||= [] of Int32) << idx }
       end
       depth << level
       FluentIndex.new(depth, members, statements, groups)
