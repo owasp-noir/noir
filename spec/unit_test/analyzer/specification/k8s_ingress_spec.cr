@@ -202,6 +202,167 @@ describe "Kubernetes Ingress Analyzer" do
     endpoints.sort_by(&.url).map { |e| {e.url, e.details.code_paths.first.line} }.should eq([{"/", 22}, {"/export", 16}])
   end
 
+  it "gives a path repeated across rules and Ingresses the line of its own rule" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: items
+      spec:
+        template:
+          spec:
+            containers:
+            - name: items
+              livenessProbe:
+                httpGet:
+                  path: /
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: items
+      spec:
+        rules:
+        - host: items.example.test
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+              backend:
+                service:
+                  name: items
+                  port:
+                    number: 80
+        - host: orders.example.test
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: demo
+      spec:
+        rules:
+        - host: demo.example.test
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+      YAML
+
+    endpoints.map { |e| {tag_descriptions(e, "ingress-host").first, e.details.code_paths.first.line} }.should eq([
+      {"items.example.test", 23}, {"orders.example.test", 33}, {"demo.example.test", 45},
+    ])
+  end
+
+  it "leaves the line of a `/` rule to that rule, not to an earlier path-less one" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: demo
+      spec:
+        rules:
+        - host: items.example.test
+          http:
+            paths:
+            - pathType: Prefix
+              backend:
+                service:
+                  name: items
+                  port:
+                    number: 80
+        - host: orders.example.test
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+      YAML
+
+    orders = endpoints.find! { |e| tag_descriptions(e, "ingress-host").first == "orders.example.test" }
+    orders.details.code_paths.first.line.should eq(19)
+  end
+
+  it "tags every row of an Ingress whose annotation answers with a redirect" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: old-items
+        annotations:
+          nginx.ingress.kubernetes.io/permanent-redirect: https://cdn.example.test/items
+      spec:
+        rules:
+        - host: items.example.test
+          http:
+            paths:
+            - path: /old
+              pathType: Prefix
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: moved-orders
+        annotations:
+          nginx.ingress.kubernetes.io/permanent-redirect: https://orders.example.test/new
+          nginx.ingress.kubernetes.io/permanent-redirect-code: "308"
+      spec:
+        rules:
+        - http:
+            paths:
+            - path: /orders
+              pathType: Prefix
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: promo
+        annotations:
+          nginx.ingress.kubernetes.io/temporal-redirect: https://demo.example.test/promo
+      spec:
+        rules:
+        - http:
+            paths:
+            - path: /promo
+              pathType: Prefix
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: odd-code
+        annotations:
+          nginx.ingress.kubernetes.io/permanent-redirect: https://demo.example.test/items
+          nginx.ingress.kubernetes.io/permanent-redirect-code: "200"
+      spec:
+        rules:
+        - http:
+            paths:
+            - path: /legacy
+              pathType: Prefix
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: served
+      spec:
+        rules:
+        - http:
+            paths:
+            - path: /served
+              pathType: Prefix
+      YAML
+
+    endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-redirect")} }.should eq([
+      {"/old", ["301 https://cdn.example.test/items"]},
+      {"/orders", ["308 https://orders.example.test/new"]},
+      {"/promo", ["302 https://demo.example.test/promo"]},
+      {"/legacy", ["301 https://demo.example.test/items"]},
+      {"/served", [] of String},
+    ])
+  end
+
   it "reads an Ingress inside a Helm named template" do
     endpoints = analyze_ingress <<-YAML
       {{- define "demo.ingress" }}

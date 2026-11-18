@@ -599,6 +599,41 @@ describe "kemal routes registered in a loop over literals" do
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
 
+  it "expands a loop over a constant literal written across several lines" do
+    temp_dir = File.tempname("kemal_multiline_const")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "app.cr")
+    File.write(temp_file, <<-'CRYSTAL')
+      ITEM_FILES = {
+        "Small" => {{ read_file("assets/small.txt") }}, # macro value
+        "Large" => {{ read_file("assets/large.txt") }},
+      }
+      ORDER_KINDS = {
+        "draft",
+        "paid",
+      }
+
+      ITEM_FILES.each do |item, data|
+        get "/assets/items/#{item}.txt" do |env|
+          data
+        end
+      end
+      ORDER_KINDS.each do |kind|
+        get "/orders/#{kind}" do |env|
+          kind
+        end
+      end
+      CRYSTAL
+
+    endpoints = Analyzer::Crystal::Kemal.new(create_test_options).analyze_file(temp_file)
+    endpoints.map { |e| "#{e.method} #{e.url}" }.sort!.should eq([
+      "GET /assets/items/Large.txt", "GET /assets/items/Small.txt", "GET /orders/draft", "GET /orders/paid",
+    ])
+    endpoints.flat_map(&.params).should be_empty
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+
   it "keeps the as-written route when a constant name is assigned twice in the file" do
     temp_dir = File.tempname("kemal_dup_const")
     Dir.mkdir_p(temp_dir)
