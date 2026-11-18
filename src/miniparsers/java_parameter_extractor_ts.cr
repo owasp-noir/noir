@@ -907,12 +907,24 @@ module Noir
         end
       end
 
-      declared.map do |name, access, init, json_name, type_name, unwrap|
+      declared.map do |field_name, access, init, json_name, type_name, unwrap|
+        # Lombok and bean accessors for a primitive `boolean isFoo` are
+        # `isFoo()` / `setFoo()`, so Jackson and `WebDataBinder` both bind
+        # the property `foo`. A `Boolean isFoo` gets `setIsFoo()` and keeps
+        # its name; `@JsonProperty` on the field names the key itself.
+        name = field_name
+        if !json_name && type_name == "boolean" && field_name.matches?(/\Ais[A-Z]/) && !setter_targets.includes?(field_name)
+          property = field_name[2].downcase.to_s + field_name[3..]
+          name = property if lombok_setters || setter_targets.includes?(property)
+        end
+        # Field annotations are keyed by the field, accessor ones by the property.
+        keys = {field_name, name}
         has_setter = lombok_setters || setter_targets.includes?(name)
         json_name ||= renamed[name]?
-        ignored = json_ignored.includes?(name) && !json_kept.includes?(name) && !(json_name && json_kept.includes?(json_name))
-        ignored ||= transient_fields.includes?(name) && !has_setter && !json_kept.includes?(name)
-        ignored ||= read_only.includes?(name)
+        kept = keys.any? { |key| json_kept.includes?(key) }
+        ignored = keys.any? { |key| json_ignored.includes?(key) } && !kept && !(json_name && json_kept.includes?(json_name))
+        ignored ||= transient_fields.includes?(field_name) && !has_setter && !kept
+        ignored ||= keys.any? { |key| read_only.includes?(key) }
         FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored)
       end
     end
