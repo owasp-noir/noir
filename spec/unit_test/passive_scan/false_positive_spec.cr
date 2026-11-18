@@ -218,6 +218,7 @@ describe NoirPassiveScan::FalsePositive do
         %(cfg = {"DATABASE_URL": demo_db.DATABASE_URL}),
         %(demo_db.DATABASE_URL = self._state["DATABASE_URL"]),
         %(    DATABASE_URL = explicit or build_url()),
+        %(    DATABASE_URL = explicit or build_url(read_secret())),
         %(    const val DATABASE_URL = "DATABASE_URL"),
       ].each do |line|
         NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_true, "expected suppressed: #{line}"
@@ -248,8 +249,10 @@ describe NoirPassiveScan::FalsePositive do
     end
 
     it "judges a long chain of calls without hitting the regex match limit" do
-      line = "DATABASE_URL = #{"f(a)||" * 30}'x'"
-      NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_false
+      ["f(a)||", "f(g(a))||"].each do |operand|
+        line = "DATABASE_URL = #{operand * 30}'x'"
+        NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_false
+      end
     end
 
     it "suppresses a credentialed-URL regex hit whose password is a stand-in" do

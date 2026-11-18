@@ -74,8 +74,12 @@ module NoirPassiveScan
 
     # Unquoted code with no literal in it: a call (`build_url()`), or
     # operands joined by a fallback (`explicit or build_url()`). A bare word
-    # is not enough — in `.env` / YAML it is the literal itself.
-    CODE_OPERAND    = %q([A-Za-z_][\w.]*(?:\([^'"`]*\))?)
+    # is not enough — in `.env` / YAML it is the literal itself. An
+    # operand's argument list is balanced, one level deep (`f(g())`): one
+    # that could span `)` split a chain like `f(a)||g(b)||…` exponentially
+    # many ways and hit the match limit, which dropped the rule for the
+    # rest of the file.
+    CODE_OPERAND    = %q([A-Za-z_][\w.]*(?:\((?:[^'"`()]|\([^'"`()]*\))*\))?)
     CODE_EXPRESSION = /\A(?:[A-Za-z_][\w.]*\([^'"`]*\)|#{CODE_OPERAND}(?:\s*(?:\bor\b|\|\||\?\?)\s*#{CODE_OPERAND})+)\s*[;,]?\z/
 
     # A machine-word integer constant (`4242`, `4242_u32`, `0x1F`): a key,
@@ -351,7 +355,10 @@ module NoirPassiveScan
       if QUOTE_BYTES.includes?(value.byte_at(0))
         close = value.index(value[0], 1)
         content = close ? value[1...close] : value[1..]
-        return content != name && !content.empty? && literal_token?(content)
+        return true if content != name && !content.empty? && literal_token?(content)
+        # An empty or stand-in first string can sit before a real one:
+        # `""" … """`, `"" if DEBUG else "…"`, `"${REF}" || "…"`.
+        return embeds_credential_url?(value)
       end
       if separator == ":" && (typed = value.match(TYPE_ANNOTATION))
         if default = typed[1]?
