@@ -177,4 +177,40 @@ describe "HonoAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  # Hono's documentation writes `app.use('/auth/*', basicAuth({ … }))` over
+  # several lines: the path and the middleware are arguments of one call.
+  it "reads an app.use() call that spans several lines" do
+    tmpdir = File.tempname("hono_multiline_use")
+    Dir.mkdir_p(tmpdir)
+    index_ts = File.join(tmpdir, "index.ts")
+    File.write(index_ts, [
+      "const app = new Hono()",
+      "app.use(",
+      "  '/auth/*',",
+      "  basicAuth({",
+      "    username: 'hono',",
+      "    password: 'secret',",
+      "  })",
+      ")",
+      "app.use(",
+      "  '/etag/*',",
+      "  etag()",
+      ")",
+      "app.get('/auth/page', (c) => c.text('ok'))",
+      "app.get('/etag/cached', (c) => c.text('ok'))",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(index_ts)
+
+    page = Endpoint.new("/auth/page", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 13)))
+    cached = Endpoint.new("/etag/cached", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 14)))
+    HonoAuthTagger.new(noir_options).perform([page, cached])
+    page.tags.map(&.description).should eq(["Protected by Hono app.use() auth on /auth/*"])
+    cached.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end

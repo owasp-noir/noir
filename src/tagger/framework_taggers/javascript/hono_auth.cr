@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../utils/js_literal_scanner"
 require "../prefix_scope"
 
 @[Noir::TaggerFor(key: "hono_auth", name: "Hono Auth Tagger", desc: "Identifies Hono authentication patterns (bearerAuth, jwt, basicAuth, custom middleware)", order: 250)]
@@ -57,8 +58,9 @@ class HonoAuthTagger < FrameworkTagger
       files.each do |file|
         lines = read_file_lines(file)
         next if lines.nil?
-        lines.each do |line|
-          stripped = line.strip
+        lines.each_with_index do |line, idx|
+          next unless line.matches?(USE_CALL)
+          stripped = use_statement(lines, idx)
 
           # Match app.use('/prefix', authMiddleware), app.use('/prefix/*', …)
           # and the app-wide app.use('*', …)
@@ -70,7 +72,7 @@ class HonoAuthTagger < FrameworkTagger
           end
 
           # Global app.use(auth)
-          if stripped =~ /(?:app|router|hono)\.use\s*\(\s*(?!['"])/
+          if stripped =~ /(?:app|router|hono)\.use\s*\(\s*(?![\s'"])/
             if has_auth_middleware_in_line?(stripped)
               @use_auth_scopes << {prefix: "/", description: "Protected by Hono global auth middleware"}
             end
@@ -78,6 +80,18 @@ class HonoAuthTagger < FrameworkTagger
         end
       end
     end
+  end
+
+  USE_CALL           = /(?:app|router|hono)\.use\s*\(/
+  MAX_USE_CALL_LINES = 40
+
+  # The `use(...)` call opened on line `idx`, read to its closing paren and
+  # joined onto one line: the path and the middleware may sit on later lines.
+  private def use_statement(lines : Array(String), idx : Int32) : String
+    text = lines[idx, MAX_USE_CALL_LINES].join(' ')
+    head = text.match(USE_CALL) || return lines[idx].strip
+    close = Noir::JSLiteralScanner.find_matching_paren(text, head.end(0) - 1) || return lines[idx].strip
+    text[head.begin(0)..close]
   end
 
   private def has_auth_middleware_in_line?(line : String) : Bool
