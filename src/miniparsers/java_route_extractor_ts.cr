@@ -1233,24 +1233,30 @@ module Noir
       values
     end
 
+    # A `params=` / `headers=` condition as Spring keys it. `!name`, `name=`
+    # (present and empty) and `name!=value` stay as written, apart from
+    # `name` (present); `request_params` folds them into what a request sends.
     private def condition_param(expr : String, param_type : String) : Param?
       condition = expr.strip
-      return if condition.empty? || condition.starts_with?("!")
+      name = condition_name(condition)
+      return if name.empty?
+      return Param.new(condition, "", param_type) if condition.starts_with?('!') || condition.ends_with?('=') || condition.includes?("!=")
+      Param.new(name, condition.partition('=')[2].strip, param_type)
+    end
 
-      if idx = condition.index("!=")
-        name = condition[...idx].strip
-        return if name.empty?
-        return Param.new(name, "", param_type)
+    # Route conditions → the params a request sends. A negated `!name`
+    # demands the input's absence, so it names nothing to send; `name=` and
+    # `name!=value` send just `name`.
+    def request_params(conditions : Array(Param)) : Array(Param)
+      conditions.compact_map do |condition|
+        next if condition.name.starts_with?('!')
+        name = condition_name(condition.name)
+        name == condition.name ? condition : Param.new(name, "", condition.param_type)
       end
+    end
 
-      if idx = condition.index('=')
-        name = condition[...idx].strip
-        value = condition[(idx + 1)..].strip
-        return if name.empty?
-        return Param.new(name, value, param_type)
-      end
-
-      Param.new(condition, "", param_type)
+    private def condition_name(condition : String) : String
+      condition.lchop('!').split(/!?=/, 2)[0].strip
     end
 
     # Known HTTP-verb identifiers we consider valid `method = ...` values.

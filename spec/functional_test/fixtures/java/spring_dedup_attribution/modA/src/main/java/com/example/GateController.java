@@ -15,4 +15,16 @@ public class GateController {
 
     @RequestMapping("/")
     public String home(@RequestParam(value = "banner", required = false) String b) { return "home"; }
+
+    @RequestMapping(value = "/gate/reset", method = RequestMethod.GET, params = {"ticket", "!relink"})
+    public String ticketOnly(@RequestParam("ticket") String t) { return t; }
+
+    @RequestMapping(value = "/gate/reset", method = RequestMethod.GET, params = "relink!=old")
+    public String relinkNotOld(@RequestParam("relink") String r) { return r; }
+
+    @GetMapping(value = "/gate/link", params = {"url", "id="})
+    public String byUrl(@RequestParam("url") String u) { return u; }
+
+    @GetMapping(value = "/gate/link", params = {"url=", "id"})
+    public String byId(@RequestParam("id") String id) { return id; }
 }

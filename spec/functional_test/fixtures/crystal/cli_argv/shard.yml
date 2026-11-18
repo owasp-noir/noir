@@ -1,0 +1,5 @@
+name: demo
+version: 0.1.0
+targets:
+  demo-dbtool:
+    main: src/dbtool.cr
