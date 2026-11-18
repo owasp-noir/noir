@@ -168,6 +168,40 @@ describe "EndpointOptimizer" do
         end
       end
 
+      # An Ingress in a `-b` base of its own, or in an infra dir whose
+      # manifest serves only scripts, fronts the app's route and folds into it.
+      it "folds an Ingress from a project with no routes into the app route" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-ingress-infra-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        app = File.join(temp_dir, "app")
+        infra = File.join(temp_dir, "infra")
+        code_file = File.join(app, "index.js")
+        rule_file = File.join(infra, "k8s/ingress.yaml")
+
+        begin
+          Dir.mkdir_p(File.join(infra, "k8s"))
+          Dir.mkdir_p(app)
+          scan = -> do
+            result = optimizer.optimize_endpoints([
+              tech_endpoint("/items", "ANY", "k8s_ingress", rule_file, 3),
+              tech_endpoint("/items", "GET", "js_express", code_file, 2),
+            ])
+            result.map { |e| {e.method, e.details.code_paths.map(&.path).sort!} }
+          end
+
+          options["base"] = YAML::Any.new([YAML::Any.new(app), YAML::Any.new(infra)])
+          scan.call.should eq([{"GET", [code_file, rule_file].sort!}])
+
+          File.write(File.join(infra, "requirements.txt"), "")
+          options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+          optimizer = EndpointOptimizer.new(logger, options)
+          scan.call.should eq([{"GET", [code_file, rule_file].sort!}])
+        ensure
+          options.delete("base")
+          FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+        end
+      end
+
       # A generator's global `security` also covers the login route the code
       # serves openly; the code's own guards decide.
       it "drops an OAS security guard once code serves the route" do

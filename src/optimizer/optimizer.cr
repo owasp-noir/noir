@@ -619,6 +619,7 @@ class EndpointOptimizer
       (code[unify_path_placeholders(key[1])] ||= [] of Tuple(String, String, String)) << key
       files[key] = endpoint.details.code_paths.map { |path_info| Noir::PathScope.expand(path_info.path) }
     end
+    holds_code = Hash(String, Bool).new
     held.each do |key, proxy|
       # A proxy declared inside a project fronts that project, so only its
       # routes are candidates (one merged across technologies included); one
@@ -626,6 +627,13 @@ class EndpointOptimizer
       # still serve a method at the path, it says nothing about which one it
       # fronts and stays apart.
       scope = proxy.details.code_paths.first?.try { |path_info| source_project_scope(path_info.path) } || ""
+      # A manifest-less `-b` base, or a project with no routes of its own (an
+      # infra dir with a manifest for its scripts), fronts other projects.
+      unless scope.empty?
+        own = !@base_fallback_scopes.includes?(scope) &&
+              holds_code.put_if_absent(scope) { files.values.any?(&.any? { |file| Noir::PathScope.under_normalized_root?(file, scope) }) }
+        scope = "" unless own
+      end
       targets = (code[unify_path_placeholders(key[1])]? || [] of Tuple(String, String, String))
         .select { |row| scope.empty? || files[row].any? { |file| Noir::PathScope.under_normalized_root?(file, scope) } }
         .group_by(&.[0]).values.compact_map { |rows| rows[0] if rows.size == 1 }
