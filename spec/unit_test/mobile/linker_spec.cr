@@ -380,6 +380,78 @@ describe "NoirMobileLinker iOS multi-app scoping" do
       CodeLocator.instance.reset_files
     end
   end
+
+  # Generated projects (no .xcodeproj) with several app targets side by side:
+  # the fallback climb must not reach the directory that holds every app.
+  it "keeps generated-project apps apart when no Xcode project exists" do
+    root = File.tempname("noir-ios-generated-multi-app")
+    apps = File.join(root, "Apps")
+    main_plist = File.join(apps, "Main", "Main-Info.plist")
+    kit_plist = File.join(apps, "Kit", "Info.plist")
+    demo_plist = File.join(apps, "Demo", "Info.plist")
+    extra_plist = File.join(apps, "Extra", "Info.plist")
+    main_delegate = File.join(apps, "Main", "Sources", "AppDelegate.swift")
+    demo_delegate = File.join(apps, "Demo", "Sources", "AppDelegate.swift")
+    links = File.join(apps, "Common", "Sources", "Links.swift")
+
+    begin
+      [main_plist, kit_plist, demo_plist, extra_plist, main_delegate, demo_delegate, links].each do |path|
+        Dir.mkdir_p(File.dirname(path))
+      end
+      [main_plist, kit_plist, demo_plist, extra_plist].each { |path| File.write(path, "") }
+      File.write(links, %(let settings = "mainapp://settings"\n))
+      File.write(main_delegate, <<-SWIFT)
+        final class AppDelegate {
+          func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+            MainRouter.route(url)
+            return true
+          }
+        }
+        SWIFT
+      File.write(demo_delegate, <<-SWIFT)
+        final class AppDelegate {
+          func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+            DemoRouter.route(url)
+            return true
+          }
+        }
+        SWIFT
+
+      locator = CodeLocator.instance
+      locator.reset_files
+      [main_delegate, demo_delegate, links].each { |path| locator.register_file(path, File.read(path)) }
+
+      build = ->(url : String, paths : Array(String)) do
+        details = Details.new
+        paths.each { |path| details.add_path(PathInfo.new(path)) }
+        details.technology = "ios"
+        endpoint = Endpoint.new(url, "GET", details)
+        endpoint.protocol = "mobile-scheme"
+        endpoint
+      end
+
+      linked = NoirMobileLinker.apply([
+        # A `<Target>-Info.plist` listed first is the declaring app's config.
+        build.call("mainapp://", [main_plist, kit_plist]),
+        build.call("demo://", [demo_plist]),
+        build.call("extra://", [extra_plist]),
+        # A harvested route anchored on a shared source file.
+        build.call("mainapp://settings", [links]),
+      ], logger)
+      callees = linked.map(&.callees.map(&.name))
+
+      callees[0].should contain("MainRouter.route")
+      callees[0].should_not contain("DemoRouter.route")
+      callees[1].should contain("DemoRouter.route")
+      callees[1].should_not contain("MainRouter.route")
+      callees[2].should be_empty
+      callees[3].should contain("MainRouter.route")
+      callees[3].should_not contain("DemoRouter.route")
+    ensure
+      FileUtils.rm_rf(root) if root
+      CodeLocator.instance.reset_files
+    end
+  end
 end
 
 describe "NoirMobileLinker Android multi-app scoping" do
