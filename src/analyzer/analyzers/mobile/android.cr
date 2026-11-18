@@ -29,6 +29,13 @@ module Analyzer::Mobile
 
     LAUNCHER_ACTION = "android.intent.action.MAIN"
 
+    # Namespace that relative class names (`.Foo`) of the manifest being
+    # parsed expand against; set only for a library module (see
+    # `parse_manifest`), so every other manifest keeps its names verbatim.
+    @class_namespace : String? = nil
+    # Settings directory => {applicationId, build script} of its modules.
+    @application_modules = {} of String => Array({String, String})
+
     def analyze
       locator = CodeLocator.instance
       manifests = locator.all(Noir::LocatorKeys::ANDROID_MANIFEST)
@@ -62,12 +69,24 @@ module Analyzer::Mobile
       package = substitute(attr(manifest, "package") || "", placeholders)
       package = gradle.package_fallback if package.empty?
 
+      # A library module has no applicationId: the manifest merger folds its
+      # components into the application that consumes it. They live in that
+      # package, `${applicationId}` is its id, and relative class names
+      # expand against the library's own namespace.
+      @class_namespace = nil
+      if app_id = gradle.consumer_id
+        @class_namespace = package unless package.empty?
+        package = app_id
+        placeholders["applicationId"] ||= app_id
+      end
+
       seen_urls = Set(String).new
+      overlaid = main_filtered_components(path)
 
       if application = find_child(manifest, "application")
         {"activity", "activity-alias", "service", "receiver"}.each do |component_tag|
           each_child(application, component_tag) do |component|
-            process_component(component, component_tag, package, strings, placeholders, path, seen_urls)
+            process_component(component, component_tag, package, strings, placeholders, path, seen_urls, overlaid)
           end
         end
 
@@ -84,20 +103,29 @@ module Analyzer::Mobile
     private def process_component(component : XML::Node, component_tag : String,
                                   package : String, strings : Hash(String, String),
                                   placeholders : Hash(String, String),
-                                  path : String, seen_urls : Set(String))
+                                  path : String, seen_urls : Set(String),
+                                  overlaid : Set(String))
       # A component explicitly disabled in the manifest can't be launched
       # (until something re-enables it at runtime), so it isn't a live entry
       # point — skip it regardless of how it would otherwise be reached.
       return if attr(component, "enabled") == "false"
 
       exported = bool_attr(component, "exported")
-      component_name = substitute(attr(component, "name") || "", placeholders)
-      handler_name = component_tag == "activity-alias" ? substitute(attr(component, "targetActivity") || component_name, placeholders) : component_name
+      component_name = qualify(substitute(attr(component, "name") || "", placeholders))
+      handler_name = component_tag == "activity-alias" ? qualify(substitute(attr(component, "targetActivity") || component_name, placeholders)) : component_name
+
+      # A guarding permission is recorded, not suppressed: whether another
+      # app can hold it is the reviewer's call.
+      permission = resolve(attr(component, "permission"), strings, placeholders)
 
       filters = [] of XML::Node
       each_child(component, "intent-filter") { |f| filters << f }
 
       if filters.empty?
+        # A source-set stub merging attributes into a src/main component
+        # whose filters live there; src/main reports it. `tools:node="replace"`
+        # drops those filters, so that one is filter-less in its variant.
+        return if overlaid.includes?(attr(component, "name") || "") && attr(component, "node") != "replace"
         # No intent-filter: a filter-less component defaults to NOT exported,
         # so it is reachable from another app only when `exported="true"` is
         # set explicitly — and then an explicit intent naming `package/component`
@@ -106,7 +134,7 @@ module Analyzer::Mobile
         # always declares a MAIN filter, so it never lands here.
         if exported
           emit_explicit_component_endpoint(component_name, handler_name, component_tag,
-            package, resolve(attr(component, "permission"), strings, placeholders), path, seen_urls)
+            package, permission, path, seen_urls)
         end
         return
       end
@@ -136,7 +164,7 @@ module Analyzer::Mobile
           # absent means "old manifest, exported".
           next if attr(component, "exported") == "false"
           emit_filter_endpoints(data_nodes, actions, categories, package, strings,
-            placeholders, path, auto_verify, handler_name, seen_urls)
+            placeholders, path, auto_verify, handler_name, permission, seen_urls)
         elsif attr(component, "exported") != "false"
           # Exported component with an action but no <data>: an IPC surface
           # reachable by explicit/implicit intent. The launcher (MAIN) is
@@ -145,11 +173,42 @@ module Analyzer::Mobile
           # manifest, where a filter-bearing component is exported.
           ipc_actions = actions.reject { |a| a == LAUNCHER_ACTION }
           unless ipc_actions.empty?
-            emit_intent_endpoint(component_name, ipc_actions, categories,
-              package, path, seen_urls)
+            emit_intent_endpoint(component_name, component_tag, ipc_actions, categories,
+              package, permission, path, seen_urls)
           end
         end
       end
+    end
+
+    # Names of the components that the module's src/main manifest declares
+    # with an intent-filter, when `path` is another source set's manifest
+    # (`src/<variant>/AndroidManifest.xml`). The manifest merger folds such
+    # a variant into src/main, so a re-declared component there is an
+    # attribute overlay, not a filter-less component.
+    private def main_filtered_components(path : String) : Set(String)
+      names = Set(String).new
+      source_set = File.dirname(path)
+      src = File.dirname(source_set)
+      return names unless File.basename(src) == "src" && File.basename(source_set) != "main"
+
+      main_path = File.join(src, "main", "AndroidManifest.xml")
+      return names unless File.exists?(main_path)
+
+      main = find_child(Noir::XmlComments.parse(read_file_content(main_path)), "manifest")
+      application = main.try { |node| find_child(node, "application") }
+      return names unless application
+
+      {"activity", "activity-alias", "service", "receiver"}.each do |component_tag|
+        each_child(application, component_tag) do |component|
+          next unless has_child?(component, "intent-filter")
+          name = attr(component, "name")
+          names << name if name
+        end
+      end
+      names
+    rescue
+      # An unreadable src/main must not cost this source set its endpoints.
+      Set(String).new
     end
 
     # Generic/standard schemes carry no app-specific meaning on their own.
@@ -205,7 +264,8 @@ module Analyzer::Mobile
                                       actions : Array(String), categories : Array(String),
                                       package : String, strings : Hash(String, String),
                                       placeholders : Hash(String, String), path : String,
-                                      auto_verify : Bool, via : String, seen_urls : Set(String))
+                                      auto_verify : Bool, via : String, permission : String?,
+                                      seen_urls : Set(String))
       # Insertion-ordered sets: `Array#includes?` dedup was O(n^2) on a
       # filter with thousands of `<data>` elements.
       schemes = Set(String).new
@@ -241,7 +301,9 @@ module Analyzer::Mobile
         protocol = (web && auto_verify) ? "universal-link" : "mobile-scheme"
         endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
         endpoint.protocol = protocol
-        endpoint.metadata = build_metadata(via, actions, categories, host, package)
+        metadata = build_metadata(via, actions, categories, host, package)
+        add_permission(metadata, "permission", permission)
+        endpoint.metadata = metadata
         mark_unresolved(endpoint, url)
         @result << endpoint
       end
@@ -294,16 +356,21 @@ module Analyzer::Mobile
     # Emits an android-intent endpoint for an exported, data-less component,
     # using the synthetic intent:// scheme so the optimizer leaves the URL
     # untouched.
-    private def emit_intent_endpoint(component_name : String, actions : Array(String),
-                                     categories : Array(String), package : String,
-                                     path : String, seen_urls : Set(String))
+    private def emit_intent_endpoint(component_name : String, component_tag : String,
+                                     actions : Array(String), categories : Array(String),
+                                     package : String, permission : String?, path : String,
+                                     seen_urls : Set(String))
       component = component_name.empty? ? package : "#{package}/#{component_name}"
       url = "intent://#{component}"
       return unless seen_urls.add?(url)
 
       endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
       endpoint.protocol = "android-intent"
-      endpoint.metadata = build_metadata("", actions, categories, "", package)
+      metadata = build_metadata("", actions, categories, "", package)
+      # The kind picks the launch verb (`am startservice` / `am broadcast`).
+      metadata["component_type"] = component_tag
+      add_permission(metadata, "permission", permission)
+      endpoint.metadata = metadata
 
       @result << endpoint
     end
@@ -360,7 +427,7 @@ module Analyzer::Mobile
       raw_authorities = attr(provider, "authorities")
       return if raw_authorities.nil? || raw_authorities.empty?
 
-      component_name = substitute(attr(provider, "name") || "", placeholders)
+      component_name = qualify(substitute(attr(provider, "name") || "", placeholders))
 
       metadata = {} of String => String
       # The provider class handles the surface, so surface it as `via` for the
@@ -539,6 +606,8 @@ module Analyzer::Mobile
       getter application_id : String?
       getter namespace : String?
       getter placeholders : Hash(String, String)
+      # applicationId of the application consuming this library module.
+      property consumer_id : String? = nil
 
       def initialize(@application_id, @namespace, @placeholders)
       end
@@ -586,11 +655,77 @@ module Analyzer::Mobile
       return GradleConfig.empty unless gradle_path
 
       begin
-        parse_gradle(read_file_content(gradle_path), gradle_path)
+        content = read_file_content(gradle_path)
+        config = parse_gradle(content, gradle_path)
+        config.consumer_id = consuming_application_id(gradle_path, content) unless config.application_id
+        config
       rescue e
         @logger.debug "Failed to parse gradle file #{gradle_path}: #{e.message}"
         GradleConfig.empty
       end
+    end
+
+    # `com.android.application`, or a plugin alias / convention plugin named
+    # after it (`libs.plugins.android.application`).
+    APPLICATION_PLUGIN_RE = /android[._-]application\b/
+    # An applicationId assignment statement, whatever its value: only an
+    # application module sets one, even to a value the scan can't read.
+    APPLICATION_ID_SET_RE = /(?:^|[{;])[ \t]*applicationId\b(?:\s*[=(]|[ \t]+["'\w$])/m
+    SETTINGS_INCLUDE_RE   = /["']:([\w.\-]+(?::[\w.\-]+)*)["']/
+    SETTINGS_SEARCH_DEPTH = 6
+
+    # The applicationId of the application a library module's manifest
+    # merges into: the only one the settings script includes, or else the
+    # only one whose build script names this module (`project(":lib")`).
+    # Nil for an application module or when the consumer is ambiguous.
+    private def consuming_application_id(gradle_path : String, content : String) : String?
+      return if content.matches?(APPLICATION_PLUGIN_RE) || content.matches?(APPLICATION_ID_SET_RE)
+
+      module_dir = File.dirname(gradle_path)
+      settings_dir = module_dir
+      SETTINGS_SEARCH_DEPTH.times do
+        break if {"settings.gradle.kts", "settings.gradle"}.any? { |name| File.exists?(File.join(settings_dir, name)) }
+        parent = File.dirname(settings_dir)
+        return if parent == settings_dir
+        settings_dir = parent
+      end
+
+      apps = application_modules(settings_dir)
+      ids = apps.map(&.[0]).uniq!
+      return ids.first if ids.size == 1
+
+      module_ref = ":#{Noir::PathScope.relative_under(module_dir, settings_dir).gsub('/', ':')}"
+      users = apps.select { |app| app[1].includes?(%("#{module_ref}")) || app[1].includes?("'#{module_ref}'") }
+      ids = users.map(&.[0]).uniq!
+      ids.size == 1 ? ids.first : nil
+    end
+
+    private def application_modules(settings_dir : String) : Array({String, String})
+      @application_modules[settings_dir] ||= begin
+        apps = [] of {String, String}
+        settings = {"settings.gradle.kts", "settings.gradle"}.map { |name| File.join(settings_dir, name) }.find { |path| File.exists?(path) }
+        if settings
+          read_file_content(settings).scan(SETTINGS_INCLUDE_RE) do |m|
+            module_dir = File.join([settings_dir] + m[1].split(':'))
+            script = {"build.gradle.kts", "build.gradle"}.map { |name| File.join(module_dir, name) }.find { |path| File.exists?(path) }
+            next unless script
+            script_content = read_file_content(script)
+            if app_id = parse_gradle(script_content, script).application_id
+              apps << {app_id, script_content}
+            end
+          end
+        end
+        apps
+      end
+    end
+
+    # Expands a relative class name against `@class_namespace`, as the
+    # manifest merger does for a library module.
+    private def qualify(name : String) : String
+      namespace = @class_namespace
+      return name if namespace.nil? || name.empty?
+      return "#{namespace}#{name}" if name.starts_with?('.')
+      name.includes?('.') ? name : "#{namespace}.#{name}"
     end
 
     # The module build script lives above the manifest (`app/build.gradle`

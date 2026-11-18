@@ -32,7 +32,7 @@ class OutputBuilderAdb < OutputBuilder
         skipped_http += 1
         next
       end
-      if ios_origin?(endpoint)
+      if ios_origin?(endpoint) && !declared_by?(endpoint, "android")
         skipped_ios += 1
         next
       end
