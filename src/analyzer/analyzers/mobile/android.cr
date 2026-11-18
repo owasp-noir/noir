@@ -145,7 +145,7 @@ module Analyzer::Mobile
           # manifest, where a filter-bearing component is exported.
           ipc_actions = actions.reject { |a| a == LAUNCHER_ACTION }
           unless ipc_actions.empty?
-            emit_intent_endpoint(component_name, ipc_actions, categories,
+            emit_intent_endpoint(component_name, component_tag, ipc_actions, categories,
               package, path, seen_urls)
           end
         end
@@ -294,16 +294,19 @@ module Analyzer::Mobile
     # Emits an android-intent endpoint for an exported, data-less component,
     # using the synthetic intent:// scheme so the optimizer leaves the URL
     # untouched.
-    private def emit_intent_endpoint(component_name : String, actions : Array(String),
-                                     categories : Array(String), package : String,
-                                     path : String, seen_urls : Set(String))
+    private def emit_intent_endpoint(component_name : String, component_tag : String,
+                                     actions : Array(String), categories : Array(String),
+                                     package : String, path : String, seen_urls : Set(String))
       component = component_name.empty? ? package : "#{package}/#{component_name}"
       url = "intent://#{component}"
       return unless seen_urls.add?(url)
 
       endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
       endpoint.protocol = "android-intent"
-      endpoint.metadata = build_metadata("", actions, categories, "", package)
+      metadata = build_metadata("", actions, categories, "", package)
+      # The kind picks the launch verb (`am startservice` / `am broadcast`).
+      metadata["component_type"] = component_tag
+      endpoint.metadata = metadata
 
       @result << endpoint
     end
