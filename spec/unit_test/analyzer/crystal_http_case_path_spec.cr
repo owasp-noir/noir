@@ -111,4 +111,22 @@ describe "crystal_http handler argument name" do
   ensure
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
+
+  it "reads no route from a Kemal::Handler's path guard" do
+    temp_dir = File.tempname("crystal_http_kemal_mw")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "auth.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      class AuthHandler < Kemal::Handler
+        def call(env)
+          return call_next(env) if env.request.path == "/login"
+          env.response.status_code = 401
+        end
+      end
+      CRYSTAL
+
+    Analyzer::Crystal::Http.new(create_test_options).analyze_file(temp_file).should be_empty
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
 end

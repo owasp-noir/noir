@@ -598,6 +598,32 @@ describe "kemal routes registered in a loop over literals" do
   ensure
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
+
+  it "keeps the as-written route when a constant name is assigned twice in the file" do
+    temp_dir = File.tempname("kemal_dup_const")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "app.cr")
+    File.write(temp_file, <<-'CRYSTAL')
+      class Widgets
+        KINDS = {"small", "large"}
+      end
+
+      class Gadgets
+        KINDS = {"red", "blue"}
+
+        KINDS.each do |kind|
+          get "/gadgets/#{kind}" do |env|
+            kind
+          end
+        end
+      end
+      CRYSTAL
+
+    endpoints = Analyzer::Crystal::Kemal.new(create_test_options).analyze_file(temp_file)
+    endpoints.map { |e| "#{e.method} #{e.url}" }.should eq(["GET /gadgets/{kind}"])
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
 end
 
 describe "kemal params read through the route's block argument" do
@@ -616,8 +642,12 @@ describe "kemal params read through the route's block argument" do
         env.params.body.fetch("name", "")
       end
 
-      def helper(ctx)
-        ctx.params.query["not_orders"]
+      def helper(env)
+        env.params.query["not_orders"]
+      end
+
+      ws "/socket" do |socket, env|
+        env.params.query["token"]
       end
       CRYSTAL
 
@@ -626,6 +656,8 @@ describe "kemal params read through the route's block argument" do
     search.params.map { |p| "#{p.param_type}:#{p.name}" }.should eq(["query:q", "query:page", "header:X-Token"])
     orders = endpoints.find! { |e| e.url == "/orders" }
     orders.params.map { |p| "#{p.param_type}:#{p.name}" }.should eq(["form:name"])
+    socket = endpoints.find! { |e| e.url == "/socket" }
+    socket.params.map { |p| "#{p.param_type}:#{p.name}" }.should eq(["query:token"])
   ensure
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
