@@ -602,8 +602,16 @@ class EndpointOptimizer
   # An `ANY` Ingress or Envoy row stays apart from another technology's `ANY`
   # row (an nginx location) at its path: a guard only one of them states
   # would cover the other's open route, and its TLS the other's http one.
+  # Ingress rules for different Services front different workloads, so
+  # they stay apart too.
   private def proxy_route_key(endpoint : Endpoint) : String
-    proxy_route?(endpoint) ? "|proxy:#{endpoint.details.technology}" : ""
+    return "" unless proxy_route?(endpoint)
+    backend = proxy_backend(endpoint)
+    "|proxy:#{endpoint.details.technology}#{"|svc:#{backend}" unless backend.empty?}"
+  end
+
+  private def proxy_backend(endpoint : Endpoint) : String
+    endpoint.tags.find(&.name.==("ingress-backend")).try(&.description) || ""
   end
 
   # Dedup-key URLs (placeholders unified) a code analyzer reports.
@@ -631,12 +639,12 @@ class EndpointOptimizer
       files[key] = endpoint.details.code_paths.map { |path_info| Noir::PathScope.expand(path_info.path) }
     end
     holds_code = Hash(String, Bool).new
-    held.each do |key, proxy|
-      # A proxy declared inside a project fronts that project, so only its
-      # routes are candidates (one merged across technologies included); one
-      # outside every project may front any of them. Where several rows
-      # still serve a method at the path, it says nothing about which one it
-      # fronts and stays apart.
+    # A proxy declared inside a project fronts that project, so only its
+    # routes are candidates (one merged across technologies included); one
+    # outside every project may front any of them. Where several rows
+    # still serve a method at the path, it says nothing about which one it
+    # fronts and stays apart.
+    entries = held.map do |key, proxy|
       scope = proxy.details.code_paths.first?.try { |path_info| source_project_scope(path_info.path) } || ""
       # A manifest-less `-b` base, or a project with no routes of its own (an
       # infra dir with a manifest for its scripts), fronts other projects.
@@ -645,9 +653,27 @@ class EndpointOptimizer
               holds_code.put_if_absent(scope) { files.values.any?(&.any? { |file| Noir::PathScope.under_normalized_root?(file, scope) }) }
         scope = "" unless own
       end
-      targets = (code[unify_path_placeholders(key[1])]? || [] of Tuple(String, String, String))
-        .select { |row| scope.empty? || files[row].any? { |file| Noir::PathScope.under_normalized_root?(file, scope) } }
-        .group_by(&.[0]).values.compact_map { |rows| rows[0] if rows.size == 1 }
+      {key, proxy, unify_path_placeholders(key[1]), scope}
+    end
+    # Ingress rules that send one path to different Services front different
+    # workloads, and nothing says which of them is the code: none folds. Only
+    # client-facing rules vote: a defaultBackend never serves a path a rule
+    # claims, and a rewrite row is the upstream path, not a competing route.
+    # ponytail: no Service-to-code tie (a Service manifest beside the code
+    # is not in the Ingress file set); add one to fold the matching rule.
+    backends = Hash(Tuple(String, String), Set(String)).new
+    entries.each do |_, proxy, path, scope|
+      backend = proxy_backend(proxy)
+      next if backend.empty? || proxy.tags.none? { |tag| tag.name == "ingress-source" && tag.description == "rule" }
+      (backends[{path, scope}] ||= Set(String).new) << backend
+    end
+    entries.each do |key, proxy, path, scope|
+      targets = [] of Tuple(String, String, String)
+      unless proxy.details.technology == "k8s_ingress" && backends[{path, scope}]?.try(&.size.> 1)
+        targets = (code[path]? || targets)
+          .select { |row| scope.empty? || files[row].any? { |file| Noir::PathScope.under_normalized_root?(file, scope) } }
+          .group_by(&.[0]).values.compact_map { |rows| rows[0] if rows.size == 1 }
+      end
       targets = [key] if targets.empty?
       open = proxy.tags.none? { |tag| tag.name == "auth" && tag.tagger == Tag.declared_access_tagger(proxy.details.technology || "") }
       targets.each do |target|
