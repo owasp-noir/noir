@@ -31,8 +31,17 @@ class FileUploadTagger < Tagger
   UPLOAD_PATH_PARTS  = Set{
     "upload", "uploads", "attach", "attachment", "attachments",
     "import", "imports", "avatar", "photo", "photos",
-    "file", "files", "image", "images", "picture", "pictures",
+    "image", "images", "picture", "pictures",
   }
+
+  # `file`/`files` is a generic REST noun, so on its own it only marks the
+  # collection itself (`POST /files`), not an item or action under it
+  # (`PATCH /files/:id`, `POST /files/purge`) that renames or prunes.
+  COLLECTION_PATH_PARTS = Set{"file", "files"}
+
+  # A read-side word in the path says the route sends a file out. A URL word
+  # alone must not tag it, though a real file param still does.
+  DOWNLOAD_PATH_PARTS = Set{"download", "downloads", "export", "exports", "zip"}
 
   # `media` is matched only as a whole `/media` path segment, never as a
   # loose sub-token. As a loose token (split on `-`/`_`) it fired on
@@ -44,7 +53,7 @@ class FileUploadTagger < Tagger
 
   private def check_endpoint(endpoint : Endpoint)
     has_upload_param = endpoint.params.any? { |param| upload_param?(param) }
-    is_upload_url = upload_url?(endpoint.url)
+    is_upload_url = upload_url?(endpoint.url, endpoint.method)
     is_upload_method = UPLOAD_METHODS.includes?(endpoint.method.upcase)
     has_multipart_header = endpoint.params.any? { |param| multipart_header?(param) }
 
@@ -80,9 +89,32 @@ class FileUploadTagger < Tagger
       (name == "content_disposition" && value.includes?("filename="))
   end
 
-  private def upload_url?(url : String) : Bool
+  # An explicit upload word always counts. The weaker `file`/`files` and
+  # `media` nouns are vetoed by a read-side word (`/files/export`).
+  private def upload_url?(url : String, method : String) : Bool
     return true if url_parts(url).any? { |part| UPLOAD_PATH_PARTS.includes?(part) }
-    segment_only_upload?(url)
+    return false if download_url?(url)
+    collection_upload?(url, method) || segment_only_upload?(url)
+  end
+
+  private def download_url?(url : String) : Bool
+    url_parts(url).any? { |part| DOWNLOAD_PATH_PARTS.includes?(part) }
+  end
+
+  # `file`/`files` counts as the last segment (`/user-files`, `/files.json`
+  # included), or, for PUT, the segment before a path parameter
+  # (`PUT /files/:name`, a raw-body upload by name).
+  private def collection_upload?(url : String, method : String) : Bool
+    segments = url.split("?", 2)[0].split("#", 2)[0].downcase.split("/").reject(&.empty?)
+    last = segments.last?
+    return false if last.nil?
+    collection = ->(seg : String) { seg.split(/[-_.]/).any? { |t| COLLECTION_PATH_PARTS.includes?(t) } }
+    return true if collection.call(last)
+    method.upcase == "PUT" && segments.size >= 2 && path_param?(last) && collection.call(segments[-2])
+  end
+
+  private def path_param?(segment : String) : Bool
+    segment.starts_with?(":") || segment.starts_with?("{") || segment.starts_with?("<")
   end
 
   # Whole-segment-only path words: matched against `/`-delimited segments
