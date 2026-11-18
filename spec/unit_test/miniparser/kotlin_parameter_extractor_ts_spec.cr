@@ -837,6 +837,11 @@ describe Noir::TreeSitterKotlinParameterExtractor do
 
       params = [] of Param
       Noir::TreeSitter.parse_kotlin(source) do |root|
+        # The shape under test: no `class_declaration` for `Api` at all.
+        top_level = [] of String
+        Noir::TreeSitter.each_named_child(root) { |child| top_level << Noir::TreeSitter.node_type(child) }
+        top_level.should eq(["package_header", "class_declaration", "annotation", "prefix_expression"])
+
         method = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, source)["Api#a"]
         params = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from_method(
           method, source, "GET", nil, {} of String => Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo)
