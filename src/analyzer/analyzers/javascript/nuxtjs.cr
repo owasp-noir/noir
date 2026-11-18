@@ -7,6 +7,8 @@ module Analyzer::Javascript
 
     EXTENSIONS = [".js", ".ts", ".mjs", ".mts"]
 
+    NUXT_CONFIG_RE = /\Anuxt\.config\.(?:js|ts|mjs|mts)\z/
+
     def analyze
       # Route candidates paired with the Nuxt app root they came from. A
       # monorepo can hold several Nuxt apps under one scan base, and each
@@ -19,6 +21,12 @@ module Analyzer::Javascript
       include_callee = callees_needed?
 
       parallel_file_scan(EXTENSIONS) do |path|
+        # `nuxt.config.*` declares forwards (`routeRules` proxy, the Nuxt 2
+        # `@nuxtjs/proxy` module, `serverMiddleware`) that the app serves.
+        if File.basename(path).matches?(NUXT_CONFIG_RE)
+          analyze_nuxt_config(path, candidates, mutex) unless base_relative_path(path).matches?(%r{/tests?/fixtures/|/__tests__/|/__mocks__/})
+          next
+        end
         # Focus on server/api and server/routes directories for Nuxt 3
         next unless path.includes?("/server/api/") || path.includes?("/server/routes/")
         # Scan-base-relative, never absolute: a `test/` or `__tests__/`
@@ -38,6 +46,76 @@ module Analyzer::Javascript
       end
 
       fold_route_candidates(candidates)
+    end
+
+    # Served prefixes a Nuxt config declares: Nitro `routeRules` entries that
+    # `proxy`, Nuxt 2 `@nuxtjs/proxy` contexts, and `serverMiddleware` paths.
+    # Redirect-only rules and a middleware given as a bare module path (no
+    # `path`) name no route of their own, so they are left out.
+    private def analyze_nuxt_config(path : String, candidates : Array(Tuple(String, Endpoint)), mutex : Mutex)
+      content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
+      found = [] of Tuple(String, Int32) # url, character offset
+
+      content.scan(/\brouteRules\s*:\s*\{/) do |m|
+        open = m.end(0) - 1
+        next unless close = Noir::JSLiteralScanner.find_matching_brace(content, open)
+        body = content[(open + 1)...close]
+        body.scan(/(['"`])(\/[^'"`]*)\1\s*:\s*\{/) do |entry|
+          rule_open = entry.end(0) - 1
+          next unless rule_close = Noir::JSLiteralScanner.find_matching_brace(body, rule_open)
+          found << {entry[2], open + 1 + rule_open} if body[rule_open..rule_close].matches?(/\bproxy\s*:/)
+        end
+      end
+
+      if content.includes?("@nuxtjs/proxy")
+        config_entries(content, /\bproxy\s*:\s*([\[{])/, top_level: true) do |body, array, offset|
+          contexts = [] of String
+          if array
+            body.scan(/\[\s*(['"`])(\/[^'"`]*)\1/) { |e| contexts << e[2] }
+          else
+            body.scan(/(['"`])(\/[^'"`]*)\1\s*:/) { |e| contexts << e[2] }
+          end
+          contexts.each do |context|
+            url = context.includes?('*') ? context : "#{context.rstrip('/')}/**"
+            found << {url, offset}
+          end
+        end
+      end
+
+      config_entries(content, /\bserverMiddleware\s*:\s*([\[{])/) do |body, array, offset|
+        if array
+          body.scan(/\bpath\s*:\s*(['"`])(\/[^'"`]*)\1/) { |e| found << {e[2], offset} }
+        else
+          body.scan(/(['"`])(\/[^'"`]*)\1\s*:/) { |e| found << {e[2], offset} }
+        end
+      end
+
+      scoped = base_relative_path(path)
+      app_root = File.dirname(scoped)
+      app_root = "" if app_root == "/" || app_root == "."
+      found.uniq!(&.[0])
+      found.each do |url, offset|
+        endpoint = Endpoint.new(url, "ANY")
+        endpoint.details = Details.new(PathInfo.new(path, content[0...offset].count('\n') + 1))
+        mutex.synchronize { candidates << {app_root, endpoint} }
+      end
+    rescue e : Exception
+      logger.debug "Error reading file #{path}: #{e.message}"
+    end
+
+    # Yields the body of each `[...]` / `{...}` value the pattern opens, whether
+    # it is an array, and where it starts.
+    # `top_level` keeps only keys of the config object itself, so a dev-server
+    # `vite: { server: { proxy: ... } }` map is not read as a served forward.
+    private def config_entries(content : String, pattern : Regex, top_level : Bool = false, & : String, Bool, Int32 -> Nil)
+      content.scan(pattern) do |m|
+        next if top_level && content[0...m.begin(0)].count('{') - content[0...m.begin(0)].count('}') > 1
+        open = m.end(0) - 1
+        array = m[1] == "["
+        close = array ? Noir::JSLiteralScanner.find_matching_bracket(content, open) : Noir::JSLiteralScanner.find_matching_brace(content, open)
+        next unless close
+        yield content[(open + 1)...close], array, open
+      end
     end
 
     private def analyze_nuxt_file(path : String, candidates : Array(Tuple(String, Endpoint)), mutex : Mutex, include_callee : Bool)
