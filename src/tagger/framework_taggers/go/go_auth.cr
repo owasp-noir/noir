@@ -137,7 +137,9 @@ class GoAuthTagger < FrameworkTagger
   # (`!ctx.IsUserSiteAdmin()`, `!ctx.Repo.Permission.CanRead(...)`,
   # `!isMember`) is an authorization check; any other is an authentication
   # one.
-  AUTHZ_CONDITION = /[Aa]dmin|[Rr]ole|[Pp]erm|[Oo]wner|[Mm]ember|[Cc]ollaborat|[Ss]cope|[Aa]ccess|[Pp]rivilege|[Vv]isib|[Pp]ublic|[Gg]rant|[Ww]riter|[Rr]eader|\b[Cc]an[A-Z]/
+  # An access token or key (`accessToken == ""`) is a credential, not a
+  # permission.
+  AUTHZ_CONDITION = /[Aa]dmin|[Rr]ole|[Pp]erm|[Oo]wner|[Mm]ember|[Cc]ollaborat|[Ss]cope|[Aa]ccess(?!_?(?:[Tt]oken|[Kk]ey))|[Pp]rivilege|[Vv]isib|[Pp]ublic|[Gg]rant|[Ww]riter|[Rr]eader|\b[Cc]an[A-Z]/
 
   # `if cond {` / `} else if x := f(); cond {` and `} else {` on their own line.
   IF_OPEN   = /\A(?:\}\s*)?(?:else\s+)?if\s+(?:[^;{]*;\s*)?(.+?)\s*\{\z/
