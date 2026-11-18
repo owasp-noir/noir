@@ -1951,15 +1951,15 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   # Whether `app` serves the Actuator on its own `management.server.port`,
-  # read as the analyzer reads it: the key in the app's base configuration.
-  private def management_port?(app : String) : Bool
+  # read as the analyzer reads it: the key in the base configuration. An
+  # app with none of its own runs on the one a module of its `classpath`
+  # ships.
+  private def management_port?(app : String, classpath : Set(String)?) : Bool
     target = relaxed_property("management.server.port")
-    CONFIG_DIRS.any? do |sub|
-      BASE_CONFIG_FILES.any? do |name|
-        path = File.join(app, sub, name)
-        !!(File.exists?(path) && (content = read_file(path)) && config_file_values(content, name.ends_with?(".properties"), target)[0])
-      end
-    end
+    sources = ->(dir : String) { CONFIG_DIRS.flat_map { |sub| BASE_CONFIG_FILES.map { |name| File.join(dir, sub, name) } }.select { |path| File.exists?(path) } }
+    files = sources.call(app)
+    files = (classpath || Set(String).new).flat_map { |dir| sources.call(dir) } if files.empty?
+    files.any? { |path| !!((content = read_file(path)) && config_file_values(content, path.ends_with?(".properties"), target)[0]) }
   end
 
   CLASS_DECLARATION = /\b(?:class|object)\s+[A-Za-z_$][\w$]*[^{;=]*\{/
@@ -2197,7 +2197,7 @@ class SpringAuthTagger < FrameworkTagger
     rules =
       if ignored
         [] of SecurityRule
-      elsif config_dir && actuator_route?(endpoint) && management_port?(config_dir) &&
+      elsif config_dir && actuator_route?(endpoint) && management_port?(config_dir, classpath) &&
             (chain = @management_chains.select { |candidate| applies.call(candidate[:module]) }.min_by?(&.[:order]))
         chain[:rules]
       elsif chain = scoped.min_by? { |candidate| {candidate[:order], -candidate[:scope].max_of { |pattern| matches_ant_pattern?(url, pattern) ? pattern_specificity(pattern) : 0 }} }
