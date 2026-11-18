@@ -96,7 +96,46 @@ describe "AspnetAuthTagger" do
     AspnetAuthTagger.new(noir_options).perform(endpoints)
 
     endpoints[0].tags.empty?.should be_true
-    endpoints[1].tags.map(&.description).should eq(["Protected by ASP.NET User.Identity.IsAuthenticated"])
+    endpoints[1].tags.map(&.description).should eq(["Protected by an in-action Unauthorized when `!User.Identity.IsAuthenticated`"])
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "does not take an action that only reads the caller as guarded" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("aspnet_reads_caller")
+    Dir.mkdir_p(tmpdir)
+    controller = File.join(tmpdir, "BrandingController.cs")
+    File.write(controller, [
+      "public class BrandingController : ControllerBase",                    # 1
+      "{",                                                                   # 2
+      "    [HttpGet(\"splash\")]",                                           # 3
+      "    public IActionResult Splash()",                                   # 4
+      "    {",                                                               # 5
+      "        var isAdmin = User.IsInRole(\"Administrator\");",             # 6
+      "        if (!_options.Enabled && !isAdmin) return NotFound();",       # 7
+      "        return Ok(\"splash\");",                                      # 8
+      "    }",                                                               # 9
+      "",                                                                    # 10
+      "    [HttpGet(\"greeting\")]",                                         # 11
+      "    public IActionResult Greeting()",                                 # 12
+      "    {",                                                               # 13
+      "        var name = HttpContext.User.Identity?.Name ?? \"guest\";",    # 14
+      "        ViewBag.SignedIn = User.Identity.IsAuthenticated;",           # 15
+      "        return Ok(name);",                                            # 16
+      "    }",                                                               # 17
+      "}",                                                                   # 18
+    ].join("\n"))
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    endpoints = {4 => "/splash", 12 => "/greeting"}.map do |line, url|
+      details = Details.new(PathInfo.new(controller, line))
+      details.technology = "cs_aspnet_core_mvc"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    AspnetAuthTagger.new(noir_options).perform(endpoints)
+
+    endpoints.map(&.tags.size).should eq([0, 0])
 
     FileUtils.rm_rf(tmpdir)
   end

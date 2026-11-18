@@ -49,13 +49,6 @@ class AspnetAuthTagger < FrameworkTagger
   # its `this` builder.
   ROUTE_BUILDER_EXTENSION = /\bstatic\s[^;{}()=]*?\b(\w+)\s*(?:<[^<>()]*>\s*)?\(\s*this\s+(?:RouteGroupBuilder|IEndpointRouteBuilder|WebApplication)\s+(\w+)/
 
-  # ASP.NET Core middleware auth in action body
-  ACTION_AUTH_PATTERNS = [
-    {/User\.Identity\.IsAuthenticated/, "ASP.NET User.Identity.IsAuthenticated"},
-    {/User\.IsInRole\s*\(/, "ASP.NET User.IsInRole check"},
-    {/HttpContext\.User/, "ASP.NET HttpContext.User check"},
-  ]
-
   def self.target_techs : Array(String)
     ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter", "cs_wolverine", "cs_signalr"]
   end
@@ -281,9 +274,9 @@ class AspnetAuthTagger < FrameworkTagger
         return
       end
 
-      # Check action body for auth checks
-      description = check_action_body(lines, line_idx) || action_refusal(path_info.path, line_idx)
-      if description
+      # A body that only reads the caller (`var isAdmin = User.IsInRole(...)`)
+      # refuses nobody; only a refusal conditioned on the caller is a guard.
+      if description = action_refusal(path_info.path, line_idx)
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
         return
       end
@@ -1085,30 +1078,5 @@ class AspnetAuthTagger < FrameworkTagger
         sb << ' '
       end
     end
-  end
-
-  # Scans the action from its declaration to its end: the brace that closes
-  # its body, or the `;` of an expression body (`Public() => Ok("x");`) or
-  # one-statement route, so the next action's checks are never read.
-  private def check_action_body(lines : Array(String), method_line : Int32) : String?
-    idx = method_line
-    end_idx = [method_line + 200, lines.size - 1].min
-    depth = 0
-    opened = false
-
-    while idx <= end_idx
-      current = lines[idx].strip
-
-      ACTION_AUTH_PATTERNS.each do |pattern, desc|
-        return desc if current.matches?(pattern)
-      end
-
-      depth += current.count('{') - current.count('}')
-      opened ||= current.includes?('{')
-      break if opened ? depth <= 0 : current.ends_with?(';')
-      idx += 1
-    end
-
-    nil
   end
 end
