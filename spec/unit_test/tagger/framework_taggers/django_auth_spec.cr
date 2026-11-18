@@ -2257,6 +2257,33 @@ describe "DjangoAuthTagger" do
     end
   end
 
+  it "reads MIDDLEWARE assigned from another list in the same settings module" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_mw_alias")
+    begin
+      {"a_svc" => "BASE_MIDDLEWARE = [\"core.middleware.Wall\"]\nMIDDLEWARE = BASE_MIDDLEWARE\n",
+       "b_svc" => "BASE_MIDDLEWARE = [\"core.middleware.Other\"]\nMIDDLEWARE = BASE_MIDDLEWARE\nDISABLED_MIDDLEWARE = [\"core.middleware.Wall\"]\n"}.each do |svc, settings|
+        %w[proj core app].each { |dir| Dir.mkdir_p(File.join(tmpdir, svc, dir)) }
+        File.write(File.join(tmpdir, svc, "proj", "__init__.py"), "")
+        File.write(File.join(tmpdir, svc, "proj", "urls.py"), "urlpatterns = []\n")
+        File.write(File.join(tmpdir, svc, "proj", "settings.py"), "ROOT_URLCONF = \"proj.urls\"\n#{settings}")
+        File.write(File.join(tmpdir, svc, "app", "views.py"), "def index(request):\n    return None\n")
+        File.write(File.join(tmpdir, svc, "core", "middleware.py"), "class Wall:\n    def __call__(self, request):\n        if not request.user.is_authenticated:\n            return HttpResponseRedirect('/login/')\n        return self.get_response(request)\n")
+      end
+      Dir.glob("#{tmpdir}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      a = Endpoint.new("/a/", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "a_svc", "app", "views.py"), 1)))
+      b = Endpoint.new("/b/", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "b_svc", "app", "views.py"), 1)))
+      DjangoAuthTagger.new(noir_options).perform([a, b])
+      a.tags.map(&.description).should eq(["Protected by Wall (settings.MIDDLEWARE refuses unauthenticated requests outside its exempt paths)"])
+      b.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "judges a permission helper only when it is the whole verdict, and same-named classes only when they agree" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_drf_helper_scope")

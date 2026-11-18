@@ -104,9 +104,8 @@ module DjangoMiddlewareGuard
   private def scan_middleware(settings_path : String, code : String)
     collect_lists(code, @settings_lists)
     root = python_import_root(settings_path)
-    code.scan(/^([ \t]*)MIDDLEWARE[ \t]*\+?=/m) do |assignment|
-      value = bracketed_after(code, /MIDDLEWARE[ \t]*\+?=/, assignment.begin) || next
-      conditional = !assignment[1].empty?
+    middleware_values(code).each do |indent, value|
+      conditional = !indent.empty?
       value.scan(/['"]([A-Za-z_][\w.]*\.[A-Za-z_]\w*)['"]/) do |entry|
         dotted = entry[1]
         next if dotted.starts_with?("django.")
@@ -119,6 +118,22 @@ module DjangoMiddlewareGuard
         end
       end
     end
+  end
+
+  # Each `MIDDLEWARE = [...]` / `+= [...]` statement's indent and list, or
+  # the list a bare name it copies holds (`MIDDLEWARE = BASE_MIDDLEWARE`).
+  private def middleware_values(code : String) : Array({String, String})
+    values = [] of {String, String}
+    code.scan(/^([ \t]*)MIDDLEWARE[ \t]*\+?=[ \t]*([^\n]*)/m) do |assignment|
+      rhs = assignment[2].strip
+      value = if rhs.starts_with?('[') || rhs.starts_with?('(')
+                bracketed_after(code, /MIDDLEWARE[ \t]*\+?=/, assignment.begin)
+              elsif name = rhs.match(/\A([A-Za-z_]\w*)\z/).try(&.[1])
+                bracketed_after(code, /^[ \t]*#{name}[ \t]*=[ \t]*(?=[\[(])/m) unless name == "MIDDLEWARE"
+              end
+      values << {assignment[1], value} if value
+    end
+    values
   end
 
   private def middleware_class(dotted : String, root : String, conditional : Bool) : MwClass?

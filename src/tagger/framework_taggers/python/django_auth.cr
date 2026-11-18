@@ -116,7 +116,7 @@ class DjangoAuthTagger < FrameworkTagger
       code = content.lines.map(&.sub(/#.*/, "")).join("\n")
       register_django_root(path, code) if has_urlconf
       scan_middleware(path, code) if has_middleware_list && code.matches?(MIDDLEWARE_ASSIGNMENT)
-      if has_middleware && bracketed_values_after(code, MIDDLEWARE_ASSIGNMENT).any?(&.includes?(LOGIN_REQUIRED_MIDDLEWARE))
+      if has_middleware && middleware_values(code).any?(&.[1].includes?(LOGIN_REQUIRED_MIDDLEWARE))
         @login_required_middleware = true
       end
       if has_drf_default && (perms = bracketed_after(code, /DEFAULT_PERMISSION_CLASSES['"]\s*:/))
@@ -183,19 +183,6 @@ class DjangoAuthTagger < FrameworkTagger
       return body.join("\n")
     end
     nil
-  end
-
-  # The `[...]` / `(...)` value following every match of `key`.
-  private def bracketed_values_after(text : String, key : Regex) : Array(String)
-    values = [] of String
-    pos = 0
-    while match = text.match(key, pos)
-      pos = match.end
-      if value = bracketed_after(text, key, match.begin)
-        values << value
-      end
-    end
-    values
   end
 
   # The `[...]` / `(...)` value following `key`, across lines.
