@@ -1,3 +1,4 @@
+require "../analyzer/engines/python_engine"
 require "../models/code_locator"
 require "../models/endpoint"
 require "../models/logger"
@@ -67,10 +68,19 @@ class EndpointOptimizer
   # How far into a Go file `go_main_package?` looks for the package clause.
   GO_PACKAGE_PROBE_BYTES = 64 * 1024
 
+  # Python app instances: `app = FastAPI()`, `app: Flask = flask.Flask(__name__)`,
+  # indented too, for a `create_app()` factory.
+  PYTHON_APP_TECHNOLOGIES   = {"python_fastapi", "python_flask"}
+  PYTHON_APP_CONSTRUCTOR_RE = /^[ \t]*[A-Za-z_][\w.]*[ \t]*(?::[^=\n]*)?=[ \t]*(?:fastapi\.|flask\.)?(?:FastAPI|Flask)[ \t]*\(/m
+  PYTHON_TRIPLE_QUOTED_RE   = /"""[\s\S]*?"""|'''[\s\S]*?'''/
+
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     @pvalue_rules = initialize_pvalue_rules
     @source_scope_cache = Hash(String, String).new
     @go_program_counts = Hash(String, Int32).new
+    @python_split_roots = Set(String).new
+    @python_app_owners = Hash(String, Tuple(String, String)?).new
+    @python_app_dirs = Hash(String, Bool).new
     @base_fallback_scopes = Set(String).new
   end
 
@@ -114,6 +124,7 @@ class EndpointOptimizer
     duplicate_count = 0
     allowed_methods = get_allowed_methods
     endpoints = fold_ai_into_static(endpoints)
+    @python_split_roots = split_python_app_roots(endpoints)
     cross_tech_keys = cross_technology_duplicate_keys(endpoints, allowed_methods)
     code_paths = code_route_paths(endpoints)
     held = [] of Tuple(Tuple(String, String, String), Endpoint)
@@ -945,7 +956,92 @@ class EndpointOptimizer
     first_path = endpoint.details.code_paths.first?.try(&.path)
     return "" unless first_path
 
-    source_project_scope(first_path)
+    scope = source_project_scope(first_path)
+    return scope if @python_split_roots.empty?
+    owner = python_app_owner(endpoint)
+    owner && @python_split_roots.includes?(owner[0]) ? owner[1] : scope
+  end
+
+  # Two FastAPI / Flask apps under one Python manifest (an API and a sidecar
+  # deployed apart) are two deployables, like the `package main` dirs of one
+  # Go module: a route belongs to the nearest directory that constructs an
+  # app. A project is split only where two of its apps serve the same route,
+  # so one app with routers in many files, or a sub-app it mounts under its
+  # own prefix, stays whole. Once a project is split, every route with an app
+  # owner takes that app's directory as its scope; a route with no owner
+  # above it (a sibling router package, say) keeps the project scope.
+  # Returns the split project roots.
+  private def split_python_app_roots(endpoints : Array(Endpoint)) : Set(String)
+    roots = Set(String).new
+    # Owner lookup reads files, so only a route declared from two directories gets one.
+    endpoints.select { |endpoint| python_app_path(endpoint) }
+      .group_by { |endpoint| {endpoint.method, normalized_dedup_url(endpoint)} }
+      .each_value do |group|
+        next if group.map { |endpoint| File.dirname(python_app_path(endpoint) || "") }.uniq!.size < 2
+        group.compact_map { |endpoint| python_app_owner(endpoint) }.group_by(&.[0]).each do |root, owners|
+          roots << root if owners.map(&.[1]).uniq!.size > 1
+        end
+      end
+    roots
+  end
+
+  private def python_app_path(endpoint : Endpoint) : String?
+    return unless PYTHON_APP_TECHNOLOGIES.includes?(endpoint.details.technology || "")
+    endpoint.details.code_paths.first?.try(&.path).try { |path| path if path.ends_with?(".py") }
+  end
+
+  # {project root, app dir} of a FastAPI / Flask endpoint: the nearest
+  # directory at or above its file, within its project, that constructs an app.
+  private def python_app_owner(endpoint : Endpoint) : Tuple(String, String)?
+    return unless path = python_app_path(endpoint)
+
+    start_dir = Noir::PathScope.expand(File.dirname(path))
+    @python_app_owners.put_if_absent(start_dir) do
+      root = source_project_scope(path).presence ||
+             Noir::PathScope.longest_base(start_dir, scan_bases).try { |base| Noir::PathScope.normalize_root(base) }
+      next unless root
+
+      dir = start_dir
+      loop do
+        break {root, dir} if python_app_dir?(dir)
+        parent = File.dirname(dir)
+        break if dir == root || parent == dir || !Noir::PathScope.under_normalized_root?(parent, root)
+        dir = parent
+      end
+    end
+  end
+
+  private def python_app_dir?(dir : String) : Bool
+    @python_app_dirs.put_if_absent(dir) do
+      (python_files_by_dir[dir]? || [] of String).any? do |file|
+        content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
+        next false unless content.includes?("FastAPI") || content.includes?("Flask")
+        content.scrub.gsub(PYTHON_TRIPLE_QUOTED_RE, "").matches?(PYTHON_APP_CONSTRUCTOR_RE)
+      rescue IO::Error
+        false
+      end
+    end
+  end
+
+  @python_files_by_dir : Hash(String, Array(String))?
+
+  # Scanned `.py` files by expanded directory. Tests, installed packages,
+  # `build/` / `dist/` output and copies under hidden directories are left out: a
+  # test's own `app = FastAPI()` is no deployable, and a copy of an app is
+  # the same app, so its routes keep merging with the original's.
+  private def python_files_by_dir : Hash(String, Array(String))
+    @python_files_by_dir ||= begin
+      locator = CodeLocator.instance
+      bases = scan_bases
+      index = Hash(String, Array(String)).new
+      locator.files_by_extension(".py").each do |file|
+        base = Noir::PathScope.longest_base(file, bases)
+        next if file.includes?("/site-packages/") || File.basename(file) == "conftest.py" || Analyzer::Python::PythonEngine.python_test_path?(file, base)
+        next if Noir::PathScope.relative_under(file, base).split('/')[0...-1].any? { |dir| dir.starts_with?('.') || dir.in?("build", "dist") }
+        (index[File.dirname(locator.expanded_path_for(file))] ||= [] of String) << file
+      end
+      index
+    end
   end
 
   private def spring_static_asset?(endpoint : Endpoint) : Bool
