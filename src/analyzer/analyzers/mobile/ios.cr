@@ -602,6 +602,12 @@ module Analyzer::Mobile
 
     MAX_LITERAL_ROUTES = 500
 
+    # A `String(format:)` specifier (`%@`, `%d`, `%lu`, `%zu`, `%.2f`, `%1$@`)
+    # in a Swift literal. `%d` / `%f` followed by a hex digit read as a
+    # percent-escape (`%dF`), which stays. A bare width (`%02d`) is left
+    # alone: it reads as the escape `%02` followed by `d`.
+    FORMAT_SPECIFIER_RE = /%(?:\d+\$)?(?:@|l{1,2}[diux]|z[du]|\.\d+f|[iusx]|[df](?![0-9A-Fa-f]))/
+
     # Full deep-link URLs hardcoded as string literals — Swift `"..."` or
     # Objective-C `@"..."` (same body syntax once the leading `@` is
     # allowed for). `(?:[^"\\ ]|\\.)*` stops at an unescaped quote *or* a
@@ -641,6 +647,7 @@ module Analyzer::Mobile
             # header. The plain literals (most of them) still land.
             next if literal.includes?("\\(")
             next if objc && literal.includes?('%')
+            next if literal.matches?(FORMAT_SPECIFIER_RE)
             next unless @code_route_seen.add?(literal)
 
             @literal_route_count += 1

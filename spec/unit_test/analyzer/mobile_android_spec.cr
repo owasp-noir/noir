@@ -423,3 +423,236 @@ describe "Analyzer::Mobile::Android (legacy manifest)" do
     urls.should_not contain("intent://com.ex.legacy/.Hidden")
   end
 end
+
+describe "Analyzer::Mobile::Android (filter-bearing component metadata)" do
+  dir = File.tempname("noir-android-filtered")
+  Dir.mkdir_p(dir)
+  manifest = File.join(dir, "AndroidManifest.xml")
+  File.write(manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.ex.filtered">
+      <application>
+        <service android:name=".SyncService" android:exported="true"
+                 android:permission="com.ex.filtered.permission.SYNC">
+          <intent-filter><action android:name="com.ex.filtered.SYNC"/></intent-filter>
+        </service>
+        <receiver android:name=".PingReceiver" android:exported="true">
+          <intent-filter><action android:name="com.ex.filtered.PING"/></intent-filter>
+        </receiver>
+        <activity android:name=".LinkActivity" android:exported="true"
+                  android:permission="com.ex.filtered.permission.OPEN">
+          <intent-filter>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="filtered" android:host="open"/>
+          </intent-filter>
+        </activity>
+      </application>
+    </manifest>
+    XML
+
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, manifest)
+  endpoints = Analyzer::Mobile::Android.new(create_test_options).analyze
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  FileUtils.rm_rf(dir)
+
+  metadata = ->(url : String) { endpoints.find! { |e| e.url == url }.metadata.not_nil! }
+
+  it "records the component kind of a service / receiver with an intent-filter" do
+    metadata.call("intent://com.ex.filtered/.SyncService")["component_type"].should eq("service")
+    metadata.call("intent://com.ex.filtered/.PingReceiver")["component_type"].should eq("receiver")
+  end
+
+  it "records the guarding android:permission of a component with an intent-filter" do
+    metadata.call("intent://com.ex.filtered/.SyncService")["permission"].should eq("com.ex.filtered.permission.SYNC")
+    metadata.call("filtered://open")["permission"].should eq("com.ex.filtered.permission.OPEN")
+    metadata.call("intent://com.ex.filtered/.PingReceiver").has_key?("permission").should be_false
+  end
+end
+
+# A flavor source set re-declares a component only to merge attributes into
+# src/main; the overlay stub carries no intent-filter of its own.
+describe "Analyzer::Mobile::Android (source-set overlay manifest)" do
+  dir = File.tempname("noir-android-overlay")
+  main_manifest = File.join(dir, "app", "src", "main", "AndroidManifest.xml")
+  beta_manifest = File.join(dir, "app", "src", "beta", "AndroidManifest.xml")
+  Dir.mkdir_p(File.dirname(main_manifest))
+  Dir.mkdir_p(File.dirname(beta_manifest))
+  File.write(main_manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.ex.overlay">
+      <application>
+        <activity android:name=".EntryActivity" android:exported="true">
+          <intent-filter>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+          </intent-filter>
+        </activity>
+        <activity android:name=".ShareActivity" android:exported="true">
+          <intent-filter>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="overlay" android:host="share"/>
+          </intent-filter>
+        </activity>
+      </application>
+    </manifest>
+    XML
+  File.write(beta_manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools" package="com.ex.overlay">
+      <application>
+        <activity android:name=".EntryActivity" android:exported="true" android:screenOrientation="portrait"/>
+        <activity android:name=".ShareActivity" android:exported="true" tools:node="replace"/>
+        <activity android:name=".BetaOnlyActivity" android:exported="true"/>
+      </application>
+    </manifest>
+    XML
+
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, main_manifest)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, beta_manifest)
+  urls = Analyzer::Mobile::Android.new(create_test_options).analyze.map(&.url)
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  FileUtils.rm_rf(dir)
+
+  it "does not report an overlay stub of a filter-bearing main component as filter-less" do
+    urls.should_not contain("intent://com.ex.overlay/.EntryActivity")
+  end
+
+  it "still reports a filter-less component the overlay declares on its own" do
+    urls.should contain("intent://com.ex.overlay/.BetaOnlyActivity")
+  end
+
+  it "reports a component the overlay replaces without its filters" do
+    urls.should contain("intent://com.ex.overlay/.ShareActivity")
+  end
+end
+
+# A library module has only a namespace; the manifest merger folds its
+# components into the consuming application, whose applicationId is the
+# package the merged components live in.
+describe "Analyzer::Mobile::Android (library module)" do
+  dir = File.tempname("noir-android-library")
+  app_manifest = File.join(dir, "app", "src", "main", "AndroidManifest.xml")
+  lib_manifest = File.join(dir, "lib", "src", "main", "AndroidManifest.xml")
+  Dir.mkdir_p(File.dirname(app_manifest))
+  Dir.mkdir_p(File.dirname(lib_manifest))
+  File.write(File.join(dir, "settings.gradle.kts"), %(include(":app", ":lib")\n))
+  File.write(File.join(dir, "app", "build.gradle.kts"), <<-KTS)
+    plugins { id("com.android.application") }
+    android {
+        namespace = "com.example.app"
+        defaultConfig { applicationId = "com.example.app" }
+    }
+    dependencies { implementation(project(":lib")) }
+    KTS
+  File.write(File.join(dir, "lib", "build.gradle.kts"), <<-KTS)
+    plugins { alias(libs.plugins.demo.feature) }
+    android { namespace = "com.example.lib" }
+    KTS
+  File.write(app_manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+      <application>
+        <activity android:name=".AppOnlyActivity" android:exported="true"/>
+      </application>
+    </manifest>
+    XML
+  File.write(lib_manifest, <<-XML)
+    <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+      <application>
+        <activity android:name=".LibLinkActivity" android:exported="true">
+          <intent-filter>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="demo" android:host="lib"/>
+          </intent-filter>
+        </activity>
+        <activity android:name=".LibExplicitActivity" android:exported="true"/>
+        <provider android:name=".LibFilesProvider" android:exported="true"
+                  android:authorities="${applicationId}.files"/>
+      </application>
+    </manifest>
+    XML
+
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, app_manifest)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, lib_manifest)
+  endpoints = Analyzer::Mobile::Android.new(create_test_options).analyze
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  FileUtils.rm_rf(dir)
+
+  urls = endpoints.map(&.url)
+
+  it "puts library deep links in the consuming application's package" do
+    metadata = endpoints.find! { |e| e.url == "demo://lib" }.metadata.not_nil!
+    metadata["package"].should eq("com.example.app")
+    metadata["via"].should eq("com.example.lib.LibLinkActivity")
+  end
+
+  it "names library components by their fully qualified class in the application package" do
+    urls.should contain("intent://com.example.app/com.example.lib.LibExplicitActivity")
+    urls.should_not contain("intent://com.example.lib/.LibExplicitActivity")
+  end
+
+  it "resolves ${applicationId} in a library manifest to the application id" do
+    urls.should contain("content://com.example.app.files")
+  end
+
+  it "leaves the application module's own components unchanged" do
+    urls.should contain("intent://com.example.app/.AppOnlyActivity")
+  end
+end
+
+# Two applications in one build: a library goes to the one that names it.
+# In another build, an application whose id the scan cannot read is not a
+# library of that build's only readable application.
+describe "Analyzer::Mobile::Android (library module with several applications)" do
+  dir = File.tempname("noir-android-library-apps")
+  write = ->(path : String, content : String) do
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, content)
+  end
+  app_script = ->(id : String, deps : String) do
+    %(plugins { id("com.android.application") }\nandroid { defaultConfig { applicationId = "#{id}" } }\n#{deps}\n)
+  end
+  manifest = ->(activity : String) do
+    <<-XML
+      <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+        <application>
+          <activity android:name="#{activity}" android:exported="true"/>
+        </application>
+      </manifest>
+      XML
+  end
+
+  lib_manifest = File.join(dir, "one", "lib", "src", "main", "AndroidManifest.xml")
+  legacy_manifest = File.join(dir, "two", "legacy", "src", "main", "AndroidManifest.xml")
+  write.call(File.join(dir, "one", "settings.gradle.kts"), %(include(":app", ":sample", ":lib")\n))
+  write.call(File.join(dir, "one", "app", "build.gradle.kts"), app_script.call("com.example.app", %(dependencies { implementation(project(":lib")) })))
+  write.call(File.join(dir, "one", "sample", "build.gradle.kts"), app_script.call("com.example.sample", ""))
+  write.call(File.join(dir, "one", "lib", "build.gradle.kts"), %(android { namespace = "com.example.lib" }\n))
+  write.call(lib_manifest, manifest.call(".LibExplicitActivity"))
+  write.call(File.join(dir, "two", "settings.gradle.kts"), %(include(":legacy", ":demo")\n))
+  write.call(File.join(dir, "two", "demo", "build.gradle.kts"), app_script.call("com.example.demo", ""))
+  write.call(File.join(dir, "two", "legacy", "build.gradle.kts"), <<-KTS)
+    plugins { alias(libs.plugins.demo.app) }
+    android {
+        namespace = "com.example.legacy"
+        defaultConfig { applicationId = legacyAppId }
+    }
+    KTS
+  write.call(legacy_manifest, manifest.call(".LegacyActivity"))
+
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, lib_manifest)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, legacy_manifest)
+  urls = Analyzer::Mobile::Android.new(create_test_options).analyze.map(&.url)
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  FileUtils.rm_rf(dir)
+
+  it "puts a library in the application whose build script names it" do
+    urls.should contain("intent://com.example.app/com.example.lib.LibExplicitActivity")
+  end
+
+  it "keeps an application with an unreadable applicationId in its own namespace" do
+    urls.should contain("intent://com.example.legacy/.LegacyActivity")
+    urls.should_not contain("intent://com.example.demo/com.example.legacy.LegacyActivity")
+  end
+end
