@@ -758,6 +758,33 @@ describe "RustAuthTagger" do
     files["crates/lib-auth/src/lib.rs"] = mw.sub(%("/login"), %("/v2/admin"))
     axum_guarded_urls(files, ["/admin"]).should be_empty
   end
+
+  it "resolves a middleware imported through `use super::` to the parent module's fn" do
+    items = <<-RUST
+      use super::require_login;
+      pub fn routes() -> Router {
+          Router::new().route("/items", get(list_items)).layer(from_fn(require_login))
+      }
+      RUST
+    parent = <<-RUST
+      pub(crate) async fn require_login(req: Request, next: Next) -> Result<Response, StatusCode> {
+          if req.headers().get("authorization").is_none() {
+              return Err(StatusCode::UNAUTHORIZED);
+          }
+          Ok(next.run(req).await)
+      }
+      RUST
+    passes = <<-RUST
+      pub async fn require_login(req: Request, next: Next) -> Response {
+          next.run(req).await
+      }
+      RUST
+    files = {"src/routes/items.rs" => items, "src/routes/mod.rs" => parent, "src/metrics/mod.rs" => passes}
+    axum_guarded_urls(files, ["/items", "/health"]).should eq(["/items"])
+
+    files = {"src/routes/items.rs" => items, "src/routes/mod.rs" => passes, "src/metrics/mod.rs" => parent}
+    axum_guarded_urls(files, ["/items", "/health"]).should be_empty
+  end
 end
 
 describe "RustAuthTagger request guards read from their FromRequest impls" do

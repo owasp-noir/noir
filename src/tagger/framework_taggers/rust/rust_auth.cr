@@ -311,8 +311,20 @@ class RustAuthTagger < FrameworkTagger
     end
   end
 
+  # `super::f` named in `from_file`, as the path from the scan base that
+  # `register_function` keys `f` under.
+  private def from_parent_module(ref : String, from_file : String) : String
+    return ref unless ref.starts_with?("super::")
+    mod = file_module_parts(from_file)
+    while ref.starts_with?("super::")
+      ref = ref.lchop("super::")
+      mod.pop?
+    end
+    (mod << ref).join("::")
+  end
+
   private def lookup_function(fn_ref : String, from_file : String) : RustFnEntry?
-    cleaned = fn_ref.lchop("::").lchop("crate::").lchop("self::")
+    cleaned = from_parent_module(fn_ref.lchop("::").lchop("crate::").lchop("self::"), from_file)
     parts = cleaned.split("::")
     ensure_fn_indexed(from_file)
     ensure_fn_ref_indexed(cleaned)
@@ -326,10 +338,10 @@ class RustAuthTagger < FrameworkTagger
     imports = file_imports_for(from_file)
     if parts.size == 1
       if imported_full = imports.names[cleaned]?
-        cleaned = imported_full.lchop("::").lchop("crate::")
+        cleaned = from_parent_module(imported_full.lchop("::").lchop("crate::"), from_file)
       end
     elsif first_imported = imports.names[parts[0]]?
-      cleaned = (first_imported.split("::") + parts[1..]).join("::").lchop("::").lchop("crate::")
+      cleaned = from_parent_module((first_imported.split("::") + parts[1..]).join("::").lchop("::").lchop("crate::"), from_file)
     end
 
     ensure_fn_ref_indexed(cleaned)
