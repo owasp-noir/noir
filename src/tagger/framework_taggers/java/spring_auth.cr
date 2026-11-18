@@ -183,6 +183,7 @@ class SpringAuthTagger < FrameworkTagger
     @unread_configs = [] of UnreadConfig
     # Boot apps => whether they exclude SecurityAutoConfiguration.
     @security_autoconfig_off = Hash(String, Bool).new
+    @management_port = Hash(String, Bool).new
     @security_meta_annotations = Hash(String, MetaAnnotation).new
     @annotation_aliases = Hash(String, Set(String)).new
     @method_readers = Hash(String, {Set(String), Bool}).new
@@ -248,6 +249,7 @@ class SpringAuthTagger < FrameworkTagger
     @security_enabled.clear
     @unread_configs.clear
     @security_autoconfig_off.clear
+    @management_port.clear
     @boot_apps.clear
     @security_meta_annotations.clear
     @annotation_aliases.clear
@@ -669,13 +671,13 @@ class SpringAuthTagger < FrameworkTagger
       chain_text.scan(/\.addPathPatterns\s*\(/) do |pmatch|
         p_open = pmatch.byte_end(0) - 1
         if p_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(chain_text, p_open)
-          found, read = interceptor_patterns(chain_text.byte_slice(p_open + 1, p_close - p_open - 1), constants)
+          found, read = interceptor_patterns(chain_text.byte_slice(p_open + 1, p_close - p_open - 1), constants, clean_content)
           add_patterns.concat(found)
           add_read &&= read
         end
       end
-      # An include pattern noir cannot read covers what it does not know.
-      next unless add_read
+      # An include list noir cannot read at all covers what it does not know.
+      next if add_patterns.empty? && !add_read
 
       add_patterns = ["/**"] if add_patterns.empty?
 
@@ -683,7 +685,7 @@ class SpringAuthTagger < FrameworkTagger
       chain_text.scan(/\.excludePathPatterns\s*\(/) do |pmatch|
         p_open = pmatch.byte_end(0) - 1
         if p_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(chain_text, p_open)
-          exclude_patterns.concat(interceptor_patterns(chain_text.byte_slice(p_open + 1, p_close - p_open - 1), constants)[0])
+          exclude_patterns.concat(interceptor_patterns(chain_text.byte_slice(p_open + 1, p_close - p_open - 1), constants, clean_content)[0])
         end
       end
 
@@ -707,13 +709,24 @@ class SpringAuthTagger < FrameworkTagger
   # The path patterns of an `addPathPatterns` / `excludePathPatterns`
   # argument list, and whether every argument was read: literals, String /
   # `String[]` constants and their concatenations, literal collections
-  # (`List.of("/a")`). Kotlin constants are not resolved.
-  private def interceptor_patterns(args : String, constants : {Hash(String, String), Hash(String, Array(String))}) : {Array(String), Bool}
+  # (`List.of("/a")`) and fields of `source` initialized with either.
+  private def interceptor_patterns(args : String, constants : {Hash(String, String), Hash(String, Array(String))}, source : String, depth = 0) : {Array(String), Bool}
     patterns = [] of String
     read = true
+    return {patterns, false} if depth > 4
     Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules.new).each do |part|
+      part = part.strip
+      if wrapped = part.match(COLLECTION_FACTORY)
+        found, inner_read = interceptor_patterns(wrapped[1], constants, source, depth + 1)
+        read &&= inner_read
+        patterns.concat(found)
+        next
+      end
       found = matcher_patterns(part, constants[0], constants[1])
-      if found.empty?
+      if found.empty? && part.matches?(/\A[A-Za-z_$][\w$]*\z/) && (init = field_initializer(source, part))
+        found, inner_read = interceptor_patterns(init, constants, source, depth + 1)
+        read &&= inner_read
+      elsif found.empty?
         rest = part.gsub(STRING_LITERAL, " ")
         found = part.scan(/"((?:[^"\\]|\\.)*)"/).map(&.[1]) unless rest.includes?('+') || rest.scan(/[A-Za-z_$][\w$]*/).any? { |word| !LIST_INIT_WORDS.includes?(word[0]) && word[0] != "arrayOf" }
       end
@@ -721,6 +734,19 @@ class SpringAuthTagger < FrameworkTagger
       patterns.concat(found)
     end
     {patterns, read}
+  end
+
+  # The initializer of variable `name` in `source` when it is a string
+  # literal or a call (`List.of(...)`, Kotlin `const val X = "/a"`).
+  private def field_initializer(source : String, name : String) : String?
+    return unless decl = source.match(/\b#{Regex.escape(name)}\s*(?::[^=\n]*)?=(?!=)\s*/)
+    rest = source.byte_slice(decl.byte_end(0))
+    if literal = rest.match(/\A"(?:[^"\\]|\\.)*"/)
+      literal[0]
+    elsif call = rest.match(/\A[\w$.<>\s]*\(/)
+      return unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(rest, call.byte_end(0) - 1)
+      rest.byte_slice(0, close + 1)
+    end
   end
 
   private def resolve_interceptor_type(arg : String, content : String) : String?
@@ -1459,6 +1485,8 @@ class SpringAuthTagger < FrameworkTagger
     nil
   end
 
+  COLLECTION_FACTORY = /\A(?:(?:List|Set|Arrays|Collections)\s*\.\s*(?:of|asList|singletonList|singleton)|listOf|setOf|arrayOf|mutableListOf)\s*\((.*)\)\z/m
+
   # Servlet URL patterns spelled as literals, or nil when one is not
   # (`Constants.PREFIX + "/*"`, a property).
   private def servlet_url_patterns(args : String) : Array(String)?
@@ -1466,7 +1494,7 @@ class SpringAuthTagger < FrameworkTagger
     Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules.new).each do |part|
       if literal = part.match(JAVA_STRING_LITERAL)
         patterns << literal[1]
-      elsif wrapped = part.match(/\A(?:(?:List|Set|Arrays|Collections)\s*\.\s*(?:of|asList|singletonList|singleton)|listOf|setOf|arrayOf|mutableListOf)\s*\((.*)\)\z/m) ||
+      elsif wrapped = part.match(COLLECTION_FACTORY) ||
                       part.match(/\A(?:new\s+String\s*\[\s*\]\s*)?\{(.*)\}\z/m) || part.match(/\A\[(.*)\]\z/m)
         return unless inner = servlet_url_patterns(wrapped[1])
         patterns.concat(inner)
@@ -1950,16 +1978,21 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
+  # Where the analyzer and Boot read a module's base configuration.
+  MANAGEMENT_CONFIG_DIRS = {"src/main/resources", "src/main/resources/config", "resources", "."}
+
   # Whether `app` serves the Actuator on its own `management.server.port`,
   # read as the analyzer reads it: the key in the base configuration. An
   # app with none of its own runs on the one a module of its `classpath`
   # ships.
   private def management_port?(app : String, classpath : Set(String)?) : Bool
-    target = relaxed_property("management.server.port")
-    sources = ->(dir : String) { CONFIG_DIRS.flat_map { |sub| BASE_CONFIG_FILES.map { |name| File.join(dir, sub, name) } }.select { |path| File.exists?(path) } }
-    files = sources.call(app)
-    files = (classpath || Set(String).new).flat_map { |dir| sources.call(dir) } if files.empty?
-    files.any? { |path| !!((content = read_file(path)) && config_file_values(content, path.ends_with?(".properties"), target)[0]) }
+    @management_port.fetch(app) do
+      target = relaxed_property("management.server.port")
+      sources = ->(dir : String) { MANAGEMENT_CONFIG_DIRS.flat_map { |sub| BASE_CONFIG_FILES.map { |name| File.join(dir, sub, name) } }.select { |path| File.exists?(path) } }
+      files = sources.call(app)
+      files = (classpath || Set(String).new).flat_map { |dir| sources.call(dir) } if files.empty?
+      @management_port[app] = files.any? { |path| !!((content = read_file(path)) && config_file_values(content, path.ends_with?(".properties"), target)[0]) }
+    end
   end
 
   CLASS_DECLARATION = /\b(?:class|object)\s+[A-Za-z_$][\w$]*[^{;=]*\{/
@@ -2171,6 +2204,7 @@ class SpringAuthTagger < FrameworkTagger
   # (nil: unknown, every chain applies) the modules whose chains apply.
   private def security_decision(endpoint : Endpoint, config_dir : String?, classpath : Set(String)?, marker : String? = nil) : Tuple(String, String?, Int32?)?
     url = path_within_app(endpoint.url, config_dir)
+    actuator = actuator_route?(endpoint)
     applies = ->(owner : String?) { owner.nil? || classpath.nil? || classpath.includes?(owner) }
     # A security configuration or switch outside any build unit (an example
     # under `docs/`) reaches only endpoints whose classpath is unknown.
@@ -2184,21 +2218,27 @@ class SpringAuthTagger < FrameworkTagger
        module_classpath(config_dir).try(&.[1])
       # The app declares no chain, yet Spring Security is on its classpath
       # and switched on: its default chain authenticates every request.
-      if @security_enabled.any? { |owner| reaches.call(owner) }
-        return {"Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)", nil, nil}
-      elsif (@boot_apps.empty? || @boot_apps.includes?(config_dir)) && !security_autoconfig_off?(config_dir)
+      default_chain =
+        if @security_enabled.any? { |owner| reaches.call(owner) }
+          "Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)"
+        elsif (@boot_apps.empty? || @boot_apps.includes?(config_dir)) && !security_autoconfig_off?(config_dir)
+          "Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)"
+        end
+      if default_chain
         # Boot's management security permits the health endpoint and its
         # groups (liveness, readiness).
-        return if actuator_route?(endpoint) && (endpoint.url.ends_with?("/health") || endpoint.url.includes?("/health/"))
-        return {"Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)", nil, nil}
+        return if actuator && (endpoint.url.ends_with?("/health") || endpoint.url.includes?("/health/"))
+        return {default_chain, nil, nil}
       end
     end
     scoped = @scoped_chains.select { |chain| applies.call(chain[:module]) && chain[:scope].any? { |pattern| matches_ant_pattern?(url, pattern) } }
     rules =
       if ignored
         [] of SecurityRule
-      elsif config_dir && actuator_route?(endpoint) && management_port?(config_dir, classpath) &&
-            (chain = @management_chains.select { |candidate| applies.call(candidate[:module]) }.min_by?(&.[:order]))
+      elsif actuator && config_dir && !@management_chains.empty? && management_port?(config_dir, classpath) &&
+            (chain = @management_chains.select { |candidate| applies.call(candidate[:module]) }.min_by?(&.[:order])) &&
+            (order = chain[:order]) && scoped.all? { |other| order < other[:order] }
+        # The first chain matching the request decides it.
         chain[:rules]
       elsif chain = scoped.min_by? { |candidate| {candidate[:order], -candidate[:scope].max_of { |pattern| matches_ant_pattern?(url, pattern) ? pattern_specificity(pattern) : 0 }} }
         chain[:rules]
