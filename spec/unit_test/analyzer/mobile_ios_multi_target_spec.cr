@@ -3,7 +3,7 @@ require "../../../src/models/code_locator"
 require "../../../src/analyzer/analyzers/mobile/ios.cr"
 
 # Regression coverage for `best_matching_schemes` in a monorepo scan that
-# sees more than one app target's Info.plist at once (KakaoTalk ships ~14).
+# sees more than one app target's Info.plist at once (a large messenger app can ship ~14).
 # A shared, String-backed router enum can be declared once but only ever
 # compared against `.host` from *one* target's own source — crossing its
 # harvested hosts against every primary scheme in the scan (rather than just
