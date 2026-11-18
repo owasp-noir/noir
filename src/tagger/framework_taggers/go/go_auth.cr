@@ -1411,7 +1411,7 @@ class GoAuthTagger < FrameworkTagger
                else
                  tests.any?(&.matches?(AUTHZ_CONDITION)) ? Guard::Authz : Guard::Authn
                end
-             elsif receiver && (stmt = line.match(RECEIVER_STATEMENT)) && stmt[1] == receiver[1]
+             elsif receiver && (stmt = line.match(RECEIVER_STATEMENT) || handed_back_call(lines, idx)) && stmt[1] == receiver[1]
                kind_followed = false
                receiver_method(body, receiver[2], stmt[2]).max_of? do |method|
                  found = body_verdict(method, nil, follow, hops - 1, route_path, route_method: route_method)
@@ -1464,6 +1464,30 @@ class GoAuthTagger < FrameworkTagger
       @body_name_veto[key] = @last_body_name_veto
     end
     verdict
+  end
+
+  ERROR_RESULT_CALL = /\A(?:if\s+)?(?:\w+\s*,\s*)*(\w+)\s*:?=\s*(\w+\s*\.\s*\w+\s*\(.*)\z/
+
+  # The call on line `idx` whose error result is returned when set
+  # (`token, err := a.extractToken(c)` then `if err != nil {` / `return
+  # err`, or `if _, err := a.extractToken(c); err != nil {`, or `return
+  # a.extractToken(c)`): a refusal the call returns is the caller's. Nil
+  # for any other line.
+  private def handed_back_call(lines : Array(String), idx : Int32) : Regex::MatchData?
+    if tail = lines[idx].strip.match(/\Areturn\s+(.+)\z/)
+      return tail[1].match(RECEIVER_STATEMENT)
+    end
+    m = lines[idx].strip.match(ERROR_RESULT_CALL) || return
+    err = m[1]
+    return if err == "_"
+    test = "#{err} != nil {"
+    row = if lines[idx].strip.ends_with?("; #{test}")
+            idx
+          elsif lines[idx + 1]?.try(&.strip) == "if #{test}"
+            idx + 1
+          end
+    return unless row && lines[row + 1]?.try(&.strip.matches?(/\Areturn\b.*\b#{err}\z/))
+    m[2].match(RECEIVER_STATEMENT)
   end
 
   # ponytail: credential predicates retain semantic name evidence (including stubs); use typed call/result dataflow to prove their reads.

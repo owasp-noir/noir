@@ -1187,6 +1187,86 @@ describe "GoAuthTagger read definitions versus name fallback" do
   end
 end
 
+describe "GoAuthTagger refusals returned by a method on the middleware's receiver" do
+  api_source = ->(body : String) do
+    <<-GO
+      package main
+      type API struct{}
+      func (a *API) extractToken(c echo.Context) (string, error) {
+        token := c.Request().Header.Get("Authorization")
+        if token == "" {
+          return "", echo.ErrUnauthorized
+        }
+        return token, nil
+      }
+      func (a *API) requireUser(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+          #{body}
+        }
+      }
+      func routes(e *echo.Echo, a *API) {
+        g := e.Group("/api")
+        g.Use(a.requireUser)
+        g.GET("/items", h)
+      }
+      GO
+  end
+
+  {
+    "an error it hands back" => "token, err := a.extractToken(c)\nif err != nil {\nreturn err\n}\nc.Set(\"token\", token)\nreturn next(c)",
+    "a tail call"            => "if _, err := a.extractToken(c); err != nil {\nreturn err\n}\nreturn next(c)",
+  }.each do |shape, body|
+    it "follows #{shape}" do
+      lines = api_source.call(body).lines
+      run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("g.GET")) + 1, "go_echo").tags.map(&.name).should eq(["auth"])
+    end
+  end
+
+  {
+    "discards the error"         => "token, _ := a.extractToken(c)\nc.Set(\"token\", token)\nreturn next(c)",
+    "hands the request on after" => "token, err := a.extractToken(c)\nif err != nil {\nreturn next(c)\n}\nc.Set(\"token\", token)\nreturn next(c)",
+    "only acts on success"       => "token, err := a.extractToken(c)\nif err == nil {\nc.Set(\"token\", token)\n}\nreturn next(c)",
+  }.each do |shape, body|
+    it "does not follow a call that #{shape}" do
+      lines = api_source.call(body).lines
+      run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("g.GET")) + 1, "go_echo").tags.should be_empty
+    end
+  end
+end
+
+describe "GoAuthTagger refusals of a receiver method the middleware returns" do
+  it "follows a middleware that returns the method's result" do
+    source = <<-GO
+      package main
+
+      import (
+        "context"
+        "net/http"
+      )
+
+      type API struct{}
+
+      func (a *API) authenticate(r *http.Request) (context.Context, error) {
+        token := r.Header.Get("Authorization")
+        if token == "" {
+          return nil, httpError(http.StatusUnauthorized, "missing token")
+        }
+        return r.Context(), nil
+      }
+
+      func (a *API) requireUser(w http.ResponseWriter, r *http.Request) (context.Context, error) {
+        return a.authenticate(r)
+      }
+
+      func (a *API) routes(r *router) {
+        r.With(a.requireUser).Get("/items", a.listItems)
+      }
+      GO
+    lines = source.lines
+    run_go_auth(lines, "/items", "GET", lines.index!(&.includes?("r.With")) + 1, "go_chi").tags.map(&.name).should eq(["auth"])
+  end
+end
+
 describe "GoAuthTagger permission query success" do
   it "keeps a permission denial after a successful query" do
     source = <<-GO
