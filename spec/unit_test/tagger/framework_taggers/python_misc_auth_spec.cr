@@ -228,4 +228,81 @@ describe "PythonMiscAuthTagger" do
       tag_at.call(28).should be_empty
     end
   end
+
+  describe "Litestar auth backends" do
+    tmpdir = File.tempname("litestar_backend")
+    guards = File.join(tmpdir, "app", "guards.py")
+    routes = File.join(tmpdir, "app", "routes.py")
+    sibling = File.join(tmpdir, "other", "routes.py")
+    lines = [
+      "from litestar import Controller, Litestar, get, post",
+      "from app.guards import auth",
+      "",
+      "class AccountController(Controller):",
+      "    @get(\"/api/me\")",
+      "    async def me(self) -> dict: ...",
+      "",
+      "    @get(\"/health\")",
+      "    async def health(self) -> dict: ...",
+      "",
+      "    @post(\"/api/access/signup\", exclude_from_auth=True)",
+      "    async def signup(self) -> dict: ...",
+      "",
+      "app = Litestar(route_handlers=[AccountController], on_app_init=[auth.on_app_init])",
+    ]
+
+    before_all do
+      Dir.mkdir_p(File.dirname(guards))
+      Dir.mkdir_p(File.dirname(sibling))
+      File.write(File.join(tmpdir, "pyproject.toml"), "[project]\nname = \"app\"\n")
+      File.write(File.join(tmpdir, "other", "pyproject.toml"), "[project]\nname = \"other\"\n")
+      File.write(guards, [
+        "from litestar.security.jwt import OAuth2PasswordBearerAuth",
+        "",
+        "auth = OAuth2PasswordBearerAuth[User](",
+        "    retrieve_user_handler=current_user_from_token,",
+        "    token_secret=\"secret\",",
+        "    token_url=\"/api/access/login\",",
+        "    exclude=[\"/health\", \"/api/access/login\", \"^/schema\"],",
+        ")",
+      ].join("\n"))
+      File.write(routes, lines.join("\n"))
+      File.write(sibling, "from litestar import get\n\n@get(\"/api/me\")\nasync def me() -> dict: ...\n")
+    end
+
+    after_all { FileUtils.rm_rf(tmpdir) }
+
+    tag = ->(file : String, line : Int32, url : String, method : String) do
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      [guards, routes, sibling].each { |path| CodeLocator.instance.register_path(path) }
+      details = Details.new(PathInfo.new(file, line))
+      details.technology = "python_litestar"
+      endpoint = Endpoint.new(url, method, [] of Param, details)
+      PythonMiscAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags
+    end
+
+    it "guards a route the app's auth backend does not exclude" do
+      tags = tag.call(routes, 5, "/api/me", "GET")
+      tags.map(&.name).should eq(["auth"])
+      tags[0].description.should contain("OAuth2PasswordBearerAuth")
+    end
+
+    it "leaves a path matching an exclude pattern open" do
+      tag.call(routes, 8, "/health", "GET").should be_empty
+    end
+
+    it "leaves a route marked exclude_from_auth open" do
+      tag.call(routes, 11, "/api/access/signup", "POST").should be_empty
+    end
+
+    it "leaves OPTIONS and HEAD open, as the backend's default exclude_http_methods does" do
+      tag.call(routes, 5, "/api/me", "HEAD").should be_empty
+    end
+
+    it "does not apply one project's backend to a sibling project" do
+      tag.call(sibling, 3, "/api/me", "GET").should be_empty
+    end
+  end
 end
