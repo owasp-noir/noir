@@ -1299,6 +1299,55 @@ describe "RubyAuthTagger (Grape route scope)" do
   end
 end
 
+describe "RubyAuthTagger (Devise route blocks)" do
+  it "tags a route inside authenticate / authenticated, not unauthenticated or devise_scope" do
+    dir = File.tempname("noir_devise_routes")
+    Dir.mkdir_p(File.join(dir, "config"))
+    routes = File.join(dir, "config", "routes.rb")
+    File.write(routes, <<-RB)
+      Rails.application.routes.draw do
+        authenticated :user, ->(u) { u.admin? } do
+          mount Sidekiq::Web => "/jobs"
+        end
+        authenticate :user do
+          mount Blazer::Engine, at: "/blazer"
+        end
+        unauthenticated do
+          mount Landing::Engine, at: "/landing"
+        end
+        devise_scope :user do
+          get "/session/check", to: redirect("/")
+        end
+        mount PgHero::Engine, at: "/pghero"
+      end
+      RB
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(url : String, line : Int32) do
+        details = Details.new(PathInfo.new(routes, line))
+        details.technology = "ruby_rails"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      jobs = at.call("/jobs", 3)
+      blazer = at.call("/blazer", 6)
+      landing = at.call("/landing", 9)
+      check = at.call("/session/check", 12)
+      pghero = at.call("/pghero", 14)
+      RubyAuthTagger.new(noir_options).perform([jobs, blazer, landing, check, pghero])
+
+      jobs.tags.map(&.name).should eq(["auth"])
+      blazer.tags.map(&.name).should eq(["auth"])
+      landing.tags.should be_empty
+      check.tags.should be_empty
+      pghero.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+end
+
 describe "RubyAuthTagger (routed controller chain)" do
   it "reads a concern's action through the routed controller, a parent's Pundit callback and a setting-lifted guard" do
     CodeLocator.instance.clear_all

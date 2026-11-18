@@ -297,6 +297,11 @@ class RubyAuthTagger < FrameworkTagger
       end
       return if authn_desc || authz_desc || body[:anonymous] || skipped || opted_out || dispatch
 
+      if endpoint.details.technology == "ruby_rails" && (block = devise_route_block(path, lines, line_idx))
+        endpoint.add_tag(Tag.new("auth", "Protected by Devise `#{block}` routes block", "ruby_auth"))
+        return
+      end
+
       # Sinatra/Rack patterns first, then Grape (before blocks, http_basic,
       # etc.), both over the same route scope.
       scope = route_scope(path, lines, line_idx, endpoint.url)
@@ -1465,6 +1470,24 @@ class RubyAuthTagger < FrameworkTagger
       idx = index.filter_up[idx] if idx >= 0
     end
     scope
+  end
+
+  # Devise's routes helpers: `authenticate :user do` runs
+  # `warden.authenticate!` before the routes inside, and `authenticated
+  # :user do` is a constraint no anonymous request matches.
+  DEVISE_ROUTE_BLOCK = /\A(authenticated?)\b(?![?!:=])[^#]*\bdo\b/
+
+  # The Devise helper whose block encloses the route at `route_line` of a
+  # `config/routes` file; nil when there is none.
+  private def devise_route_block(path : String, lines : Array(String), route_line : Int32) : String?
+    return unless path.includes?("/config/routes")
+    index = scope_lines(path, lines)
+    idx = route_line
+    while (idx = index.prev_shallower[idx]) >= 0
+      if m = index.stripped[idx].match(DEVISE_ROUTE_BLOCK)
+        return m[1]
+      end
+    end
   end
 
   private def match_scope(scope : Array(String), patterns) : String?
