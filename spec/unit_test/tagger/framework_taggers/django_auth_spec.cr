@@ -2453,4 +2453,31 @@ describe "DjangoAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "tags the admin site mount, which serves only active staff" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_admin_site")
+    Dir.mkdir_p(tmpdir)
+    urls = File.join(tmpdir, "urls.py")
+    File.write(urls, <<-PY)
+      urlpatterns = [
+          path("admin/", admin.site.urls),
+          re_path(r"^api/", router.urls),
+      ]
+      PY
+    CodeLocator.instance.register_path(urls)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      admin_index = Endpoint.new("/admin/", "GET", [] of Param, Details.new(PathInfo.new(urls, 2)))
+      api = Endpoint.new("/api/", "GET", [] of Param, Details.new(PathInfo.new(urls, 3)))
+      DjangoAuthTagger.new(noir_options).perform([admin_index, api])
+      admin_index.tags.map(&.description).should eq(["Protected by Django admin site"])
+      api.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end

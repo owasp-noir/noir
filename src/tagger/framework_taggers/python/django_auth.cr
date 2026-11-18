@@ -218,6 +218,12 @@ class DjangoAuthTagger < FrameworkTagger
     contexts = read_source_context(endpoint)
     return if contexts.empty?
     urlconf = urlconf_entries(contexts)
+    # `AdminSite.admin_view` sends a caller who is not active staff to the
+    # admin login; the index is what the mount itself serves.
+    if !urlconf.empty? && urlconf.all?(&.matches?(/\badmin\.site\.urls\b/))
+      endpoint.add_tag(Tag.new("auth", "Protected by Django admin site", "django_auth"))
+      return
+    end
     # A view served by a base class's method lists the view class itself
     # among its code paths (its `class` line): that class's MRO, not the
     # base's, decides what its `dispatch` and permissions do.
