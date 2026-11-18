@@ -282,5 +282,51 @@ describe "FileUploadTagger" do
       endpoint.tags.size.should eq(1)
       endpoint.tags[0].name.should eq("file_upload")
     end
+
+    it "does not tag item or action routes under a /files collection from the URL word alone" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      rename = Endpoint.new("/files/:id", "PATCH", [Param.new("name", "", "json")])
+      cleanup = Endpoint.new("/files/cleanup", "POST")
+
+      tagger.perform([rename, cleanup])
+
+      rename.tags.size.should eq(0)
+      cleanup.tags.size.should eq(0)
+    end
+
+    it "still tags the /files collection and item routes with file evidence" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      create = Endpoint.new("/api/files", "POST")
+      replace = Endpoint.new("/files/:id", "PUT", [Param.new("data", "", "file")])
+
+      tagger.perform([create, replace])
+
+      create.tags.size.should eq(1)
+      replace.tags.size.should eq(1)
+    end
+
+    it "does not tag a download or export route from the URL word alone" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      download = Endpoint.new("/api/file/download/:seq", "POST", [Param.new("reason", "", "json")])
+      export = Endpoint.new("/api/export/file", "POST")
+
+      tagger.perform([download, export])
+
+      download.tags.size.should eq(0)
+      export.tags.size.should eq(0)
+    end
+
+    it "still tags a download-named route that carries a real file param" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/upload/download-template", "POST", [Param.new("doc", "", "file")])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+    end
   end
 end
