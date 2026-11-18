@@ -587,7 +587,7 @@ module Noir
       exec_aliases.sort_by!(&.[2])
       tested_aliases = Set(Int32).new
 
-      scan_if_conditions(handler.body) do |condition, offset, block_start, block_end|
+      scan_if_conditions(handler.body) do |condition, offset, block_start, block_end, braced|
         methods = extract_methods(condition, refs.method_refs)
         paths = extract_paths(condition, refs.path_refs)
         url_patterns.each do |name, path|
@@ -614,6 +614,10 @@ module Noir
             paths.each { |path| routes << RouteHit.new(method, path, offset, block_start, block_end) }
           end
         elsif !methods.empty?
+          # A method test alone guards a verb inside some path's block; its
+          # one-statement form (`if (m === 'GET') return f(q)`) must not cut
+          # off the params that block read before it.
+          block_start = block_end = nil unless braced
           method_hits << ValueHit.new(methods, offset, block_start, block_end)
           if block_start && block_end
             method_regions << Region.new(methods, block_start, block_end)
@@ -745,7 +749,7 @@ module Noir
       end
     end
 
-    private def self.scan_if_conditions(body : String, & : String, Int32, Int32?, Int32? -> Nil) : Nil
+    private def self.scan_if_conditions(body : String, & : String, Int32, Int32?, Int32?, Bool -> Nil) : Nil
       body.scan(/\bif\s*\(/) do |match|
         if_start = match.begin(0) || 0
         open_paren = body.index('(', if_start)
@@ -756,16 +760,52 @@ module Noir
         condition = body[(open_paren + 1)...close_paren]
         block_start = nil.as(Int32?)
         block_end = nil.as(Int32?)
+        braced = false
         after_condition = skip_whitespace(body, close_paren + 1)
         if after_condition < body.size && body[after_condition] == '{'
           if close_brace = JSRouteExtractor.find_matching_brace(body, after_condition)
             block_start = after_condition + 1
             block_end = close_brace
+            braced = true
           end
+        elsif after_condition < body.size
+          # `if (cond) return send(...)`: the branch is one statement.
+          block_start = after_condition
+          block_end = statement_end(body, after_condition)
         end
 
-        yield condition, if_start, block_start, block_end
+        yield condition, if_start, block_start, block_end, braced
       end
+    end
+
+    # End of the single statement starting at `from`: the first `;` or newline
+    # outside any bracket or string, so a one-line `if (c) return f(a, b)` ends
+    # at its own line and a multi-line call is kept whole.
+    private def self.statement_end(body : String, from : Int32) : Int32
+      depth = 0
+      quote = nil.as(Char?)
+      i = from
+      while i < body.size
+        ch = body[i]
+        if q = quote
+          if ch == '\\'
+            i += 1
+          elsif ch == q
+            quote = nil
+          end
+        elsif ch == '"' || ch == '\'' || ch == '`'
+          quote = ch
+        elsif ch == '(' || ch == '[' || ch == '{'
+          depth += 1
+        elsif ch == ')' || ch == ']' || ch == '}'
+          return i if depth == 0
+          depth -= 1
+        elsif depth == 0 && (ch == ';' || ch == '\n')
+          return i
+        end
+        i += 1
+      end
+      body.size
     end
 
     private def self.scan_switches(body : String,
