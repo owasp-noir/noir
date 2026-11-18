@@ -29,6 +29,13 @@ module Analyzer::Mobile
 
     LAUNCHER_ACTION = "android.intent.action.MAIN"
 
+    # Namespace that relative class names (`.Foo`) of the manifest being
+    # parsed expand against; set only for a library module (see
+    # `parse_manifest`), so every other manifest keeps its names verbatim.
+    @class_namespace : String? = nil
+    # Settings directory => {applicationId, build script} of its modules.
+    @application_modules = {} of String => Array({String, String})
+
     def analyze
       locator = CodeLocator.instance
       manifests = locator.all(Noir::LocatorKeys::ANDROID_MANIFEST)
@@ -62,6 +69,17 @@ module Analyzer::Mobile
       package = substitute(attr(manifest, "package") || "", placeholders)
       package = gradle.package_fallback if package.empty?
 
+      # A library module has no applicationId: the manifest merger folds its
+      # components into the application that consumes it. They live in that
+      # package, `${applicationId}` is its id, and relative class names
+      # expand against the library's own namespace.
+      @class_namespace = nil
+      if app_id = gradle.consumer_id
+        @class_namespace = package unless package.empty?
+        package = app_id
+        placeholders["applicationId"] ||= app_id
+      end
+
       seen_urls = Set(String).new
       overlaid = main_filtered_components(path)
 
@@ -93,8 +111,8 @@ module Analyzer::Mobile
       return if attr(component, "enabled") == "false"
 
       exported = bool_attr(component, "exported")
-      component_name = substitute(attr(component, "name") || "", placeholders)
-      handler_name = component_tag == "activity-alias" ? substitute(attr(component, "targetActivity") || component_name, placeholders) : component_name
+      component_name = qualify(substitute(attr(component, "name") || "", placeholders))
+      handler_name = component_tag == "activity-alias" ? qualify(substitute(attr(component, "targetActivity") || component_name, placeholders)) : component_name
 
       # A guarding permission is recorded, not suppressed: whether another
       # app can hold it is the reviewer's call.
@@ -408,7 +426,7 @@ module Analyzer::Mobile
       raw_authorities = attr(provider, "authorities")
       return if raw_authorities.nil? || raw_authorities.empty?
 
-      component_name = substitute(attr(provider, "name") || "", placeholders)
+      component_name = qualify(substitute(attr(provider, "name") || "", placeholders))
 
       metadata = {} of String => String
       # The provider class handles the surface, so surface it as `via` for the
@@ -587,6 +605,8 @@ module Analyzer::Mobile
       getter application_id : String?
       getter namespace : String?
       getter placeholders : Hash(String, String)
+      # applicationId of the application consuming this library module.
+      property consumer_id : String? = nil
 
       def initialize(@application_id, @namespace, @placeholders)
       end
@@ -634,11 +654,74 @@ module Analyzer::Mobile
       return GradleConfig.empty unless gradle_path
 
       begin
-        parse_gradle(read_file_content(gradle_path), gradle_path)
+        content = read_file_content(gradle_path)
+        config = parse_gradle(content, gradle_path)
+        config.consumer_id = consuming_application_id(gradle_path, content) unless config.application_id
+        config
       rescue e
         @logger.debug "Failed to parse gradle file #{gradle_path}: #{e.message}"
         GradleConfig.empty
       end
+    end
+
+    # `com.android.application`, or a plugin alias / convention plugin named
+    # after it (`libs.plugins.android.application`).
+    APPLICATION_PLUGIN_RE = /android[._-]application\b/
+    SETTINGS_INCLUDE_RE   = /["']:([\w.\-]+(?::[\w.\-]+)*)["']/
+    SETTINGS_SEARCH_DEPTH = 6
+
+    # The applicationId of the application a library module's manifest
+    # merges into: the only one the settings script includes, or else the
+    # only one whose build script names this module (`project(":lib")`).
+    # Nil for an application module or when the consumer is ambiguous.
+    private def consuming_application_id(gradle_path : String, content : String) : String?
+      return if content.matches?(APPLICATION_PLUGIN_RE)
+
+      module_dir = File.dirname(gradle_path)
+      settings_dir = module_dir
+      SETTINGS_SEARCH_DEPTH.times do
+        break if {"settings.gradle.kts", "settings.gradle"}.any? { |name| File.exists?(File.join(settings_dir, name)) }
+        parent = File.dirname(settings_dir)
+        return if parent == settings_dir
+        settings_dir = parent
+      end
+
+      apps = application_modules(settings_dir)
+      ids = apps.map(&.[0]).uniq!
+      return ids.first if ids.size == 1
+
+      module_ref = ":#{Noir::PathScope.relative_under(module_dir, settings_dir).gsub('/', ':')}"
+      users = apps.select { |app| app[1].includes?(%("#{module_ref}")) || app[1].includes?("'#{module_ref}'") }
+      ids = users.map(&.[0]).uniq!
+      ids.size == 1 ? ids.first : nil
+    end
+
+    private def application_modules(settings_dir : String) : Array({String, String})
+      @application_modules[settings_dir] ||= begin
+        apps = [] of {String, String}
+        settings = {"settings.gradle.kts", "settings.gradle"}.map { |name| File.join(settings_dir, name) }.find { |path| File.exists?(path) }
+        if settings
+          read_file_content(settings).scan(SETTINGS_INCLUDE_RE) do |m|
+            module_dir = File.join([settings_dir] + m[1].split(':'))
+            script = {"build.gradle.kts", "build.gradle"}.map { |name| File.join(module_dir, name) }.find { |path| File.exists?(path) }
+            next unless script
+            script_content = read_file_content(script)
+            if app_id = parse_gradle(script_content, script).application_id
+              apps << {app_id, script_content}
+            end
+          end
+        end
+        apps
+      end
+    end
+
+    # Expands a relative class name against `@class_namespace`, as the
+    # manifest merger does for a library module.
+    private def qualify(name : String) : String
+      namespace = @class_namespace
+      return name if namespace.nil? || name.empty?
+      return "#{namespace}#{name}" if name.starts_with?('.')
+      name.includes?('.') ? name : "#{namespace}.#{name}"
     end
 
     # The module build script lives above the manifest (`app/build.gradle`

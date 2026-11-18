@@ -93,6 +93,7 @@ SCHEME myapp://complex/:id
 **Android**
 
 * **gradle 플레이스홀더**: 매니페스트 위쪽에서 가장 가까운 `build.gradle(.kts)`를 읽습니다. 같은 플레이스홀더가 여러 번 선언되면(예: `buildTypes` 오버라이드) 먼저 선언된 쪽(관례상 `defaultConfig`)이 우선합니다. 빌드 variant별 값은 모델링하지 않습니다. gradle에 값이 없는 플레이스홀더는 URL에 그대로 남고, 엔드포인트에 `unresolved` 태그가 붙습니다.
+* **라이브러리 모듈**: 빌드 스크립트에 `applicationId`가 없고 application 플러그인도 적용하지 않은 모듈은 그 모듈을 사용하는 애플리케이션에 병합됩니다. 대상은 `settings.gradle(.kts)`가 포함하는 유일한 애플리케이션 모듈이고, 여럿이면 빌드 스크립트에서 이 모듈을 참조하는 유일한 모듈입니다. 컴포넌트는 그 애플리케이션의 패키지로 보고되고, `${applicationId}`는 그 애플리케이션의 id로 해석되며, 상대 클래스 이름(`.Foo`)은 라이브러리 namespace 기준으로 확장됩니다.
 * **Jetpack Navigation**: 스킴 없는 URI(런타임에는 http·https 모두 매칭)는 `https` 하나로 추출합니다. `{arg}` 세그먼트는 `:arg` path 파라미터로, `?key={arg}` 쿼리 플레이스홀더는 `query` 파라미터로 바뀌고, 끝의 `.*` 와일드카드는 리터럴 프리픽스만 남깁니다.
 * **intent-filter가 없는 컴포넌트**: intent-filter가 없는 `android:exported="true"` 컴포넌트는 명시적 인텐트 표면(`android-intent`, metadata에 `explicit`/`exported`/`component_type` 포함)으로 보고합니다. action·category·data URI가 없어도, 컴포넌트 이름을 지정한 명시적 인텐트는 여전히 그 컴포넌트에 도달합니다.
   * exported가 아니거나 `android:enabled="false"`인 필터 없는 컴포넌트는 보고하지 않습니다.
