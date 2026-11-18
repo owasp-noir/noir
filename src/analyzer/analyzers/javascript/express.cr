@@ -98,10 +98,28 @@ module Analyzer::Javascript
 
       # Process static directories to create endpoints for static files
       process_js_static_dirs(static_dirs, result)
-      result.map! { |endpoint| Noir::JSMountPrefix.finish(endpoint) }
+      result.map! { |endpoint| drop_undeclared_path_params(Noir::JSMountPrefix.finish(endpoint)) }
       clear_ambiguous_template_handlers(result)
 
       result
+    end
+
+    # `req.params.X` reads a placeholder the final URL (mount prefix included)
+    # declares; any other name is always undefined. Rows keep what they read
+    # when the URL may be incomplete (unresolved mount prefix, `${...}` or
+    # `{name}` part) or the file builds a `mergeParams` router, whose parent
+    # params come from a mount this scan may not see.
+    private def drop_undeclared_path_params(endpoint : Endpoint) : Endpoint
+      return endpoint unless endpoint.params.any? { |param| param.param_type == "path" }
+      return endpoint if endpoint.resolution.try(&.has_key?("prefix")) || endpoint.url.matches?(/\$?\{[\w$.]+\}/)
+      file = endpoint.details.code_paths.first?.try(&.path)
+      return endpoint if file && read_file_content(file).includes?("mergeParams")
+      endpoint.params.reject! do |param|
+        # Numeric names are unnamed `*` / capture groups (`req.params[0]`).
+        param.param_type == "path" && !param.name.matches?(/\A\d+\z/) &&
+          !endpoint.url.matches?(/(?:[:*]|\(\?<)#{Regex.escape(param.name)}(?!\w)/)
+      end
+      endpoint
     end
 
     # `/${name}` registered by several modules whose `name` comes from their
