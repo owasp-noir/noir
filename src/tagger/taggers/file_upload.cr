@@ -31,8 +31,17 @@ class FileUploadTagger < Tagger
   UPLOAD_PATH_PARTS  = Set{
     "upload", "uploads", "attach", "attachment", "attachments",
     "import", "imports", "avatar", "photo", "photos",
-    "file", "files", "image", "images", "picture", "pictures",
+    "image", "images", "picture", "pictures",
   }
+
+  # `file`/`files` is a generic REST noun, so on its own it only marks the
+  # collection itself (`POST /files`), not an item or action under it
+  # (`PATCH /files/:id`, `POST /files/cleanup`) that renames or prunes.
+  COLLECTION_PATH_PARTS = Set{"file", "files"}
+
+  # A read-side word in the path says the route sends a file out. A URL word
+  # alone must not tag it, though a real file param still does.
+  DOWNLOAD_PATH_PARTS = Set{"download", "downloads", "export", "exports", "zip"}
 
   # `media` is matched only as a whole `/media` path segment, never as a
   # loose sub-token. As a loose token (split on `-`/`_`) it fired on
@@ -48,7 +57,7 @@ class FileUploadTagger < Tagger
     is_upload_method = UPLOAD_METHODS.includes?(endpoint.method.upcase)
     has_multipart_header = endpoint.params.any? { |param| multipart_header?(param) }
 
-    check = is_upload_method && (has_upload_param || is_upload_url || has_multipart_header)
+    check = is_upload_method && (has_upload_param || (is_upload_url && !download_url?(endpoint.url)) || has_multipart_header)
 
     if check
       tag = Tag.new("file_upload", "File upload endpoint potentially vulnerable to unrestricted file upload, path traversal, or malicious file execution.", "FileUpload")
@@ -82,7 +91,17 @@ class FileUploadTagger < Tagger
 
   private def upload_url?(url : String) : Bool
     return true if url_parts(url).any? { |part| UPLOAD_PATH_PARTS.includes?(part) }
-    segment_only_upload?(url)
+    collection_upload?(url) || segment_only_upload?(url)
+  end
+
+  private def download_url?(url : String) : Bool
+    url_parts(url).any? { |part| DOWNLOAD_PATH_PARTS.includes?(part) }
+  end
+
+  # `file`/`files` counts only as the last segment of the path.
+  private def collection_upload?(url : String) : Bool
+    last = url.split("?", 2)[0].split("#", 2)[0].downcase.split("/").reject(&.empty?).last?
+    !last.nil? && url_parts(last).size == 1 && COLLECTION_PATH_PARTS.includes?(last)
   end
 
   # Whole-segment-only path words: matched against `/`-delimited segments
