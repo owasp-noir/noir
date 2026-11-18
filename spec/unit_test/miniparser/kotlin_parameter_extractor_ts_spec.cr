@@ -346,6 +346,30 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       ])
     end
 
+    it "resolves a qualified nested DTO type to the nested class, not the outer one" do
+      source = <<-KT
+        package com.example
+
+        @RestController
+        class OrderController(private val orderService: OrderService) {
+            data class CreateRequest(val itemId: Long, val quantity: Int)
+        }
+
+        class DemoController {
+            @PostMapping("/orders")
+            fun create(@RequestBody req: OrderController.CreateRequest): String = ""
+            @GetMapping("/orders")
+            fun search(req: OrderController.CreateRequest?): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
+      extract(source, "DemoController", "create", "POST", fields: fields)
+        .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "json"}, {"quantity", "json"}])
+      extract(source, "DemoController", "search", "GET", fields: fields)
+        .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "query"}, {"quantity", "query"}])
+    end
+
     it "names JSON body fields by @JsonProperty" do
       dto = <<-KT
         package com.example

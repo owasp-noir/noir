@@ -466,6 +466,39 @@ describe Noir::TreeSitterJavaParameterExtractor do
         .map(&.name).should eq(["hidden", "isFeatured"])
     end
 
+    it "resolves a qualified nested DTO type to the nested class it names" do
+      dto_source = <<-JAVA
+        public class UserDto {
+            public static class Request { public String userName; public String email; }
+        }
+        public class OrderDto {
+            public static class Request { public Long itemId; public int quantity; }
+        }
+        JAVA
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(dto_source)
+
+      controller = <<-JAVA
+        class DemoController {
+            @PostMapping("/users")
+            public String users(@RequestBody UserDto.Request req) { return ""; }
+            @PostMapping("/orders")
+            public String orders(@RequestBody OrderDto.Request req) { return ""; }
+            @PostMapping("/orders/bulk")
+            public String bulk(@RequestBody List<OrderDto.Request> reqs) { return ""; }
+            @GetMapping("/orders/search")
+            public String search(OrderDto.Request req) { return ""; }
+        }
+        JAVA
+
+      method_params(controller, "DemoController", "users", "POST", "json", class_fields)
+        .map(&.name).should eq(["userName", "email"])
+      method_params(controller, "DemoController", "orders", "POST", "json", class_fields)
+        .map(&.name).should eq(["itemId", "quantity"])
+      method_params(controller, "DemoController", "bulk", "POST", "json", class_fields)
+        .map(&.name).should eq(["itemId", "quantity"])
+      method_params(controller, "DemoController", "search", "GET", nil, class_fields)
+        .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "query"}, {"quantity", "query"}])
+    end
   end
 
   describe "implicit (un-annotated) parameter binding" do
