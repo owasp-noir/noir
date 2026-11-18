@@ -8,9 +8,18 @@ module Analyzer::Crystal
     # the per-line hot path; mirrors the VERB_ROUTE_PATTERNS approach in grip.cr).
     METHOD_THEN_PATH_RE = /context\.request\.method\s*(?:==|===)\s*["'](GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)["']\s*&&\s*.*context\.request\.path\s*(?:==|===)\s*["']([^"']+?)["']/
     PATH_THEN_METHOD_RE = /context\.request\.path\s*(?:==|===)\s*["']([^"']+?)["']\s*&&\s*.*context\.request\.method\s*(?:==|===)\s*["'](GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)["']/
-    PATH_COMPARE_RE     = /context\.request\.path\s*(?:==|===|\.starts_with\?|\.includes\?)\s*\(?\s*["']([^"']+?)["']/
-    WHEN_RE             = /(?:^|[^.\w])when\s+["']([^"']+?)["']/
-    PATH_CASE_RE        = /(?:^\s*|[=(]\s*|\breturn\s+)(case)\b.*\brequest\.path\b/
+    # An exact compare only: `path.starts_with?("/api/")` guards a subtree
+    # and `includes?` a substring, neither of which is a route.
+    PATH_COMPARE_RE = /context\.request\.path\s*(?:==|===)\s*["']([^"']+?)["']/
+    WHEN_RE         = /(?:^|[^.\w])when\s+["']([^"']+?)["']/
+    PATH_CASE_RE    = /(?:^\s*|[=(]\s*|\breturn\s+)(case)\b.*\brequest\.path\b/
+    # The handler's argument goes by any name (`HTTP::Server.new do |ctx|`,
+    # `def call(ctx)`, or `ctx = context` inside one). The patterns above
+    # read it as `context`, so those names are rewritten to it first. Only a
+    # handler's own argument: `ctx.request.path == "/x"` in a Kemal helper
+    # taking the context is a guard, not a route.
+    HANDLER_ARG_RE   = /HTTP::Server\.new\b[^|]*\|\s*(\w+)|\bdef\s+call\s*\(\s*(\w+)/
+    HANDLER_ALIAS_RE = /^\s*(\w+)\s*=\s*(\w+)\s*$/
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -25,6 +34,7 @@ module Analyzer::Crystal
       # strings, or other values) that happen to contain path-like literals.
       # Pattern mirrors the namespace/scope indent stacks used in kemal/grip/lucky/etc.
       path_case_stack = [] of NamedTuple(indent: Int32, column: Int32)
+      lines = as_context_receiver(lines)
       param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |line, index|
@@ -79,6 +89,26 @@ module Analyzer::Crystal
       end
 
       endpoints
+    end
+
+    # `lines` with each handler argument's `<name>.request.` read as
+    # `context.request.`.
+    private def as_context_receiver(lines : Array(String)) : Array(String)
+      names = Set(String).new
+      lines.each do |line|
+        next unless line.includes?("HTTP::Server") || line.includes?("call") || (!names.empty? && line.includes?('='))
+        stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
+        if match = stripped.match(HANDLER_ARG_RE)
+          names << (match[1]? || match[2])
+        elsif (match = stripped.match(HANDLER_ALIAS_RE)) && names.includes?(match[2])
+          names << match[1]
+        end
+      end
+      names.delete("context")
+      return lines if names.empty?
+
+      receiver = /\b(?<![.@:])(?:#{names.map { |name| Regex.escape(name) }.join('|')})\.request\./
+      lines.map { |line| line.includes?(".request.") ? line.gsub(receiver, "context.request.") : line }
     end
 
     def line_to_param(content : String) : Param
