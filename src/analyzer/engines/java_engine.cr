@@ -1456,7 +1456,7 @@ module Analyzer::Java
       index.to_h do |cls, fields|
         # Own fields come first; a subclass without its own root inherits
         # its parent's, as Jackson reads class annotations up the hierarchy.
-        root = fields.compact_map(&.json_root).first? || cls
+        root = fields.compact_map(&.json_root).first? || cls.rpartition('.').last
         renamed = fields.map do |field|
           field.json_name = Noir::JacksonNaming.translate(field.name, strategy) if strategy && !field.json_name_fixed?
           field.json_name = "#{root}.#{field.json_name}" if unwrap

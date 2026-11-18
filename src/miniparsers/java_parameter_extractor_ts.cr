@@ -193,7 +193,7 @@ module Noir
         lombok_setters = lombok_field_binding?(decl, source)
         fields = apply_json_naming(collect_class_fields(body, source, lombok_setters), json_naming_of(decl, source), json_root_of(decl, source))
         fields = apply_json_ignore_properties(fields, decl, source)
-        results[class_name] = fields unless fields.empty?
+        type_keys(decl, class_name, source).each { |key| results[key] = fields } unless fields.empty?
       end
       # Java records: the header components ARE the bindable fields (a
       # record can't declare extra instance state), bound through the
@@ -208,7 +208,8 @@ module Noir
           class_name = Noir::TreeSitter.node_text(name_node, source)
           fields = apply_json_naming(collect_record_fields(decl, source), json_naming_of(decl, source), json_root_of(decl, source))
           fields = apply_json_ignore_properties(fields, decl, source)
-          results[class_name] = fields unless fields.empty? || results.has_key?(class_name)
+          next if fields.empty?
+          type_keys(decl, class_name, source).each { |key| results[key] ||= fields }
         end
       end
       results
@@ -370,9 +371,36 @@ module Noir
         next unless super_node
         super_name = simple_superclass_name(Noir::TreeSitter.node_text(super_node, source))
         next if super_name.empty?
-        results[Noir::TreeSitter.node_text(name_node, source)] = super_name
+        type_keys(decl, Noir::TreeSitter.node_text(name_node, source), source).each { |key| results[key] = super_name }
       end
       results
+    end
+
+    TYPE_DECLARATIONS = Set{"class_declaration", "interface_declaration", "enum_declaration", "record_declaration"}
+
+    # Index keys for a type: its simple name, plus `Outer.Inner` when it is
+    # nested, the name a parameter written `Outer.Inner` resolves to.
+    private def type_keys(decl : LibTreeSitter::TSNode, name : String, source : String) : Array(String)
+      qualified = name
+      node = decl
+      while node = Noir::TreeSitter.parent(node)
+        next unless TYPE_DECLARATIONS.includes?(Noir::TreeSitter.node_type(node))
+        next unless outer = Noir::TreeSitter.field(node, "name")
+        qualified = "#{Noir::TreeSitter.node_text(outer, source)}.#{qualified}"
+      end
+      qualified == name ? [name] : [name, qualified]
+    end
+
+    # The DTO index key a written type resolves to: the longest dotted
+    # suffix the index knows (`com.ex.OrderDto.Request` -> `OrderDto.Request`
+    # -> `Request`).
+    private def dto_key(class_fields : Hash(String, Array(FieldInfo)), type_name : String) : String?
+      parts = type_name.strip.split('.')
+      parts.each_index do |i|
+        key = parts[i..].join('.')
+        return key if class_fields.has_key?(key)
+      end
+      nil
     end
 
     # `extends com.example.Base<T>` -> `Base`. The tree-sitter
@@ -1162,7 +1190,7 @@ module Noir
         # request body). Applying this per-parameter — rather than
         # pre-seeding the whole method — lets an explicit `@RequestBody` on
         # the same POST resolve to "json" instead of being dragged along.
-        bindable = simple_param || class_fields.has_key?(type_name) ||
+        bindable = simple_param || dto_key(class_fields, type_name) ||
                    SERVLET_REQUEST_TYPES.includes?(type_name) || pageable_type?(type_name)
         return parameter_format unless bindable
         effective_format = verb == "POST" ? "form" : "query"
@@ -1225,7 +1253,8 @@ module Noir
           sink << Param.new(name, pageable_default_value(pageable_default, name, source, constants, current_class) || "", "query")
         end
       elsif ann_kind.nil? || ann_kind == :body
-        return carry_format unless fields = class_fields[type_name]? || class_fields[collection_element_type(type_name)]?
+        return carry_format unless key = dto_key(class_fields, type_name) || dto_key(class_fields, collection_element_type(type_name))
+        fields = class_fields[key]
         # `@RequestBody` is deserialised by Jackson, which populates every
         # non-static instance field by reflection (and via
         # all-args/`@Builder` constructors) regardless of setter
@@ -1247,7 +1276,7 @@ module Noir
           # turns one value into it (`converted_types`). One level only;
           # JSON keeps the nested key.
           unless json_body || simple_bindable_param?(field.type_name) || converted_types.includes?(field.type_name)
-            nested = class_fields[field.type_name]?
+            nested = dto_key(class_fields, field.type_name).try { |nested_key| class_fields[nested_key] }
           end
           if nested
             nested.each do |sub|
@@ -1344,9 +1373,9 @@ module Noir
 
     # Case-preserving counterpart to `simple_param_base`: strips the same
     # single-argument collection/`Optional` wrapper and array/varargs
-    # brackets, but keeps the original casing so the result can be used
-    # as a `class_fields` DTO-index lookup key (which is indexed by the
-    # class's exact simple name, e.g. "ItemDto", not "itemdto"). Lets
+    # brackets, but keeps the original casing and any qualifier so
+    # `dto_key` can resolve the result against the `class_fields` DTO index
+    # (keyed by the class's exact name, e.g. "ItemDto", not "itemdto"). Lets
     # `@RequestBody List<ItemDto> items` / `@RequestBody ItemDto[] items`
     # resolve to the same field set as a bare `@RequestBody ItemDto item`.
     private def collection_element_type(type_name : String) : String
@@ -1355,11 +1384,7 @@ module Noir
         base = match[1].strip
       end
       base = base.gsub(/\[\s*\]/, "")
-      base = base.rstrip(". ")
-      if idx = base.rindex('.')
-        base = base[(idx + 1)..]
-      end
-      base
+      base.rstrip(". ")
     end
 
     private def resolve_annotation_string_value(node : LibTreeSitter::TSNode,
