@@ -602,3 +602,40 @@ describe "SpringSecurityTagger (scope of a rule)" do
     tags["POST /other"].should be_empty
   end
 end
+
+describe "SpringSecurityTagger (frame options replaced by a header writer)" do
+  controller = "public class Controller {\n    public String a() { return \"\"; }\n}\n"
+  chain = ->(headers : String) do
+    <<-JAVA
+      @Configuration
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.headers(h -> h
+                  .frameOptions(f -> f.disable())#{headers});
+              return http.build();
+          }
+      }
+      JAVA
+  end
+  tags_for = ->(headers : String) do
+    spring_security_tags({
+      "src/main/java/SecurityConfig.java" => chain.call(headers),
+      "src/main/java/Controller.java"     => controller,
+    }, {"GET /items" => "src/main/java/Controller.java:2"})["GET /items"]
+  end
+
+  it "flags a bare frameOptions disable" do
+    tags_for.call("").should eq(["security-headers"])
+  end
+
+  it "does not flag clickjacking when the chain writes X-Frame-Options itself" do
+    tags_for.call("\n            .addHeaderWriter(new XFrameOptionsHeaderWriter(XFrameOptionsMode.SAMEORIGIN))").should be_empty
+    tags_for.call("\n            .addHeaderWriter(new StaticHeadersWriter(\"X-Frame-Options\", \"DENY\"))").should be_empty
+  end
+
+  it "flags a header writer that still allows framing" do
+    tags_for.call("\n            .addHeaderWriter(new StaticHeadersWriter(\"X-Frame-Options\", \"ALLOWALL\"))").should eq(["security-headers"])
+    tags_for.call("\n            .addHeaderWriter(new XFrameOptionsHeaderWriter(new WhiteListedAllowFromStrategy(origins)))").should eq(["security-headers"])
+  end
+end

@@ -1313,7 +1313,8 @@ describe "SpringAuthTagger (multi-module projects)" do
   end
 end
 
-def run_spring_endpoints_map(files : Hash(String, String), routes : Hash(String, String)) : Hash(String, Endpoint)
+# `framework` names the routes the analyzer marks framework-provided.
+def run_spring_endpoints_map(files : Hash(String, String), routes : Hash(String, String), framework = [] of String) : Hash(String, Endpoint)
   CodeLocator.instance.clear_all
   root = File.tempname("spring_endpoints_map")
   files.each do |relative, source|
@@ -1327,7 +1328,9 @@ def run_spring_endpoints_map(files : Hash(String, String), routes : Hash(String,
   endpoints = routes.map do |route, location|
     method, url = route.split(' ', 2)
     file, line = location.split(':')
-    Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new(File.join(root, file), line.to_i)))
+    endpoint = Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new(File.join(root, file), line.to_i)))
+    endpoint.add_tag(Analyzer::Java::JavaEngine::FRAMEWORK_PROVIDED_TAG) if framework.includes?(route)
+    endpoint
   end
   SpringAuthTagger.new(noir_options).perform(endpoints)
   FileUtils.rm_rf(root)
@@ -4755,5 +4758,175 @@ describe "SpringAuthTagger (WebSecurity ignoring)" do
     tags = run_spring_security_config({"SecurityConfig.java" => config}, ["GET /items/1"])
     tags["GET /items/1"].size.should eq(1)
     tags["GET /items/1"][0].should start_with("Protected by Shiro authc")
+  end
+end
+
+describe "SpringAuthTagger (Gradle scripts outside the build)" do
+  it "does not read a CI init script under a dot directory as build logic" do
+    plain = "#{SPRING_WEB_STARTER}}\n"
+    gradle_items_guard(plain, {".github/ci/init.gradle" => "def core = gradle.rootProject.project(':api')\n"}).should be_empty
+    gradle_items_guard(plain, {"gradle/shared.gradle" => "dependencies { implementation project(':api') }\n"}).should eq(["Protected by Spring Security hasRole via anyRequest()"])
+  end
+end
+
+describe "SpringAuthTagger (Actuator routes)" do
+  build = "dependencies {\n    implementation 'org.springframework.boot:spring-boot-starter-web'\n    implementation 'org.springframework.boot:spring-boot-starter-actuator'\n    implementation 'org.springframework.boot:spring-boot-starter-security'\n}\n"
+  app = "@SpringBootApplication\npublic class App { public static void main(String[] a) { SpringApplication.run(App.class, a); } }\n"
+  boot_default = ["Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)"]
+  auth_of = ->(endpoints : Hash(String, Endpoint), route : String) { endpoints[route].tags.select(&.name.==("auth")).map(&.description) }
+
+  it "leaves the Actuator health endpoint public under Boot's default security" do
+    endpoints = run_spring_endpoints_map({
+      "build.gradle"                              => build,
+      "src/main/java/com/example/App.java"        => app,
+      "src/main/java/com/example/Controller.java" => "public class Controller {\n    @GetMapping(\"/health\")\n    public String health() { return \"\"; }\n}\n",
+    }, {
+      "GET /manage/health" => "build.gradle:3",
+      "GET /manage/info"   => "build.gradle:3",
+      "GET /health"        => "src/main/java/com/example/Controller.java:2",
+    }, ["GET /manage/health", "GET /manage/info"])
+    auth_of.call(endpoints, "GET /manage/health").should be_empty
+    auth_of.call(endpoints, "GET /manage/info").should eq(boot_default)
+    # The app's own /health is not the Actuator's.
+    auth_of.call(endpoints, "GET /health").should eq(boot_default)
+
+    # The same holds when @EnableWebSecurity sits on a class with no chain.
+    endpoints = run_spring_endpoints_map({
+      "build.gradle"                            => build,
+      "src/main/java/com/example/App.java"      => app,
+      "src/main/java/com/example/Security.java" => "@Configuration\n@EnableWebSecurity\npublic class Security {}\n",
+    }, {"GET /manage/health" => "build.gradle:3", "GET /manage/info" => "build.gradle:3"}, ["GET /manage/health", "GET /manage/info"])
+    auth_of.call(endpoints, "GET /manage/health").should be_empty
+    auth_of.call(endpoints, "GET /manage/info").should eq(["Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)"])
+  end
+
+  it "decides Actuator routes on the management port by the chain matching that port" do
+    config = <<-JAVA
+      @Configuration
+      public class OpsSecurityConfig {
+          @Autowired ManagementServerProperties ops;
+
+          @Bean
+          @Order(0)
+          SecurityFilterChain opsChain(HttpSecurity http) throws Exception {
+              http.securityMatcher(request -> ops.getPort().equals(request.getLocalPort()))
+                  .authorizeHttpRequests(c -> c.anyRequest().permitAll());
+              return http.build();
+          }
+
+          @Bean
+          @Order(1)
+          SecurityFilterChain appChain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(c -> c.anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    files = {
+      "build.gradle"                                     => build,
+      "src/main/java/com/example/App.java"               => app,
+      "src/main/java/com/example/OpsSecurityConfig.java" => config,
+      "src/main/java/com/example/Controller.java"        => SPRING_ITEMS_CONTROLLER,
+    }
+    routes = {"GET /manage/health" => "build.gradle:3", "GET /items" => "src/main/java/com/example/Controller.java:2"}
+    authenticated = ["Protected by Spring Security authenticated via anyRequest()"]
+
+    endpoints = run_spring_endpoints_map(files.merge({"src/main/resources/application.properties" => "management.server.port=${OPS_PORT:9091}\n"}), routes, ["GET /manage/health"])
+    auth_of.call(endpoints, "GET /manage/health").should be_empty
+    auth_of.call(endpoints, "GET /items").should eq(authenticated)
+    # An imported configuration does not move the port the app sets.
+    imported = {"src/main/resources/application.yml" => "management:\n  server.port: 9091\nspring:\n  config.import: optional:file:./extra.yml\n"}
+    auth_of.call(run_spring_endpoints_map(files.merge(imported), routes, ["GET /manage/health"]), "GET /manage/health").should be_empty
+
+    # Without its own port the Actuator answers on the app's port.
+    endpoints = run_spring_endpoints_map(files, routes, ["GET /manage/health"])
+    auth_of.call(endpoints, "GET /manage/health").should eq(authenticated)
+
+    # An app with no configuration of its own runs on the one a module on
+    # its classpath ships.
+    bundled = {
+      "settings.gradle"                                       => "include 'core', 'bundle'\n",
+      "core/build.gradle"                                     => build,
+      "core/src/main/java/com/example/OpsSecurityConfig.java" => config,
+      "core/src/main/resources/application.properties"        => "management.server.port=9091\n",
+      "bundle/build.gradle"                                   => build.sub("dependencies {\n", "dependencies {\n    implementation project(':core')\n"),
+      "bundle/src/main/java/com/example/b/App.java"           => app,
+    }
+    endpoints = run_spring_endpoints_map(bundled, {"GET /manage/health" => "bundle/build.gradle:4"}, ["GET /manage/health"])
+    auth_of.call(endpoints, "GET /manage/health").should be_empty
+
+    # A path-scoped chain ordered before the port chain sees the request first.
+    first = config.sub("@Order(0)\n", "@Order(5)\n").sub(
+      "    @Bean\n    @Order(1)",
+      "    @Bean\n    @Order(0)\n    SecurityFilterChain manageChain(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/manage/**\")\n            .authorizeHttpRequests(c -> c.anyRequest().authenticated());\n        return http.build();\n    }\n\n    @Bean\n    @Order(1)")
+    endpoints = run_spring_endpoints_map(files.merge({"src/main/java/com/example/OpsSecurityConfig.java" => first, "src/main/resources/application.properties" => "management.server.port=9091\n"}), routes, ["GET /manage/health"])
+    auth_of.call(endpoints, "GET /manage/health").should eq(authenticated)
+  end
+end
+
+describe "SpringAuthTagger (HandlerInterceptor path constants)" do
+  interceptor = <<-JAVA
+    package com.example;
+
+    public class KeyInterceptor implements HandlerInterceptor {
+        @Override
+        public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+            if (request.getHeader("X-Key") == null) {
+                response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+                return false;
+            }
+            return true;
+        }
+    }
+    JAVA
+  controller = "public class Controller {\n    @GetMapping(\"/items/{id}\")\n    public String item() { return \"\"; }\n}\n"
+  routes = {
+    "GET /items/1"      => "src/main/java/com/example/Controller.java:2",
+    "GET /items/open/1" => "src/main/java/com/example/Controller.java:2",
+    "GET /home"         => "src/main/java/com/example/Controller.java:2",
+  }
+  guarded_routes = ->(registration : String) do
+    config = <<-JAVA
+      package com.example;
+
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          private static final String BASE = "/items";
+          private static final String ITEM_PATHS = "/items/**";
+          private static final String OPEN_PATHS = "/items/open/**";
+          private static final List<String> ITEM_LIST = List.of("/items/**");
+
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new KeyInterceptor())#{registration};
+          }
+      }
+      JAVA
+    endpoints = run_spring_endpoints_map({
+      "src/main/java/com/example/KeyInterceptor.java" => interceptor,
+      "src/main/java/com/example/WebConfig.java"      => config,
+      "src/main/java/com/example/Controller.java"     => controller,
+    }, routes)
+    routes.keys.select { |route| endpoints[route].tags.any?(&.name.==("auth")) }
+  end
+
+  it "reads String constants and concatenations as path patterns" do
+    guarded_routes.call(".addPathPatterns(ITEM_PATHS).excludePathPatterns(OPEN_PATHS)").should eq(["GET /items/1"])
+    guarded_routes.call(".addPathPatterns(BASE + \"/**\").excludePathPatterns(OPEN_PATHS)").should eq(["GET /items/1"])
+    guarded_routes.call(".addPathPatterns(List.of(\"/items/**\"))").should eq(["GET /items/1", "GET /items/open/1"])
+  end
+
+  it "reads collections of constants and List fields" do
+    guarded_routes.call(".addPathPatterns(List.of(ITEM_PATHS))").should eq(["GET /items/1", "GET /items/open/1"])
+    guarded_routes.call(".addPathPatterns(ITEM_LIST).excludePathPatterns(OPEN_PATHS)").should eq(["GET /items/1"])
+  end
+
+  it "keeps the include patterns it reads beside one it cannot" do
+    guarded_routes.call(".addPathPatterns(\"/items/**\", patterns())").should eq(["GET /items/1", "GET /items/open/1"])
+    guarded_routes.call(".addPathPatterns(Arrays.asList(\"/items/**\", patterns()))").should eq(["GET /items/1", "GET /items/open/1"])
+  end
+
+  it "does not widen an include pattern it cannot read to every route" do
+    guarded_routes.call(".addPathPatterns(patterns())").should be_empty
   end
 end
