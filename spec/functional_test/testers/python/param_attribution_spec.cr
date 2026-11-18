@@ -23,6 +23,10 @@ describe "Python param attribution", tags: "functional" do
     rows["POST /bulk"].should eq(["names:json"])
     # The dependency's own params, not an `ids` body field.
     rows["GET /picked"].should eq(["raw:query"])
+    # A lone dict body is not nested under its parameter name.
+    rows["POST /orders"].should eq(["label:json", "lines:json"])
+    rows["POST /orders/{order_id}/notes"].should eq(["note:json", "order_id:path"])
+    rows["POST /orders/raw"].should eq(["payload:json"])
   end
 
   it "reads Flask fields through a request.form / request.args alias" do

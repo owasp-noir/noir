@@ -1,4 +1,4 @@
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Query
 
@@ -31,3 +31,24 @@ def parse_ids(raw: str = Query("")):
 @app.get("/picked")
 def picked(ids: Annotated[list[int], Depends(parse_ids)]):
     return ids
+
+
+def get_session():
+    return None
+
+
+# A lone dict body is the request body itself: its keys are the fields.
+@app.post("/orders")
+def create_order(payload: dict[str, Any], session=Depends(get_session)):
+    return {"label": payload["label"], "lines": payload.get("lines", [])}
+
+
+@app.post("/orders/{order_id}/notes")
+def add_note(order_id: int, payload: Optional[Dict[str, Any]] = None):
+    return {"note": payload.get("note")}
+
+
+# No key read: the body stays one opaque field.
+@app.post("/orders/raw")
+def raw_order(payload: dict[str, Any]):
+    return payload
