@@ -132,6 +132,11 @@ module Noir
         format == "json" ? @json_name : @name
       end
 
+      # A Kotlin property binds by its own name; Gson reads the same one.
+      def field_name : String
+        @name
+      end
+
       # The request-ready value of this field's initializer, or "" when the
       # initializer is an expression with no literal form.
       #

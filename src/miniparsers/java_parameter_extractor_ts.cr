@@ -116,7 +116,11 @@ module Noir
     alias ImportDecl = Noir::ImportGraph::ImportRef
 
     struct FieldInfo
+      # The bean property Spring binds: the declared field name, except
+      # `boolean isFoo`, whose accessors make it `foo`.
       getter name : String
+      # The declared Java field name, which Gson reads JSON by.
+      getter field_name : String
       getter access_modifier : String # "public", "private", "protected", ""
       getter? has_setter : Bool
       getter init_value : String # "" when no initializer
@@ -142,7 +146,8 @@ module Noir
       property? json_ignored : Bool
 
       def initialize(@name, @access_modifier, @has_setter, @init_value, json_name : String? = nil, @type_name = "",
-                     @unwrap = nil, @json_ignored = false)
+                     @unwrap = nil, @json_ignored = false, field_name : String? = nil)
+        @field_name = field_name || @name
         @json_name = json_name || @name
         @json_name_fixed = !json_name.nil?
       end
@@ -953,7 +958,7 @@ module Noir
         ignored = keys.any? { |key| json_ignored.includes?(key) } && !kept && !(json_name && json_kept.includes?(json_name))
         ignored ||= transient_fields.includes?(field_name) && !has_setter && !kept
         ignored ||= keys.any? { |key| read_only.includes?(key) }
-        FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored)
+        FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored, field_name)
       end
     end
 
