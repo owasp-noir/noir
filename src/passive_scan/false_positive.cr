@@ -372,12 +372,13 @@ module NoirPassiveScan
       !token.matches?(NUMBER_LITERAL) && literal_token?(token)
     end
 
-    # True when a quoted value is only an identifier built on `name`, not
+    # True when a quoted value is only an identifier ending in `name`, not
     # key material: `"ITEM_PRIVATE_KEY"`, `"extra_order_private_key"`,
-    # `"demo-secret:VAULT_TOKEN"`. A digit beside the name keeps it a literal.
+    # `"demo-secret:VAULT_TOKEN"`. `"my-private-key-for-ci"` stays a literal.
     private def self.spells_name?(content : String, name : String) : Bool
-      spelled = content.upcase.tr("-", "_")
-      spelled.includes?(name) && !spelled.gsub(name, "").matches?(/\d/)
+      value = content.upcase.tr("-", "_")
+      spelled = name.upcase.tr("-", "_")
+      value.ends_with?(spelled) && value.rchop(spelled).matches?(/\A(?:[A-Z_.]*[_:.\/])?\z/)
     end
 
     # The default of a shell / Spring expansion, read from just after the

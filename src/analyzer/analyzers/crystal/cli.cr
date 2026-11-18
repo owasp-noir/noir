@@ -37,9 +37,12 @@ module Analyzer::Crystal
     ARGV_ARRAY_EQ  = /\bARGV\s*[!=]=\s*\[([^\]]*)\]/
     ARGV_TAKE      = /\bARGV\.(?:first|shift)\b/
     ARGV_SPLAT     = /^\s*(\w+(?:\s*,\s*\w+)+)\s*=\s*ARGV\s*$/
-    # `sync = ARGV[0]? == "sync"` names a subcommand that `if sync` /
-    # `elsif sync && ready` later selects.
-    GUARD_ASSIGN = /^\s*([a-z_]\w*)\s*=[^=~]/
+    # `sync = ARGV[0]? == "sync"` (optionally `&& …`) names a subcommand that
+    # `if sync` / `elsif sync && ready` later selects. Any other assignment
+    # to the variable forgets it.
+    ARGV_SUB_IS  = /\bARGV(?:\s*\[\s*0\s*\]\??|\.first\??)\s*==\s*"/
+    ASSIGN       = /^\s*([a-z_]\w*)\s*=[^=~]/
+    GUARD_ASSIGN = /^\s*([a-z_]\w*)\s*=\s*ARGV(?:\s*\[\s*0\s*\]\??|\.first\??)\s*==\s*"[^"]+"\s*(?:&&(?![^|]*\s\?\s)[^|]*)?$/
     GUARD_BRANCH = /^\s*(?:if|elsif)\s+([a-z_]\w*)(?:\s*&&[^|]*)?(?:\s+then)?\s*$/
 
     MARKERS = Detector::Crystal::Cli::MARKERS
@@ -162,6 +165,9 @@ module Analyzer::Crystal
           fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1], "", "argument"))
         end
 
+        if m = line.match(ASSIGN)
+          guards.delete(m[1])
+        end
         if line.includes?("ARGV")
           if line.matches?(ARGV_CASE)
             cases << ArgvCase.new(targets, !line.matches?(ARGV_CASE_PEEK), line_no)
@@ -191,7 +197,7 @@ module Analyzer::Crystal
       subs = [] of String
       line.scan(ARGV_SUB_EQ) { |em| subs.concat(argv_words([em[1]], compared, endpoints, path, line_no)) }
       line.scan(ARGV_ARRAY_EQ) { |em| subs.concat(argv_words(em[1].scan(/"([^"]*)"/).map(&.[1]), compared, endpoints, path, line_no)) }
-      if line.matches?(ARGV_SUB_EQ) && !subs.empty?
+      if line.matches?(ARGV_SUB_IS) && !subs.empty?
         targets = subs
         offset = -1
       end

@@ -23,9 +23,8 @@ module Analyzer::Swift
     OPTION_FLAG     = /@(?:Option|Flag)\b/
     ARGUMENT_WRAP   = /@Argument\b/
     # `name: .customLong("x")` or the first one in `name: [.short, .customLong("x")]`.
-    CUSTOM_LONG    = /name:\s*(?:\[[^\]]*?)?\.(?:customLong|long)\s*\(\s*"([^"]+)"/
-    VAR_DECL       = /\bvar\s+(\w+)/
-    STRING_LITERAL = /"(?:[^"\\]|\\.)*"/
+    CUSTOM_LONG = /name:\s*(?:\[[^\]]*?)?\.(?:customLong|long)\s*\(\s*"([^"]+)"/
+    VAR_DECL    = /\bvar\s+(\w+)/
 
     GETENV   = /\bgetenv\s*\(\s*"([^"]+)"/
     PROC_ENV = /ProcessInfo(?:\.processInfo|\(\))?\.environment\s*\[\s*"([^"]+)"\s*\]/
@@ -98,6 +97,9 @@ module Analyzer::Swift
       current_url = root_url
       pending : Symbol? = nil # :flag | :argument awaiting the var name
       pending_custom : String? = nil
+      # Strings and comments blanked: a wrapper spelled in prose
+      # (`print("@Flag var …")`, a `"""` help text) is not a declaration.
+      masked = Noir::SwiftLexer.for(lines.join('\n')).masked_lines
 
       lines.each_with_index do |line, index|
         line_no = index + 1
@@ -110,8 +112,7 @@ module Analyzer::Swift
           fetch_endpoint(endpoints, current_url, path, line_no)
         end
 
-        # A wrapper spelled inside a string (`print("@Flag var …")`) is prose.
-        code = line.gsub(STRING_LITERAL, "\"\"")
+        code = masked[index]? || line
         if code.matches?(OPTION_FLAG)
           pending = :flag
           pending_custom = line.match(CUSTOM_LONG).try(&.[1])

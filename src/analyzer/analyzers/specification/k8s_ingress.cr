@@ -170,7 +170,9 @@ module Analyzer::Specification
       redirect = if target = value.call("temporal-redirect")
                    "302 #{target}"
                  elsif target = value.call("permanent-redirect")
-                   "#{value.call("permanent-redirect-code") || 301} #{target}"
+                   # ingress-nginx falls back to 301 outside 300..308.
+                   code = value.call("permanent-redirect-code").try(&.to_i?)
+                   "#{code && (300..308).includes?(code) ? code : 301} #{target}"
                  end
       Tag.new("nginx-redirect", redirect, "k8s_ingress_analyzer") if redirect
     end
@@ -213,11 +215,13 @@ module Analyzer::Specification
         next unless path_h
 
         path = path_h[YAML::Any.new("path")]?.try(&.as_s?) || ""
+        # A path-less entry has no `path:` line of its own to take.
+        line = path.empty? ? nil : path_lines[path]?.try(&.shift?)
         path = "/" if path.empty? && backend_present?(path_h[YAML::Any.new("backend")]?)
         next if path.empty?
 
         path_type = path_h[YAML::Any.new("pathType")]?.try(&.as_s?) || DEFAULT_PATH_TYPE
-        rule_details = line_details(details, path_lines[path]?.try(&.shift?))
+        rule_details = line_details(details, line)
         backend = backend_service(path_h[YAML::Any.new("backend")]?)
         emit_endpoint(path, path_type, host, tls_hosts, rule_details, access: access, backend: backend, redirect: redirect)
 
