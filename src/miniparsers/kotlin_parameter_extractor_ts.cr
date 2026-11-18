@@ -1174,7 +1174,7 @@ module Noir
       return parameter_format if ann_kind.nil? && injected_param
       # A resolver keyed on the parameter's type supplies it too, unless
       # `@ModelAttribute`, whose resolver runs first, claims it.
-      return parameter_format if ann_kind.nil? && !model_attribute && injected_types.includes?(type_name)
+      return parameter_format if ann_kind.nil? && !model_attribute && injected_types.includes?(type_name.rpartition('.').last)
 
       effective_format = parameter_format
       # A carried-over "header"/"cookie" describes how the *previous*
