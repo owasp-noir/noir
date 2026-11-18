@@ -136,6 +136,11 @@ class NextjsAuthTagger < FrameworkTagger
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{refusal.condition}` (replies #{refusal.status})", "nextjs_auth"))
       return
     end
+    # A server action has no response to put a status on: it throws.
+    if condition = unauthorized_denial(raw, code)
+      endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{condition}` (throws unauthorized)", "nextjs_auth"))
+      return
+    end
     if found = helper_refusal(code, raw, path, 0)
       # Located at the helper's definition, so `noir reach` on its file finds the route.
       how = found.note ? "#{found.how}; #{found.note}" : found.how
@@ -506,19 +511,22 @@ class NextjsAuthTagger < FrameworkTagger
     :throw if thrown_unauthorized?(raw, code)
   end
 
-  # A throw that says unauthorized (in `raw`, strings kept) under a session
-  # denial (in `code`).
   private def thrown_unauthorized?(raw : Array(String), code : Array(String)) : Bool
+    !unauthorized_denial(raw, code).nil?
+  end
+
+  # The session denial (in `code`) a throw that says unauthorized (in `raw`,
+  # strings kept) sits under.
+  private def unauthorized_denial(raw : Array(String), code : Array(String)) : String?
     raw.each_with_index do |_, i|
       next unless raw[i, 4].join('\n').matches?(THROWN_UNAUTHORIZED)
       i.downto({i - CONDITION_LOOKBACK, 0}.max) do |j|
         stripped = code[j].strip
         break if j < i && stripped == "}"
-        return true if code[j].matches?(SESSION_DENIED) || secret_list_denied?(code[j], raw[j])
+        return stripped.rchop('{').strip if code[j].matches?(SESSION_DENIED) || secret_list_denied?(code[j], raw[j])
         break if j < i && stripped.matches?(ELSE_BRANCH)
       end
     end
-    false
   end
 
   # The comment-stripped lines from `start` to the brace that closes the

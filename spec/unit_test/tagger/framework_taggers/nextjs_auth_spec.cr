@@ -61,6 +61,13 @@ describe "NextjsAuthTagger" do
     tag.call("pages/api/typeof-inverse.ts", 5).should be_empty
   end
 
+  it "tags a server action that throws unauthorized without a session" do
+    tags = tag.call("app/actions/items.ts", 5)
+    tags.map(&.name).should eq(["auth"])
+    tags[0].description.should contain("if (!session?.user?.id)")
+    tag.call("app/actions/items.ts", 14).should be_empty
+  end
+
   it "tags a handler that compares the caller's key with a process.env secret" do
     tag.call("app/api/cron/route.ts", 3).map(&.name).should eq(["auth"])
   end
