@@ -39,8 +39,9 @@ module Noir
       getter offset : Int32
       getter scope_start_pos : Int32?
       getter scope_end_pos : Int32?
+      getter? unbraced : Bool
 
-      def initialize(@values : Array(String), @offset : Int32, @scope_start_pos : Int32? = nil, @scope_end_pos : Int32? = nil)
+      def initialize(@values : Array(String), @offset : Int32, @scope_start_pos : Int32? = nil, @scope_end_pos : Int32? = nil, @unbraced : Bool = false)
       end
     end
 
@@ -50,8 +51,9 @@ module Noir
       getter offset : Int32
       getter scope_start_pos : Int32?
       getter scope_end_pos : Int32?
+      getter? unbraced : Bool
 
-      def initialize(@method : String, @path : String, @offset : Int32, @scope_start_pos : Int32? = nil, @scope_end_pos : Int32? = nil)
+      def initialize(@method : String, @path : String, @offset : Int32, @scope_start_pos : Int32? = nil, @scope_end_pos : Int32? = nil, @unbraced : Bool = false)
       end
     end
 
@@ -174,8 +176,9 @@ module Noir
                                          url_patterns : Hash(String, String),
                                          endpoints : Array(Endpoint),
                                          seen : Set(Tuple(String, String))) : Nil
-      extract_route_hits(handler, url_patterns).each do |hit|
-        push_route(file_path, newlines, hit, handler.body_start_pos + hit.offset, handler, endpoints, seen)
+      hits = extract_route_hits(handler, url_patterns)
+      hits.each do |hit|
+        push_route(file_path, newlines, hit, handler.body_start_pos + hit.offset, handler, endpoints, seen, hits)
       end
     end
 
@@ -185,13 +188,14 @@ module Noir
                                 pos : Int32,
                                 handler : Handler?,
                                 endpoints : Array(Endpoint),
-                                seen : Set(Tuple(String, String))) : Nil
+                                seen : Set(Tuple(String, String)),
+                                siblings : Array(RouteHit) = [] of RouteHit) : Nil
       return unless seen.add?({hit.method, hit.path})
 
       line = (newlines.bsearch_index { |newline| newline >= pos } || newlines.size) + 1
       endpoint = Endpoint.new(hit.path, hit.method, Details.new(PathInfo.new(file_path, line)))
       push_path_params(endpoint)
-      extract_params(handler, hit, endpoint) if handler
+      extract_params(handler, hit, endpoint, siblings) if handler
       endpoints << endpoint
     end
 
@@ -611,7 +615,7 @@ module Noir
 
         if !methods.empty? && !paths.empty?
           methods.each do |method|
-            paths.each { |path| routes << RouteHit.new(method, path, offset, block_start, block_end) }
+            paths.each { |path| routes << RouteHit.new(method, path, offset, block_start, block_end, !braced) }
           end
         elsif !methods.empty?
           # A method test alone guards a verb inside some path's block; its
@@ -623,7 +627,7 @@ module Noir
             method_regions << Region.new(methods, block_start, block_end)
           end
         elsif !paths.empty?
-          path_hits << ValueHit.new(paths, offset, block_start, block_end)
+          path_hits << ValueHit.new(paths, offset, block_start, block_end, !braced)
           if block_start && block_end
             path_regions << Region.new(paths, block_start, block_end)
           end
@@ -658,14 +662,14 @@ module Noir
         end
 
         scoped_methods.each do |method|
-          hit.values.each { |path| routes << RouteHit.new(method, path, hit.offset, hit.scope_start_pos, hit.scope_end_pos) }
+          hit.values.each { |path| routes << RouteHit.new(method, path, hit.offset, hit.scope_start_pos, hit.scope_end_pos, hit.unbraced?) }
         end
       end
 
       method_hits.each do |hit|
         scoped_paths = values_for_offset(path_regions, hit.offset)
         scoped_paths.each do |path|
-          hit.values.each { |method| routes << RouteHit.new(method, path, hit.offset, hit.scope_start_pos, hit.scope_end_pos) }
+          hit.values.each { |method| routes << RouteHit.new(method, path, hit.offset, hit.scope_start_pos, hit.scope_end_pos, hit.unbraced?) }
         end
       end
 
@@ -995,8 +999,8 @@ module Noir
       result
     end
 
-    private def self.extract_params(handler : Handler, hit : RouteHit, endpoint : Endpoint) : Nil
-      body = scoped_body(handler.body, hit.scope_start_pos, hit.scope_end_pos)
+    private def self.extract_params(handler : Handler, hit : RouteHit, endpoint : Endpoint, siblings : Array(RouteHit)) : Nil
+      body = hit.unbraced? ? without_sibling_scopes(handler.body, hit, siblings) : scoped_body(handler.body, hit.scope_start_pos, hit.scope_end_pos)
       if handler.request_name != "req"
         body = body.gsub(/\b#{Regex.escape(handler.request_name)}\s*\./, "req.")
       end
@@ -1014,6 +1018,35 @@ module Noir
     def self.extract_fetch_request_params(body : String, endpoint : Endpoint) : Nil
       extract_query_params(body, endpoint)
       extract_json_body_params(body, endpoint)
+    end
+
+    # A one-statement guard (`if (path === '/a') return f(q)`) has no block to
+    # scope to, so the handler body stays whole minus the other routes'
+    # guards: params read above the dispatch are shared by every branch,
+    # while a branch's own reads stay with its route. A guard that holds this
+    # one (nested tests) is kept.
+    private def self.without_sibling_scopes(body : String, hit : RouteHit, siblings : Array(RouteHit)) : String
+      from = hit.scope_start_pos
+      to = hit.scope_end_pos
+      return body unless from && to
+
+      cuts = siblings.compact_map do |other|
+        s = other.scope_start_pos
+        e = other.scope_end_pos
+        next unless s && e && s >= 0 && s < e && e <= body.size
+        next if (s <= from && to <= e) || (from <= s && e <= to)
+        {s, e}
+      end.uniq!.sort!
+      return body if cuts.empty?
+
+      String.build do |io|
+        pos = 0
+        cuts.each do |s, e|
+          io << body[pos...s] if s > pos
+          pos = e if e > pos
+        end
+        io << body[pos..] if pos < body.size
+      end
     end
 
     private def self.scoped_body(body : String, scope_start : Int32?, scope_end : Int32?) : String

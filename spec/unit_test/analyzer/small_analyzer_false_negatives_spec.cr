@@ -82,6 +82,41 @@ describe "js_http path-only dispatch" do
     routes["GET /items"].should eq(["q:query"])
     routes["POST /items"].should eq(["q:query"])
   end
+
+  it "keeps params read above one-statement guards and drops the other branches' reads" do
+    routes = scan_files({
+      "server.js" => <<-JS,
+        const http = require("node:http");
+        http.createServer((req, res) => {
+          const u = new URL(req.url, "http://localhost");
+          const id = u.searchParams.get("id");
+          const token = req.headers["x-demo-token"];
+          if (req.method === "GET" && u.pathname === "/items") return list(res, id, token, u.searchParams.get("sort"));
+          if (u.pathname === "/status") return res.end(u.searchParams.get("verbose"));
+          res.end();
+        }).listen(8080);
+        JS
+    })
+    routes["GET /items"].should eq(["id:query", "sort:query", "x-demo-token:header"])
+    routes["GET /status"].should eq(["id:query", "verbose:query", "x-demo-token:header"])
+  end
+
+  it "keeps params read above a one-statement path test nested in a method block" do
+    routes = scan_files({
+      "server.js" => <<-JS,
+        const http = require("node:http");
+        http.createServer((req, res) => {
+          const u = new URL(req.url, "http://localhost");
+          const id = u.searchParams.get("id");
+          if (req.method === "GET") {
+            if (u.pathname === "/status") return res.end("ok");
+          }
+          res.end();
+        }).listen(8080);
+        JS
+    })
+    routes["GET /status"].should eq(["id:query"])
+  end
 end
 
 describe "express routes declared on a resolved constant path" do
@@ -169,6 +204,8 @@ describe "rust clap derive fields" do
             pub cache: String,
             #[command(flatten)]
             pub extra: ExtraArgs,
+            #[clap(flatten)]
+            pub legacy: ExtraArgs,
         }
 
         #[derive(Args)]
@@ -187,6 +224,7 @@ describe "rust clap derive fields" do
     routes["CLI cli://demo/build"].should contain("release:flag")
     routes["CLI cli://demo/build"].should_not contain("cache:argument")
     routes["CLI cli://demo/build"].should_not contain("extra:argument")
+    routes["CLI cli://demo/build"].should_not contain("legacy:argument")
   end
 end
 
@@ -269,6 +307,20 @@ describe "nuxt config forwards" do
         JS
     })
     routes.keys.sort!.should eq(["ANY /api/**", "ANY /hook"])
+  end
+
+  it "does not read a dev-server proxy nested in the vite config" do
+    routes = scan_files({
+      "package.json"   => %({"dependencies":{"nuxt":"^2.15.8","@nuxtjs/proxy":"^2.1.0"}}),
+      "nuxt.config.js" => <<-JS,
+        export default {
+          modules: ['@nuxtjs/proxy'],
+          vite: { server: { proxy: { '/dev': { target: 'http://backend.example' } } } },
+          proxy: { '/api/': 'http://backend.example' },
+        }
+        JS
+    })
+    routes.keys.should eq(["ANY /api/**"])
   end
 
   it "ignores a proxy key when the proxy module is not installed" do
