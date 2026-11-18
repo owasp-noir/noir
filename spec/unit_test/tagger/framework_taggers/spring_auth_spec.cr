@@ -4789,6 +4789,15 @@ describe "SpringAuthTagger (Actuator routes)" do
     auth_of.call(endpoints, "GET /manage/info").should eq(boot_default)
     # The app's own /health is not the Actuator's.
     auth_of.call(endpoints, "GET /health").should eq(boot_default)
+
+    # The same holds when @EnableWebSecurity sits on a class with no chain.
+    endpoints = run_spring_endpoints_map({
+      "build.gradle"                              => build,
+      "src/main/java/com/example/App.java"        => app,
+      "src/main/java/com/example/Security.java"   => "@Configuration\n@EnableWebSecurity\npublic class Security {}\n",
+    }, {"GET /manage/health" => "build.gradle:3", "GET /manage/info" => "build.gradle:3"}, ["GET /manage/health", "GET /manage/info"])
+    auth_of.call(endpoints, "GET /manage/health").should be_empty
+    auth_of.call(endpoints, "GET /manage/info").should eq(["Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)"])
   end
 
   it "decides Actuator routes on the management port by the chain matching that port" do
@@ -4845,6 +4854,13 @@ describe "SpringAuthTagger (Actuator routes)" do
     }
     endpoints = run_spring_endpoints_map(bundled, {"GET /manage/health" => "bundle/build.gradle:4"}, ["GET /manage/health"])
     auth_of.call(endpoints, "GET /manage/health").should be_empty
+
+    # A path-scoped chain ordered before the port chain sees the request first.
+    first = config.sub("@Order(0)\n", "@Order(5)\n").sub(
+      "    @Bean\n    @Order(1)",
+      "    @Bean\n    @Order(0)\n    SecurityFilterChain manageChain(HttpSecurity http) throws Exception {\n        http.securityMatcher(\"/manage/**\")\n            .authorizeHttpRequests(c -> c.anyRequest().authenticated());\n        return http.build();\n    }\n\n    @Bean\n    @Order(1)")
+    endpoints = run_spring_endpoints_map(files.merge({"src/main/java/com/example/OpsSecurityConfig.java" => first, "src/main/resources/application.properties" => "management.server.port=9091\n"}), routes, ["GET /manage/health"])
+    auth_of.call(endpoints, "GET /manage/health").should eq(authenticated)
   end
 end
 
@@ -4878,6 +4894,7 @@ describe "SpringAuthTagger (HandlerInterceptor path constants)" do
           private static final String BASE = "/items";
           private static final String ITEM_PATHS = "/items/**";
           private static final String OPEN_PATHS = "/items/open/**";
+          private static final List<String> ITEM_LIST = List.of("/items/**");
 
           @Override
           public void addInterceptors(InterceptorRegistry registry) {
@@ -4897,6 +4914,16 @@ describe "SpringAuthTagger (HandlerInterceptor path constants)" do
     guarded_routes.call(".addPathPatterns(ITEM_PATHS).excludePathPatterns(OPEN_PATHS)").should eq(["GET /items/1"])
     guarded_routes.call(".addPathPatterns(BASE + \"/**\").excludePathPatterns(OPEN_PATHS)").should eq(["GET /items/1"])
     guarded_routes.call(".addPathPatterns(List.of(\"/items/**\"))").should eq(["GET /items/1", "GET /items/open/1"])
+  end
+
+  it "reads collections of constants and List fields" do
+    guarded_routes.call(".addPathPatterns(List.of(ITEM_PATHS))").should eq(["GET /items/1", "GET /items/open/1"])
+    guarded_routes.call(".addPathPatterns(ITEM_LIST).excludePathPatterns(OPEN_PATHS)").should eq(["GET /items/1"])
+  end
+
+  it "keeps the include patterns it reads beside one it cannot" do
+    guarded_routes.call(".addPathPatterns(\"/items/**\", patterns())").should eq(["GET /items/1", "GET /items/open/1"])
+    guarded_routes.call(".addPathPatterns(Arrays.asList(\"/items/**\", patterns()))").should eq(["GET /items/1", "GET /items/open/1"])
   end
 
   it "does not widen an include pattern it cannot read to every route" do

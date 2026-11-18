@@ -633,4 +633,9 @@ describe "SpringSecurityTagger (frame options replaced by a header writer)" do
     tags_for.call("\n            .addHeaderWriter(new XFrameOptionsHeaderWriter(XFrameOptionsMode.SAMEORIGIN))").should be_empty
     tags_for.call("\n            .addHeaderWriter(new StaticHeadersWriter(\"X-Frame-Options\", \"DENY\"))").should be_empty
   end
+
+  it "flags a header writer that still allows framing" do
+    tags_for.call("\n            .addHeaderWriter(new StaticHeadersWriter(\"X-Frame-Options\", \"ALLOWALL\"))").should eq(["security-headers"])
+    tags_for.call("\n            .addHeaderWriter(new XFrameOptionsHeaderWriter(new WhiteListedAllowFromStrategy(origins)))").should eq(["security-headers"])
+  end
 end
