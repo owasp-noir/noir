@@ -9,7 +9,7 @@ tag:
   description: Administrative or privileged endpoint; high-value target for broken access control, privilege escalation, and forced browsing.
 match:
   any:
-    # Whole segments only: /admin/panel and /wp-admin match, /badminton
+    # Whole segments only: /admin/users and /wp-admin match, /badminton
     # does not. `superadmin` has no separator, so it is listed itself.
     # A static asset (`/css/admin.theme.css`, `/js/admin-panel.js`) is a file
     # served to everyone, not an administrative handler, so it is exempt.
