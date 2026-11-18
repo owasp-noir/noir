@@ -105,12 +105,19 @@ module Analyzer::Javascript
     end
 
     # `req.params.X` reads a placeholder the final URL (mount prefix included)
-    # declares; any other name is always undefined. An unresolved prefix may
-    # have declared it, so those rows keep what they read.
+    # declares; any other name is always undefined. Rows keep what they read
+    # when the URL may be incomplete (unresolved mount prefix, `${...}` or
+    # `{name}` part) or the file builds a `mergeParams` router, whose parent
+    # params come from a mount this scan may not see.
     private def drop_undeclared_path_params(endpoint : Endpoint) : Endpoint
-      return endpoint if endpoint.resolution.try(&.has_key?("prefix"))
+      return endpoint unless endpoint.params.any? { |param| param.param_type == "path" }
+      return endpoint if endpoint.resolution.try(&.has_key?("prefix")) || endpoint.url.matches?(/\$?\{[\w$.]+\}/)
+      file = endpoint.details.code_paths.first?.try(&.path)
+      return endpoint if file && read_file_content(file).includes?("mergeParams")
       endpoint.params.reject! do |param|
-        param.param_type == "path" && !endpoint.url.matches?(/(?:[:*]|\(\?<)#{Regex.escape(param.name)}(?!\w)/)
+        # Numeric names are unnamed `*` / capture groups (`req.params[0]`).
+        param.param_type == "path" && !param.name.matches?(/\A\d+\z/) &&
+          !endpoint.url.matches?(/(?:[:*]|\(\?<)#{Regex.escape(param.name)}(?!\w)/)
       end
       endpoint
     end

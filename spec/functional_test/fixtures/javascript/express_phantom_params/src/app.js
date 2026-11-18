@@ -1,7 +1,7 @@
 const express = require('express');
 const app = express();
 const items = express.Router({ mergeParams: true });
-const orders = express.Router();
+const orders = require('./orders');
 
 // A write through a destructured alias sets a header; it reads nothing.
 items.get('/plain', (req, res) => {
@@ -16,16 +16,6 @@ items.get('/plain', (req, res) => {
 items.get('/read', (req, res) => {
   const { headers } = req;
   res.send(headers['x-token'] + headers.locale);
-});
-
-// `req.params.X` for an X the route does not declare is always undefined.
-orders.get('/:id', (req, res) => {
-  res.send(req.params.id + req.params.ghost);
-});
-
-orders.get('/const', (req, res) => {
-  const { phantom } = req.params;
-  res.send(phantom);
 });
 
 // mergeParams: the mount prefix supplies :uid.
