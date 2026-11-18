@@ -379,7 +379,9 @@ module Analyzer::Mobile
     #   A) `url.host == SomeEnum.someCase.rawValue` — the dominant idiom for
     #      apps with a real internal router (the host vocabulary lives in a
     #      String-backed enum, not a literal), harvested by resolving the
-    #      enum's full case list and crossing it with `@primary_schemes`.
+    #      enum's full case list and crossing it with `@primary_schemes`
+    #      (or with the secondary scheme guarding its dispatcher, see
+    #      `dispatcher_guard_schemes`).
     #   B) Full `"scheme://host/path"` string literals hardcoded in source
     #      (debug menus, doc comments, tests) — no cross-product needed,
     #      the scheme is already embedded in the literal.
@@ -444,28 +446,74 @@ module Analyzer::Mobile
       # line can't be mistaken for a real comment/structure and corrupt the
       # scan of a later line.
       enum_sites = {} of String => String
+      # enum name => every {file, enclosing func, is-a-comparison} it was
+      # seen at, for `dispatcher_guard_schemes` below.
+      enum_routers = {} of String => Set(Tuple(String, String?, Bool))
       swift_files.each do |path|
         content = read_file_content(path)
         depth = 0
         in_string = false
+        # The `func` whose body the line is in, closed when the brace depth
+        # drops back to where it was declared, so a computed property or
+        # closure after it is not credited to it.
+        current_func = nil
+        func_depth = 0
+        func_opened = false
+        brace_depth = 0
         content.each_line do |line|
           break if enum_sites.size >= MAX_HOST_ENUMS
           stripped, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, depth, in_string)
+          if func_match = stripped.match(SWIFT_FUNC_NAME_RE)
+            current_func = func_match[1]
+            func_depth = brace_depth
+            func_opened = false
+          end
 
           stripped.scan(HOST_ENUM_SITE_RE) do |m|
             enum_name = m[1]? || m[2]? || m[3]?
-            enum_sites[enum_name] ||= path if enum_name
+            next unless enum_name
+            enum_sites[enum_name] ||= path
+            compares = m[0].includes?("==") || m[0].includes?("!=") || m[0].includes?(".contains(")
+            (enum_routers[enum_name] ||= Set(Tuple(String, String?, Bool)).new) << {path, current_func, compares}
           end
+
+          brace_depth += stripped.count('{') - stripped.count('}')
+          func_opened ||= stripped.includes?('{')
+          current_func = nil if brace_depth < func_depth || (func_opened && brace_depth <= func_depth)
         end
       rescue e
         @logger.debug "Failed scanning #{path} for scheme host enums: #{e.message}"
       end
+
+      # Hitting the cap skips the remaining files, so an unguarded router
+      # there would go unseen: only ever add guarded schemes then.
+      capped = enum_sites.size >= MAX_HOST_ENUMS
+      declared = @result.compact_map do |ep|
+        ep.protocol == "mobile-scheme" && ep.url.ends_with?("://") ? ep.url.rchop("://") : nil
+      end.to_set
 
       enum_sites.each do |enum_name, site_path|
         cases = resolve_enum_cases(enum_name, swift_files)
         next if cases.empty?
 
         schemes = best_matching_schemes(site_path)
+        # A host enum read only by dispatchers that run under a non-primary
+        # scheme's guard belongs to that scheme. Any unguarded comparison,
+        # or a guard naming a primary scheme, keeps the primary rows.
+        guarded = [] of String
+        unguarded = false
+        enum_routers[enum_name].each do |path, func, compares|
+          if func && (found = dispatcher_guard_schemes(path, func, declared, swift_files))
+            guarded.concat(found)
+          elsif compares
+            unguarded = true
+          end
+        end
+        schemes = if !guarded.empty? && !unguarded && !capped && guarded.none? { |scheme| @primary_schemes.includes?(scheme) }
+                    guarded.uniq
+                  else
+                    schemes | guarded
+                  end
         cases.first(MAX_CASES_PER_ENUM).each do |host, decl_path, decl_line|
           next if host.empty?
 
@@ -479,6 +527,95 @@ module Analyzer::Mobile
           end
         end
       end
+    end
+
+    SWIFT_FUNC_NAME_RE    = /\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)/
+    SCHEME_GUARD_EQ_RE    = /("[^"\n]*"|[A-Za-z_][A-Za-z0-9_.?]*)\s*==\s*("[^"\n]*"|[A-Za-z_][A-Za-z0-9_.?]*)/
+    MAX_GUARD_RESOLVE_HOP = 3
+
+    # The declared schemes `func_name` is dispatched under, or nil. One hop
+    # in the same file: `func_name` must not be called from any other file,
+    # and every call site of it must be unqualified (or `self.`) and sit in an `if`
+    # block whose condition mentions a scheme and compares it (`==`) with
+    # something that resolves to a declared scheme — the `{` opening that
+    # block on the call line or ending the line before it. An `else {` or a
+    # `guard ... else {` branch is the opposite of the comparison, so it
+    # does not count.
+    private def dispatcher_guard_schemes(path : String, func_name : String, declared : Set(String), swift_files : Array(String)) : Array(String)?
+      call_re = /\b#{Regex.escape(func_name)}\(/
+      def_re = /\bfunc\s+#{Regex.escape(func_name)}\b/
+      # ponytail: any other-file mention gives up, even another type's
+      # same-named method; cross-file call resolution is out of scope.
+      return if swift_files.any? do |other|
+                  next false if other == path
+                  content = read_file_content(other)
+                  content.includes?("#{func_name}(") && content.each_line.any? { |line| line.matches?(call_re) && !line.matches?(def_re) }
+                end
+
+      lines = read_file_content(path).lines
+      found = [] of String
+      lines.each_with_index do |line, index|
+        next unless call_at = line.index(call_re)
+        next if line.matches?(def_re)
+
+        before = line[0, call_at]
+        # `x.name(` may be some other type's method of the same name.
+        return if before.matches?(/\.\s*$/) && !before.matches?(/\bself\??\.\s*$/)
+        guard = if brace = before.rindex('{')
+                  before[0, brace]
+                elsif index > 0 && (previous = lines[index - 1].rstrip).ends_with?('{')
+                  previous.rchop('{')
+                end
+        return unless guard && guard.matches?(/\bif\b/) && guard.matches?(/scheme/i)
+        return if guard.matches?(/\belse\s*$|\bguard\b/)
+
+        schemes = [] of String
+        guard.scan(SCHEME_GUARD_EQ_RE) do |m|
+          schemes.concat(scheme_constant_values(m[1], swift_files))
+          schemes.concat(scheme_constant_values(m[2], swift_files))
+        end
+        schemes.select! { |scheme| declared.includes?(scheme) }
+        return if schemes.empty?
+        found.concat(schemes)
+      end
+      found.empty? ? nil : found
+    end
+
+    @scheme_constant_cache = {} of String => Array(String)
+
+    # String values a guard operand can hold: a literal, a
+    # `Type.constant` (every `static let constant = "..."` in a file
+    # declaring `Type`, so each `#if` flavor counts), or an enum
+    # property read `Enum.someCase.property` (the `case .someCase:` arm's
+    # `return` expression in a file declaring `Enum`, resolved again).
+    # ponytail: the property name is not checked; undeclared values are
+    # dropped by the caller's declared-scheme filter.
+    private def scheme_constant_values(expr : String, swift_files : Array(String), hop : Int32 = 0) : Array(String)
+      return [expr[1..-2]] if expr.starts_with?('"')
+      parts = expr.split('.')
+      return [] of String unless hop < MAX_GUARD_RESOLVE_HOP && parts.size.in?(2, 3) && parts[0].matches?(/^[A-Z]/)
+      if cached = @scheme_constant_cache[expr]?
+        return cached
+      end
+
+      type_re = /\b(?:class|struct|enum|extension)\s+#{Regex.escape(parts[0])}\b/
+      member = Regex.escape(parts[1])
+      values = [] of String
+      swift_files.each do |path|
+        content = read_file_content(path)
+        next unless content.includes?(parts[0]) && content.matches?(type_re)
+
+        if parts.size == 2
+          content.scan(/\bstatic\s+(?:let|var)\s+#{member}\s*(?::\s*String\s*)?=\s*"([^"\n]*)"/) { |m| values << m[1] }
+        else
+          content.scan(/\bcase\s+(?:\.\w+\s*,\s*)*\.#{member}\b[^:\n]*:\s*return\s+("[^"\n]*"|[A-Za-z_][A-Za-z0-9_.]*)/) do |m|
+            values.concat(scheme_constant_values(m[1], swift_files, hop + 1))
+          end
+        end
+      end
+      # Only top-level results are complete; a deeper call may have hit the hop cap.
+      @scheme_constant_cache[expr] = values if hop == 0
+      values
     end
 
     # A monorepo scan sees every app target's `@primary_schemes` at once, so
