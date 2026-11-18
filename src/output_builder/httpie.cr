@@ -83,7 +83,7 @@ class OutputBuilderHttpie < OutputBuilder
           parts << CurlCommand.shell_quote("Cookie:#{cookie_value}")
         end
 
-        ob_puts parts.join(" ")
+        ob_puts parts.join(" ") + project_shell_comment(endpoint)
       end
     end
   end

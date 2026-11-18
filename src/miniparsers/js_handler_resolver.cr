@@ -75,7 +75,7 @@ module Noir::JSHandlerResolver
   private def source(path : String) : String?
     found, cached = @@lock.synchronize { {@@sources.has_key?(path), @@sources[path]?} }
     return cached if found
-    text = TextFile.read(path) rescue nil
+    text = CodeLocator.instance.read_source(path) rescue nil
     @@lock.synchronize { Noir::ExtractionResultCache.store_capped(@@sources, path, text, 512) }
   end
 
@@ -488,7 +488,7 @@ module Noir::JSHandlerResolver
     return cached if cached
     entries = [] of Tuple(String, String)
     begin
-      imports = JSON.parse(TextFile.read(manifest))["imports"]?.try(&.as_h?)
+      imports = JSON.parse((CodeLocator.instance.read_source(manifest) || ""))["imports"]?.try(&.as_h?)
       imports.try &.each do |pattern, value|
         # `null` blocks the pattern: Node refuses it, so it resolves nowhere.
         target = value.raw.nil? ? "" : value.as_s? || value.as_h?.try(&.find { |c, v| PACKAGE_CONDITIONS.includes?(c) && v.as_s? }).try(&.[1].as_s)
@@ -505,7 +505,7 @@ module Noir::JSHandlerResolver
     cached = @@lock.synchronize { @@tsconfig_paths[tsconfig]? }
     return cached if cached
     aliases = [] of Tuple(String, String)
-    if File.file?(tsconfig) && (text = TextFile.read(tsconfig) rescue nil) && (block = text.match(TSCONFIG_PATHS_RE))
+    if File.file?(tsconfig) && (text = (CodeLocator.instance.read_source(tsconfig) || "") rescue nil) && (block = text.match(TSCONFIG_PATHS_RE))
       base = File.expand_path(text.match(TSCONFIG_BASE_URL_RE).try(&.[1]) || ".", File.dirname(tsconfig))
       block[1].scan(TSCONFIG_ENTRY_RE) { |m| aliases << {m[1], File.expand_path(m[2], base)} }
       aliases.sort_by! { |pattern, _| -pattern.size } # TypeScript takes the longest matching prefix

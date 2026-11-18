@@ -39,13 +39,10 @@ module NoirMobileLinker
     endpoint
   end
 
-  # Content cache may be cold (budget exhausted, or caching disabled in
-  # tests); fall back to a direct read per the CodeLocator contract.
   def self.read_content(path : String) : String?
-    cached = CodeLocator.instance.content_for(path)
-    return cached if cached
-    return unless File.exists?(path)
-    Noir::TextFile.read(path)
+    CodeLocator.instance.read_source(path)
+  rescue File::NotFoundError
+    nil
   end
 
   # Aggregated handler evidence to graft onto an endpoint.

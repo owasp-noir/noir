@@ -142,7 +142,7 @@ class OutputBuilderPostman < OutputBuilder
         # without it `demo.example.com/api/users/{id}` and
         # `demo.example.com.evil/api/users/{id}` are two entries in the
         # sidebar reading exactly the same.
-        item = {"name" => "#{method} #{item_label(uri, url_parts)}", "request" => request}
+        item = {"name" => "#{method} #{item_label(uri, url_parts)}#{project_suffix(endpoint)}", "request" => request}
         if description = noir_ai_context_description(endpoint) || noir_callees_description(endpoint)
           item["description"] = description
         end

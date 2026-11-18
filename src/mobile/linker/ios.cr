@@ -201,8 +201,12 @@ module NoirMobileLinker
 
     def self.xcode_project_root(path : String) : String?
       nearest_ancestor(path) do |dir|
-        !glob_under(dir, "*.xcodeproj").empty? ||
-          !glob_under(dir, "*.xcworkspace").empty?
+        locator = CodeLocator.instance
+        if locator.scan_files_active?
+          locator.source_child_directories(dir).any? { |child| child.ends_with?(".xcodeproj") || child.ends_with?(".xcworkspace") }
+        else
+          !glob_under(dir, "*.xcodeproj").empty? || !glob_under(dir, "*.xcworkspace").empty?
+        end
       end
     end
 

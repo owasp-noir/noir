@@ -25,11 +25,16 @@ module Detector::Java
     @derivative_cache = {} of String => Bool
     @derivative_cache_mutex = Mutex.new
 
+    def requires_scan_files? : Bool
+      true
+    end
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".java") || filename.ends_with?(".kt")
+      return false unless file_contents.includes?("jakarta.ws.rs") || file_contents.includes?("javax.ws.rs")
       return false if content_matches?(file_contents, DERIVATIVE_MARKERS_RE)
-      return false if derivative_project?(filename)
-      file_contents.includes?("jakarta.ws.rs") || file_contents.includes?("javax.ws.rs")
+
+      !derivative_project?(filename)
     end
 
     private def derivative_project?(filename : String) : Bool
@@ -49,19 +54,26 @@ module Detector::Java
     DERIVATIVE_MANIFEST_GLOBS = %w[pom.xml build.gradle build.gradle.kts]
 
     private def compute_derivative_project(root : String) : Bool
-      candidates = %w[src/main/java/**/*.java src/main/kotlin/**/*.kt].flat_map { |glob| glob_under(root, glob) }
-      candidates = %w[**/*.java **/*.kt].flat_map { |glob| glob_under(root, glob) } if candidates.empty?
-      candidates += DERIVATIVE_MANIFEST_GLOBS.map { |name| File.join(root, name) }
-
       locator = CodeLocator.instance
+      candidates = if locator.scan_files_active?
+                     files = locator.source_files_under(File.join(root, "src", "main", "java"), ".java") +
+                             locator.source_files_under(File.join(root, "src", "main", "kotlin"), ".kt")
+                     if files.empty?
+                       files = locator.source_files_under(root, ".java") + locator.source_files_under(root, ".kt")
+                     end
+                     files
+                   else
+                     files = %w[src/main/java/**/*.java src/main/kotlin/**/*.kt].flat_map { |glob| glob_under(root, glob) }
+                     files.empty? ? %w[**/*.java **/*.kt].flat_map { |glob| glob_under(root, glob) } : files
+                   end
+      candidates.concat(DERIVATIVE_MANIFEST_GLOBS.map { |name| File.join(root, name) })
+
       candidates.any? do |path|
         next false unless File.file?(path)
 
         begin
-          # The detector pass already read most of these files; reuse the
-          # cached content so the one-time sweep avoids a second disk read.
-          content = locator.content_for(path) || File.read(path)
-          content_matches?(content, DERIVATIVE_MARKERS_RE)
+          content = locator.read_source(path)
+          content ? content_matches?(content, DERIVATIVE_MARKERS_RE) : false
         rescue
           false
         end

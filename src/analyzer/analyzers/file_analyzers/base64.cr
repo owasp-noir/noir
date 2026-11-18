@@ -10,13 +10,13 @@ require "../../../utils/file_url_scanner"
 # found in: an endpoint recovered from an encoded blob is a different kind of
 # finding from a route the code declares, and the report should say so. See
 # `FileAnalyzer::Hook` for why this name is not in the tech catalog.
-FileAnalyzer.add_hook(tech: "file_base64", func: ->(path : String, url : String) : Array(Endpoint) {
+FileAnalyzer.add_hook(tech: "file_base64", func: ->(path : String, url : String, content : String) : Array(Endpoint) {
   results = [] of Endpoint
   # Parsed on the first candidate only: most files carry no URL literal.
   base = nil
 
   begin
-    Noir::FileUrlScanner.each_line(path) do |line, index|
+    content.each_line.with_index do |line, index|
       next if Noir::FileUrlScanner.binary_line?(line)
 
       # Every token on the line is tried, not just the first: a line

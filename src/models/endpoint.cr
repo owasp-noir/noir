@@ -300,6 +300,26 @@ struct Param
   end
 end
 
+# The source of one contribution to a route. A nil project is unscoped;
+# "." means the project owns the scan root.
+struct Origin
+  include JSON::Serializable
+  include YAML::Serializable
+
+  getter technology : String
+  getter kind : String
+  getter project : String?
+  getter platform : String?
+  getter variant : String?
+  getter application : String?
+
+  def initialize(@technology : String, @kind : String, @project : String? = nil,
+                 @platform : String? = nil, @variant : String? = nil, @application : String? = nil)
+  end
+
+  def_equals_and_hash @technology, @kind, @project, @platform, @variant, @application
+end
+
 struct Details
   include JSON::Serializable
   include YAML::Serializable
@@ -320,10 +340,8 @@ struct Details
   #
   # Serialized only when two or more technologies contributed. A single
   # entry would repeat `technology` on every endpoint of every report, so
-  # suppressing it keeps the JSON/YAML/TOML documents byte-identical for the
-  # unmerged majority; a consumer reads `technologies` when present and
-  # falls back to `[technology]` when absent — the same fallback it needs
-  # for output from a Noir that predates the field.
+  # legacy list stays compact. Consumers of reports that predate `origins`
+  # can read `technologies` and fall back to `[technology]`.
   @[JSON::Field(ignore_serialize: technologies.size < 2)]
   @[YAML::Field(ignore_serialize: technologies.size < 2)]
   property technologies : Array(String) = [] of String
@@ -336,11 +354,33 @@ struct Details
   # Empty when there is no project to name: no manifest above the source,
   # the manifest sits at the scan base itself (a single-project scan), or the
   # endpoint is a declaration (spec, collection). Serialized only when
-  # non-empty, so reports for single-project scans stay byte-identical, and
-  # a consumer reads a missing key as "no project".
+  # non-empty for compatibility. `origins` also records root projects,
+  # declaration scopes and every contribution to a merged row.
   @[JSON::Field(ignore_serialize: project.empty?)]
   @[YAML::Field(ignore_serialize: project.empty?)]
   property project : String = ""
+
+  @[JSON::Field(ignore_serialize: origins.empty?)]
+  @[YAML::Field(ignore_serialize: origins.empty?)]
+  property origins : Array(Origin) = [] of Origin
+
+  def contributing_technologies : Array(String)
+    (@origins.map(&.technology) + @technologies + [@technology || ""]).reject(&.empty?).uniq!
+  end
+
+  def primary_origin : Origin?
+    @origins.find { |origin| origin.technology == @technology } || @origins.first?
+  end
+
+  def origin_identity : {String, String?, String?, String?}
+    origin = primary_origin
+    {origin.try(&.project) || @project, origin.try(&.platform), origin.try(&.application), origin.try(&.variant)}
+  end
+
+  def origin_projects : Array(String)
+    projects = @origins.compact_map(&.project).uniq!
+    projects.empty? && !@project.empty? ? [@project] : projects
+  end
 
   # New details types can be added in the future.
 
@@ -368,6 +408,7 @@ struct Details
     end
     copy.technologies = @technologies.reject(&.empty?).uniq!.sort!
     copy.project = @project
+    copy.origins = @origins.dup
     copy
   end
 

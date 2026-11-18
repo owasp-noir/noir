@@ -219,8 +219,8 @@ module Analyzer::Specification
       dir = File.dirname(path)
       while Noir::PathScope.under_root?(dir, base)
         manifest = File.join(dir, ".openapi-generator", "FILES")
-        if File.file?(manifest)
-          lines = File.read_lines(manifest, chomp: true)
+        if File.file?(manifest) && (content = CodeLocator.instance.read_source(manifest))
+          lines = content.lines
           return lines.includes?(path[(dir.size + 1)..]) &&
             lines.any?(&.matches?(GENERATED_CLIENT_FILE)) &&
             lines.none?(&.matches?(GENERATED_SERVER_FILE)) &&
@@ -240,7 +240,10 @@ module Analyzer::Specification
     # Any one of several is enough: keeping a document is the safe direction.
     private def server_generator_configured?(dir : String) : Bool
       config = File.join(dir, "openapitools.json")
-      File.file?(config) && File.read(config).scan(GENERATOR_NAME).any?(&.[1].matches?(SERVER_GENERATOR))
+      content = CodeLocator.instance.read_source(config)
+      content ? content.scan(GENERATOR_NAME).any?(&.[1].matches?(SERVER_GENERATOR)) : false
+    rescue File::NotFoundError
+      false
     end
 
     # `each_spec_file` plus the `Details` almost every caller builds from
@@ -729,11 +732,16 @@ module Analyzer::Specification
       # The size and binary budget the detector walk applies to a document it
       # finds itself. A ref is a second way into the file tree, not a way
       # around that budget.
-      if reason = MediaFilter.skip_check(target, info: info)
+      if reason = MediaFilter.skip_check(target, info: info, sniff_binary: false)
         return record_ref_gap(from_path, file_ref, reason)
       end
 
-      read_file_content(target)
+      locator = CodeLocator.instance
+      if locator.scan_files_active? && !locator.source_path?(target)
+        return record_ref_gap(from_path, file_ref, "target is not in the scan file set")
+      end
+
+      locator.read_source(target) || record_ref_gap(from_path, file_ref, "target is not text")
     end
 
     # Reports a ref that was declined or could not be read, once per distinct

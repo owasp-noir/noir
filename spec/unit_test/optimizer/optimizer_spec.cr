@@ -221,9 +221,8 @@ describe "EndpointOptimizer" do
 
       # In a monorepo an Ingress fronts its own project: it does not land on
       # another project's route at the same path, nor on a manifest-less
-      # script's. A rule outside every project (a root `deploy/`) folds only
-      # where one route serves the method at its path. Rules left unfolded
-      # merge as any two Ingress rows at one path do.
+      # script's. An unscoped rule can fold into the unscoped script at
+      # the same path, while the scoped rule with no match stays ANY.
       it "folds an Ingress only into a route of the project that holds it" do
         optimizer = EndpointOptimizer.new(logger, options)
         temp_dir = File.join(Dir.tempdir, "noir-optimizer-ingress-scope-#{Process.pid}-#{Time.utc.to_unix_ms}")
@@ -251,8 +250,8 @@ describe "EndpointOptimizer" do
           result = optimizer.optimize_endpoints([ingress.call(own), ingress.call(web_own), ingress.call(root)] + code)
           rows = result.map { |e| {e.method, e.url, e.details.code_paths.map(&.path).sort!} }.sort!
           rows.should eq([
-            {"ANY", "/", [own, root].sort!},
-            {"GET", "/", [File.join(tools, "server.py")]},
+            {"ANY", "/", [own]},
+            {"GET", "/", [root, File.join(tools, "server.py")].sort!},
             {"GET", "/", [File.join(web, "app.py"), web_own]},
             {"GET", "/items", [File.join(api, "app.py")]},
           ])
@@ -262,9 +261,7 @@ describe "EndpointOptimizer" do
         end
       end
 
-      # An Ingress in a `-b` base of its own, or in an infra dir whose
-      # manifest serves only scripts, fronts the app's route and folds into it.
-      it "folds an Ingress from a project with no routes into the app route" do
+      it "keeps an Ingress in a project without matching code as its own row" do
         optimizer = EndpointOptimizer.new(logger, options)
         temp_dir = File.join(Dir.tempdir, "noir-optimizer-ingress-infra-#{Process.pid}-#{Time.utc.to_unix_ms}")
         app = File.join(temp_dir, "app")
@@ -284,12 +281,12 @@ describe "EndpointOptimizer" do
           end
 
           options["base"] = YAML::Any.new([YAML::Any.new(app), YAML::Any.new(infra)])
-          scan.call.should eq([{"GET", [code_file, rule_file].sort!}])
+          scan.call.sort!.should eq([{"ANY", [rule_file]}, {"GET", [code_file]}])
 
           File.write(File.join(infra, "requirements.txt"), "")
           options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
           optimizer = EndpointOptimizer.new(logger, options)
-          scan.call.should eq([{"GET", [code_file, rule_file].sort!}])
+          scan.call.sort!.should eq([{"ANY", [rule_file]}, {"GET", [code_file]}])
         ensure
           options.delete("base")
           FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
@@ -997,13 +994,14 @@ describe "EndpointOptimizer" do
         File.write(File.join(base, "kemal/shard.yml"), "name: app\n")
         options["base"] = YAML::Any.new([YAML::Any.new(base)])
 
-        # The Sinatra app has no manifest of its own; the checkout's
-        # `shard.yml` above the base must not make it a second project.
+        # The Sinatra app is unscoped and remains distinct from the scoped
+        # Kemal app. The checkout manifest sits above the scan base.
         result = optimizer.optimize_endpoints([
           tech_endpoint("/", "GET", "crystal_kemal", File.join(base, "kemal/src/app.cr")),
           tech_endpoint("/", "GET", "ruby_sinatra", File.join(base, "sinatra/app.rb")),
         ])
-        result.size.should eq(1)
+        result.size.should eq(2)
+        result.find! { |endpoint| endpoint.details.technology == "ruby_sinatra" }.details.origins.first.project.should be_nil
       ensure
         options.delete("base")
         FileUtils.rm_rf(temp_dir)
@@ -1055,7 +1053,7 @@ describe "EndpointOptimizer" do
       end
     end
 
-    it "merges a base's own rows the same way whichever other bases are scanned" do
+    it "preserves the rows across independent bases and scopes an explicitly scanned nested base" do
       temp_dir = File.join(Dir.tempdir, "noir-optimizer-otherbase-#{Process.pid}-#{Time.utc.to_unix_ms}")
       nb = File.join(temp_dir, "nb")
       other = File.join(temp_dir, "other")
@@ -1076,7 +1074,7 @@ describe "EndpointOptimizer" do
             tech_endpoint("/x", "GET", "oas3", File.join(nb, "openapi.yaml"), 4),
           ]).size
         end
-        counts.should eq([1, 1, 1])
+        counts.should eq([2, 2, 3])
       ensure
         options.delete("base")
         FileUtils.rm_rf(temp_dir)
@@ -1212,7 +1210,7 @@ describe "EndpointOptimizer" do
       end
     end
 
-    it "merges duplicated Kotlin Spring static assets from separate build modules" do
+    it "keeps distinct Kotlin Spring static assets from separate build modules" do
       optimizer = EndpointOptimizer.new(logger, options)
       temp_dir = File.join(Dir.tempdir, "noir-optimizer-static-modules-#{Process.pid}-#{Time.utc.to_unix_ms}")
       module_a = File.join(temp_dir, "webflux")
@@ -1235,10 +1233,8 @@ describe "EndpointOptimizer" do
 
         result = optimizer.optimize_endpoints([endpoint_a, endpoint_b])
 
-        result.size.should eq(1)
-        # Both module paths must survive the merge; their order follows
-        # the source-location sort, so compare as a set.
-        result[0].details.code_paths.map(&.path).sort!.should eq([static_a, static_b].sort)
+        result.size.should eq(2)
+        result.map { |endpoint| endpoint.details.code_paths.map(&.path) }.sort!.should eq([[static_a], [static_b]].sort!)
       ensure
         FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
       end

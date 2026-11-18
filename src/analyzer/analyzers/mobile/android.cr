@@ -192,7 +192,7 @@ module Analyzer::Mobile
       return names unless File.basename(src) == "src" && File.basename(source_set) != "main"
 
       main_path = File.join(src, "main", "AndroidManifest.xml")
-      return names unless File.exists?(main_path)
+      return names unless CodeLocator.instance.source_file?(main_path)
 
       main = find_child(Noir::XmlComments.parse(read_file_content(main_path)), "manifest")
       application = main.try { |node| find_child(node, "application") }
@@ -506,22 +506,14 @@ module Analyzer::Mobile
                                         placeholders : Hash(String, String),
                                         seen_urls : Set(String))
       nav_dir = File.join(File.dirname(manifest_path), "res", "navigation")
-      return unless Dir.exists?(nav_dir)
-
-      glob_under(nav_dir, "*.xml").sort.each do |nav_path|
-        # The walk is its own, so `--exclude-path` has to be applied here:
-        # the detector's filter only covers files that reach an analyzer
-        # through `CodeLocator`.
-        next if excluded_path?(nav_path)
-        begin
-          doc = Noir::XmlComments.parse(read_file_content(nav_path))
-          root = find_child(doc, "navigation")
-          next unless root
-          walk_navigation(root, "", package, strings, placeholders, nav_path, seen_urls)
-        rescue e
-          @logger.debug "Failed to parse navigation graph #{nav_path}: #{e.message}"
-          @logger.debug_sub e
-        end
+      resource_xml_files(nav_dir).each do |nav_path|
+        doc = Noir::XmlComments.parse(read_file_content(nav_path))
+        root = find_child(doc, "navigation")
+        next unless root
+        walk_navigation(root, "", package, strings, placeholders, nav_path, seen_urls)
+      rescue e
+        @logger.debug "Failed to parse navigation graph #{nav_path}: #{e.message}"
+        @logger.debug_sub e
       end
     end
 
@@ -684,7 +676,7 @@ module Analyzer::Mobile
       module_dir = File.dirname(gradle_path)
       settings_dir = module_dir
       SETTINGS_SEARCH_DEPTH.times do
-        break if {"settings.gradle.kts", "settings.gradle"}.any? { |name| File.exists?(File.join(settings_dir, name)) }
+        break if {"settings.gradle.kts", "settings.gradle"}.any? { |name| CodeLocator.instance.source_file?(File.join(settings_dir, name)) }
         parent = File.dirname(settings_dir)
         return if parent == settings_dir
         settings_dir = parent
@@ -703,11 +695,11 @@ module Analyzer::Mobile
     private def application_modules(settings_dir : String) : Array({String, String})
       @application_modules[settings_dir] ||= begin
         apps = [] of {String, String}
-        settings = {"settings.gradle.kts", "settings.gradle"}.map { |name| File.join(settings_dir, name) }.find { |path| File.exists?(path) }
+        settings = {"settings.gradle.kts", "settings.gradle"}.map { |name| File.join(settings_dir, name) }.find { |path| CodeLocator.instance.source_file?(path) }
         if settings
           read_file_content(settings).scan(SETTINGS_INCLUDE_RE) do |m|
             module_dir = File.join([settings_dir] + m[1].split(':'))
-            script = {"build.gradle.kts", "build.gradle"}.map { |name| File.join(module_dir, name) }.find { |path| File.exists?(path) }
+            script = {"build.gradle.kts", "build.gradle"}.map { |name| File.join(module_dir, name) }.find { |path| CodeLocator.instance.source_file?(path) }
             next unless script
             script_content = read_file_content(script)
             if app_id = parse_gradle(script_content, script).application_id
@@ -736,7 +728,7 @@ module Analyzer::Mobile
       4.times do
         {"build.gradle", "build.gradle.kts"}.each do |name|
           candidate = File.join(dir, name)
-          return candidate if File.exists?(candidate)
+          return candidate if CodeLocator.instance.source_file?(candidate)
         end
         parent = File.dirname(dir)
         break if parent == dir
@@ -821,17 +813,21 @@ module Analyzer::Mobile
       dir = File.dirname(Noir::PathScope.expand(gradle_path))
       BUILDSRC_SEARCH_DEPTH.times do
         buildsrc = File.join(dir, "buildSrc")
-        if Dir.exists?(buildsrc)
-          {"*.kt", "*.kts", "*.gradle"}.each do |pattern|
-            glob_under(buildsrc, "**/#{pattern}").sort.each do |src|
-              next if excluded_path?(src)
-              begin
-                if m = read_file_content(src).match(def_re)
-                  return m[1]
-                end
-              rescue
-                next
+        locator = CodeLocator.instance
+        exists = locator.scan_files_active? ? locator.source_directory?(buildsrc) : Dir.exists?(buildsrc)
+        if exists
+          {".kt", ".kts", ".gradle"}.each do |extension|
+            files = if locator.scan_files_active?
+                      locator.source_files_under(buildsrc, extension)
+                    else
+                      glob_under(buildsrc, "**/*#{extension}").reject { |path| excluded_path?(path) }
+                    end
+            files.sort!.each do |src|
+              if m = read_file_content(src).match(def_re)
+                return m[1]
               end
+            rescue
+              next
             end
           end
           return # buildSrc found but constant absent — stop walking up
@@ -927,23 +923,27 @@ module Analyzer::Mobile
     private def load_strings(manifest_path : String) : Hash(String, String)
       strings = {} of String => String
       values_dir = File.join(File.dirname(manifest_path), "res", "values")
-      return strings unless Dir.exists?(values_dir)
-
-      glob_under(values_dir, "*.xml").sort.each do |path|
-        next if excluded_path?(path)
-        begin
-          doc = Noir::XmlComments.parse(read_file_content(path))
-          next unless resources = find_child(doc, "resources")
-          each_child(resources, "string") do |node|
-            name = attr(node, "name")
-            strings[name] = node.content if name && !strings.has_key?(name)
-          end
-        rescue e
-          @logger.debug "Failed to parse values file #{path}: #{e.message}"
+      resource_xml_files(values_dir).each do |path|
+        doc = Noir::XmlComments.parse(read_file_content(path))
+        next unless resources = find_child(doc, "resources")
+        each_child(resources, "string") do |node|
+          name = attr(node, "name")
+          strings[name] = node.content if name && !strings.has_key?(name)
         end
+      rescue e
+        @logger.debug "Failed to parse values file #{path}: #{e.message}"
       end
 
       strings
+    end
+
+    private def resource_xml_files(dir : String) : Array(String)
+      locator = CodeLocator.instance
+      if locator.scan_files_active?
+        locator.source_files_in(dir).select(&.ends_with?(".xml")).sort!
+      else
+        glob_under(dir, "*.xml").reject { |path| excluded_path?(path) }.sort!
+      end
     end
 
     private def collect_names(parent : XML::Node, tag : String,

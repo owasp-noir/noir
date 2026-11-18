@@ -407,6 +407,8 @@ module Analyzer::Java
       result
     end
 
+    @subresource_class_names = Hash(String, Array(String)).new
+
     private def subresource_sources_for(path : String,
                                         content : String,
                                         package_name : String,
@@ -419,9 +421,7 @@ module Analyzer::Java
       resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
 
       Noir::ImportGraph.related_files(path, package_name, resolved_imports, "java") do |file|
-        # The import graph walks the disk: a sub-resource the user excluded
-        # must not lend its routes to a locator in a file they kept.
-        next if file != path && excluded_path?(file)
+        next if file != path && !CodeLocator.instance.scan_files_active? && excluded_path?(file)
         body = cache[file] ||= begin
           file == path ? content : read_file_content(file)
         rescue IO::Error
@@ -430,7 +430,11 @@ module Analyzer::Java
         next if body.empty?
         next unless body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
 
-        class_names = file == path && current_file_class_names ? current_file_class_names : Noir::TreeSitterJaxRsExtractor.extract_class_names(body)
+        class_names = @subresource_class_names[file] ||= if file == path && current_file_class_names
+                                                           current_file_class_names
+                                                         else
+                                                           Noir::TreeSitterJaxRsExtractor.extract_class_names(body)
+                                                         end
         # Built only when the extractor descends into a class of this file.
         scope = nil.as(Proc(Noir::TreeSitterJaxRsExtractor::IndexScope)?)
         if file != path && dto_builder && bean_cache
@@ -1405,9 +1409,9 @@ module Analyzer::Java
             logger.debug "Skipping static-location #{location}: resolves outside the scan base"
             next
           end
-          Dir.glob("#{escape_glob_path(dir)}/**/*", match: File::MatchOptions::DotFiles) do |file|
-            next if File.directory?(file) || excluded_path?(file)
-            url = Noir::URLPath.absolute_join(base_path, prefix, file.sub(dir, ""))
+          CodeLocator.instance.static_files_under(dir).sort!.each do |file|
+            relative_path = Noir::PathScope.relative_under(file, dir)
+            url = Noir::URLPath.absolute_join(base_path, prefix, relative_path)
             endpoints << Endpoint.new(url, "GET", Details.new(PathInfo.new(file))) if served.add?({url, file})
           end
         end

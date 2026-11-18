@@ -1,3 +1,5 @@
+require "../../../../models/code_locator"
+
 module Analyzer::Javascript
   # Resolves a JS/TS `require('./x')` / `import ... from './x'` specifier
   # to a file on disk.
@@ -34,8 +36,10 @@ module Analyzer::Javascript
                    File.expand_path(require_path, base_dir)
                  end
 
+      locator = CodeLocator.instance
+
       # Case 1: The resolved path is a file that exists
-      return resolved if File.file?(resolved)
+      return resolved if locator.source_file?(resolved)
 
       # Case 2: Try adding common JS/TS extensions.
       # Using `File.extname(require_path).empty?` is wrong because files
@@ -49,7 +53,7 @@ module Analyzer::Javascript
       unless known_js_exts.any? { |ext| require_path.ends_with?(ext) }
         [".js", ".ts", ".jsx", ".tsx"].each do |ext|
           with_ext = "#{resolved}#{ext}"
-          return with_ext if File.file?(with_ext)
+          return with_ext if locator.source_file?(with_ext)
         end
       end
 
@@ -68,7 +72,7 @@ module Analyzer::Javascript
         base = resolved[0...(resolved.size - js_ext.size)]
         ts_exts.each do |ts_ext|
           candidate = "#{base}#{ts_ext}"
-          return candidate if File.file?(candidate)
+          return candidate if locator.source_file?(candidate)
         end
       end
 
@@ -76,7 +80,7 @@ module Analyzer::Javascript
       if File.directory?(resolved)
         ["index.js", "index.ts", "index.jsx", "index.tsx"].each do |index_file|
           index_path = File.join(resolved, index_file)
-          return index_path if File.file?(index_path)
+          return index_path if locator.source_file?(index_path)
         end
       end
 

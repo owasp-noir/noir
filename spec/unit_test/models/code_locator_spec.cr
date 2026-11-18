@@ -207,3 +207,49 @@ describe "derived index invalidation" do
     locator.files_by_extension(".py").should eq(["/a/one.py", "/b/two.py"])
   end
 end
+
+describe "scan source registry" do
+  it "normalizes aliases, caches lazy reads, and gates media and unregistered files" do
+    File.tempfile("noir-source", ".txt") do |source|
+      source.print("first")
+      source.flush
+
+      locator = CodeLocator.new
+      dir = File.dirname(source.path)
+      alias_path = File.join(dir, ".", File.basename(source.path))
+      unregistered = File.join(dir, "noir-unregistered.txt")
+      locator.register_path(alias_path)
+      locator.register_media_path(File.join(dir, "font.woff"))
+
+      locator.with_scan_files do
+        locator.source_path?(source.path).should eq(alias_path)
+        locator.source_files_in(dir).should eq([alias_path])
+        locator.source_files_under(dir, ".txt").should eq([alias_path])
+        locator.static_files_under(dir).should contain(File.join(dir, "font.woff"))
+        locator.read_source(source.path).should eq("first")
+        File.write(source.path, "changed")
+        locator.read_source(alias_path).should eq("first")
+        locator.read_source(unregistered).should be_nil
+        locator.read_source(File.join(dir, "font.woff")).should be_nil
+
+        locator.reset_files
+        locator.source_files_in(dir).should be_empty
+        locator.read_source(source.path).should be_nil
+      end
+      locator.read_source(source.path).should eq("changed")
+    end
+  end
+
+  it "does not pass binary content from a lazily registered path to text consumers" do
+    File.tempfile("noir-binary", ".data") do |source|
+      source.print("before\0after")
+      source.flush
+      locator = CodeLocator.new
+      locator.register_path(source.path)
+      locator.with_scan_files do
+        locator.read_source(source.path).should be_nil
+        locator.content_for(source.path).should be_nil
+      end
+    end
+  end
+end

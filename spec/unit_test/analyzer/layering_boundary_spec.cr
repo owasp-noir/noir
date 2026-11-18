@@ -68,11 +68,6 @@ CONTENT_FALLBACK_RE = /CodeLocator\.instance\.content_for\([^)]*\)\s*\|\|/
 # resolving its config YAML through `get_files_by_extensions` instead —
 # that is the preferred fix wherever the index can answer the question.
 DIRECTORY_WALK_ALLOWLIST = [
-  # Quarkus' `META-INF/resources`: the endpoint set is "every file under
-  # this directory", including the media files the detector's filter keeps
-  # out of `file_map`, so no index answers it. (Spring's static locations
-  # have the same shape and walk in `JavaEngine#spring_static_endpoints`.)
-  "src/analyzer/analyzers/java/quarkus.cr",
   # Android navigation graphs / `buildSrc` / `res/values`: XML resource
   # directories addressed by their role in the project layout.
   "src/analyzer/analyzers/mobile/android.cr",
@@ -99,15 +94,7 @@ RAW_FILE_IO_ALLOWLIST = [
 
 # Hand-rolled `content_for(...) || read` copies that are not fixable by
 # calling `read_file_content`.
-CONTENT_FALLBACK_ALLOWLIST = [
-  # Not an `Analyzer` subclass, so it has no `read_file_content` to call —
-  # it is a plain helper class the Express adapter drives. Gains the
-  # accessor if it ever grows an analyzer base.
-  "src/analyzer/analyzers/javascript/express/router_mount_scanner.cr",
-  # Same story: a plain helper class the Express adapter drives, with no
-  # `Analyzer` base to inherit `read_file_content` from.
-  "src/analyzer/analyzers/javascript/express/route_helper_scanner.cr",
-]
+CONTENT_FALLBACK_ALLOWLIST = [] of String
 
 # Every (allowlist, pattern) pair, so the staleness guard below covers all of
 # them rather than just the first. An allowlist whose entries are never

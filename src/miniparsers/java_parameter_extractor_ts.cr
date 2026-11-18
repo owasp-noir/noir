@@ -1773,12 +1773,7 @@ module Noir
     end
 
     private def file_body(file : String) : String
-      # Detector pre-warms a content cache for every scanned file
-      # (size-bounded). Sibling/parent DTO files often live in that
-      # cache already — `nil` falls back to a fresh disk read for
-      # files outside the budget.
-      CodeLocator.instance.content_for(file) ||
-        Noir::TextFile.read(file)
+      CodeLocator.instance.read_source(file) || ""
     end
 
     private def absorb!(result : Index,

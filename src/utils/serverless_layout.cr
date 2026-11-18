@@ -1,3 +1,4 @@
+require "../models/code_locator"
 require "./text_file"
 
 module Noir
@@ -56,11 +57,16 @@ module Noir
     # Whether `root` is a Vercel project: it carries a `vercel.json` /
     # `now.json`, or its package.json depends on the Vercel runtime types.
     def vercel_project?(root : String) : Bool
-      return true if VERCEL_CONFIGS.any? { |config| File.exists?(File.join(root, config)) }
+      locator = CodeLocator.instance
+      return true if VERCEL_CONFIGS.any? do |config|
+                       path = File.join(root, config)
+                       locator.source_file?(path)
+                     end
       package = File.join(root, "package.json")
-      return false unless File.exists?(package)
-      content = Noir::TextFile.read(package) rescue ""
+      content = locator.read_source(package) || return false
       VERCEL_PACKAGE_MARKERS.any? { |marker| content.includes?(marker) }
+    rescue IO::Error
+      false
     end
 
     # Netlify's default function directories: `netlify/functions/` and

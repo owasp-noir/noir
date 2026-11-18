@@ -80,7 +80,7 @@ module Noir
       return [] of Endpoint unless File.exists?(file_path)
 
       begin
-        content = content || Noir::TextFile.read(file_path)
+        content = content || (CodeLocator.instance.read_source(file_path) || "")
 
         # Cheap pre-filter: every shape the JSParser knows about ends
         # in a verb call (`x.get(`, `.post(`, ...), a Fastify/Restify
@@ -1400,7 +1400,7 @@ module Noir
       if hit = @@stripped_sources_mutex.synchronize { @@stripped_sources[path]? }
         return hit
       end
-      text = strip_js_comments(TextFile.read(path))
+      text = strip_js_comments((CodeLocator.instance.read_source(path) || ""))
       @@stripped_sources_mutex.synchronize { ExtractionResultCache.store_capped(@@stripped_sources, path, text, 512) }
     end
 

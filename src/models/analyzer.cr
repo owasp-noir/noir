@@ -102,17 +102,8 @@ class Analyzer
     ""
   end
 
-  # Prefer the detector-populated cache over a fresh disk read. On
-  # cache miss (budget exhausted, cache cleared between runs, path
-  # not registered via register_file) falls back to a disk read.
-  #
-  # Analyzers migrating from direct `File.read(path, ...)` calls
-  # should use this helper so the second read of files the detector
-  # already loaded is free.
   def read_file_content(path : String) : String
-    cached = CodeLocator.instance.content_for(path)
-    return cached if cached
-    Noir::TextFile.read(path)
+    CodeLocator.instance.read_source(path) || ""
   end
 
   # `line_number_for_index` for a *byte* offset — what `Regex::MatchData#byte_begin`
@@ -501,7 +492,7 @@ class FileAnalyzer < Analyzer
   # here — the hooks are activated by a flag, like `ai` is by
   # `--ai-provider`, and they read every file in the scan rather than a
   # recognisable one.
-  record Hook, func : Proc(String, String, Array(Endpoint)), tech : String
+  record Hook, func : Proc(String, String, String, Array(Endpoint)), tech : String
 
   @@hooks = [] of Hook
 
@@ -524,6 +515,10 @@ class FileAnalyzer < Analyzer
   end
 
   def self.add_hook(func : Proc(String, String, Array(Endpoint)), tech : String)
+    add_hook(->(path : String, url : String, _content : String) { func.call(path, url) }, tech)
+  end
+
+  def self.add_hook(func : Proc(String, String, String, Array(Endpoint)), tech : String)
     @@hooks << Hook.new(func, tech)
   end
 
@@ -581,8 +576,9 @@ class FileAnalyzer < Analyzer
 
             logger.debug "Analyzing: #{path}"
 
+            content = CodeLocator.instance.read_source(path) || next
             hooks.each do |hook|
-              file_results = hook.func.call(path, @url)
+              file_results = hook.func.call(path, @url, content)
               unless file_results.nil?
                 file_results.each do |file_result|
                   # Same stamp `analysis_endpoints` applies to every tech

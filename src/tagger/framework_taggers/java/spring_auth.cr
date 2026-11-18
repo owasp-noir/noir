@@ -2357,8 +2357,7 @@ class SpringAuthTagger < FrameworkTagger
     values : Array(String)? = nil
     CONFIG_DIRS.each do |sub|
       dir = File.join(module_dir, sub)
-      next unless Dir.exists?(dir)
-      children = Dir.children(dir).sort!
+      children = config_children(dir)
       if bootstrap = children.find(&.matches?(BOOTSTRAP_CONFIG_FILE))
         return {nil, "#{key}, which #{bootstrap} can import"}
       end
@@ -2380,7 +2379,7 @@ class SpringAuthTagger < FrameworkTagger
       end
     end
     {module_dir, File.join(module_dir, "config")}.each do |dir|
-      (Dir.children(dir).sort! rescue [] of String).each do |name|
+      config_children(dir).each do |name|
         next unless BASE_CONFIG_FILES.includes?(name) || name.matches?(PROFILE_CONFIG_FILE)
         next unless content = read_file(File.join(dir, name))
         base, profiled = config_file_values(content, name.ends_with?(".properties"), target)
@@ -2389,6 +2388,17 @@ class SpringAuthTagger < FrameworkTagger
     end
     return {nil, "#{key}, set from a ${...} placeholder"} if values.try &.any?(&.includes?("${"))
     {values, nil}
+  end
+
+  private def config_children(dir : String) : Array(String)
+    locator = CodeLocator.instance
+    if locator.scan_files_active?
+      locator.source_files_in(dir).map { |path| File.basename(path) }.sort!
+    else
+      Dir.children(dir).sort!
+    end
+  rescue File::Error
+    [] of String
   end
 
   # `{the value the file's default documents set, whether a profile document sets it}`.

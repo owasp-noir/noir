@@ -24,51 +24,17 @@ module FileHelper
     CodeLocator.instance.expanded_file_map
   end
 
-  @walked_path_index : Hash(String, String)? = nil
-
-  # The as-walked spelling of a path an analyzer resolved with
-  # `File.expand_path` — a config `<include>` target, a route file named from
-  # a source file. `code_paths` are reported the way the walker handed them
-  # over, so a resolved path has to be mapped back before it reaches a report:
-  # left absolute it puts the scanning machine's directory layout into
-  # anything shared, and a SARIF `artifactLocation.uri` that isn't
-  # repo-relative can't be matched to a file by GitHub code scanning.
-  #
-  # Falls back to the input for a file outside the scan — there is nothing
-  # better to say about it.
+  # Resolve an expanded path to its original spelling in the scan.
   def walked_path(expanded : String) : String
     walked_path?(expanded) || expanded
   end
 
-  # Like `walked_path`, but nil for a file the detector did not register —
-  # outside the scan base, pruned, or matched by `--exclude-path`. Use it to
-  # gate a path that came from somewhere untrusted (an LLM reply).
   def walked_path?(expanded : String) : String?
-    index = (@walked_path_index ||= all_files_expanded.each_with_object({} of String => String) do |(file, file_expanded), map|
-      map[file_expanded] ||= file
-    end)
-    index[expanded]?
+    CodeLocator.instance.source_path?(expanded)
   end
 
-  # Get files filtered by path prefix
-  #
-  # No `File.directory?` guard: the detector's walk only registers a
-  # path in `file_map` after `next unless info.file?` (see
-  # `detect_techs`), so every entry is already a regular file. The guard
-  # was a guaranteed-false `stat(2)` paid once per file per analyzer.
   def get_files_by_prefix(prefix : String) : Array(String)
-    # `.dup`: the previous `.select` handed back a fresh array, and
-    # `all_files` is CodeLocator's live `file_map`. Callers that
-    # `reject!`/`<<` the result must not reach through to it.
-    return all_files.dup if prefix.empty?
-
-    root = expanded_root_for(prefix)
-    result = [] of String
-    all_files_expanded.each do |file, expanded|
-      next unless Noir::PathScope.under_normalized_root?(expanded, root)
-      result << file
-    end
-    result
+    CodeLocator.instance.source_files_under(prefix)
   end
 
   # Get files filtered by extension (uses cached index for O(1) lookup)
@@ -138,17 +104,7 @@ module FileHelper
   # extension at all — on a monorepo where the language's source set is
   # a small slice of the tree that is mostly wasted work.
   def get_files_by_prefix_and_extension(prefix : String, extension : String) : Array(String)
-    candidates = get_files_by_extension(extension)
-    return [] of String if candidates.empty?
-    # See `get_files_by_prefix` — the index array is live, so hand back
-    # a copy rather than aliasing it.
-    return candidates.dup if prefix.empty?
-
-    root = expanded_root_for(prefix)
-    locator = CodeLocator.instance
-    candidates.select do |file|
-      Noir::PathScope.under_normalized_root?(locator.expanded_path_for(file), root)
-    end
+    CodeLocator.instance.source_files_under(prefix, extension)
   end
 
   # Get public files (files that should be served as static content)

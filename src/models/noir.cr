@@ -198,7 +198,9 @@ class NoirRunner
 
   def analyze
     # Same as `detect`: one working-directory lookup for the whole phase.
-    Noir::PathScope.with_pinned_cwd { analyze_phase }
+    Noir::PathScope.with_pinned_cwd do
+      CodeLocator.instance.with_scan_files { analyze_phase }
+    end
   end
 
   private def analyze_phase

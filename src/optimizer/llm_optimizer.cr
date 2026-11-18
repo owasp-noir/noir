@@ -73,11 +73,11 @@ class LLMEndpointOptimizer < EndpointOptimizer
     # would replace distinct routes with duplicates. Keep the original URL.
     # Checked here, in candidate order, so the winner does not depend on
     # which request finished first.
-    taken = endpoints.map { |endpoint| {endpoint.method, endpoint.url} }.to_set
+    taken = endpoints.map { |endpoint| {endpoint.method, endpoint.url, endpoint.details.origin_identity} }.to_set
     candidate_indexes.each_with_index do |idx, i|
       original = final_endpoints[idx]
       optimized = results[i]
-      if optimized.url != original.url && !taken.add?({optimized.method, optimized.url})
+      if optimized.url != original.url && !taken.add?({optimized.method, optimized.url, optimized.details.origin_identity})
         @logger.debug_sub "  - URL rewrite #{original.url} → #{optimized.url} rejected: collides with another endpoint"
         optimized.url = original.url
       end

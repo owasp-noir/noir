@@ -1909,7 +1909,7 @@ class GoAuthTagger < FrameworkTagger
   private def replaced_dir(file : String, import : String) : String?
     root = go_module(file)
     replaces = @replaces.put_if_absent(root) do
-      mod = File.read(File.join(root, "go.mod")) rescue ""
+      mod = read_file(File.join(root, "go.mod")) || ""
       mod.scan(GO_REPLACE).map { |m| {m[1], m[2]} }
     end
     replaces.each do |(from, to)|
@@ -1928,7 +1928,7 @@ class GoAuthTagger < FrameworkTagger
         next dir[vendor + 8..]
       end
       root = go_module(File.join(dir, "_.go"))
-      mod = File.read(File.join(root, "go.mod")) rescue nil
+      mod = read_file(File.join(root, "go.mod"))
       path = mod.try(&.match(GO_MODULE_PATH)).try(&.[1])
       next unless path
       dir == root ? path : "#{path}/#{dir[root.size..].lchop('/')}"
@@ -2933,8 +2933,8 @@ class GoAuthTagger < FrameworkTagger
   private def same_program?(a : String, b : String) : Bool
     return true if a == b
     @linked_modules.put_if_absent({a, b}) do
-      mod_a = File.read(File.join(a, "go.mod")) rescue ""
-      mod_b = File.read(File.join(b, "go.mod")) rescue ""
+      mod_a = read_file(File.join(a, "go.mod")) || ""
+      mod_b = read_file(File.join(b, "go.mod")) || ""
       path_a = mod_a.match(GO_MODULE_PATH).try(&.[1])
       path_b = mod_b.match(GO_MODULE_PATH).try(&.[1])
       next false if path_a.nil? || path_b.nil? || path_a == path_b

@@ -125,6 +125,8 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer << "\n#{r_method} #{r_kind} #{r_name}"
       end
 
+      r_buffer << project_suffix(endpoint)
+
       # `[]?` throughout: `config_initializer` seeds every key for CLI runs,
       # but a builder constructed with a partial options hash (specs, library
       # use) raised KeyError on the first endpoint. `any_to_bool` is untyped

@@ -7,8 +7,13 @@ class OutputBuilderMarkdownTable < OutputBuilder
   include OutputBuilderMarkdownCell
 
   def print(endpoints : Array(Endpoint))
-    ob_puts "| Endpoint | Protocol | Params |"
-    ob_puts "| -------- | -------- | ------ |"
+    show_project = endpoints.any? { |endpoint| !report_projects(endpoint).empty? }
+    show_path = any_to_bool(@options["include_path"]?)
+    columns = ["Endpoint", "Protocol", "Params"]
+    columns << "Project" if show_project
+    columns << "Source" if show_path
+    ob_puts "| #{columns.join(" | ")} |"
+    ob_puts "| #{columns.map { |column| "-" * column.size }.join(" | ")} |"
 
     endpoints.each do |endpoint|
       # `params` is a non-nilable Array, so the `-` placeholder used to sit
@@ -30,7 +35,17 @@ class OutputBuilderMarkdownTable < OutputBuilder
       # route (`[x](…)`, `*`, `_`) can render as Markdown inside one, and the
       # route reads exactly as written.
       endpoint_cell = markdown_code_span(sanitize_code_span_cell("#{endpoint.method} #{endpoint.url}"))
-      ob_puts "| #{endpoint_cell} | #{sanitize_text_cell(endpoint.protocol)} | #{params_text} |"
+      cells = [endpoint_cell, sanitize_text_cell(endpoint.protocol), params_text]
+      cells << sanitize_text_cell(report_projects(endpoint)) if show_project
+      if show_path
+        paths = endpoint.details.code_paths.map do |location|
+          line = location.line
+          path = line ? "#{location.path}:#{line}" : location.path
+          markdown_code_span(sanitize_code_span_cell(path))
+        end
+        cells << paths.join("<br>")
+      end
+      ob_puts "| #{cells.join(" | ")} |"
     end
   end
 end

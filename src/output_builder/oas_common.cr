@@ -34,7 +34,7 @@ module OutputBuilderOasCommon
   # first one's value throws the rest away — `servers` would name one of two
   # hosts, `x-noir-operations` one of fifteen GraphQL operations — so these
   # are unioned instead.
-  UNIONED_OPERATION_KEYS = Set{"servers", "x-noir-operations", "x-noir-hosts", "x-noir-projects"}
+  UNIONED_OPERATION_KEYS = Set{"servers", "x-noir-operations", "x-noir-hosts", "x-noir-projects", "x-noir-origins"}
 
   # A native Hash/Array/scalar literal as a fresh `JSON::Any`, for the values
   # that land in the `Hash(String, JSON::Any)` trees the merge helpers below
@@ -462,10 +462,12 @@ module OutputBuilderOasCommon
   # `resolve_project_collisions` strips it again from operations only one
   # project declared, which is every operation of a single-project scan.
   private def add_noir_project_extension(operation : Hash(String, JSON::Any), endpoint : Endpoint)
-    project = endpoint.details.project
-    return if project.empty?
-
-    operation["x-noir-projects"] = json_any([project])
+    details = endpoint.details
+    projects = details.origin_projects
+    operation["x-noir-projects"] = json_any(projects) unless projects.empty?
+    unless details.origins.empty?
+      operation["x-noir-origins"] = JSON.parse(details.origins.to_json)
+    end
   end
 
   # Keeps `x-noir-projects` (sorted) on the operations two or more projects
@@ -496,7 +498,7 @@ module OutputBuilderOasCommon
     projects = resolved.delete("x-noir-projects").try(&.as_a?).try(&.map(&.as_s).uniq!.sort!) || [] of String
     if projects.size > 1
       resolved["x-noir-projects"] = json_any(projects)
-      @logger.warning "#{method.upcase} #{oas_path} is declared by #{projects.size} projects (#{projects.join(", ")}); " \
+      @logger.warning "#{method.upcase} #{oas_path} is declared by #{projects.size} projects (#{escape_control_chars(projects.join(", "))}); " \
                       "their parameters are merged into one operation. Scan each project on its own for separate operations."
     end
     JSON::Any.new(resolved)
@@ -682,7 +684,7 @@ module OutputBuilderOasCommon
   private def resolve_oas_path(endpoint : Endpoint, route : String, parameters : Array(Hash(String, JSON::Any)),
                                canonical_paths : Hash(String, String)) : {String, String?}
     declared_path_params = endpoint.params.compact_map { |p| p.name if p.request_type == "path" }
-    technologies = endpoint.details.technologies + [endpoint.details.technology || ""]
+    technologies = endpoint.details.contributing_technologies
     oas_path = normalize_oas_path(route_path(route), declared_path_params, technologies)
     canonical_path = canonical_oas_path(oas_path, canonical_paths)
     return {oas_path, nil} if canonical_path == oas_path

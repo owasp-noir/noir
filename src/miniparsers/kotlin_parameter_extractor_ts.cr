@@ -1664,8 +1664,7 @@ module Noir
     end
 
     private def file_body(file : String) : String
-      CodeLocator.instance.content_for(file) ||
-        Noir::TextFile.read(file)
+      CodeLocator.instance.read_source(file) || ""
     end
 
     private def absorb!(result : Index,

@@ -32,7 +32,7 @@ class OutputBuilderAdb < OutputBuilder
         skipped_http += 1
         next
       end
-      if ios_origin?(endpoint) && !declared_by?(endpoint, "android")
+      if !declared_by?(endpoint, "android") && (ios_origin?(endpoint) || !endpoint.details.origins.empty?)
         skipped_ios += 1
         next
       end
@@ -109,7 +109,8 @@ class OutputBuilderAdb < OutputBuilder
     parts << "-d" << device_shell_quote(baked[:url])
     # Constrain the launch to the declaring app when it's known, so the link
     # isn't grabbed by another handler or the disambiguation chooser.
-    if package = meta["package"]?
+    app = endpoint.details.origins.find { |origin| origin.platform == "android" }.try(&.application)
+    if package = app || meta["package"]?
       parts << "-p" << device_shell_quote(package) unless package.empty?
     end
     append_extras(parts, endpoint)

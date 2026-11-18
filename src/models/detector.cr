@@ -169,6 +169,11 @@ class Detector
     false
   end
 
+  # Detectors that resolve other source files need the completed registry.
+  def requires_scan_files? : Bool
+    false
+  end
+
   # Whether the detector can be skipped on subsequent files once it
   # has matched. Defaults to `true` (idempotent — the detector only
   # signals tech presence). Detectors that perform side effects in

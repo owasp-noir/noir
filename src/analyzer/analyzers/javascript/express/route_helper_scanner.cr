@@ -204,7 +204,7 @@ module Analyzer::Javascript
         next unless @base_paths.any? { |base| Noir::PathScope.under_root?(file, base) }
 
         content = begin
-          JsModuleResolver.normalize_computed_specifiers(CodeLocator.instance.content_for(file) || Noir::TextFile.read(file))
+          JsModuleResolver.normalize_computed_specifiers(CodeLocator.instance.read_source(file) || "")
         rescue e : File::NotFoundError | File::Error | IO::Error
           @logger.debug "Error reading #{file} for route helpers (#{e.class}): #{e.message}"
           next
@@ -340,7 +340,7 @@ module Analyzer::Javascript
         by_target[key[0]] << {key[1], passed} if passed
       end
       by_target.each do |target, positions|
-        raw = CodeLocator.instance.content_for(target) || (Noir::TextFile.read(target) rescue nil)
+        raw = CodeLocator.instance.read_source(target) rescue nil
         next unless raw
         content = Noir::JSRouteExtractor.strip_js_comments(raw)
         head = content.match(MODULE_EXPORT_FN) || next

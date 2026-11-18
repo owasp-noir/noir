@@ -8,29 +8,22 @@ require "../utils/control_chars"
 # classification and the same "is this actually launchable?" / shell-quoting
 # rules — kept here so the two stay in lock-step.
 module MobileLaunch
-  # An iOS-originated mobile endpoint. The analyzer framework tags each
-  # endpoint with its detector tech (`details.technology`): the Android
-  # manifest analyzer -> "android", the iOS analyzer -> "ios". The shared App
-  # Links analyzer ("well_known_applinks") emits both platforms, told apart by
-  # the backing file — Android `assetlinks.json` vs Apple
-  # apple-app-site-association.
   def ios_origin?(endpoint : Endpoint) : Bool
-    return true if declared_by?(endpoint, "ios")
-    return false unless endpoint.details.technology == "well_known_applinks"
-
-    # Classify as iOS only on an affirmative Apple apple-app-site-association
-    # backing file. The old `none? { assetlinks.json }` was vacuously true for
-    # an empty code_paths list (which optimization can produce), so an Android
-    # App-Links association with no code_paths leaked into the iOS simctl list.
-    endpoint.details.code_paths.any? { |pi| File.basename(pi.path) == "apple-app-site-association" }
+    declared_by?(endpoint, "ios")
   end
 
-  # Android and iOS declaring the same link merge into one endpoint whose
-  # `technology` names only the winner; `technologies` keeps both, so the
-  # link launches on either platform.
-  def declared_by?(endpoint : Endpoint, tech : String) : Bool
+  def declared_by?(endpoint : Endpoint, platform : String) : Bool
     details = endpoint.details
-    details.technology == tech || details.technologies.includes?(tech)
+    return details.origins.any? { |origin| origin.platform == platform } unless details.origins.empty?
+
+    technologies = details.contributing_technologies
+    return true if technologies.includes?(platform)
+    return false unless technologies.includes?("well_known_applinks")
+
+    details.code_paths.any? do |location|
+      name = File.basename(location.path)
+      platform == "ios" ? name.in?("apple-app-site-association", "apple-app-site-association.json") : name == "assetlinks.json"
+    end
   end
 
   # App Links / Universal Links from `.well-known` files are bare path
