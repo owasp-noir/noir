@@ -4566,3 +4566,38 @@ describe "SpringAuthTagger (Boot security auto-configuration excluded)" do
     tags["GET /items"][0].should start_with("Protected by Spring Security default chain (@EnableWebSecurity")
   end
 end
+
+describe "SpringAuthTagger (concatenated matcher patterns)" do
+  it "reads a securityMatcher and a requestMatchers pattern built by string concatenation" do
+    config = <<-JAVA
+      package com.example;
+
+      public class SecurityConfig {
+          private static final String INTERNAL = "/internal";
+
+          @Bean
+          @Order(1)
+          SecurityFilterChain internal(HttpSecurity http) throws Exception {
+              http.securityMatcher(Paths.INTERNAL + "/**")
+                  .authorizeHttpRequests(a -> a
+                      .requestMatchers(antMatcher(INTERNAL + "/admin" + "/**")).authenticated()
+                      .anyRequest().permitAll());
+              return http.build();
+          }
+
+          @Bean
+          @Order(2)
+          SecurityFilterChain api(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(a -> a.anyRequest().authenticated());
+              return http.build();
+          }
+      }
+      JAVA
+    paths = "package com.example;\n\npublic class Paths {\n    public static final String INTERNAL = \"/internal\";\n}\n"
+    tags = run_spring_security_config({"SecurityConfig.java" => config, "Paths.java" => paths},
+      ["GET /internal/ping", "GET /internal/admin/jobs", "GET /items"])
+    tags["GET /internal/ping"].should be_empty
+    tags["GET /internal/admin/jobs"].should eq(["Protected by Spring Security authenticated via requestMatchers(\"/internal/admin/**\")"])
+    tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyRequest()"])
+  end
+end
