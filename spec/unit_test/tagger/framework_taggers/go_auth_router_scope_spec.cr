@@ -554,6 +554,36 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     guarded?(result["GET /api/late"]).should be_true
   end
 
+  it "scopes a fiber app.Use(path, mw) to the routes under that path" do
+    src = <<-GO
+      package main
+
+      import (
+      \t"github.com/gofiber/fiber/v2"
+      \t"github.com/gofiber/fiber/v2/middleware/keyauth"
+      )
+
+      func protect(router fiber.Router, auth fiber.Handler) {
+      \trouter.Use("/mcp", auth)
+      }
+
+      func main() {
+      \tapp := fiber.New()
+      \tprotect(app, keyauth.New(keyauth.Config{KeyLookup: "header:x"}))
+      \tapp.Post("/mcp/call", func(c *fiber.Ctx) error { return nil })
+      \tapp.Use("/admin", keyauth.New(keyauth.Config{KeyLookup: "header:x"}))
+      \tapp.Get("/health", func(c *fiber.Ctx) error { return nil })
+      \tapp.Get("/admin/users", func(c *fiber.Ctx) error { return nil })
+      }
+      GO
+    result = router_scope_scan({"go.mod" => "module f\n", "main.go" => src},
+      [{"POST", "/mcp/call", "main.go", %("/mcp/call")}, {"GET", "/health", "main.go", %("/health")},
+       {"GET", "/admin/users", "main.go", %("/admin/users")}], "go_fiber")
+    guarded?(result["GET /admin/users"]).should be_true
+    guarded?(result["POST /mcp/call"]).should be_true
+    guarded?(result["GET /health"]).should be_false
+  end
+
   it "still guards a subrouter mounted on the guarded router (chi Mount, mux Subrouter)" do
     chi = <<-GO
       package main

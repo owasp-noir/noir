@@ -70,6 +70,9 @@ module GoRouteGroupScope
   # A `.Use(...)` / `.Pre(...)` middleware registration call.
   USE_CALL = /(\w+)\.(?:Use|Pre)\s*\(/
 
+  # A `.Use` whose first argument is a path literal.
+  USE_WITH_PATH = /\w\.Use\s*\(\s*"([^"]*)"\s*,/
+
   # `name := parent.Group("/seg", mw...)` — middleware handed to the group
   # constructor instead of a later `.Use`; gin, Iris (`Party`) and Fiber all
   # take it. The group is already in `Scopes#groups` by the time the line is
@@ -184,6 +187,10 @@ module GoRouteGroupScope
     receiver = stripped.match(USE_CALL).try &.[1]
     return if receiver.nil?
 
+    # Fiber's `app.Use("/admin", mw)` runs `mw` only under that path.
+    if m = stripped.match(USE_WITH_PATH)
+      return scopes.extend(scopes.receiver(receiver), m[1])
+    end
     scopes.receiver(receiver)
   end
 

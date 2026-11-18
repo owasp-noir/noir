@@ -2007,6 +2007,7 @@ class GoAuthTagger < FrameworkTagger
         # A chain that keeps its group nowhere guards only its own routes.
         use_receiver = above_line.match(GoRouteGroupScope::USE_CALL).try(&.[1])
         if code_only(above_line).matches?(USE_TOKEN) && !ephemeral_group_use(above_line) &&
+           above_line.match(GoRouteGroupScope::USE_WITH_PATH).try { |m| prefix_covers?(m[1], endpoint.url) } != false &&
            (route_receiver.nil? || use_receiver.nil? ||
            router_chain(path_info.path, lines, line_num, route_receiver)[0].any? { |(router, _)| router == use_receiver })
           statement = statement_text(lines, check_idx + 1)

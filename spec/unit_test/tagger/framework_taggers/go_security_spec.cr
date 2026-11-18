@@ -251,6 +251,34 @@ describe "GoSecurityTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "scopes a fiber app.Use(path, mw) to the routes under that path" do
+    tmpdir = File.tempname("go_sec_use_path")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "main.go")
+    File.write(file, [
+      "package main",
+      "func main() {",
+      "    app := fiber.New()",
+      "    app.Use(\"/api\", limiter.New())",
+      "    app.Get(\"/health\", healthHandler)",
+      "    app.Get(\"/api/items\", itemsHandler)",
+      "}",
+    ].join("\n"))
+
+    opts = create_test_options
+    opts["base"] = YAML::Any.new(tmpdir)
+    seed_file_map(tmpdir)
+
+    health = go_endpoint(file, 5, "/health", "GET", "go_fiber")
+    items = go_endpoint(file, 6, "/api/items", "GET", "go_fiber")
+    GoSecurityTagger.new(opts).perform([health, items])
+
+    tag_named(health, "rate-limit").should be_nil
+    tag_named(items, "rate-limit").should_not be_nil
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
   it "exempts static-asset routes from a global root cors scope" do
     # Models gotify: a global `r.Use(cors.New(...))` plus static routes
     # served off the engine (the SPA shell / `/static/*`). CORS is global,
