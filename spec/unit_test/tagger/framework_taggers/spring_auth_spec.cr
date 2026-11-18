@@ -4825,6 +4825,9 @@ describe "SpringAuthTagger (Actuator routes)" do
     endpoints = run_spring_endpoints_map(files.merge({"src/main/resources/application.properties" => "management.server.port=${OPS_PORT:9091}\n"}), routes, ["GET /manage/health"])
     auth_of.call(endpoints, "GET /manage/health").should be_empty
     auth_of.call(endpoints, "GET /items").should eq(authenticated)
+    # An imported configuration does not move the port the app sets.
+    imported = {"src/main/resources/application.yml" => "management:\n  server.port: 9091\nspring:\n  config.import: optional:file:./extra.yml\n"}
+    auth_of.call(run_spring_endpoints_map(files.merge(imported), routes, ["GET /manage/health"]), "GET /manage/health").should be_empty
 
     # Without its own port the Actuator answers on the app's port.
     endpoints = run_spring_endpoints_map(files, routes, ["GET /manage/health"])
