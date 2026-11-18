@@ -66,6 +66,7 @@ describe "Analyzer::Mobile::Ios (format-string literals)" do
     XML
   File.write(swift, <<-SWIFT)
     let media = String(format: "demo://media?action=play&id=%@&page=%lu", itemId, page)
+    let price = String(format: "demo://price?amount=%.2f&count=%zu", amount, count)
     let search = "demo://search?q=hello%20world"
     let plain = "demo://items/list"
     SWIFT
@@ -82,6 +83,7 @@ describe "Analyzer::Mobile::Ios (format-string literals)" do
 
   it "skips a Swift literal carrying printf format specifiers" do
     urls.any?(&.starts_with?("demo://media")).should be_false
+    urls.any?(&.starts_with?("demo://price")).should be_false
   end
 
   it "keeps percent-escapes and plain literals" do
