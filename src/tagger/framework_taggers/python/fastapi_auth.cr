@@ -1520,13 +1520,13 @@ class FastAPIAuthTagger < FrameworkTagger
   # the locals its body assigns once, and its body for the evaluator.
   private record HttpMiddleware, receiver : String, klass : MwClass, locals : Hash(String, String)
 
-  HTTP_MIDDLEWARE     = /^\s*@\s*(\w+)\s*\.\s*middleware\s*\(\s*["']http["']\s*\)/
-  STARLETTE_PATH_EXPR = /(?<![\w.])request\.url\.path\b/
-  MW_MODULE_CONSTANT  = /^([A-Z_][A-Z0-9_]*)\s*(?::[^=\n]+)?=\s*(?:frozenset|set|tuple|list)?\s*\(?\s*[\[({]/
-  MW_LOCAL_ASSIGNMENT = /\A([A-Za-z_]\w*)\s*(?::[^=]+)?=(?!=)\s*(.+)\z/m
+  HTTP_MIDDLEWARE           = /^\s*@\s*(\w+)\s*\.\s*middleware\s*\(\s*["']http["']\s*\)/
+  STARLETTE_PATH_EXPR       = /(?<![\w.])request\.url\.path\b/
+  MW_MODULE_CONSTANT        = /^([A-Z_][A-Z0-9_]*)\s*(?::[^=\n]+)?=\s*(?:frozenset|set|tuple|list)?\s*\(?\s*[\[({]/
+  MW_LOCAL_ASSIGNMENT       = /\A([A-Za-z_]\w*)\s*(?::[^=]+)?=(?!=)\s*(.+)\z/m
   MW_CREDENTIAL_SOURCE_HTTP = /\brequest\.(?:headers|cookies)\b/
   MW_CREDENTIAL_NAME_HTTP   = /['"][\w-]*(?:key|token|secret|signature|password|authorization|session|auth)[\w-]*['"]/i
-  MW_IDENTITY_CALL    = /\A(?:await\s+)?[\w.]*(?:user|session|principal|identity|caller)\w*\s*\(/i
+  MW_IDENTITY_CALL          = /\A(?:await\s+)?[\w.]*(?:user|session|principal|identity|caller)\w*\s*\(/i
   # A name read (not called, not assigned), or a string literal to step over.
   MW_LOCAL_NAME         = /#{PythonGuardDefinitions::STRING_LITERAL.source}|(?<![\w.])[A-Za-z_]\w*\b(?!\s*\()(?!\s*=(?!=))/
   MW_CREDENTIAL_MISSING = /\bnot\s+in\b|\bis\s+None\b|==\s*None\b|!=(?!\s*None\b)/
