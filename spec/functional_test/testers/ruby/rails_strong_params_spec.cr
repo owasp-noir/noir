@@ -9,7 +9,8 @@ require "../../func_spec.cr"
 # A permit list may also hang off a helper that returns
 # `params.require(key)` (`params_for(:item).permit(...)`) or off a
 # local bound to `params.require(:order)` / `params[:note]`; the container
-# key is not a field then either. A Devise sessions override that never
+# key is not a field then either, by the same rule as a permit root, even
+# if the local is also passed whole somewhere. A Devise sessions override that never
 # calls `super` reads none of Devise's sign-in params; a passwords override
 # that calls `super`, or a helper reading `resource_params`, keeps them.
 article_fields = [
