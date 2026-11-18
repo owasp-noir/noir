@@ -355,11 +355,17 @@ describe Noir::TreeSitterKotlinParameterExtractor do
             data class CreateRequest(val itemId: Long, val quantity: Int)
         }
 
+        class PaymentController {
+            data class CreateRequest(val cardNo: String)
+        }
+
         class DemoController {
             @PostMapping("/orders")
             fun create(@RequestBody req: OrderController.CreateRequest): String = ""
             @GetMapping("/orders")
             fun search(req: OrderController.CreateRequest?): String = ""
+            @PostMapping("/orders/full")
+            fun full(@RequestBody req: com.example.OrderController.CreateRequest): String = ""
         }
         KT
 
@@ -368,6 +374,10 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "json"}, {"quantity", "json"}])
       extract(source, "DemoController", "search", "GET", fields: fields)
         .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "query"}, {"quantity", "query"}])
+      # A package-qualified name resolves by its longest known suffix, not
+      # the simple name another nested class shares.
+      extract(source, "DemoController", "full", "POST", fields: fields)
+        .map { |p| {p.name, p.param_type} }.should eq([{"itemId", "json"}, {"quantity", "json"}])
 
       # A resolver that supplies the nested type (`== OrderController.CreateRequest::class.java`)
       # is recorded by its simple name; the qualified parameter still matches it.
