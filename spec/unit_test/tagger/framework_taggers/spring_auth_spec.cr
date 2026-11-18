@@ -4832,6 +4832,19 @@ describe "SpringAuthTagger (Actuator routes)" do
     # Without its own port the Actuator answers on the app's port.
     endpoints = run_spring_endpoints_map(files, routes, ["GET /manage/health"])
     auth_of.call(endpoints, "GET /manage/health").should eq(authenticated)
+
+    # An app with no configuration of its own runs on the one a module on
+    # its classpath ships.
+    bundled = {
+      "settings.gradle"                                       => "include 'core', 'bundle'\n",
+      "core/build.gradle"                                     => build,
+      "core/src/main/java/com/example/OpsSecurityConfig.java" => config,
+      "core/src/main/resources/application.properties"        => "management.server.port=9091\n",
+      "bundle/build.gradle"                                   => build.sub("dependencies {\n", "dependencies {\n    implementation project(':core')\n"),
+      "bundle/src/main/java/com/example/b/App.java"           => app,
+    }
+    endpoints = run_spring_endpoints_map(bundled, {"GET /manage/health" => "bundle/build.gradle:4"}, ["GET /manage/health"])
+    auth_of.call(endpoints, "GET /manage/health").should be_empty
   end
 end
 
