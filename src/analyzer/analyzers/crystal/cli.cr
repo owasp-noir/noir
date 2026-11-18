@@ -1,5 +1,7 @@
+require "yaml"
 require "../../../models/analyzer"
 require "../../engines/cli_endpoint_support"
+require "../../../miniparsers/crystal_callee_extractor"
 
 module Analyzer::Crystal
   # Surfaces the command-line attack surface of Crystal programs as `cli://`
@@ -34,11 +36,14 @@ module Analyzer::Crystal
         next if cli_test_path?(path)
         next unless File.exists?(path)
         begin
-          content = read_file_content(path)
+          # Comment-cut first: a doc comment's `ARGV[0]` or `parser.on`
+          # example is not the program reading input.
+          lines = read_file_content(path).lines.map { |line| Noir::CrystalCalleeExtractor.strip_comment(line) }
+          content = lines.join('\n')
           next unless content.matches?(MARKERS)
           root_url = "cli://#{cli_binary_name(path)}"
           emit_env = !content.matches?(WEB_RE)
-          scan(content.lines, path, root_url, endpoints, emit_env)
+          scan(lines, path, root_url, endpoints, emit_env)
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"
           next
@@ -90,7 +95,47 @@ module Analyzer::Crystal
       end
     end
 
+    REQUIRE_RE = /^\s*require\s+"(\.{1,2}\/[^"*]+)"/
+
+    @shard_target_names : Hash(String, String)?
+
+    # Each `.cr` file a `shard.yml` target builds, by expanded path => the
+    # target's name: its `main:` and every file that main reaches through
+    # relative `require`s. A file two targets reach names neither.
+    private def shard_target_names : Hash(String, String)
+      @shard_target_names ||= begin
+        reached = {} of String => Set(String)
+        get_files_by_basename("shard.yml").each do |manifest|
+          targets = YAML.parse(read_file_content(manifest))["targets"]?.try(&.as_h?) rescue nil
+          next unless targets
+          dir = File.dirname(Noir::PathScope.expand(manifest))
+          targets.each do |name, target|
+            main = target["main"]?.try(&.as_s?) rescue nil
+            next unless main
+            pending = [File.expand_path(main, dir)]
+            seen = Set(String).new
+            while file = pending.pop?
+              next unless seen.add?(file) && seen.size <= 512 && File.file?(file)
+              (reached[file] ||= Set(String).new) << name.to_s
+              (read_file_content(file) rescue "").each_line do |line|
+                if match = line.match(REQUIRE_RE)
+                  required = File.expand_path(match[1], File.dirname(file))
+                  pending << (required.ends_with?(".cr") ? required : "#{required}.cr")
+                end
+              end
+            end
+          end
+        end
+        names = {} of String => String
+        reached.each { |file, targets| names[file] = targets.first if targets.size == 1 }
+        names
+      end
+    end
+
     private def cli_binary_name(path : String) : String
+      if name = shard_target_names[Noir::PathScope.expand(path)]?
+        return name
+      end
       stem = File.basename(path, ".cr")
       if stem == "main" || stem == "cli" || stem == "app"
         if name = cli_directory_binary_name(path)
