@@ -202,6 +202,61 @@ describe "Kubernetes Ingress Analyzer" do
     endpoints.sort_by(&.url).map { |e| {e.url, e.details.code_paths.first.line} }.should eq([{"/", 22}, {"/export", 16}])
   end
 
+  it "gives a path repeated across rules and Ingresses the line of its own rule" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: items
+      spec:
+        template:
+          spec:
+            containers:
+            - name: items
+              livenessProbe:
+                httpGet:
+                  path: /
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: items
+      spec:
+        rules:
+        - host: items.example.test
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+              backend:
+                service:
+                  name: items
+                  port:
+                    number: 80
+        - host: orders.example.test
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+      ---
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: demo
+      spec:
+        rules:
+        - host: demo.example.test
+          http:
+            paths:
+            - path: /
+              pathType: Prefix
+      YAML
+
+    endpoints.map { |e| {tag_descriptions(e, "ingress-host").first, e.details.code_paths.first.line} }.should eq([
+      {"items.example.test", 23}, {"orders.example.test", 33}, {"demo.example.test", 44},
+    ])
+  end
+
   it "reads an Ingress inside a Helm named template" do
     endpoints = analyze_ingress <<-YAML
       {{- define "demo.ingress" }}
