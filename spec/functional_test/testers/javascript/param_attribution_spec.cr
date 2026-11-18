@@ -33,6 +33,24 @@ describe "JavaScript param attribution", tags: "functional" do
     rows["POST /photos"][0].should eq(["photos:file"])
   end
 
+  it "drops alias writes and path params the route cannot supply" do
+    rows = params_for.call("express_phantom_params")
+    # `headers['accept'] = ...` through `const { headers } = req` sets a header.
+    rows["GET /users/:uid/plain"][0].should eq(["uid:path"])
+    rows["GET /users/:uid/read"][0].should eq(["locale:header", "uid:path", "x-token:header"])
+    # `req.params.ghost` is not a placeholder of `/orders/:id`; `:uid` comes
+    # from the mount prefix under mergeParams.
+    rows["GET /orders/:id"][0].should eq(["id:path"])
+    rows["GET /orders/const"][0].should be_empty
+    rows["GET /users/:uid/owner"][0].should eq(["uid:path"])
+    # Kept: a mergeParams router mounted where the scan cannot see (parent
+    # params), unnamed wildcards read by position, and a path with an
+    # unresolved imported part that may declare `:id`.
+    rows["GET /list"][0].should eq(["ownerId:path"])
+    rows["GET /files/*"][0].should eq(["0:path"])
+    rows["GET /orders/{base}/:x"][0].should eq(["base:path", "id:path", "x:path"])
+  end
+
   it "reads @koa/multer fields" do
     rows = params_for.call("koa_multer")
     rows["POST /icons"][0].should eq(["icon:file"])
