@@ -294,7 +294,7 @@ module Noir
         next if name.empty?
         type_name = Noir::TreeSitter.field(component, "type").try { |node| Noir::TreeSitter.node_text(node, source) } || ""
         fields << FieldInfo.new(name, "public", true, "", json_property_name(component, source), type_name,
-          json_unwrap(component, source), json_ignore?(component, source))
+          json_unwrap(component, source), json_ignore?(component, source) || json_read_only?(component, source))
       end
       fields
     end
@@ -304,6 +304,13 @@ module Noir
     private def json_property_name(decl : LibTreeSitter::TSNode, source : String) : String?
       return unless ann = annotation_node_on(decl, source, "JsonProperty")
       annotation_string_arg(ann, source).presence
+    end
+
+    # `@JsonProperty(access = READ_ONLY)`: serialized only, never read from a
+    # request body. `WRITE_ONLY` is the opposite and still binds.
+    private def json_read_only?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      return false unless ann = annotation_node_on(decl, source, "JsonProperty")
+      annotation_text(ann, source).matches?(/\baccess\s*=\s*(?:[\w.]*\.)?READ_ONLY\b/)
     end
 
     # `@JsonIgnore` (not `@JsonIgnore(false)`) on a field or accessor.
@@ -831,6 +838,7 @@ module Noir
       # `@JsonIgnore` getter, `@JsonProperty` setter).
       json_ignored = Set(String).new
       json_kept = Set(String).new
+      read_only = Set(String).new
       # Jackson does not read a `transient` field as a property; a setter
       # (written or Lombok) or `@JsonProperty` still binds it.
       transient_fields = Set(String).new
@@ -860,7 +868,11 @@ module Noir
           end
           declared << {name, access, init, json_property_name(member, source), type_name, json_unwrap(member, source)}
           json_ignored << name if json_ignore?(member, source)
-          json_kept << name if annotation_node_on(member, source, "JsonProperty")
+          if json_read_only?(member, source)
+            read_only << name
+          elsif annotation_node_on(member, source, "JsonProperty")
+            json_kept << name
+          end
           if field_modifier?(member, source, "transient") && !annotation_node_on(member, source, "Setter")
             transient_fields << name
           end
@@ -876,7 +888,13 @@ module Noir
           if parameters = Noir::TreeSitter.field(member, "parameters")
             Noir::TreeSitter.each_named_child(parameters) { arity += 1 }
           end
-          json_ignored << property if property && arity == (name.starts_with?("set") ? 1 : 0) && json_ignore?(member, source)
+          if property && arity == (name.starts_with?("set") ? 1 : 0)
+            json_ignored << property if json_ignore?(member, source)
+            if json_read_only?(member, source)
+              read_only << property
+              next
+            end
+          end
           # `@JsonSetter("encryptedValue") setEncryptedValueBase64(..)` binds
           # the key it names, whatever the method is called.
           {"JsonProperty", "JsonSetter"}.each do |binding|
@@ -900,6 +918,7 @@ module Noir
         json_name ||= renamed[name]?
         ignored = json_ignored.includes?(name) && !json_kept.includes?(name) && !(json_name && json_kept.includes?(json_name))
         ignored ||= transient_fields.includes?(name) && !has_setter && !json_kept.includes?(name)
+        ignored ||= read_only.includes?(name)
         FieldInfo.new(name, access, has_setter, init, json_name, type_name, unwrap, ignored)
       end
     end
