@@ -205,7 +205,6 @@ describe NoirPassiveScan::FalsePositive do
     end
 
     it "suppresses a name assigned a reference or a code expression, not a literal" do
-      secret = "S3cret"
       [
         # Shell handoffs: the value is another variable, whatever follows it.
         %(  DEMO_DATABASE_URL="$ORDER_DSN" \\),
@@ -214,7 +213,6 @@ describe NoirPassiveScan::FalsePositive do
         %(export DATABASE_URL=${ORDER_DSN:-}),
         %q(export DATABASE_URL="postgresql://\${PGUSER}:\${PGPASS}@\${PGHOST}/demo"),
         %(DATABASE_URL=... cargo run),
-        %(Reads `${DATABASE_URL}` (no default). Dev uses `postgres://admin:#{secret}@localhost:5432/demo`.),
         # Code that types or reads the name.
         %(    DATABASE_URL: str | None = None),
         %(cfg = {"DATABASE_URL": demo_db.DATABASE_URL}),
@@ -239,10 +237,19 @@ describe NoirPassiveScan::FalsePositive do
         %(cfg = {"DATABASE_URL" => ENV.fetch("DEMO_TEST_DATABASE_URL", "postgresql://demo:#{secret}@db.example.test:5432/demo")}),
         # PHP / Perl assign through `$NAME`; only a read is an expansion.
         %($DATABASE_URL = "postgres://admin:#{secret}@db.example.test/app";),
+        # A first quoted token that holds nothing does not hide a later literal.
+        %(DATABASE_URL = """postgres://admin:#{secret}@db.example.test/app"""),
+        %(DATABASE_URL = "" if DEBUG else "postgres://admin:#{secret}@db.example.test/app"),
+        %(DATABASE_URL = "${ORDER_DSN}" || "postgres://admin:#{secret}@db.example.test/app"),
       ].each do |line|
         NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_false, "expected kept: #{line}"
       end
       NoirPassiveScan::FalsePositive.suppress?(github_rule, "GITHUB_TOKEN=demo.token.value").should be_false
+    end
+
+    it "judges a long chain of calls without hitting the regex match limit" do
+      line = "DATABASE_URL = #{"f(a)||" * 30}'x'"
+      NoirPassiveScan::FalsePositive.suppress?(database_rule, line).should be_false
     end
 
     it "suppresses a credentialed-URL regex hit whose password is a stand-in" do
