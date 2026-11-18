@@ -39,6 +39,11 @@ class AccountRecoveryTagger < Tagger
     "verification_code", "recovery_code", "confirmation_token",
   }
 
+  # `password` next to one of these names a file or archive password
+  # (`/zip/password/download`), not a credential change.
+  FILE_CONTEXT_PATH_PARTS = Set{"zip", "download", "downloads", "file", "files", "archive", "export"}
+  FILE_PASSWORD_PARTS     = Set{"password", "passwd"}
+
   # Weaker, generic action words. Tag only when two *distinct* weak
   # tokens co-occur (e.g. `/verify-email`, `/change-email`,
   # `/account/recovery`), so a bare `/reset` or `/confirm` on an
@@ -50,17 +55,29 @@ class AccountRecoveryTagger < Tagger
     "account", "recover", "recovery",
   }
 
+  ACTION_VERBS   = Set{"change", "update"}
+  CHANGED_THINGS = Set{"email", "username", "phone"}
+
   private def check_endpoint(endpoint : Endpoint)
     param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
     url_segments = url_parts(endpoint.url)
 
+    file_context = url_segments.any? { |part| FILE_CONTEXT_PATH_PARTS.includes?(part) }
+
     has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
-                 url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) } ||
+                 url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) && !(file_context && FILE_PASSWORD_PARTS.includes?(part)) } ||
                  mfa_squished_segment?(endpoint.url)
 
     weak_tokens = Set(String).new
     url_segments.each do |part|
       weak_tokens << part if WEAK_PATH_PARTS.includes?(part)
+    end
+    # Beside `verification`, `change`/`update` are not evidence unless they
+    # name the thing being changed (`/verification/1/update_file`, but still
+    # `/verification/change-email`).
+    if (weak_tokens.includes?("verification") || weak_tokens.includes?("verify")) &&
+       weak_tokens.none? { |t| CHANGED_THINGS.includes?(t) }
+      weak_tokens.subtract(ACTION_VERBS)
     end
 
     check = has_strong || weak_tokens.size >= 2

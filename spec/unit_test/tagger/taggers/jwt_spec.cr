@@ -228,5 +228,19 @@ describe "JwtTagger" do
 
       endpoint.tags.map(&.name).should contain("jwt")
     end
+
+    it "does not count a CLI command's env token names as JWT signals" do
+      tagger = JwtTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("cli://demo/sync", "CLI", [
+        Param.new("DEMO_PERSONAL_TOKEN", "", "env"),
+        Param.new("OTHER_PERSONAL_TOKEN", "", "env"),
+      ])
+      endpoint.protocol = "cli"
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end
