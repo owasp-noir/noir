@@ -3,13 +3,22 @@ require "../../models/endpoint"
 
 @[Noir::TaggerFor(key: "file_upload", name: "FileUpload Tagger", desc: "Identifies file upload endpoints", order: 90)]
 class FileUploadTagger < Tagger
-  # Param names that denote an actual uploaded file regardless of how the
-  # value is carried — a `filename`, an `attachment`, a `multipart`
-  # boundary. Safe to flag on any writable param type.
-  WORDS = Set{
-    "file", "files", "upload", "attachment", "attachments", "document", "documents",
-    "multipart", "content_type", "filename", "content_disposition",
-  }
+  # Param names that denote an uploaded file however the value is carried.
+  # ponytail: a bare JSON `file` stays here only because Rails reports
+  # permitted params as json whenever the controller renders json, though
+  # they may arrive as multipart form data; drop it once the Rails analyzer
+  # types attachment-backed fields as `file`.
+  WORDS = Set{"file", "upload", "multipart"}
+
+  # Names that denote an uploaded file only as a multipart part. In a JSON
+  # body `files`/`attachment` are references to stored files (a URL list, a
+  # message attachment object), since JSON cannot carry a multipart file.
+  FORM_FILE_WORDS = Set{"files", "attachment", "attachments", "document", "documents"}
+
+  # Metadata about a file part. On its own it is an upload only as a form
+  # field beside the part, and not on a download route, where it names the
+  # file to send back.
+  FILE_METADATA_WORDS = Set{"filename", "content_type", "content_disposition"}
 
   # Media words that frequently name a *reference* — a profile-image URL,
   # an avatar link — inside a JSON/body payload rather than an uploaded
@@ -52,7 +61,7 @@ class FileUploadTagger < Tagger
   SEGMENT_ONLY_PATH_PARTS = Set{"media"}
 
   private def check_endpoint(endpoint : Endpoint)
-    has_upload_param = endpoint.params.any? { |param| upload_param?(param) }
+    has_upload_param = endpoint.params.any? { |param| upload_param?(param, endpoint.url) }
     is_upload_url = upload_url?(endpoint.url, endpoint.method)
     is_upload_method = UPLOAD_METHODS.includes?(endpoint.method.upcase)
     has_multipart_header = endpoint.params.any? { |param| multipart_header?(param) }
@@ -65,7 +74,7 @@ class FileUploadTagger < Tagger
     end
   end
 
-  private def upload_param?(param : Param) : Bool
+  private def upload_param?(param : Param, url : String) : Bool
     return false unless UPLOAD_PARAM_TYPES.includes?(param.param_type)
 
     # A param whose type *is* `file` is a file input regardless of its
@@ -74,12 +83,16 @@ class FileUploadTagger < Tagger
     return true if param.param_type == "file"
 
     name = normalize_param_name(param.name)
-    return true if WORDS.includes?(name) || name.ends_with?("_file") || name.ends_with?("_files")
+    return true if WORDS.includes?(name)
+    return false unless MEDIA_UPLOAD_PARAM_TYPES.includes?(param.param_type)
+    return !download_url?(url) if FILE_METADATA_WORDS.includes?(name)
 
-    # Media words count as an upload only via multipart carriage. In a
-    # JSON/body payload they are almost always a URL/reference string, so
-    # `upload_url?`/`multipart_header?` must corroborate them instead.
-    MEDIA_WORDS.includes?(name) && MEDIA_UPLOAD_PARAM_TYPES.includes?(param.param_type)
+    # The other file and media words count as an upload only as multipart
+    # form data. In a JSON/body payload they are almost always a
+    # URL/reference string, so `upload_url?`/`multipart_header?` must
+    # corroborate them instead.
+    FORM_FILE_WORDS.includes?(name) || MEDIA_WORDS.includes?(name) ||
+      name.ends_with?("_file") || name.ends_with?("_files")
   end
 
   private def multipart_header?(param : Param) : Bool
