@@ -157,6 +157,12 @@ describe "Analyzer::Mobile::Ios (secondary-scheme dispatchers)" do
             }
             return false
         }
+        func sendURL() -> URL? {
+            var components = URLComponents()
+            components.scheme = "demolink"
+            components.host = LinkHost.send.rawValue
+            return components.url
+        }
         private func handleShare(_ url: URL) -> Bool {
             return ShareHost.post.rawValue == url.host
         }
@@ -176,6 +182,8 @@ describe "Analyzer::Mobile::Ios (secondary-scheme dispatchers)" do
   CodeLocator.instance.reset_files
   FileUtils.rm_rf(dir)
 
+  # `sendURL` only builds a link (an assignment, not a routing decision),
+  # so it does not pull LinkHost back onto the primary scheme.
   it "credits hosts to the scheme a literal guard selects" do
     urls.should contain("demolink://send")
     urls.should contain("demolink://copy")
