@@ -419,6 +419,9 @@ module Analyzer::Java
       resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
 
       Noir::ImportGraph.related_files(path, package_name, resolved_imports, "java") do |file|
+        # The import graph walks the disk: a sub-resource the user excluded
+        # must not lend its routes to a locator in a file they kept.
+        next if file != path && excluded_path?(file)
         body = cache[file] ||= begin
           file == path ? content : read_file_content(file)
         rescue IO::Error
