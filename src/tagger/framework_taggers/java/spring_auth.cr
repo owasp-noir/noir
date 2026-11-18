@@ -122,6 +122,11 @@ class SpringAuthTagger < FrameworkTagger
   # Spring Security switched on without a chain of the app's own: its
   # default chain authenticates every request.
   ENABLE_SECURITY = /@Enable(?:Web|WebFlux|RSocket)Security\b/
+  # Boot's default chain comes from this auto-configuration, not from the
+  # dependency: an app that excludes it (`@SpringBootApplication(exclude =
+  # SecurityAutoConfiguration.class)`, `spring.autoconfigure.exclude`) has none.
+  SECURITY_AUTOCONFIG   = /\bSecurityAutoConfiguration\b/
+  AUTOCONFIG_ANNOTATION = /@(?:SpringBootApplication|EnableAutoConfiguration)\s*\(/
   # An XML `<http>` element in the Spring Security namespace.
   XML_SECURITY_NAMESPACE = "springframework.org/schema/security"
   XML_HTTP_ELEMENT       = /<(?:[\w-]+:)?http[\s>]/
@@ -154,6 +159,10 @@ class SpringAuthTagger < FrameworkTagger
   # last), so its rules decide them and no other chain's do.
   alias UnreadConfig = NamedTuple(module: String?, what: String, path: String, line: Int32)
 
+  # A path `web.ignoring()` takes out of every chain (`WebSecurityCustomizer`,
+  # `configure(WebSecurity)`): no chain, Boot's default included, guards it.
+  alias IgnoredPath = NamedTuple(pattern: String, method: String?, module: String?)
+
   alias ScopedChain = NamedTuple(scope: Array(String), order: Int32, rules: Array(SecurityRule), module: String?)
 
   def initialize(options : Hash(String, YAML::Any))
@@ -162,6 +171,7 @@ class SpringAuthTagger < FrameworkTagger
     # a matcher noir cannot read, which keep the old global treatment).
     @security_rules = [] of SecurityRule
     @scoped_chains = [] of ScopedChain
+    @ignored_paths = [] of IgnoredPath
     # Build units that declare a security chain (nil: a file outside any).
     @chain_modules = Set(String?).new
     # Build units that switch Spring Security on (`@EnableWebSecurity`), and
@@ -169,6 +179,8 @@ class SpringAuthTagger < FrameworkTagger
     # whose authorization rules it cannot read).
     @security_enabled = Set(String?).new
     @unread_configs = [] of UnreadConfig
+    # Boot apps => whether they exclude SecurityAutoConfiguration.
+    @security_autoconfig_off = Hash(String, Bool).new
     @security_meta_annotations = Hash(String, MetaAnnotation).new
     @annotation_aliases = Hash(String, Set(String)).new
     @method_readers = Hash(String, {Set(String), Bool}).new
@@ -228,9 +240,11 @@ class SpringAuthTagger < FrameworkTagger
   private def pre_scan_security_configs
     @security_rules.clear
     @scoped_chains.clear
+    @ignored_paths.clear
     @chain_modules.clear
     @security_enabled.clear
     @unread_configs.clear
+    @security_autoconfig_off.clear
     @boot_apps.clear
     @security_meta_annotations.clear
     @annotation_aliases.clear
@@ -283,10 +297,12 @@ class SpringAuthTagger < FrameworkTagger
 
         unless test_source?(file)
           @security_enabled << module_dir if content.matches?(ENABLE_SECURITY) && Noir::CComments.strip(content).matches?(ENABLE_SECURITY)
+          @security_autoconfig_off[module_dir] = true if module_dir && content.includes?("SecurityAutoConfiguration") && excludes_security_autoconfig?(content)
           scan_servlet_filter_defs(content, file, module_dir) if content.includes?("doFilter")
           scan_filter_registrations(content, file, module_dir) if content.includes?("FilterRegistrationBean")
           scan_bean_types(content, module_dir) if content.includes?("@Bean")
           @servlet_component_scans << module_dir if content.includes?("@ServletComponentScan")
+          scan_ignored_paths(content, file.ends_with?(".java"), module_dir) if content.includes?("ignoring(")
           scan_component_packages(content, module_dir) if module_dir && (content.includes?("@SpringBootApplication") || content.includes?("@ComponentScan") || content.includes?("@Import"))
         end
 
@@ -1669,6 +1685,44 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
+  IGNORING_CALL    = /\bignoring\s*\(\s*\)/
+  IGNORED_MATCHERS = /\A\s*\.\s*(?:antMatchers|requestMatchers|mvcMatchers)\s*\(/
+
+  # `web.ignoring().requestMatchers(..)`, chained calls included
+  # (`.antMatchers("/a").antMatchers("/b")`). One registered only under a
+  # `@Profile` / `@ConditionalOn…` is skipped: a setting decides whether it
+  # takes the paths out, so the chains' guards stand.
+  private def scan_ignored_paths(content : String, java : Bool, module_dir : String?)
+    code = Noir::CComments.strip(content)
+    return unless code.matches?(IGNORING_CALL)
+    strings, arrays = java ? security_constants(content) : {Hash(String, String).new, Hash(String, Array(String)).new}
+    code.scan(IGNORING_CALL) do |match|
+      position = match.byte_end(0)
+      next if conditionally_registered?(code, match.byte_begin(0))
+      while call = Noir::TextFile.byte_window(code, position, 64).match(IGNORED_MATCHERS)
+        open = position + call.byte_end(0) - 1
+        break unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(code, open)
+        args = code.byte_slice(open + 1, close - open - 1)
+        method = request_matcher_method(args)
+        matcher_patterns(args, strings, arrays).each { |pattern| @ignored_paths << {pattern: pattern, method: method, module: module_dir} }
+        position = close + 1
+      end
+    end
+  end
+
+  # Whether a declaration enclosing `position` (the bean method, its
+  # lambda, the configuration class) carries `@Profile` / `@ConditionalOn…`.
+  private def conditionally_registered?(code : String, position : Int32) : Bool
+    return false unless code.includes?("@Profile") || code.includes?("@ConditionalOn")
+    offset = 0
+    while (open = code.byte_index('{'.ord.to_u8, offset)) && open < position
+      close = Noir::JSLiteralScanner.find_matching_brace_at_byte(code, open)
+      return true if (close.nil? || close >= position) && declaration_lead(code.byte_slice(0, open)).matches?(CONDITIONAL_REGISTRATION)
+      offset = open + 1
+    end
+    false
+  end
+
   private def scan_security_config(content : String, java : Bool, module_dir : String?, file_path : String)
     strings, arrays = java ? security_constants(content) : {Hash(String, String).new, Hash(String, Array(String)).new}
     code = Noir::CComments.strip(content)
@@ -2054,19 +2108,26 @@ class SpringAuthTagger < FrameworkTagger
     # A security configuration or switch outside any build unit (an example
     # under `docs/`) reaches only endpoints whose classpath is unknown.
     reaches = ->(owner : String?) { owner ? applies.call(owner) : classpath.nil? }
-    if config_dir && classpath && @chain_modules.none? { |owner| applies.call(owner) } && @unread_configs.none? { |config| reaches.call(config[:module]) } &&
+    # `web.ignoring()` takes the path out of Spring Security's chains only:
+    # a Shiro filter still decides it.
+    ignored = @ignored_paths.any? do |path|
+      reaches.call(path[:module]) && path[:method].in?(nil, endpoint.method.upcase) && matches_ant_pattern?(url, path[:pattern])
+    end
+    if !ignored && config_dir && classpath && @chain_modules.none? { |owner| applies.call(owner) } && @unread_configs.none? { |config| reaches.call(config[:module]) } &&
        module_classpath(config_dir).try(&.[1])
       # The app declares no chain, yet Spring Security is on its classpath
       # and switched on: its default chain authenticates every request.
       if @security_enabled.any? { |owner| reaches.call(owner) }
         return {"Protected by Spring Security default chain (@EnableWebSecurity, no SecurityFilterChain on the app's classpath)", nil, nil}
-      elsif @boot_apps.empty? || @boot_apps.includes?(config_dir)
+      elsif (@boot_apps.empty? || @boot_apps.includes?(config_dir)) && !security_autoconfig_off?(config_dir)
         return {"Protected by Spring Boot default security (Spring Security on the app's classpath, no SecurityFilterChain in it)", nil, nil}
       end
     end
     scoped = @scoped_chains.select { |chain| applies.call(chain[:module]) && chain[:scope].any? { |pattern| matches_ant_pattern?(url, pattern) } }
     rules =
-      if chain = scoped.min_by? { |candidate| {candidate[:order], -candidate[:scope].max_of { |pattern| matches_ant_pattern?(url, pattern) ? pattern_specificity(pattern) : 0 }} }
+      if ignored
+        [] of SecurityRule
+      elsif chain = scoped.min_by? { |candidate| {candidate[:order], -candidate[:scope].max_of { |pattern| matches_ant_pattern?(url, pattern) ? pattern_specificity(pattern) : 0 }} }
         chain[:rules]
       else
         @security_rules.select { |rule| applies.call(rule[:module]) }
@@ -2128,7 +2189,7 @@ class SpringAuthTagger < FrameworkTagger
         return {"#{reasons}, for #{verbs} only#{note}", first_guard.try(&.[:path]) || best.try(&.[:path]), first_guard.try(&.[:line]) || best.try(&.[:line])}
       end
     end
-    if best.nil? && (unread = @unread_configs.find { |config| reaches.call(config[:module]) })
+    if best.nil? && !ignored && (unread = @unread_configs.find { |config| reaches.call(config[:module]) })
       # No rule noir reads decides the request, but a configuration it does
       # not read can.
       return {"Protected by Spring Security, configured by #{unread[:what]}, which noir does not read#{note}", unread[:path], unread[:line]}
@@ -2136,6 +2197,28 @@ class SpringAuthTagger < FrameworkTagger
     return unless best && best[:protected_rule]
 
     {"#{best[:description]}#{note}", best[:path], best[:line]}
+  end
+
+  private def excludes_security_autoconfig?(content : String) : Bool
+    code = Noir::CComments.strip(content)
+    code.scan(AUTOCONFIG_ANNOTATION).any? do |match|
+      open = match.byte_end(0) - 1
+      next false unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(code, open)
+      args = code.byte_slice(open + 1, close - open - 1)
+      next false unless args.matches?(/\bexclude(?:Name)?\s*=/) && args.matches?(SECURITY_AUTOCONFIG)
+      # Under `@Profile` / `@ConditionalOn…` a setting decides the exclusion.
+      body = code.byte_index('{'.ord.to_u8, close) || code.bytesize
+      lead = declaration_lead(code.byte_slice(0, match.byte_begin(0))) + code.byte_slice(close, body - close)
+      !lead.matches?(CONDITIONAL_REGISTRATION)
+    end
+  end
+
+  # An exclusion through the app's configuration counts only when no
+  # profile or import can change it (`module_config_list`).
+  private def security_autoconfig_off?(app : String) : Bool
+    @security_autoconfig_off.fetch(app) do
+      @security_autoconfig_off[app] = module_config_list(app, "spring.autoconfigure.exclude")[0].try(&.any?(&.matches?(SECURITY_AUTOCONFIG))) || false
+    end
   end
 
   CONFIG_DIRS           = {"src/main/resources", "src/main/resources/config"}

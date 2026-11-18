@@ -470,6 +470,34 @@ describe "SpringSecurityTagger (scope of a rule)" do
     tags["POST /items"].should eq(["csrf-protection", "cors"])
   end
 
+  it "judges a framework route anchored on a Boot app's own build file by that app" do
+    stomp = <<-JAVA
+      @Configuration
+      @EnableWebSocketMessageBroker
+      public class StompConfig implements WebSocketMessageBrokerConfigurer {
+          @Override
+          public void registerStompEndpoints(StompEndpointRegistry registry) {
+              registry.addEndpoint("/").setAllowedOriginPatterns("*");
+          }
+      }
+      JAVA
+    boot = "@SpringBootApplication\npublic class DemoApp {}\n"
+    files = {
+      "settings.gradle"                    => "include 'api', 'worker'\n",
+      "api/build.gradle"                   => "dependencies { implementation 'org.springframework.boot:spring-boot-starter-actuator' }\n",
+      "api/src/main/java/StompConfig.java" => stomp,
+      "api/src/main/java/DemoApp.java"     => boot,
+      "worker/build.gradle"                => "dependencies { implementation 'org.springframework.boot:spring-boot-starter-actuator' }\n",
+      "worker/src/main/java/DemoApp.java"  => boot,
+    }
+    spring_security_tags(files, {"GET /" => "api/build.gradle:1"})["GET /"].should eq(["cors"])
+    # The worker app has no WebSocket endpoint of its own.
+    spring_security_tags(files, {"GET /" => "worker/build.gradle:1"})["GET /"].should be_empty
+    # A parent build that is no Boot app names no serving app: every app's settings may apply.
+    parent = files.merge({"build.gradle" => "subprojects { apply plugin: 'java' }\n"})
+    spring_security_tags(parent, {"GET /" => "build.gradle:1"})["GET /"].should eq(["cors"])
+  end
+
   it "matches a CSRF or CORS path pattern as a whole path, not a prefix" do
     files = {
       "src/main/java/SecurityConfig.java" => <<-JAVA,
