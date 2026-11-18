@@ -267,16 +267,8 @@ module Analyzer::Java
       resources_root = File.join(project_root, "src/main/resources/META-INF/resources")
       return endpoints unless Dir.exists?(resources_root)
 
-      # `Dir.glob` rather than a `file_map` lookup: the endpoint set is
-      # "every file Quarkus serves out of META-INF/resources", including
-      # the images and fonts the media filter keeps out of the index. That
-      # also means `--exclude-path` never reached this walk, so it is
-      # applied per file here.
-      glob_under(resources_root, "**/*").sort.each do |file|
-        next if File.directory?(file)
-        next if excluded_path?(file)
-
-        relative_path = file[resources_root.size..].lstrip('/')
+      CodeLocator.instance.static_files_under(resources_root).sort!.each do |file|
+        relative_path = Noir::PathScope.relative_under(file, resources_root)
         next if relative_path.empty?
 
         details = Details.new(PathInfo.new(file))

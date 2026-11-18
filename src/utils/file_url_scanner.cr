@@ -1,7 +1,5 @@
 require "uri"
-require "./text_file"
 require "./url_origin"
-require "../models/code_locator"
 
 module Noir
   # Shared line/URL extraction for the `FileAnalyzer` hooks
@@ -12,8 +10,6 @@ module Noir
   # what they cost apply to every scan that passes `-u/--url`. Three things
   # are centralised here:
   #
-  #   * reading through the detector's content cache instead of re-opening
-  #     the file per hook,
   #   * rejecting lines that are binary payload rather than text,
   #   * turning a raw `https?://…` run into a URL, or rejecting it.
   module FileUrlScanner
@@ -93,18 +89,6 @@ module Noir
       rest = path[base.path.size..]
       return unless rest.empty? || rest.starts_with?('/')
       rest
-    end
-
-    # Yields each line of `path` with its 0-based index, reading through the
-    # detector's content cache when the file is there. The hooks used to
-    # `File.open` the same file once each, so a cached file was read from
-    # disk twice per scan on top of the detector's own read.
-    def self.each_line(path : String, &)
-      if cached = CodeLocator.instance.content_for(path)
-        cached.each_line.with_index { |line, index| yield line, index }
-      else
-        Noir::TextFile.read(path).each_line.with_index { |line, index| yield line, index }
-      end
     end
 
     # True when `line` is binary payload rather than source/prose text.

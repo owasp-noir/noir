@@ -1,0 +1,44 @@
+src/analyzer/analyzers/llm_analyzers/unified_ai.cr: content = Noir::TextFile.read(path)
+src/analyzer/analyzers/llm_analyzers/unified_ai.cr: File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
+src/analyzer/analyzers/llm_analyzers/unified_ai.cr: entries = Dir.children(current).sort
+src/analyzer/analyzers/llm_analyzers/unified_ai.cr: content = Noir::TextFile.read(resolved)
+src/analyzer/analyzers/llm_analyzers/unified_ai.cr: Dir.glob(glob).each do |file_path|
+src/analyzer/analyzers/llm_analyzers/unified_ai.cr: File.open(file_path, "r", encoding: "utf-8", invalid: :skip) do |file|
+src/analyzer/analyzers/mobile/android.cr: glob_under(buildsrc, "**/*#{extension}").reject { |path| excluded_path?(path) }
+src/analyzer/analyzers/mobile/android.cr: glob_under(dir, "*.xml").reject { |path| excluded_path?(path) }.sort!
+src/analyzer/analyzers/mobile/ios.cr: xcconfigs = glob_under(root, "**/*.xcconfig").reject { |path| excluded_path?(path) }
+src/analyzer/analyzers/mobile/ios.cr: pbxprojs = glob_under(root, "**/project.pbxproj").reject { |path| excluded_path?(path) }
+src/analyzer/analyzers/mobile/ios.cr: glob_under(dir, pattern).any? { |path| !excluded_path?(path) }
+src/analyzer/analyzers/specification/mitmproxy.cr: File.open(path, &.read_fully(buffer))
+src/cli/commands/config.cr: File.read(path)
+src/cli/commands/rules.cr: rule_files = glob_under(path, "**/*.{yml,yaml}")
+src/cli/inspect.cr: text = File.read(path)
+src/cli_validation.cr: content = File.read(path)
+src/config_initializer.cr: File.read(@config_file)
+src/detector/detectors/java/jaxrs.cr: files = %w[src/main/java/**/*.java src/main/kotlin/**/*.kt].flat_map { |glob| glob_under(root, glob) }
+src/detector/detectors/java/jaxrs.cr: files.empty? ? %w[**/*.java **/*.kt].flat_map { |glob| glob_under(root, glob) } : files
+src/llm/acp/client.cr: File.open(File::NULL, "w")
+src/llm/cache.cr: content = File.read(path)
+src/llm/cache.cr: Dir.children(cache_dir).each do |entry|
+src/miniparsers/import_graph.cr: glob_under(dir, pattern).each { |p| block.call(p) }
+src/miniparsers/import_graph.cr: Dir.children(dir).to_set
+src/mobile/linker/ios.cr: !glob_under(dir, "*.xcodeproj").empty? || !glob_under(dir, "*.xcworkspace").empty?
+src/models/code_locator.cr: content = Noir::TextFile.read(path, info)
+src/models/framework_tagger.cr: Dir.children(current) rescue [] of String
+src/models/output_builder.cr: @@handles[path] ||= File.open(path, "w")
+src/options.cr: key = Noir::TextFile.strip_utf8_bom(File.read(Path[path].expand(home: true))).strip
+src/output_builder/html.cr: template = File.read(template_path)
+src/passive_scan/rules.cr: Dir.glob("#{escape_glob_path(path)}/**/*.{yml,yaml}").sort!.each do |file|
+src/passive_scan/rules.cr: documents = YAML.parse_all(File.read(file))
+src/tagger/framework_taggers/java/spring_auth.cr: Dir.children(dir).sort!
+src/tagger/rule_tagger.cr: glob_under(path, "**/*.{yml,yaml}").sort!
+src/tagger/rule_tagger.cr: parse(File.read(file), file)
+src/tagger/rules/embed.cr: names = Dir.children(dir).select { |name| name.ends_with?(".yml") || name.ends_with?(".yaml") }.sort!
+src/tagger/rules/embed.cr: entries = names.map { |name| "{#{name.inspect}, #{File.read(File.join(dir, name)).inspect}}" }
+src/utils/dir_listing.cr: Dir.each_child(dir) do |name|
+src/utils/media_filter.cr: File.open(file_path) do |io|
+src/utils/read_pool.cr: content = preloaded || Noir::TextFile.read(path)
+src/utils/text_file.cr: content = File.read(path)
+src/utils/utils.cr: def glob_under(dir : String, pattern : String) : Array(String)
+src/utils/utils.cr: return Dir.glob(pattern) if dir.empty?
+src/utils/utils.cr: Dir.glob("#{escape_glob_path(dir.chomp('/'))}/#{pattern}")

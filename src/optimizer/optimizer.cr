@@ -2,6 +2,7 @@ require "../analyzer/engines/python_engine"
 require "../models/code_locator"
 require "../models/endpoint"
 require "../models/logger"
+require "../mobile/linker"
 require "../techs/techs"
 require "../utils/media_filter"
 require "../utils/*"
@@ -32,10 +33,14 @@ class EndpointOptimizer
   AI_FOLD_PLACEHOLDER_RE = /\A(?::\w.*|\*\w*|\{[^}]*\}|<[^>]*>|\[[^\]]*\])\z/
   URL_AUTHORITY_RE       = /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\/[^\/]*/
 
+  private alias RouteScope = {String, String?, String?, String?}
+  private alias RouteKey = {String, String, RouteScope, String, String}
+
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
   @pvalue_rules : Hash(String, Array(PValueRule))
   @source_scope_cache : Hash(String, String)
+  @bases : Array(String)
 
   # A URL that already carries its own scheme + authority
   # (e.g. `https://host/path`). The HAR / OAS detectors emit these, so
@@ -50,6 +55,12 @@ class EndpointOptimizer
     "settings.gradle.kts",
     "shard.yml",
     "package.json",
+    "composer.json",
+    "Gemfile",
+    "deno.json",
+    "deno.jsonc",
+    "Package.swift",
+    "pubspec.yaml",
     "go.mod",
     "Cargo.toml",
     "pyproject.toml",
@@ -81,7 +92,7 @@ class EndpointOptimizer
     @python_split_roots = Set(String).new
     @python_app_owners = Hash(String, Tuple(String, String)?).new
     @python_app_dirs = Hash(String, Bool).new
-    @base_fallback_scopes = Set(String).new
+    @bases = [] of String
   end
 
   # Main optimization workflow - calls all optimization steps
@@ -105,7 +116,7 @@ class EndpointOptimizer
   # still resolve to "whichever fiber won" — the exact non-determinism
   # this sort exists to remove — making the winning `technology` flip
   # between runs on a single machine, not just across machines.
-  private def endpoint_order_key(endpoint : Endpoint) : Tuple(String, Int32, String, String, String)
+  private def endpoint_order_key(endpoint : Endpoint) : Tuple(String, Int32, String, String, String, String)
     code_path = endpoint.details.code_paths.first?
     {
       code_path.try(&.path) || "",
@@ -113,21 +124,33 @@ class EndpointOptimizer
       endpoint.url,
       endpoint.method,
       endpoint.details.technology || "",
+      endpoint.details.primary_origin.try(&.variant) || "",
     }
   end
 
   # Remove duplicated endpoints and parameters, validate HTTP methods, clean URLs
   def optimize_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
+    @bases = resolve_scan_bases
+    @source_scope_cache.clear
+    @go_program_counts.clear
+    @go_main_dirs = nil
+    @python_app_owners.clear
+    @python_app_dirs.clear
+    @python_files_by_dir = nil
+    @ios_app_dirs = nil
+
     @logger.info "Optimizing endpoints."
     @logger.sub "➔ Removing duplicated endpoints and params."
-    final_map = {} of Tuple(String, String, String) => Endpoint
+    final_map = {} of RouteKey => Endpoint
     duplicate_count = 0
     allowed_methods = get_allowed_methods
-    endpoints = fold_ai_into_static(endpoints)
     @python_split_roots = split_python_app_roots(endpoints)
-    cross_tech_keys = cross_technology_duplicate_keys(endpoints, allowed_methods)
+    endpoints = endpoints.map { |endpoint| record_origin(endpoint) }
+    endpoints = fold_ai_into_static(endpoints)
+    declaration_scopes = infer_declaration_scopes(endpoints, allowed_methods)
+    cross_tech_keys = cross_technology_duplicate_keys(endpoints, allowed_methods, declaration_scopes)
     code_paths = code_route_paths(endpoints)
-    held = [] of Tuple(Tuple(String, String, String), Endpoint)
+    held = [] of {RouteKey, Endpoint}
 
     # `parallel_analyze` does not preserve input order: files go to N
     # workers through a bounded channel, so collection order depends on
@@ -209,11 +232,6 @@ class EndpointOptimizer
         next
       end
 
-      # Seed the contributing-technology list with the endpoint's own
-      # analyzer, so the list is complete whether or not a duplicate ever
-      # merges into it.
-      tiny_tmp = record_own_technology(tiny_tmp)
-
       # Duplicate check
       absolute_url = tiny_tmp.url.matches?(ABSOLUTE_URL_RE)
 
@@ -244,12 +262,13 @@ class EndpointOptimizer
       # Placeholder spellings are unified only where another technology
       # reports the route too (code + spec/collection). Within one analyzer,
       # `/users/{id}` and `/users/{user}` are kept as it reported them.
-      dedup_url = unified_url if cross_tech_keys.includes?({tiny_tmp.method, unified_url})
+      scope = route_scope(tiny_tmp, tiny_tmp.method, unified_url, declaration_scopes)
+      dedup_url = unified_url if cross_tech_keys.includes?({tiny_tmp.method, unified_url, scope})
       # A lone SDL file falls back to `/graphql`; Django mounts the same
       # schema at `graphql/`. One operation either way.
       dedup_url = dedup_url.sub("/#", "#") if graphql_endpoint?(tiny_tmp)
 
-      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, unified_url, cross_tech_keys) + route_condition_key(tiny_tmp) + proxy_route_key(tiny_tmp)}
+      key = {tiny_tmp.method, dedup_url, scope, route_condition_key(tiny_tmp), proxy_route_key(tiny_tmp)}
 
       # Folded into the code routes at its path once they are all merged.
       if proxy_route?(tiny_tmp) && code_paths.includes?(unified_url)
@@ -281,59 +300,125 @@ class EndpointOptimizer
 
     @logger.verbose_sub "➔ Total duplicated endpoints: #{duplicate_count}"
     merged = merge_concrete_example_endpoints(final_map.values)
-    assign_projects(tag_spec_only_endpoints(prune_collection_graphql_transport_endpoints(merged)))
+    tag_spec_only_endpoints(prune_collection_graphql_transport_endpoints(merged))
   end
 
-  # Record each code endpoint's project on `details.project`, relative to the
-  # scan base it was found under. The dedup above already keeps one route
-  # served by two apps as two endpoints; this is what lets a report, `query
-  # --project` and the OAS builders tell them apart.
-  #
-  # Left empty (and so omitted from reports) when the project is the scan base
-  # itself, which is every single-project scan, and when the manifest was
-  # found above the base: that is the directory the user pointed Noir away
-  # from, not a project of the scan.
-  private def assign_projects(endpoints : Array(Endpoint)) : Array(Endpoint)
-    bases = scan_bases
-    endpoints.each_with_index do |endpoint, idx|
-      scope = framework_source_scope(endpoint)
-      next if scope.empty?
+  private def resolve_scan_bases : Array(String)
+    raw = @options["base"]?
+    return [] of String unless raw
+    (raw.as_a?.try(&.map(&.to_s)) || [raw.to_s]).reject(&.empty?).map { |base| Noir::PathScope.normalize_root(base) }.uniq!
+  end
 
-      project = project_relative_to_base(scope, bases)
-      next if project.empty?
+  private def project_label(scope : String) : String?
+    return if scope.empty?
+    return unless root = Noir::PathScope.longest_base(scope, @bases)
 
-      details = endpoint.details
-      details.project = project
-      endpoint.details = details
-      endpoints[idx] = endpoint
+    relative = scope[root.size..].lstrip('/')
+    return relative.presence || "." if @bases.size == 1
+
+    # Explicit roots are paired by their argument order in diff scans.
+    # Their names on disk can differ between the two source trees.
+    name = "base #{@bases.index!(root) + 1}"
+    relative.empty? ? name : "#{name}/#{relative}"
+  end
+
+  private def record_origin(endpoint : Endpoint) : Endpoint
+    details = endpoint.details
+    return endpoint unless technology = details.technology.presence
+    path = details.code_paths.first?.try(&.path)
+    project = project_label(framework_source_scope(endpoint)) || details.project.presence
+    platform = if technology.in?("ios", "android")
+                 technology
+               elsif technology == "well_known_applinks"
+                 case File.basename(path || "")
+                 when "assetlinks.json"                                               then "android"
+                 when "apple-app-site-association", "apple-app-site-association.json" then "ios"
+                 end
+               end
+    kind = case NoirTechs.view(technology)
+           when "gateway" then "infra"
+           when "spec"    then "spec"
+           when "traffic" then "traffic"
+           else
+             if technology == "well_known_applinks" || (platform && path && path.ends_with?(/\.(?:xml|plist|entitlements)\z/))
+               "config"
+             else
+               "code"
+             end
+           end
+
+    if details.origins.empty?
+      variant_path = path.try { |file| Noir::PathScope.base_relative(file, @bases) } if platform == "android"
+      variant = variant_path.try(&.match(%r{(?:^|/)src/([^/]+)/(?:AndroidManifest\.xml|res/)}).try(&.[1])) if platform == "android"
+      variant = nil if variant == "main"
+      app = endpoint.metadata.try(&.["package"]?).presence if platform
+      details.origins = [Origin.new(technology, kind, project, platform, variant, app)]
+    else
+      # An analyzer can supply configuration identity before project scope is known.
+      details.origins = details.origins.map do |origin|
+        Origin.new(origin.technology, origin.kind, origin.project || project, origin.platform, origin.variant, origin.application)
+      end
     end
-    endpoints
+    details.add_technology(technology)
+    details.project = project if project && project != "." && !NoirTechs::DECLARATION_TECHS.includes?(technology)
+    endpoint.details = details
+    endpoint
   end
 
-  private def scan_bases : Array(String)
-    bases = @options["base"]?.try(&.as_a?) || [] of YAML::Any
-    bases.map(&.to_s).reject(&.empty?)
+  private def origin_scope(endpoint : Endpoint) : RouteScope
+    project, platform, application, variant = endpoint.details.origin_identity
+    {project.presence || framework_source_scope(endpoint), platform, application, variant}
   end
 
-  # `scope` relative to the deepest base that contains it; "" for the base
-  # itself or when no base contains it.
-  private def project_relative_to_base(scope : String, bases : Array(String)) : String
-    return "" unless base = Noir::PathScope.longest_base(scope, bases)
+  private def declaration_for_scope?(endpoint : Endpoint) : Bool
+    kind = endpoint.details.primary_origin.try(&.kind)
+    !endpoint.non_http? && (kind.in?("spec", "traffic") || graphql_endpoint?(endpoint) && source_document_endpoint?(endpoint))
+  end
 
-    root = Noir::PathScope.normalize_root(base)
-    scope.size > root.size ? scope[root.size..].lstrip('/') : ""
+  # A project-less API document can describe a single implementation at the
+  # matching address. An unscoped implementation is itself a distinct scope.
+  private def infer_declaration_scopes(endpoints : Array(Endpoint), allowed_methods : Array(String)) : Hash({String, String}, String)
+    scopes = Hash({String, String}, Set(String)).new
+    endpoints.each do |endpoint|
+      next unless declaration_for_scope?(endpoint) && origin_scope(endpoint)[0].empty?
+      method = normalized_dedup_method(endpoint.method, allowed_methods)
+      url = unify_path_placeholders(normalized_dedup_url(endpoint)).sub("/#", "#")
+      scopes[{method, url}] ||= Set(String).new
+    end
+    return {} of {String, String} => String if scopes.empty?
+
+    endpoints.each do |endpoint|
+      next if endpoint.non_http? || source_document_endpoint?(endpoint)
+      method = normalized_dedup_method(endpoint.method, allowed_methods)
+      url = unify_path_placeholders(normalized_dedup_url(endpoint)).sub("/#", "#")
+      if candidates = scopes[{method, url}]?
+        candidates << origin_scope(endpoint)[0]
+      end
+    end
+    result = {} of {String, String} => String
+    scopes.each do |key, values|
+      result[key] = values.first if values.size == 1
+    end
+    result
+  end
+
+  private def route_scope(endpoint : Endpoint, method : String, url : String, inferred : Hash({String, String}, String)) : RouteScope
+    scope = origin_scope(endpoint)
+    return scope unless scope[0].empty? && declaration_for_scope?(endpoint)
+    {inferred[{method, url.sub("/#", "#")}]? || "", nil, nil, nil}
   end
 
   # A repository can carry an API document because it implements it or
   # because it publishes it for others. When code analyzers ran and none of
   # them reported a spec operation, say so instead of dropping it.
   private def tag_spec_only_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
-    return endpoints unless endpoints.any? { |endpoint| code_technology_contributed?(endpoint) }
+    code_projects = endpoints.compact_map { |endpoint| origin_scope(endpoint)[0] if code_technology_contributed?(endpoint) }.to_set
+    return endpoints if code_projects.empty?
 
     endpoints.each_with_index do |endpoint, idx|
-      technologies = endpoint.details.technologies
-      next unless technologies.any? { |technology| SPEC_ONLY_TECHNOLOGIES.includes?(technology) }
+      next unless endpoint.details.contributing_technologies.any? { |technology| SPEC_ONLY_TECHNOLOGIES.includes?(technology) }
       next if code_technology_contributed?(endpoint)
+      next unless code_projects.includes?(origin_scope(endpoint)[0])
       endpoint.add_tag(Tag.new("spec-only", "Declared by an API specification; no code analyzer reported this route", "optimizer"))
       endpoints[idx] = endpoint
     end
@@ -341,7 +426,7 @@ class EndpointOptimizer
   end
 
   private def code_technology_contributed?(endpoint : Endpoint) : Bool
-    endpoint.details.technologies.any? { |technology| !NoirTechs::DECLARATION_TECHS.includes?(technology) }
+    endpoint.details.contributing_technologies.any? { |technology| !NoirTechs::DECLARATION_TECHS.includes?(technology) }
   end
 
   # An AI endpoint that names a static route under another path-param
@@ -355,7 +440,7 @@ class EndpointOptimizer
     return endpoints if ai.empty? || static.empty?
 
     static = static.sort_by { |endpoint| endpoint_order_key(endpoint) }
-    index = {} of Tuple(String, String) => Int32
+    index = {} of {String, String, RouteScope} => Int32
     static.each_with_index { |endpoint, idx| index[ai_fold_key(endpoint)] ||= idx }
 
     unmatched = ai.reject do |endpoint|
@@ -371,9 +456,9 @@ class EndpointOptimizer
     static + unmatched
   end
 
-  private def ai_fold_key(endpoint : Endpoint) : Tuple(String, String)
+  private def ai_fold_key(endpoint : Endpoint) : {String, String, RouteScope}
     segments = comparable_path_segments(endpoint.url.sub(URL_AUTHORITY_RE, ""))
-    {endpoint.method.upcase, "/" + segments.map { |seg| seg.matches?(AI_FOLD_PLACEHOLDER_RE) ? "{}" : seg }.join('/')}
+    {endpoint.method.upcase, "/" + segments.map { |seg| seg.matches?(AI_FOLD_PLACEHOLDER_RE) ? "{}" : seg }.join('/'), origin_scope(endpoint)}
   end
 
   private def merge_params(target : Endpoint, source : Endpoint, drop_collection_noise : Bool = false, skip_path : Bool = false) : Nil
@@ -417,6 +502,8 @@ class EndpointOptimizer
         # them would fold into each other and both vanish; a template that
         # already folded away is gone too.
         next if target_idx == source_idx || removed.includes?(target_idx)
+        target = endpoints[target_idx]
+        next unless origin_scope(target) == origin_scope(source)
         next unless template_matches_concrete_example?(template_segments, concrete_segments)
 
         endpoints[target_idx] = merge_endpoint_context(endpoints[target_idx], source)
@@ -626,34 +713,17 @@ class EndpointOptimizer
     paths
   end
 
-  private def fold_proxy_routes(final_map : Hash(Tuple(String, String, String), Endpoint), held : Array(Tuple(Tuple(String, String, String), Endpoint))) : Nil
+  private def fold_proxy_routes(final_map : Hash(RouteKey, Endpoint), held : Array({RouteKey, Endpoint})) : Nil
     return if held.empty?
 
-    opened = Set(Tuple(String, String, String)).new
-    code = Hash(String, Array(Tuple(String, String, String))).new
-    # Expanded code paths of each row, read before any proxy folds into it.
-    files = Hash(Tuple(String, String, String), Array(String)).new
+    opened = Set(RouteKey).new
+    code = Hash({String, RouteScope}, Array(RouteKey)).new
     final_map.each do |key, endpoint|
       next if endpoint.non_http? || !code_technology_contributed?(endpoint)
-      (code[unify_path_placeholders(key[1])] ||= [] of Tuple(String, String, String)) << key
-      files[key] = endpoint.details.code_paths.map { |path_info| Noir::PathScope.expand(path_info.path) }
+      (code[{unify_path_placeholders(key[1]), key[2]}] ||= [] of RouteKey) << key
     end
-    holds_code = Hash(String, Bool).new
-    # A proxy declared inside a project fronts that project, so only its
-    # routes are candidates (one merged across technologies included); one
-    # outside every project may front any of them. Where several rows
-    # still serve a method at the path, it says nothing about which one it
-    # fronts and stays apart.
     entries = held.map do |key, proxy|
-      scope = proxy.details.code_paths.first?.try { |path_info| source_project_scope(path_info.path) } || ""
-      # A manifest-less `-b` base, or a project with no routes of its own (an
-      # infra dir with a manifest for its scripts), fronts other projects.
-      unless scope.empty?
-        own = !@base_fallback_scopes.includes?(scope) &&
-              holds_code.put_if_absent(scope) { files.values.any?(&.any? { |file| Noir::PathScope.under_normalized_root?(file, scope) }) }
-        scope = "" unless own
-      end
-      {key, proxy, unify_path_placeholders(key[1]), scope}
+      {key, proxy, unify_path_placeholders(key[1]), key[2]}
     end
     # Ingress rules that send one path to different Services front different
     # workloads, and nothing says which of them is the code: none folds. Only
@@ -661,17 +731,16 @@ class EndpointOptimizer
     # claims, and a rewrite row is the upstream path, not a competing route.
     # ponytail: no Service-to-code tie (a Service manifest beside the code
     # is not in the Ingress file set); add one to fold the matching rule.
-    backends = Hash(Tuple(String, String), Set(String)).new
+    backends = Hash({String, RouteScope}, Set(String)).new
     entries.each do |_, proxy, path, scope|
       backend = proxy_backend(proxy)
       next if backend.empty? || proxy.tags.none? { |tag| tag.name == "ingress-source" && tag.description == "rule" }
       (backends[{path, scope}] ||= Set(String).new) << backend
     end
     entries.each do |key, proxy, path, scope|
-      targets = [] of Tuple(String, String, String)
+      targets = [] of RouteKey
       unless proxy.details.technology == "k8s_ingress" && backends[{path, scope}]?.try(&.size.> 1)
-        targets = (code[path]? || targets)
-          .select { |row| scope.empty? || files[row].any? { |file| Noir::PathScope.under_normalized_root?(file, scope) } }
+        targets = (code[{path, scope}]? || targets)
           .group_by(&.[0]).values.compact_map { |rows| rows[0] if rows.size == 1 }
       end
       targets = [key] if targets.empty?
@@ -723,35 +792,21 @@ class EndpointOptimizer
     target
   end
 
-  private def record_own_technology(endpoint : Endpoint) : Endpoint
-    details = endpoint.details
-    details.add_technology(details.technology)
-    endpoint.details = details
-    endpoint
-  end
-
-  # Keep every technology that contributed to a merged endpoint.
-  #
-  # The dedup keeps the winner's `technology` and, until this list existed,
-  # discarded the loser's — so an endpoint declared by both a Go router and
-  # the project's swagger document was reported as Go only, and a consumer
-  # asking "which sources know this route" had to run one scan per
-  # technology to find out. Runs after the promotions above on purpose: a
-  # promotion may have replaced `technology`, and both the old and the new
-  # value belong in the list.
-  #
-  # Returns the endpoint for the same reason `promote_scalar_context` does.
+  # Preserve all contributing origins when one endpoint supplies the display
+  # fields and another supplies parameters, paths or tags.
   private def absorb_technologies(target : Endpoint, source : Endpoint) : Endpoint
     details = target.details
     details.add_technology(details.technology)
-    details.add_technology(source.details.technology)
-    source.details.technologies.each { |technology| details.add_technology(technology) }
+    source.details.contributing_technologies.each { |technology| details.add_technology(technology) }
+    details.origins = (details.origins + source.details.origins).uniq!
+    if details.project.empty? && !source.details.project.empty?
+      details.project = source.details.project
+    end
     target.details = details
     target
   end
 
-  # Declarations are unscoped, so two Ingress rules, two nginx `server`
-  # blocks or two spec files routing one path merge into one row. The access
+  # Declarations in one scope routing one path merge into one row. The access
   # rule each declares guards only its own, so a guarded and an open
   # declaration of the same technology make an open row: the guard is kept
   # only while every declaration of that technology merged so far states
@@ -875,40 +930,27 @@ class EndpointOptimizer
     target
   end
 
-  private def cross_technology_duplicate_keys(endpoints : Array(Endpoint), allowed_methods : Array(String)) : Set(Tuple(String, String))
-    technologies_by_key = Hash(Tuple(String, String), Set(String)).new
-    urls_by_key_technology = Hash(Tuple(String, String, String), Set(String)).new
-    framework_scopes_by_key = Hash(Tuple(String, String), Set(String)).new
+  private def cross_technology_duplicate_keys(endpoints : Array(Endpoint), allowed_methods : Array(String),
+                                              inferred : Hash({String, String}, String)) : Set({String, String, RouteScope})
+    technologies_by_key = Hash({String, String, RouteScope}, Set(String)).new
+    urls_by_key_technology = Hash(Tuple(Tuple(String, String, RouteScope), String), Set(String)).new
 
     endpoints.each do |endpoint|
       shaped_url = normalized_dedup_url(endpoint)
       next if shaped_url.empty?
       url = endpoint.non_http? ? shaped_url : unify_path_placeholders(shaped_url)
-
       method = normalized_dedup_method(endpoint.method, allowed_methods)
-      key = {method, url}
+      key = {method, url, route_scope(endpoint, method, url, inferred)}
       technology = endpoint.details.technology || ""
       (technologies_by_key[key] ||= Set(String).new) << technology
-      (urls_by_key_technology[{method, url, technology}] ||= Set(String).new) << shaped_url
-
-      scope = framework_source_scope(endpoint)
-      # A base standing in for a missing manifest is no build module: counting
-      # it would let an unrelated `-b` change how this base's rows merge.
-      (framework_scopes_by_key[key] ||= Set(String).new) << scope unless scope.empty? || @base_fallback_scopes.includes?(scope)
+      (urls_by_key_technology[{key, technology}] ||= Set(String).new) << shaped_url
     end
 
-    keys = Set(Tuple(String, String)).new
+    keys = Set({String, String, RouteScope}).new
     technologies_by_key.each do |key, technologies|
       next unless technologies.size > 1
-      # Unifying placeholders must not merge two routes one analyzer reported
-      # apart (`/users/:id` and `/users/:username`, separate handlers): when
-      # any technology spells the key more than one way, keep exact URLs.
-      next if technologies.any? { |technology| urls_by_key_technology[{key[0], key[1], technology}].size > 1 }
-      # Neutralizing the scope merges a collection endpoint with the framework
-      # one at the same path. But when 2+ distinct build-module scopes share the
-      # path, neutralizing would also collapse those distinct multi-module
-      # endpoints into one, so keep their scopes intact in that case.
-      next if (framework_scopes_by_key[key]?.try(&.size) || 0) > 1
+      # One analyzer can deliberately register several spellings of a route.
+      next if technologies.any? { |technology| urls_by_key_technology[{key, technology}].size > 1 }
       keys << key
     end
     keys
@@ -956,11 +998,6 @@ class EndpointOptimizer
     url.gsub(WHOLE_SEGMENT_PLACEHOLDER_RE, "{}")
   end
 
-  private def endpoint_source_scope(endpoint : Endpoint, dedup_url : String, cross_tech_keys : Set(Tuple(String, String))) : String
-    return "" if cross_tech_keys.includes?({endpoint.method, dedup_url})
-    framework_source_scope(endpoint)
-  end
-
   # Handlers that share an address but match different request conditions
   # (Spring `params="ticket"` vs `params="relink"`) are separate endpoints:
   # unioning them would send every handler's selector in one request.
@@ -969,24 +1006,35 @@ class EndpointOptimizer
     "|" + endpoint.route_conditions.map { |param| "#{param.param_type}:#{param.name}=#{param.value}" }.sort!.join("&")
   end
 
-  # The build-module scope an endpoint carries on its own merits (ignoring any
-  # cross-technology neutralization). Code endpoints get the project root of
-  # their first path, so two separately deployed apps of a monorepo that serve
-  # the same route stay two endpoints; declarations (specs, collections, infra
-  # config) and graphql / Spring static endpoints stay unscoped.
+  # The project of the declaring file, or the deployable app within it.
   private def framework_source_scope(endpoint : Endpoint) : String
-    return "" if NoirTechs::DECLARATION_TECHS.includes?(endpoint.details.technology || "")
-    return "" if graphql_endpoint?(endpoint)
-    return "" if spring_static_asset?(endpoint)
-
     first_path = endpoint.details.code_paths.first?.try(&.path)
     return "" unless first_path
+
+    if endpoint.details.technology == "ios"
+      ios_scope = ios_project_scope(first_path)
+      return ios_scope if ios_scope
+    end
 
     scope = source_project_scope(first_path)
     return scope if @python_split_roots.empty?
     owner = python_app_owner(endpoint)
     owner && @python_split_roots.includes?(owner[0]) ? owner[1] : scope
   end
+
+  private def ios_project_scope(path : String) : String?
+    locator = CodeLocator.instance
+    dirs = @ios_app_dirs ||= locator.all(Noir::LocatorKeys::IOS_INFO_PLIST).map do |plist|
+      File.dirname(locator.expanded_path_for(plist))
+    end.uniq!
+    expanded = locator.expanded_path_for(path)
+    owner = Noir::PathScope.longest_base(expanded, dirs)
+    return owner if owner
+
+    NoirMobileLinker::IosHandlers.xcode_project_root(path)
+  end
+
+  @ios_app_dirs : Array(String)?
 
   # Two FastAPI / Flask apps under one Python manifest (an API and a sidecar
   # deployed apart) are two deployables, like the `package main` dirs of one
@@ -1024,7 +1072,7 @@ class EndpointOptimizer
     start_dir = Noir::PathScope.expand(File.dirname(path))
     @python_app_owners.put_if_absent(start_dir) do
       root = source_project_scope(path).presence ||
-             Noir::PathScope.longest_base(start_dir, scan_bases).try { |base| Noir::PathScope.normalize_root(base) }
+             Noir::PathScope.longest_base(start_dir, @bases).try { |base| Noir::PathScope.normalize_root(base) }
       next unless root
 
       dir = start_dir
@@ -1040,7 +1088,7 @@ class EndpointOptimizer
   private def python_app_dir?(dir : String) : Bool
     @python_app_dirs.put_if_absent(dir) do
       (python_files_by_dir[dir]? || [] of String).any? do |file|
-        content = CodeLocator.instance.content_for(file) || Noir::TextFile.read(file)
+        content = CodeLocator.instance.read_source(file) || next false
         next false unless content.includes?("FastAPI") || content.includes?("Flask")
         content.scrub.gsub(PYTHON_TRIPLE_QUOTED_RE, "").matches?(PYTHON_APP_CONSTRUCTOR_RE)
       rescue IO::Error
@@ -1058,7 +1106,7 @@ class EndpointOptimizer
   private def python_files_by_dir : Hash(String, Array(String))
     @python_files_by_dir ||= begin
       locator = CodeLocator.instance
-      bases = scan_bases
+      bases = @bases
       index = Hash(String, Array(String)).new
       locator.files_by_extension(".py").each do |file|
         base = Noir::PathScope.longest_base(file, bases)
@@ -1068,21 +1116,6 @@ class EndpointOptimizer
       end
       index
     end
-  end
-
-  private def spring_static_asset?(endpoint : Endpoint) : Bool
-    return false unless endpoint.method == "GET"
-
-    first_path = endpoint.details.code_paths.first?.try(&.path)
-    return false unless first_path
-
-    normalized = first_path.gsub('\\', '/')
-    {
-      "/src/main/resources/META-INF/resources/",
-      "/src/main/resources/resources/",
-      "/src/main/resources/static/",
-      "/src/main/resources/public/",
-    }.any? { |marker| normalized.includes?(marker) }
   end
 
   private def source_project_scope(path : String) : String
@@ -1095,15 +1128,15 @@ class EndpointOptimizer
     start_dir = Noir::PathScope.expand(File.directory?(path) ? path : File.dirname(path))
     # Keyed by directory: every code endpoint is scoped now, and its files
     # share far fewer directories than paths.
-    @source_scope_cache[start_dir] ||= begin
+    project_scope = @source_scope_cache[start_dir] ||= begin
       scope = ""
       dir = start_dir
-      bases = scan_bases
+      bases = @bases
       floor = Noir::PathScope.longest_base(start_dir, bases).try { |base| Noir::PathScope.normalize_root(base) }
 
       loop do
         break if floor && !Noir::PathScope.under_normalized_root?(dir, floor)
-        if PROJECT_MANIFEST_FILES.any? { |manifest| File.exists?(File.join(dir, manifest)) } || bazel_deployable_dir?(dir)
+        if project_manifest?(dir) || bazel_deployable_dir?(dir)
           scope = dir
           break
         end
@@ -1118,28 +1151,34 @@ class EndpointOptimizer
       # fold into one row. A single base stays unscoped.
       if scope.empty? && floor && bases.size > 1
         scope = floor
-        @base_fallback_scopes << floor
-      end
-
-      # One Go module, many programs (gin-gonic/examples, a `cmd/` tree):
-      # each `package main` directory is its own deployable, so `POST
-      # /upload` in two of them must not merge into one row carrying the
-      # first one's path and the other's handler. Without a `go.mod` in
-      # the scan, the base stands in for the module.
-      module_root = scope.empty? ? floor : scope
-      if path.ends_with?(".go") && module_root && go_program_dir?(start_dir, module_root)
-        scope = start_dir
       end
 
       scope
+    end
+
+    # Go executables can own distinct scopes inside one module. Keep this
+    # language-specific decision outside the directory-level manifest memo.
+    return project_scope unless path.ends_with?(".go")
+    module_root = project_scope.presence || Noir::PathScope.longest_base(start_dir, @bases)
+    module_root && go_program_dir?(start_dir, module_root) ? start_dir : project_scope
+  end
+
+  private def project_manifest?(dir : String) : Bool
+    locator = CodeLocator.instance
+    if locator.scan_files_active?
+      locator.source_files_in(dir).any? do |file|
+        PROJECT_MANIFEST_FILES.includes?(File.basename(file)) || file.ends_with?(/\.(?:csproj|fsproj|vbproj)\z/)
+      end
+    else
+      PROJECT_MANIFEST_FILES.any? { |manifest| locator.source_file?(File.join(dir, manifest)) }
     end
   end
 
   private def bazel_deployable_dir?(dir : String) : Bool
     {"BUILD", "BUILD.bazel"}.any? do |name|
       path = File.join(dir, name)
-      next false unless File.file?(path)
-      File.read(path).scrub.matches?(BAZEL_DEPLOYABLE_RE)
+      next false unless CodeLocator.instance.source_file?(path)
+      CodeLocator.instance.read_source(path).try(&.matches?(BAZEL_DEPLOYABLE_RE)) || false
     rescue IO::Error | InvalidByteSequenceError
       false
     end
@@ -1163,11 +1202,10 @@ class EndpointOptimizer
     @go_main_dirs ||= begin
       locator = CodeLocator.instance
       found = Set(String).new
-      buffer = Bytes.new(GO_PACKAGE_PROBE_BYTES)
       locator.files_by_extension(".go").each do |file|
         next if file.ends_with?("_test.go") || file.includes?("/vendor/") || file.includes?("/testdata/")
         dir = File.dirname(locator.expanded_path_for(file))
-        found << dir if !found.includes?(dir) && go_main_package?(file, buffer)
+        found << dir if !found.includes?(dir) && go_main_package?(file)
       end
       found
     end
@@ -1177,16 +1215,11 @@ class EndpointOptimizer
   # comments and `/* */` spans above it, however long the license header
   # runs, within the first `GO_PACKAGE_PROBE_BYTES`. Scrubbed: the cut can
   # split a character, and PCRE refuses invalid UTF-8.
-  private def go_main_package?(file : String, buffer : Bytes) : Bool
-    read = File.open(file) do |io|
-      total = 0
-      while total < buffer.size && (count = io.read(buffer[total..])) > 0
-        total += count
-      end
-      total
-    end
+  private def go_main_package?(file : String) : Bool
+    content = CodeLocator.instance.read_source(file) || return false
+    head = Noir::TextFile.byte_window(content, 0, GO_PACKAGE_PROBE_BYTES)
     in_block = false
-    String.new(buffer[0, read]).scrub.lchop('\uFEFF').each_line do |line|
+    head.lchop('\uFEFF').each_line do |line|
       if in_block
         close = line.index("*/") || next
         line = line[close + 2..]

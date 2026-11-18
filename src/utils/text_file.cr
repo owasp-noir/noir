@@ -38,8 +38,8 @@ module Noir::TextFile
   # `package.json`) with `File.exists?`, which is true for a FIFO, and opening
   # a FIFO blocks until a writer appears — the scan hung with no output. A
   # missing path still raises, as before.
-  def self.read(path : String) : String
-    return "" unless File.info(path).file?
+  def self.read(path : String, info : File::Info? = nil) : String
+    return "" unless (info || File.info(path)).file?
     content = File.read(path)
     return transcode_utf16(content) if utf16_bom?(content)
     content = strip_utf8_bom(content)

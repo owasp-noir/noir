@@ -60,6 +60,7 @@ module MediaFilter
 
     # Binary executables and libraries
     ".exe", ".dll", ".so", ".dylib", ".bin", ".app", ".deb", ".rpm",
+    ".o", ".obj", ".a", ".lib", ".class", ".pyc", ".pyo", ".wasm",
 
     # Database files
     ".db", ".sqlite", ".sqlite3", ".mdb", ".accdb",

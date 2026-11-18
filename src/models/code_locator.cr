@@ -1,5 +1,7 @@
 require "../utils/file_extension"
 require "../utils/path_scope"
+require "../utils/text_file"
+require "../utils/media_filter"
 require "../utils/utils"
 require "./logger"
 require "./locator_key"
@@ -30,6 +32,22 @@ class CodeLocator
   getter scan_base_paths : Array(String)
 
   @lock : Mutex
+  @read_lock = Mutex.new
+  @registered_paths : Hash(String, String)?
+  @directory_files : Hash(String, Array(String))?
+  @directory_children : Hash(String, Array(String))?
+  @binary_paths = Set(String).new
+  getter? scan_files_active : Bool = false
+
+  # Standalone parsers and analyzers also accept explicit files. In the scan
+  # pipeline, every resolved source path must come from this registry.
+  def with_scan_files(&)
+    previous = @scan_files_active
+    @scan_files_active = true
+    yield
+  ensure
+    @scan_files_active = previous || false
+  end
 
   def initialize
     @logger = NoirLogger.new(false, false, true, false)
@@ -132,9 +150,8 @@ class CodeLocator
   # Invalidates the four derived views but deliberately NOT `@file_contents`.
   # A newly registered path has no cached content to invalidate, and dropping
   # the cache here would throw away every file read so far. `content_for`
-  # returning nil for a registered path is the contract — `register_file`
-  # skips over-budget files the same way — so callers keep a `File.read`
-  # fallback regardless.
+  # returning nil for a registered path is valid: `read_source` loads
+  # those files on demand, including files beyond the cache budget.
   def register_path(path : String)
     @a_map[FILE_MAP] ||= Array(String).new
     @a_map[FILE_MAP] << path
@@ -163,6 +180,7 @@ class CodeLocator
     @file_contents.clear
     @content_cache_used = 0_i64
     @content_cache_skipped = 0
+    @binary_paths.clear
     invalidate_file_views
   end
 
@@ -172,6 +190,9 @@ class CodeLocator
   private def invalidate_file_views
     @expanded_file_map = nil
     @expanded_path_index = nil
+    @registered_paths = nil
+    @directory_files = nil
+    @directory_children = nil
     @extension_index_built = false
     @basename_index_built = false
   end
@@ -180,14 +201,18 @@ class CodeLocator
   # `file_map` and (budget permitting) cache the content so analyzers
   # can skip the second `File.read`. Files whose content exceeds the
   # remaining budget are still registered in `file_map` but not cached,
-  # and `content_for(path)` returns `nil` for them — callers must keep
-  # a `File.read` fallback.
+  # and `read_source` can still load them on demand.
   def register_file(path : String, content : String)
     register_path(path)
 
+    cache_content(path, content)
+  end
+
+  private def cache_content(path : String, content : String)
     return if @content_cache_budget <= 0
+    return if @file_contents.has_key?(path)
     size = content.bytesize.to_i64
-    if @content_cache_used + size > @content_cache_budget
+    if size > @content_cache_budget - @content_cache_used
       @content_cache_skipped += 1
       return
     end
@@ -195,11 +220,120 @@ class CodeLocator
     @content_cache_used += size
   end
 
-  # Returns cached file content or `nil` if the file was not cached
-  # (budget exhausted, caching disabled, or read after cache was
-  # cleared). Callers should fall back to `File.read` on `nil`.
+  # Returns cached content without opening the file.
   def content_for(path : String) : String?
     @file_contents[path]?
+  end
+
+  # Resolve an import or other derived path back to its spelling in the scan.
+  def source_path?(path : String) : String?
+    paths = @registered_paths
+    unless paths
+      pairs = expanded_file_map
+      paths = @lock.synchronize do
+        @registered_paths ||= pairs.each_with_object({} of String => String) do |(original, expanded), index|
+          index[expanded] ||= original
+        end
+      end
+    end
+    paths[expanded_path_for(path)]?
+  end
+
+  # Use the scan directory index when resolving optional files. Standalone
+  # callers still resolve paths in the directory they were given.
+  def source_file?(path : String) : Bool
+    @scan_files_active ? !source_path?(path).nil? : File.file?(path)
+  end
+
+  # The text read boundary for analyzers and report enrichment. A cache miss
+  # still uses the same membership and binary checks as a cache hit.
+  def read_source(path : String) : String?
+    if @scan_files_active
+      path = source_path?(path) || return
+    else
+      return if MediaFilter.media_file?(path)
+    end
+
+    @read_lock.synchronize do
+      if cached = content_for(path)
+        return cached
+      end
+      return if @binary_paths.includes?(path)
+
+      if @scan_files_active
+        info = File.info(path, follow_symlinks: false)
+        return unless info.file?
+        return if MediaFilter.skip_check(path, info: info, sniff_binary: false)
+      end
+      content = Noir::TextFile.read(path, info)
+      if content.to_slice.includes?(0_u8)
+        @binary_paths << path if @scan_files_active
+        return
+      end
+      cache_content(path, content) if @scan_files_active
+      content
+    end
+  end
+
+  # Files under a root in walk order. Use an extension when the caller
+  # already knows the kind of source it needs.
+  def source_files_under(root : String, extension : String? = nil) : Array(String)
+    files = extension ? files_by_extension(extension) : all_files
+    return files.dup if root.empty?
+
+    normalized = Noir::PathScope.normalize_root(root)
+    files.select { |file| Noir::PathScope.under_normalized_root?(expanded_path_for(file), normalized) }
+  end
+
+  # Public assets need paths even when the text reader excludes their bytes.
+  def static_files_under(root : String) : Array(String)
+    normalized = Noir::PathScope.normalize_root(root)
+    media = media_files.select { |path| Noir::PathScope.under_normalized_root?(Noir::PathScope.expand(path), normalized) }
+    source_files_under(root) + media
+  end
+
+  def source_files_in(dir : String) : Array(String)
+    source_directories[0][Noir::PathScope.normalize_root(dir)]? || [] of String
+  end
+
+  def source_child_directories(dir : String) : Array(String)
+    source_directories[1][Noir::PathScope.normalize_root(dir)]? || [] of String
+  end
+
+  def source_directory?(dir : String) : Bool
+    files, children = source_directories
+    normalized = Noir::PathScope.normalize_root(dir)
+    files.has_key?(normalized) || children.has_key?(normalized)
+  end
+
+  private def source_directories : {Hash(String, Array(String)), Hash(String, Array(String))}
+    if (files = @directory_files) && (children = @directory_children)
+      return {files, children}
+    end
+
+    pairs = expanded_file_map
+    @lock.synchronize do
+      if (files = @directory_files) && (children = @directory_children)
+        return {files, children}
+      end
+
+      files = Hash(String, Array(String)).new
+      children = Hash(String, Array(String)).new
+      seen = Set(String).new
+      pairs.each do |original, expanded|
+        dir = File.dirname(expanded)
+        (files[dir] ||= [] of String) << original
+        while seen.add?(dir)
+          parent = File.dirname(dir)
+          break if parent == dir
+          (children[parent] ||= [] of String) << dir
+          dir = parent
+        end
+      end
+      @directory_files = files
+      @directory_children = children
+      {files, children}
+    end
   end
 
   def content_cache_stats : NamedTuple(bytes: Int64, files: Int32, skipped: Int32, budget: Int64)
@@ -338,14 +472,8 @@ class CodeLocator
     @s_map.clear
     @a_map.clear
     @extension_index.clear
-    @extension_index_built = false
     @basename_index.clear
-    @basename_index_built = false
-    @file_contents.clear
-    @content_cache_used = 0_i64
-    @content_cache_skipped = 0
-    @expanded_file_map = nil
-    @expanded_path_index = nil
+    reset_files
   end
 
   def show_table

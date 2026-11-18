@@ -96,6 +96,20 @@ class OutputBuilder
   # introducers aren't consumed as a bare two-character escape.
   ANSI_ESCAPE = /\e\[[0-?]*[ -\/]*[@-~]|\e\][^\a\e]*(?:\a|\e\\)|\e[ -\/]*[0-~]/
 
+  private def report_projects(endpoint : Endpoint) : String
+    endpoint.details.origin_projects.reject { |project| project == "." }.sort!.join(", ")
+  end
+
+  private def project_suffix(endpoint : Endpoint) : String
+    projects = report_projects(endpoint)
+    projects.empty? ? "" : " [project #{escape_control_chars(projects)}]"
+  end
+
+  private def project_shell_comment(endpoint : Endpoint) : String
+    projects = report_projects(endpoint)
+    projects.empty? ? "" : " # project: #{escape_control_chars(projects)}"
+  end
+
   # A `?` in a Noir URL is not always a query separator — it is also route
   # syntax (Express `/geo/:ip?`, F# `/legacy(/?)`, a regex route
   # `/grp/(?:a|b)/(.*)?`). Only a `?` that introduces a `key=value` pair

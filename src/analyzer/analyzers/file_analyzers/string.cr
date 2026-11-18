@@ -9,14 +9,14 @@ require "../../../utils/file_url_scanner"
 # dropped, and prose/markup delimiters are trimmed off the URL.
 # Attributed to `file_url`; see `FileAnalyzer::Hook` for why that name is not
 # in the tech catalog.
-FileAnalyzer.add_hook(tech: "file_url", func: ->(path : String, url : String) : Array(Endpoint) {
+FileAnalyzer.add_hook(tech: "file_url", func: ->(path : String, url : String, content : String) : Array(Endpoint) {
   results = [] of Endpoint
   # Parsed on the first candidate only: most files carry no URL literal.
   base = nil
   return results if Noir::FileUrlScanner::REQUEST_FILE_EXTENSIONS.includes?(File.extname(path))
 
   begin
-    Noir::FileUrlScanner.each_line(path) do |line, index|
+    content.each_line.with_index do |line, index|
       next if Noir::FileUrlScanner.binary_line?(line)
 
       Noir::FileUrlScanner.each_url(line) do |candidate|

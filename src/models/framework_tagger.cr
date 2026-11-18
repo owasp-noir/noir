@@ -96,7 +96,13 @@ class FrameworkTagger < Tagger
     root = nil
     current = dir
     loop do
-      if (Dir.children(current).any?(&.matches?(manifest)) rescue false)
+      locator = CodeLocator.instance
+      names = if locator.scan_files_active?
+                locator.source_files_in(current).map { |file| File.basename(file) }
+              else
+                Dir.children(current) rescue [] of String
+              end
+      if names.any?(&.matches?(manifest))
         root = current
         break
       end
@@ -196,14 +202,7 @@ class FrameworkTagger < Tagger
       return cached
     end
 
-    # Prefer the detector's content cache, which by this point holds
-    # almost every file of the scan — the bare `File.read` this replaces
-    # paid a second open for every file any tagger looked at. Analyzers
-    # already read through the same cache (`Analyzer#read_file_content`),
-    # so this also stops taggers being the one component that sees raw
-    # bytes: on a file with invalid UTF-8 they now get the same
-    # `invalid: :skip` text everything else works from.
-    content = CodeLocator.instance.content_for(path) || Noir::TextFile.read(path)
+    content = CodeLocator.instance.read_source(path) || return
     @file_cache[path] = content
     content
   rescue ex

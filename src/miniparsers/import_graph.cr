@@ -89,14 +89,26 @@ module Noir
     # `package_name` is empty, the source-root step is skipped (no
     # safe inference possible) — same-directory siblings are still
     # yielded.
+    private def self.source_file?(path : String) : Bool
+      locator = CodeLocator.instance
+      locator.source_file?(path)
+    end
+
     def self.related_files(path : String,
                            package_name : String,
                            imports : Indexable(ImportRef),
                            extension : String,
                            &block : String ->) : Nil
+      locator = CodeLocator.instance
       seen = Set(String).new
       visit = ->(file : String) do
-        block.call(file) if seen.add?(file)
+        if locator.scan_files_active?
+          if registered = locator.source_path?(file)
+            block.call(registered) if seen.add?(registered)
+          end
+        elsif seen.add?(file)
+          block.call(file)
+        end
       end
 
       visit.call(path)
@@ -198,7 +210,12 @@ module Noir
         end
       end
       dirs = [] of String
-      safe_glob(root, "*.*") { |entry| dirs << File.basename(entry) if directory?(entry) }
+      locator = CodeLocator.instance
+      if locator.scan_files_active?
+        dirs = locator.source_child_directories(root).map { |entry| File.basename(entry) }.select(&.includes?('.')).sort!
+      else
+        safe_glob(root, "*.*") { |entry| dirs << File.basename(entry) if directory?(entry) }
+      end
       @@dotted_dirs_mutex.synchronize { @@dotted_dirs_cache[root] = dirs }
     end
 
@@ -246,7 +263,7 @@ module Noir
       roots.each do |root|
         next unless directory?(File.join(root, relative_dir))
         file = File.join(root, "#{relative}.#{extension}")
-        found << file if File.exists?(file)
+        found << file if source_file?(file)
       end
       found
     end
@@ -268,7 +285,12 @@ module Noir
       end
 
       siblings = [] of String
-      safe_glob(package_dir, "*.#{extension}") { |sibling| siblings << sibling }
+      locator = CodeLocator.instance
+      if locator.scan_files_active?
+        siblings = locator.source_files_in(package_dir).select(&.ends_with?(".#{extension}")).sort!
+      else
+        safe_glob(package_dir, "*.#{extension}") { |sibling| siblings << sibling }
+      end
 
       @@package_siblings_mutex.synchronize do
         Noir::ExtractionResultCache.store_capped(@@package_siblings_cache, cache_key, siblings, PACKAGE_SIBLINGS_MAX_ENTRIES)
@@ -278,6 +300,9 @@ module Noir
     # Memoised `Dir.exists?`. See the call site for why the directory
     # test is an exact short-circuit for the file test.
     private def self.directory?(path : String) : Bool
+      locator = CodeLocator.instance
+      return locator.source_directory?(path) if locator.scan_files_active?
+
       @@directory_mutex.synchronize do
         if cached = @@directory_cache[path]?
           return cached
@@ -343,10 +368,18 @@ module Noir
         if (lang == "java" || lang == "kotlin") && segments[-2] == "main" && segments[-3] == "src"
           module_root = segments[0, segments.size - 3].join('/')
           workspace_root = File.dirname(module_root)
-          safe_glob(workspace_root, "*/src/main/#{lang}") do |candidate|
-            next unless Dir.exists?(candidate)
-            candidate_expanded = Noir::PathScope.expand(candidate)
-            roots << candidate if candidate_expanded != expanded
+          locator = CodeLocator.instance
+          if locator.scan_files_active?
+            locator.source_child_directories(workspace_root).sort.each do |dir|
+              candidate = File.join(dir, "src", "main", lang)
+              roots << candidate if candidate != expanded && locator.source_directory?(candidate)
+            end
+          else
+            safe_glob(workspace_root, "*/src/main/#{lang}") do |candidate|
+              next unless Dir.exists?(candidate)
+              candidate_expanded = Noir::PathScope.expand(candidate)
+              roots << candidate if candidate_expanded != expanded
+            end
           end
         end
       end
@@ -491,7 +524,7 @@ module Noir
       # nothing. Mirrors Node's behaviour for fully-qualified
       # `./foo.ts` imports.
       if extensions.any? { |ext| import_specifier.ends_with?(".#{ext}") }
-        return combined if File.exists?(combined)
+        return combined if source_file?(combined)
 
         # TS ESM fallback: a `.js`-family specifier resolves to the
         # sibling `.ts` source when the literal `.js` file is absent.
@@ -503,7 +536,7 @@ module Noir
           base = combined[0...(combined.size - js_ext.size)]
           ts_exts.each do |ts_ext|
             candidate = "#{base}#{ts_ext}"
-            return candidate if File.exists?(candidate)
+            return candidate if source_file?(candidate)
           end
         end
         return
@@ -511,13 +544,13 @@ module Noir
 
       extensions.each do |ext|
         candidate = "#{combined}.#{ext}"
-        return candidate if File.exists?(candidate)
+        return candidate if source_file?(candidate)
       end
 
-      if Dir.exists?(combined)
+      if directory?(combined)
         extensions.each do |ext|
           candidate = File.join(combined, "index.#{ext}")
-          return candidate if File.exists?(candidate)
+          return candidate if source_file?(candidate)
         end
       end
 
@@ -622,7 +655,7 @@ module Noir::ImportGraph::Python
   def self.find_imported_modules(app_base_path : String,
                                  file_path : String,
                                  content : String? = nil) : Hash(String, Tuple(String, Int32))
-    content = Noir::TextFile.read(file_path) if content.nil?
+    content ||= CodeLocator.instance.read_source(file_path) || ""
 
     file_base_path = file_path
     file_base_path = File.dirname(file_path) if file_path.ends_with? ".py"
@@ -645,7 +678,7 @@ module Noir::ImportGraph::Python
   def self.find_imported_symbols(app_base_path : String,
                                  file_path : String,
                                  content : String? = nil) : Hash(String, Tuple(String, String))
-    content = Noir::TextFile.read(file_path) if content.nil?
+    content ||= CodeLocator.instance.read_source(file_path) || ""
 
     key = {app_base_path, file_path, Noir::ExtractionResultCache.source_fingerprint(content)}
     if cached = @@symbol_mutex.synchronize { @@symbol_cache[key]? }
@@ -708,7 +741,7 @@ module Noir::ImportGraph::Python
     cache_key = {app_base_path, file_path}
     imports = @@symbol_mutex.synchronize { @@package_import_cache[cache_key]? }
     unless imports
-      source = CodeLocator.instance.content_for(file_path) || Noir::TextFile.read(file_path)
+      source = CodeLocator.instance.read_source(file_path) || return
       imports = imported_symbols_from_content(app_base_path, file_path, source)
       @@symbol_mutex.synchronize do
         Noir::ExtractionResultCache.store_capped(@@package_import_cache, cache_key, imports)
@@ -728,16 +761,16 @@ module Noir::ImportGraph::Python
     segments = dotted.empty? ? [] of String : dotted.split(".")
     segments.each_with_index do |segment, index|
       candidate = File.join(dir, segment)
-      if index == segments.size - 1 && File.file?("#{candidate}.py") && exact_entry?(dir, "#{segment}.py")
+      if index == segments.size - 1 && python_file?("#{candidate}.py") && exact_entry?(dir, "#{segment}.py")
         return "#{candidate}.py"
-      elsif File.directory?(candidate) && exact_entry?(dir, segment)
+      elsif python_directory?(candidate) && exact_entry?(dir, segment)
         dir = candidate
       else
         return
       end
     end
     init = File.join(dir, "__init__.py")
-    File.file?(init) ? init : nil
+    python_file?(init) ? init : nil
   end
 
   # Python matches module names case-sensitively; a case-insensitive file
@@ -746,7 +779,20 @@ module Noir::ImportGraph::Python
   @@dir_entries = Hash(String, Set(String)).new
   @@dir_entries_mutex = Mutex.new
 
+  private def self.python_file?(path : String) : Bool
+    locator = CodeLocator.instance
+    locator.source_file?(path)
+  end
+
+  private def self.python_directory?(path : String) : Bool
+    locator = CodeLocator.instance
+    locator.scan_files_active? ? locator.source_directory?(path) : File.directory?(path)
+  end
+
   private def self.exact_entry?(dir : String, name : String) : Bool
+    # The registry's keys preserve case, even on case-insensitive filesystems.
+    return true if CodeLocator.instance.scan_files_active?
+
     entries = @@dir_entries_mutex.synchronize { @@dir_entries[dir]? }
     unless entries
       entries = begin
@@ -915,10 +961,10 @@ module Noir::ImportGraph::Python
       travel_package_path = File.join(package_path, names)
 
       py_guess = "#{travel_package_path}.py"
-      if File.directory?(travel_package_path)
+      if python_directory?(travel_package_path)
         package_path = travel_package_path
         is_positive_travel = true
-      elsif dotted_as_names_split.size - 2 <= index && File.exists?(py_guess)
+      elsif dotted_as_names_split.size - 2 <= index && python_file?(py_guess)
         py_path = py_guess
         is_positive_travel = true
       else
@@ -936,7 +982,7 @@ module Noir::ImportGraph::Python
           import, alias_name = import.split(" as ")
         end
 
-        package_type = File.exists?(File.join(package_path, "#{import}.py")) ? PackageType::FILE : PackageType::CODE
+        package_type = python_file?(File.join(package_path, "#{import}.py")) ? PackageType::FILE : PackageType::CODE
 
         if alias_name.nil?
           package_map << {import, py_path, package_type}

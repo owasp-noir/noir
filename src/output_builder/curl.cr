@@ -11,7 +11,7 @@ class OutputBuilderCurl < OutputBuilder
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
       expand_synthetic_http_methods(endpoint.method).each do |method|
-        ob_puts CurlCommand.for_endpoint(method, baked, endpoint.params)
+        ob_puts CurlCommand.for_endpoint(method, baked, endpoint.params) + project_shell_comment(endpoint)
       end
     end
   end

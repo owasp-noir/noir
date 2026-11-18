@@ -19,6 +19,10 @@ module Detector::Javascript
       filename.includes?("api/") || filename.includes?("api\\")
     end
 
+    def requires_scan_files? : Bool
+      true
+    end
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       return false if Noir::ServerlessLayout.non_handler_file?(filename)

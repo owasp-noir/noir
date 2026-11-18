@@ -1361,7 +1361,7 @@ module Analyzer::Javascript
       return false unless File.file?(file_path)
 
       begin
-        content = CodeLocator.instance.content_for(file_path) || Noir::TextFile.read(file_path)
+        content = CodeLocator.instance.read_source(file_path) || ""
         # Look for common route definition patterns
         # Matches: router.get(, router.post(, .get(, .post(, etc.
         # A commented-out `// router.get(...)` in a middleware module must not
@@ -1957,7 +1957,7 @@ module Analyzer::Javascript
     # Every specifier matcher below reads quoted literals; computed
     # `__dirname` specifiers are rewritten to them first.
     private def read_source(file : String) : String
-      JsModuleResolver.normalize_computed_specifiers(CodeLocator.instance.content_for(file) || Noir::TextFile.read(file))
+      JsModuleResolver.normalize_computed_specifiers(CodeLocator.instance.read_source(file) || "")
     end
 
     private def resolve_require_path(from_file : String, require_path : String) : String?

@@ -113,6 +113,10 @@ end
 # (the CLI, via `NoirRunner`) pass an array and get every tech that raised.
 def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLogger,
                        failures : Array(AnalyzerFailure)? = nil)
+  CodeLocator.instance.with_scan_files { analyze_scanned_endpoints(options, techs, logger, failures) }
+end
+
+private def analyze_scanned_endpoints(options, techs, logger, failures)
   result = [] of Endpoint
   file_analyzer = FileAnalyzer.new options
   logger.info "Initializing analyzers"
@@ -228,6 +232,20 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   if file_analyzer_hooks > 0
     logger.sub "➔ File-based Analyzer: #{file_analyzer_hooks} hook#{'s' unless file_analyzer_hooks == 1} in use"
     result = result + file_analyzer.analyze
+  end
+
+  # The legacy I/O exceptions may still produce attributed paths. Keep
+  # exclusion semantics at the shared boundary until those callers migrate.
+  exclusions = Noir::ExcludePath.new(options["exclude_path"]?.to_s)
+  if exclusions.active?
+    bases = options["base"]?.try(&.as_a?).try(&.map(&.to_s)) || [] of String
+    result.reject! do |endpoint|
+      paths = endpoint.details.code_paths
+      !paths.empty? && paths.all? do |location|
+        owners = bases.select { |base| Noir::PathScope.under_root?(location.path, base) }
+        !owners.empty? && owners.all? { |base| exclusions.excluded?(Noir::PathScope.relative_under(location.path, base)) }
+      end
+    end
   end
 
   logger.info "Found #{result.size} endpoints"

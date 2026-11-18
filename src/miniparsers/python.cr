@@ -398,7 +398,7 @@ class PythonParser
   private def get_or_create_parser(pyfile : String) : PythonParser?
     return @parsers[pyfile] if @parsers.has_key?(pyfile)
 
-    content = Noir::TextFile.read(pyfile)
+    content = (CodeLocator.instance.read_source(pyfile) || "")
     sub = PythonParser.new(pyfile, content, @parsers, @visited.dup, depth: @depth + 1)
     @parsers[pyfile] = sub
     sub

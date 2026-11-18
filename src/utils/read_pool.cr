@@ -33,7 +33,7 @@ class Noir::ReadPool
     Noir::WorkerThreads.count
   end
 
-  @jobs : Channel(Tuple(String, Channel(Outcome)))
+  @jobs : Channel(Tuple(String, String?, Channel(Outcome)))
   @done : WaitGroup
 
   # `passive_rules` run on every file that reads as text, on the pool's
@@ -42,7 +42,7 @@ class Noir::ReadPool
   # under `-P`.
   def initialize(workers : Int32 = ReadPool.worker_count,
                  @passive_rules : Array(PassiveScan) = [] of PassiveScan)
-    @jobs = Channel(Tuple(String, Channel(Outcome))).new(workers * 16)
+    @jobs = Channel(Tuple(String, String?, Channel(Outcome))).new(workers * 16)
     @done = WaitGroup.new(workers)
     workers.times { spawn_worker }
   end
@@ -53,17 +53,17 @@ class Noir::ReadPool
 
   private def work : Nil
     while job = @jobs.receive?
-      path, reply = job
-      reply.send(read(path))
+      path, preloaded, reply = job
+      reply.send(read(path, preloaded))
     end
   ensure
     @done.done
   end
 
   # Queue `path` for reading. The returned channel yields its `Outcome`.
-  def submit(path : String) : Channel(Outcome)
+  def submit(path : String, preloaded : String? = nil) : Channel(Outcome)
     reply = Channel(Outcome).new(1)
-    @jobs.send({path, reply})
+    @jobs.send({path, preloaded, reply})
     reply
   end
 
@@ -75,8 +75,8 @@ class Noir::ReadPool
 
   # `Noir::TextFile.read` plus the binary sniff the walk applies right
   # after it, both pure functions of the bytes, and the passive rules.
-  private def read(path : String) : Outcome
-    content = Noir::TextFile.read(path)
+  private def read(path : String, preloaded : String?) : Outcome
+    content = preloaded || Noir::TextFile.read(path)
     return Outcome.new(content: content, binary: true) if content.to_slice.includes?(0_u8)
     Outcome.new(content: content, passive_results: passive_results(path, content))
   rescue e

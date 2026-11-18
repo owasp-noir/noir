@@ -200,21 +200,16 @@ module Noir::Detection
     prefixes
   end
 
-  def add_android_source_prefixes_from_dir(dir : String, prefixes : Array(String))
-    manifest_path = File.join(dir, "AndroidManifest.xml")
-    begin
-      # `File.file?` raises (not false) on EACCES, and `File.exists?` is true
-      # for a directory named AndroidManifest.xml, whose read raises EISDIR.
-      return unless File.file?(manifest_path)
-      content = Noir::TextFile.read(manifest_path)
-      return unless content.includes?("<manifest")
-    rescue IO::Error
-      return
+  def read_android_manifest(manifest_path : String, prefixes : Array(String)) : String?
+    content = CodeLocator.instance.read_source(manifest_path)
+    if content && content.includes?("<manifest")
+      android_source_prefixes_for_manifest(manifest_path).each do |prefix|
+        prefixes << prefix unless prefixes.includes?(prefix)
+      end
     end
-
-    android_source_prefixes_for_manifest(manifest_path).each do |prefix|
-      prefixes << prefix unless prefixes.includes?(prefix)
-    end
+    content
+  rescue IO::Error
+    nil
   end
 
   def android_source_file?(path : String, prefixes : Array(String)) : Bool
@@ -773,8 +768,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         dir_has_shard = listing.has_shard
         scoped_names = Noir::Detection.scoped_dir_names(listing.entries)
         native_root = Noir::Detection.native_source_root?(listing.entries, inherited_native_root)
-        if android_source_scope_active
-          Noir::Detection.add_android_source_prefixes_from_dir(dir, android_source_prefixes)
+        android_manifest_content = nil
+        if android_source_scope_active && (manifest = listing.entries.find { |entry| entry.name == "AndroidManifest.xml" })
+          manifest_path = File.join(dir, manifest.name)
+          relative = manifest_path.starts_with?(base_prefix) ? manifest_path[base_prefix.size..] : manifest_path
+          if (info = manifest.info) && info.file? && !exclude_path.excluded?(relative) && !MediaFilter.skip_check(manifest_path, info: info, sniff_binary: false)
+            android_manifest_content = Noir::Detection.read_android_manifest(manifest_path, android_source_prefixes)
+          end
         end
         begin
           listing.entries.each do |listed|
@@ -898,7 +898,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               next
             end
 
-            reply = read_pool.submit(full_path)
+            reply = read_pool.submit(full_path, entry == "AndroidManifest.xml" ? android_manifest_content : nil)
             pending.send(Noir::Detection::PendingFile.new(full_path, candidate_detector_indices, android_source_file, reply))
           end
           # A listing that failed part-way: the entries it did yield were
@@ -1001,6 +1001,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # never persist.
   detected_flags = Array(AtomicFlag).new(detector_list.size) { AtomicFlag.new }
 
+  deferred_files = Hash(Int32, Array(String)).new
   concurrency.times do
     wg.add(1)
     spawn do
@@ -1012,6 +1013,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
         candidate_detector_indices.each do |idx|
           detector = detector_list[idx]
+          if detector.requires_scan_files?
+            mutex.synchronize { (deferred_files[idx] ||= [] of String) << file }
+            next
+          end
           # Skip detectors that have already matched, unless
           # the detector signals it has side effects in
           # `detect` (`idempotent? == false`) — see
@@ -1062,6 +1067,25 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       "--exclude-path contains an invalid glob pattern (#{pattern_error}): #{options["exclude_path"]?.to_s.inspect}. " \
       "Check the `[` character classes — each one must be closed with a `]`."
     )
+  end
+
+  unless deferred_files.empty?
+    locator.with_scan_files do
+      deferred_files.each do |idx, files|
+        detector = detector_list[idx]
+        next if detector.idempotent? && techs.includes?(detector.name)
+        files.each do |file|
+          content = locator.read_source(file) || next
+          next unless detector.detect(file, content)
+
+          techs << detector.name unless techs.includes?(detector.name)
+          logger.verbose_sub "└── Detected: #{detector.name} in #{file}"
+          break if detector.idempotent?
+        rescue ex : IO::Error
+          logger.debug "Error detecting #{file}: #{ex.message}"
+        end
+      end
+    end
   end
 
   logger.debug "Added #{locator.all_files.size} files to file_map"

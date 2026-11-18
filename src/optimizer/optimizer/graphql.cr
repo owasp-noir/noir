@@ -22,10 +22,10 @@ class EndpointOptimizer
   end
 
   private def prune_collection_graphql_transport_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
-    operation_paths = Set(String).new
+    operation_paths = Set({String, RouteScope}).new
     endpoints.each do |endpoint|
       next unless graphql_operation_endpoint?(endpoint)
-      operation_paths << graphql_transport_path(endpoint.url)
+      operation_paths << {graphql_transport_path(endpoint.url), origin_scope(endpoint)}
     end
     return endpoints if operation_paths.empty?
 
@@ -34,10 +34,10 @@ class EndpointOptimizer
     end
   end
 
-  private def collection_graphql_transport_noise?(endpoint : Endpoint, operation_paths : Set(String)) : Bool
+  private def collection_graphql_transport_noise?(endpoint : Endpoint, operation_paths : Set({String, RouteScope})) : Bool
     return false unless collection_endpoint?(endpoint)
     return false unless endpoint.method == "POST"
-    return false unless operation_paths.includes?(graphql_transport_path(endpoint.url))
+    return false unless operation_paths.includes?({graphql_transport_path(endpoint.url), origin_scope(endpoint)})
     return false if endpoint.url.includes?("#")
 
     endpoint.params.all? { |param| collection_noise_header_param?(param) }

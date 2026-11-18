@@ -23,7 +23,10 @@ module Analyzer::Mobile
     # address). Compared case-insensitively.
     GENERIC_SCHEMES = Set{"http", "https", "file", "content"}
 
-    @build_vars_cache = {} of String => Hash(String, Array(String))
+    private alias BuildVars = Hash(String, Array(String))
+    private alias BuildSettings = {common: BuildVars, project: BuildVars, configs: Hash(String, BuildVars)}
+
+    @build_vars_cache = {} of String => BuildSettings
     # The app's "main" scheme + declared aliases — the first CFBundleURLTypes
     # array entry that resolves to any scheme, per Info.plist (see
     # `parse_info_plist`). Used to scope the code-level route harvesting
@@ -42,7 +45,10 @@ module Analyzer::Mobile
     @primary_scheme_dirs = {} of String => Array(String)
     # Shared across the two code-level harvesting passes so a route found
     # both ways (or repeated across call sites) only surfaces once.
-    @code_route_seen = Set(String).new
+    @code_route_seen = Set({String, String}).new
+    @project_roots = Hash(String, String).new
+    @plist_dirs = [] of String
+    @schemes_by_project = Hash(String, Set(String)).new
     # Budget counter for `harvest_literal_scheme_routes` only — kept
     # separate from `@code_route_seen` (shared dedup across both passes) so
     # a large batch of enum-harvested routes from `harvest_enum_host_routes`
@@ -55,6 +61,7 @@ module Analyzer::Mobile
 
       plists = locator.all(Noir::LocatorKeys::IOS_INFO_PLIST)
       if plists.is_a?(Array(String))
+        @plist_dirs = plists.map { |path| File.dirname(Noir::PathScope.expand(path)) }.uniq!
         plists.each { |path| parse_safely(path) { |doc| parse_info_plist(doc, path) } }
       end
 
@@ -87,8 +94,9 @@ module Analyzer::Mobile
       return unless url_types
 
       build_vars = load_xcconfig_vars(path)
+      project_schemes = @schemes_by_project[settings_root(path)] ||= Set(String).new
 
-      seen = Set(String).new
+      seen = Set({String, String?}).new
       # Only the first array entry that resolves to any real scheme is
       # treated as "primary" — this is the app's main scheme plus whatever
       # aliases it lists alongside it (e.g. `myapp` + `myapp-alt` in one
@@ -108,20 +116,21 @@ module Analyzer::Mobile
           # `${APPLICATION_SCHEME}`) are substituted at build time from
           # .xcconfig — resolve them here so Firefox/Element surface
           # `firefox://` / `element://` instead of the literal variable.
-          resolved_schemes = substitute_build_vars(raw_scheme, build_vars)
+          resolved_schemes = configured_values(raw_scheme, build_vars)
           # Generic web/file schemes (registered e.g. so the app is
           # selectable as a browser) carry no app-specific deep-link
           # surface — a bare `http://` / `https://` is not an addressable
           # entry point, just noise in the inventory.
-          resolved_schemes.each do |scheme|
+          resolved_schemes.each do |scheme, variant|
             next if unresolved_build_var?(scheme)
             next if GENERIC_SCHEMES.includes?(scheme.downcase)
             entry_schemes << scheme
+            project_schemes << scheme
 
             url = "#{scheme}://"
-            next unless seen.add?(url)
+            next unless seen.add?({url, variant})
 
-            endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
+            endpoint = configuration_endpoint(url, path, variant)
             endpoint.protocol = "mobile-scheme"
             @result << endpoint
           end
@@ -165,7 +174,7 @@ module Analyzer::Mobile
     # Values are gathered from the enclosing Xcode project root and kept as a
     # small set per key because open-source repos often carry multiple app
     # flavors in one tree (e.g. Firefox Focus/Klar).
-    private def load_xcconfig_vars(plist_path : String) : Hash(String, Array(String))
+    private def load_xcconfig_vars(plist_path : String) : BuildSettings
       # Generated-project tooling (Tuist, XcodeGen, Bazel's rules_apple, plain
       # SPM apps) commonly ships no `.xcodeproj`/`.xcworkspace` at all — those
       # are produced at build time and not checked in. Falling back to just
@@ -173,7 +182,7 @@ module Analyzer::Mobile
       # sibling directory (e.g. a top-level `Configs/`), silently dropping
       # every scheme that resolves through them. The scan's own configured
       # base is the best remaining signal of "the whole project" in that case.
-      root = xcode_project_root(plist_path) || configured_base_for(plist_path)
+      root = settings_root(plist_path)
       if cached = @build_vars_cache[root]?
         return cached
       end
@@ -194,7 +203,7 @@ module Analyzer::Mobile
       # truncate (a 20-service monorepo carries more than
       # MAX_PBXPROJ_FILES), so the selection depends on order.
       vars = {} of String => Array(String)
-      if all_files.empty?
+      if !CodeLocator.instance.scan_files_active? && all_files.empty?
         # `--exclude-path` is applied by the detector's walk, which this
         # branch runs *instead of* — so it has to be re-applied by hand or
         # the fallback reads build settings out of a file the user
@@ -206,14 +215,48 @@ module Analyzer::Mobile
         pbxprojs = get_files_by_relative_path("project.pbxproj", root)
       end
 
+      configs = {} of String => BuildVars
       xcconfigs.sort.first(MAX_XCCONFIG_FILES).each do |xc|
-        parse_xcconfig(xc, vars)
+        local = BuildVars.new
+        parse_xcconfig(xc, local)
+        configs[Noir::PathScope.relative_under(xc, root)] = local
+        local.each { |key, values| values.each { |value| store_build_var(vars, key, value) } }
       end
+      project_vars = BuildVars.new
       pbxprojs.sort.first(MAX_PBXPROJ_FILES).each do |pbx|
-        parse_pbxproj(pbx, vars)
+        parse_pbxproj(pbx, project_vars)
       end
-      @build_vars_cache[root] = vars
-      vars
+      project_vars.each { |key, values| values.each { |value| store_build_var(vars, key, value) } }
+      common = vars.select { |_, values| values.size == 1 }
+      @build_vars_cache[root] = {common: common, project: project_vars, configs: configs}
+    end
+
+    private def settings_root(path : String) : String
+      dir = File.dirname(Noir::PathScope.expand(path))
+      @project_roots[dir] ||= xcode_project_root(path) || generated_project_root(path, dir)
+    end
+
+    private def generated_project_root(path : String, dir : String) : String
+      base = Noir::PathScope.normalize_root(configured_base_for(path))
+      return base if @plist_dirs.size < 2
+
+      # Climb toward shared settings within this app. Stop when the next
+      # directory also contains a different app's plist.
+      loop do
+        parent = File.dirname(dir)
+        return dir if parent == dir || !Noir::PathScope.under_normalized_root?(parent, base)
+        sibling_app = @plist_dirs.any? do |other|
+          Noir::PathScope.under_normalized_root?(other, parent) && !Noir::PathScope.under_normalized_root?(other, dir)
+        end
+        return dir if sibling_app
+        dir = parent
+      end
+    end
+
+    private def code_project_root(path : String) : String
+      expanded = Noir::PathScope.expand(path)
+      roots = @plist_dirs.map { |dir| settings_root(File.join(dir, "Info.plist")) }.uniq!
+      Noir::PathScope.longest_base(expanded, roots) || configured_base_for(path)
     end
 
     # The nearest ancestor of the Info.plist that holds a `.xcodeproj` /
@@ -236,6 +279,10 @@ module Analyzer::Mobile
     # this is not here", and letting it still anchor the build-settings
     # search would read the very tree the user carved out.
     private def xcode_project_bundle?(dir : String, pattern : String) : Bool
+      locator = CodeLocator.instance
+      if locator.scan_files_active?
+        return locator.source_child_directories(dir).any? { |path| File.match?(pattern, File.basename(path)) }
+      end
       glob_under(dir, pattern).any? { |path| !excluded_path?(path) }
     end
 
@@ -275,31 +322,52 @@ module Analyzer::Mobile
       value.strip
     end
 
+    private def configuration_endpoint(url : String, path : String, variant : String?) : Endpoint
+      details = Details.new(PathInfo.new(path))
+      details.origins = [Origin.new("ios", "config", platform: "ios", variant: variant)]
+      Endpoint.new(url, "GET", details)
+    end
+
+    # Each xcconfig gets its own overrides. Only unambiguous settings from
+    # elsewhere can fill the gaps, so values from two configurations never mix.
+    private def configured_values(value : String, settings : BuildSettings) : Array({String, String?})
+      return [{value, nil}] of {String, String?} unless value.matches?(BUILD_VAR_REF_RE)
+
+      configured = [] of {String, String?}
+      settings[:configs].each do |variant, local|
+        substitute_build_vars(value, settings[:common].merge(local), local).each do |resolved, local_used|
+          configured << {resolved, variant} if local_used && !unresolved_build_var?(resolved)
+        end
+      end
+      # Values defined only in project.pbxproj can still resolve without a
+      # configuration file to attribute them to.
+      return configured unless configured.empty?
+      substitute_build_vars(value, settings[:project]).map { |resolved, _| {resolved, nil.as(String?)} }
+    end
+
     # Resolves `$(VAR)` / `${VAR}` against the xcconfig map. Values in
     # xcconfig files may themselves point at another build setting
     # (`APP_SCHEME = ${BRANDED_SCHEME}`), so resolve repeatedly with a
     # bounded depth. Unknown or cyclic references are kept verbatim and
     # filtered by `unresolved_build_var?` before endpoint creation.
-    private def substitute_build_vars(value : String, vars : Hash(String, Array(String))) : Array(String)
-      return [value] unless value.matches?(BUILD_VAR_REF_RE)
-
-      resolved = [value]
+    private def substitute_build_vars(value : String, vars : BuildVars, local : BuildVars? = nil) : Array({String, Bool})
+      resolved = [{value, false}]
       MAX_BUILD_VAR_SUBSTITUTION_DEPTH.times do
         changed = false
-        next_values = [] of String
+        next_values = [] of {String, Bool}
 
-        resolved.each do |candidate|
+        resolved.each do |candidate, local_used|
           if match = candidate.match(BUILD_VAR_RE)
             if replacements = vars[match[1]]?
               replacements.each do |replacement|
-                next_values << candidate.sub(match[0], replacement)
+                next_values << {candidate.sub(match[0], replacement), local_used || local.try(&.has_key?(match[1])) || false}
               end
               changed = true
             else
-              next_values << candidate
+              next_values << {candidate, local_used}
             end
           else
-            next_values << candidate
+            next_values << {candidate, local_used}
           end
         end
 
@@ -307,7 +375,7 @@ module Analyzer::Mobile
         break unless changed
 
         resolved = next_values
-        break unless resolved.any?(&.matches?(BUILD_VAR_REF_RE))
+        break unless resolved.any? { |candidate, _| unresolved_build_var?(candidate) }
       end
       resolved
     end
@@ -342,7 +410,7 @@ module Analyzer::Mobile
       # surface as literal, unusable `$(VAR)` hostnames.
       build_vars = load_xcconfig_vars(path)
 
-      seen = Set(String).new
+      seen = Set({String, String?}).new
       each_array_string(domains) do |entry|
         # Entries look like "applinks:example.com", "appclips:example.com",
         # "applinks:example.com?mode=developer", "webcredentials:example.com".
@@ -352,7 +420,7 @@ module Analyzer::Mobile
         domain = domain.split('?', 2).first.strip
         next if domain.empty?
 
-        substitute_build_vars(domain, build_vars).each do |resolved_domain|
+        configured_values(domain, build_vars).each do |resolved_domain, variant|
           next if unresolved_build_var?(resolved_domain)
           next if resolved_domain.empty?
 
@@ -360,9 +428,9 @@ module Analyzer::Mobile
           # is the same https:// surface; deduping on the URL collapses the two
           # while still surfacing App-Clip-only domains.
           url = "https://#{resolved_domain}/"
-          next unless seen.add?(url)
+          next unless seen.add?({url, variant})
 
-          endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
+          endpoint = configuration_endpoint(url, path, variant)
           endpoint.protocol = "universal-link"
           @result << endpoint
         end
@@ -445,11 +513,13 @@ module Analyzer::Mobile
       # a `//` or brace inside a case's own string literal on an earlier
       # line can't be mistaken for a real comment/structure and corrupt the
       # scan of a later line.
-      enum_sites = {} of String => String
+      enum_sites = {} of {String, String} => String
+      files_by_project = swift_files.group_by { |path| code_project_root(path) }
       # enum name => every {file, enclosing func, is-a-comparison} it was
       # seen at, for `dispatcher_guard_schemes` below.
-      enum_routers = {} of String => Set(Tuple(String, String?, Bool))
+      enum_routers = {} of {String, String} => Set(Tuple(String, String?, Bool))
       swift_files.each do |path|
+        scope = code_project_root(path)
         content = read_file_content(path)
         depth = 0
         in_string = false
@@ -472,9 +542,10 @@ module Analyzer::Mobile
           stripped.scan(HOST_ENUM_SITE_RE) do |m|
             enum_name = m[1]? || m[2]? || m[3]?
             next unless enum_name
-            enum_sites[enum_name] ||= path
+            key = {scope, enum_name}
+            enum_sites[key] ||= path
             compares = m[0].includes?("==") || m[0].includes?("!=") || m[0].includes?(".contains(")
-            (enum_routers[enum_name] ||= Set(Tuple(String, String?, Bool)).new) << {path, current_func, compares}
+            (enum_routers[key] ||= Set(Tuple(String, String?, Bool)).new) << {path, current_func, compares}
           end
 
           brace_depth += stripped.count('{') - stripped.count('}')
@@ -492,8 +563,10 @@ module Analyzer::Mobile
         ep.protocol == "mobile-scheme" && ep.url.ends_with?("://") ? ep.url.rchop("://") : nil
       end.to_set
 
-      enum_sites.each do |enum_name, site_path|
-        cases = resolve_enum_cases(enum_name, swift_files)
+      enum_sites.each do |key, site_path|
+        scope, enum_name = key
+        project_files = files_by_project[scope]
+        cases = resolve_enum_cases(enum_name, project_files)
         next if cases.empty?
 
         schemes = best_matching_schemes(site_path)
@@ -502,8 +575,8 @@ module Analyzer::Mobile
         # or a guard naming a primary scheme, keeps the primary rows.
         guarded = [] of String
         unguarded = false
-        enum_routers[enum_name].each do |path, func, compares|
-          if func && (found = dispatcher_guard_schemes(path, func, declared, swift_files))
+        enum_routers[key].each do |path, func, compares|
+          if func && (found = dispatcher_guard_schemes(path, func, declared, project_files))
             guarded.concat(found)
           elsif compares
             unguarded = true
@@ -519,7 +592,7 @@ module Analyzer::Mobile
 
           schemes.each do |scheme|
             url = "#{scheme}://#{host}"
-            next unless @code_route_seen.add?(url)
+            next unless @code_route_seen.add?({scope, url})
 
             endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(decl_path, decl_line)))
             endpoint.protocol = "mobile-scheme"
@@ -769,6 +842,8 @@ module Analyzer::Mobile
       return if files.empty?
 
       files.each do |path|
+        scope = code_project_root(path)
+        allowed_schemes = @schemes_by_project[scope]?
         break if @literal_route_count >= MAX_LITERAL_ROUTES
         objc = path.ends_with?(".m") || path.ends_with?(".mm")
         content = read_file_content(path)
@@ -778,6 +853,9 @@ module Analyzer::Mobile
 
           line.scan(literal_re) do |m|
             literal = m[1]
+            if allowed_schemes && !allowed_schemes.includes?(literal.split("://", 2).first)
+              next
+            end
             # Swift string interpolation (`\(id)`) and Objective-C format
             # specifiers (`%@`) inside the literal are skipped rather than
             # templated — see the deferred-work note above the section
@@ -785,7 +863,7 @@ module Analyzer::Mobile
             next if literal.includes?("\\(")
             next if objc && literal.includes?('%')
             next if literal.matches?(FORMAT_SPECIFIER_RE)
-            next unless @code_route_seen.add?(literal)
+            next unless @code_route_seen.add?({scope, literal})
 
             @literal_route_count += 1
             endpoint = Endpoint.new(literal, "GET", Details.new(PathInfo.new(path, index + 1)))
