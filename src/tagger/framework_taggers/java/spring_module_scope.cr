@@ -39,10 +39,14 @@ module SpringModuleScope
   # The build units of the endpoint's sources. A build file is no evidence
   # of the serving module: a framework-provided route (`/actuator`) points
   # at the parent pom that declares the dependency every child app inherits.
+  # A Boot app's own build file is: that app serves the route.
   private def endpoint_modules(endpoint : Endpoint) : Array(String)
     endpoint.details.code_paths.compact_map do |path_info|
       path = path_info.path
-      build_module(path) unless MediaFilter.spec_document?(path) || File.basename(path).matches?(BUILD_FILE)
+      next if MediaFilter.spec_document?(path)
+      module_dir = build_module(path)
+      next if File.basename(path).matches?(BUILD_FILE) && !@boot_apps.includes?(module_dir)
+      module_dir
     end.uniq!
   end
 
