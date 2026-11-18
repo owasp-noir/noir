@@ -528,6 +528,9 @@ module Noir
         when "prefix_expression"
           if class_name = split_constructor_class_name(child, source)
             collect_orphan_function_nodes(child, source, class_name, result)
+          elsif infix = infix_class_expression(child, source)
+            class_name = Noir::TreeSitter.node_text(LibTreeSitter.ts_node_named_child(infix, 1_u32), source)
+            collect_orphan_function_nodes(LibTreeSitter.ts_node_named_child(infix, 2_u32), source, class_name, result)
           end
           orphan_class = nil
         when "annotation", "line_comment", "multiline_comment"
