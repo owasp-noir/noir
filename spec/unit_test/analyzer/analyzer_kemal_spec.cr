@@ -529,3 +529,104 @@ describe "kemal router-instance routes" do
     FileUtils.rm_rf(temp_dir) if temp_dir
   end
 end
+
+describe "kemal routes registered in a loop over literals" do
+  it "expands a tuple, %w(), hash or same-file constant loop into its literal routes" do
+    temp_dir = File.tempname("kemal_loops")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "app.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      KINDS = {"widgets", "gadgets"}
+
+      def register
+        %w(decode encode).each do |action|
+          post("/tool/\#{action}") { |ctx| action }
+        end
+        {"/status", "/status.json"}.each do |path|
+          get(path) do |ctx|
+            ctx.params.query["verbose"]
+          end
+        end
+        {"/items" => "/upstream/items", "/items/search" => "/upstream/search"}.each do |route, upstream|
+          get route do |ctx|
+            upstream
+          end
+        end
+        KINDS.each do |kind|
+          get "/\#{kind}/:id" do |env|
+            kind
+          end
+          get "/fixed" do |env|
+            kind
+          end
+        end
+        dynamic_names.each do |name|
+          get "/dyn/\#{name}" do |env|
+            name
+          end
+        end
+      end
+      CRYSTAL
+
+    endpoints = Analyzer::Crystal::Kemal.new(create_test_options).analyze_file(temp_file)
+    endpoints.map { |e| "#{e.method} #{e.url}" }.sort!.should eq([
+      "GET /dyn/{name}", "GET /fixed", "GET /gadgets/:id", "GET /items", "GET /items/search",
+      "GET /status", "GET /status.json", "GET /widgets/:id", "POST /tool/decode", "POST /tool/encode",
+    ])
+    status = endpoints.find! { |e| e.url == "/status.json" }
+    status.params.map(&.name).should eq(["verbose"])
+    status.details.code_paths.first.line.should eq(8)
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+
+  it "reads Kemal::RouteHandler add_route, with a literal or loop-bound method" do
+    temp_dir = File.tempname("kemal_add_route")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "app.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      Kemal::RouteHandler::INSTANCE.add_route("PUT", "/direct") { |ctx| "d" }
+      {"GET", "POST"}.each do |method|
+        Kemal::RouteHandler::INSTANCE.add_route(method, "/hook/*path") do |ctx|
+          "hit"
+        end
+      end
+      CRYSTAL
+
+    endpoints = Analyzer::Crystal::Kemal.new(create_test_options).analyze_file(temp_file)
+    endpoints.map { |e| "#{e.method} #{e.url}" }.sort!.should eq(["GET /hook/*path", "POST /hook/*path", "PUT /direct"])
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+end
+
+describe "kemal params read through the route's block argument" do
+  it "reads params on any block argument name, fetch forms, and stops at a def" do
+    temp_dir = File.tempname("kemal_block_arg")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "app.cr")
+    File.write(temp_file, <<-CRYSTAL)
+      get "/search" do |ctx|
+        q = ctx.params.query["q"]
+        pages = ctx.params.query.fetch_all("page")
+        token = ctx.request.headers["X-Token"]
+        q
+      end
+      post "/orders" do |env|
+        env.params.body.fetch("name", "")
+      end
+
+      def helper(ctx)
+        ctx.params.query["not_orders"]
+      end
+      CRYSTAL
+
+    endpoints = Analyzer::Crystal::Kemal.new(create_test_options).analyze_file(temp_file)
+    search = endpoints.find! { |e| e.url == "/search" }
+    search.params.map { |p| "#{p.param_type}:#{p.name}" }.should eq(["query:q", "query:page", "header:X-Token"])
+    orders = endpoints.find! { |e| e.url == "/orders" }
+    orders.params.map { |p| "#{p.param_type}:#{p.name}" }.should eq(["form:name"])
+  ensure
+    FileUtils.rm_rf(temp_dir) if temp_dir
+  end
+end
