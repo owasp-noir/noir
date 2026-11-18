@@ -708,6 +708,118 @@ describe "EndpointOptimizer" do
       end
     end
 
+    describe "Python apps sharing one manifest" do
+      py_endpoint = ->(url : String, technology : String, path : String, param : String) do
+        endpoint = tech_endpoint(url, "POST", technology, path, 9)
+        endpoint.params = [Param.new(param, "", "json")]
+        endpoint
+      end
+
+      it "keeps two FastAPI apps that serve the same route apart" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-pyapps-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        web = File.join(temp_dir, "services/web/pkg_web/app.py")
+        web_router = File.join(temp_dir, "services/web/pkg_web/routers/items.py")
+        jobs = File.join(temp_dir, "services/jobs/pkg_jobs/server.py")
+
+        begin
+          {web, web_router, jobs}.each { |file| Dir.mkdir_p(File.dirname(file)) }
+          File.write(web, "from fastapi import FastAPI\n\napp = FastAPI()\n")
+          File.write(web_router, "from fastapi import APIRouter\n\nrouter = APIRouter()\n")
+          File.write(jobs, "import fastapi\n\napp: fastapi.FastAPI = fastapi.FastAPI(title=\"jobs\")\n")
+          File.write(File.join(temp_dir, "pyproject.toml"), "[project]\nname = \"demo\"\n")
+          register_files(temp_dir)
+          options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+
+          result = optimizer.optimize_endpoints([
+            py_endpoint.call("/api/lookup", "python_fastapi", web, "term"),
+            py_endpoint.call("/api/items", "python_fastapi", web_router, "name"),
+            py_endpoint.call("/api/lookup", "python_fastapi", jobs, "source_ref"),
+          ])
+
+          result.map { |endpoint| {endpoint.url, endpoint.params.map(&.name), endpoint.details.project} }.sort!.should eq([
+            {"/api/items", ["name"], "services/web/pkg_web"},
+            {"/api/lookup", ["source_ref"], "services/jobs/pkg_jobs"},
+            {"/api/lookup", ["term"], "services/web/pkg_web"},
+          ])
+        ensure
+          options.delete("base")
+          CodeLocator.instance.reset_files
+          FileUtils.rm_rf(temp_dir)
+        end
+      end
+
+      it "keeps two Flask apps under one requirements.txt apart, a factory-built one included" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-pyflask-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        first = File.join(temp_dir, "a/app.py")
+        second = File.join(temp_dir, "b/__init__.py")
+        second_view = File.join(temp_dir, "b/views/search.py")
+
+        begin
+          {first, second, second_view}.each { |file| Dir.mkdir_p(File.dirname(file)) }
+          File.write(first, "from flask import Flask\napp = Flask(__name__)\n")
+          File.write(second, "from flask import Flask\n\ndef create_app():\n    app = Flask(__name__)\n    return app\n")
+          File.write(second_view, "from flask import Blueprint\nbp = Blueprint(\"search\", __name__)\n")
+          File.write(File.join(temp_dir, "requirements.txt"), "flask\n")
+          register_files(temp_dir)
+
+          result = optimizer.optimize_endpoints([
+            py_endpoint.call("/search", "python_flask", first, "alpha"),
+            py_endpoint.call("/search", "python_flask", second_view, "beta"),
+          ])
+
+          result.map(&.params.map(&.name)).sort!.should eq([["alpha"], ["beta"]])
+        ensure
+          CodeLocator.instance.reset_files
+          FileUtils.rm_rf(temp_dir)
+        end
+      end
+
+      it "keeps one app whole: routers in many files, a mounted sub-app, a test app and a hidden copy" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        temp_dir = File.join(Dir.tempdir, "noir-optimizer-pyone-#{Process.pid}-#{Time.utc.to_unix_ms}")
+        main = File.join(temp_dir, "demo/main.py")
+        nested = File.join(temp_dir, "demo/routers/orders.py")
+        sibling = File.join(temp_dir, "routes/orders.py")
+        sub_app = File.join(temp_dir, "demo/admin/app.py")
+        test_app = File.join(temp_dir, "test_app.py")
+        copy = File.join(temp_dir, ".snapshot/demo/main.py")
+
+        begin
+          {main, nested, sibling, sub_app, copy}.each { |file| Dir.mkdir_p(File.dirname(file)) }
+          File.write(main, "from fastapi import FastAPI\napp = FastAPI()\n")
+          File.write(nested, "from fastapi import APIRouter\nrouter = APIRouter()\n")
+          File.write(sibling, "from fastapi import APIRouter\nrouter = APIRouter()\n")
+          File.write(sub_app, "from fastapi import FastAPI\nadmin = FastAPI()\n")
+          File.write(test_app, "from fastapi import FastAPI\napp = FastAPI()\n")
+          File.write(copy, "from fastapi import FastAPI\napp = FastAPI()\n")
+          File.write(File.join(temp_dir, "pyproject.toml"), "[project]\nname = \"demo\"\n")
+          register_files(temp_dir)
+          CodeLocator.instance.register_path(copy) # the glob skips dot dirs
+          options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+
+          result = optimizer.optimize_endpoints([
+            py_endpoint.call("/orders", "python_fastapi", nested, "item"),
+            py_endpoint.call("/orders", "python_fastapi", sibling, "note"),
+            py_endpoint.call("/health", "python_fastapi", main, "probe"),
+            py_endpoint.call("/health", "python_fastapi", copy, "probe"),
+            py_endpoint.call("/backoffice/widgets", "python_fastapi", sub_app, "name"),
+          ])
+
+          result.map { |endpoint| {endpoint.url, endpoint.params.map(&.name).sort!, endpoint.details.project} }.sort!.should eq([
+            {"/backoffice/widgets", ["name"], ""},
+            {"/health", ["probe"], ""},
+            {"/orders", ["item", "note"], ""},
+          ])
+        ensure
+          options.delete("base")
+          CodeLocator.instance.reset_files
+          FileUtils.rm_rf(temp_dir)
+        end
+      end
+    end
+
     it "reads a Go package clause whose 4 KB head ends inside a multibyte character" do
       optimizer = EndpointOptimizer.new(logger, options)
       temp_dir = File.join(Dir.tempdir, "noir-optimizer-goutf8-#{Process.pid}-#{Time.utc.to_unix_ms}")
