@@ -80,6 +80,11 @@ module Noir
     # parameters. Anything else uses form data.
     QUERY_VERB_PARAMS = Set{"GET", "HEAD", "OPTIONS"}
 
+    # Spring Data paging types: no request value converts to one, so a
+    # command-object property of such a type binds nothing. Same set as the
+    # Java extractor's `PAGING_TYPES`.
+    PAGING_TYPES = Set{"Pageable", "PageRequest", "Sort"}
+
     HTTP_HEADER_SPECIAL_CASES = {
       "Etag"             => "ETag",
       "Te"               => "TE",
@@ -112,12 +117,14 @@ module Noir
       # The declaring class's `@JsonRootName`: the key the body is wrapped
       # in under `UNWRAP_ROOT_VALUE`.
       property json_root : String? = nil
+      # Simple name of the declared type (`Sort` for `org.x.Sort?`), "" when unwritten.
+      getter type_name : String
 
       def initialize(@name, @access_modifier, @has_setter, @init_value,
                      @null_validation_groups = [] of String, @server_managed = false,
                      @validation_annotations = [] of String,
                      @init_string_literal = false,
-                     json_name : String? = nil)
+                     json_name : String? = nil, @type_name = "")
         @json_name = json_name || @name
         @json_name_fixed = !json_name.nil?
       end
@@ -756,6 +763,11 @@ module Noir
 
     # ---- DTO field collection ----------------------------------------
 
+    # `org.x.Sort?` -> `Sort`, `List<Item>` -> `List`.
+    private def simple_declared_type(node : LibTreeSitter::TSNode, source : String) : String
+      Noir::TreeSitter.node_text(node, source).split('<').first.rchop('?').split('.').last.strip
+    end
+
     # `private` / `protected` / `internal` from a property's modifiers;
     # Kotlin's default is public. `has_setter` stays true for every field,
     # so binders that accept "public or settable" are unaffected.
@@ -781,6 +793,7 @@ module Noir
           name = ""
           init = ""
           init_string = false
+          type_name = ""
           Noir::TreeSitter.each_named_child(param) do |child|
             case Noir::TreeSitter.node_type(child)
             when "simple_identifier"
@@ -788,7 +801,9 @@ module Noir
             when "string_literal"
               init = decode_string_literal(child, source)
               init_string = true
-            when "user_type", "nullable_type", "binding_pattern_kind",
+            when "user_type", "nullable_type"
+              type_name = simple_declared_type(child, source)
+            when "binding_pattern_kind",
                  "modifiers", "parameter_modifiers", "annotation"
               # type / val|var marker / property annotations — not a
               # default value. `modifiers` carries `@field:Email`-style
@@ -804,7 +819,7 @@ module Noir
           fields << FieldInfo.new(
             name, field_visibility(param, source), true, init, null_validation_groups(param, source),
             server_managed_field?(param, source, name, init, class_name, class_text), validation_annotations(param, source),
-            init_string, json_property_name(param, source)
+            init_string, json_property_name(param, source), type_name
           )
         end
       end
@@ -837,13 +852,16 @@ module Noir
             name = ""
             init = ""
             init_string = false
+            type_name = ""
             Noir::TreeSitter.each_named_child(member) do |child|
               case Noir::TreeSitter.node_type(child)
               when "variable_declaration"
                 Noir::TreeSitter.each_named_child(child) do |sub|
-                  if Noir::TreeSitter.node_type(sub) == "simple_identifier"
-                    name = Noir::TreeSitter.node_text(sub, source)
-                    break
+                  case Noir::TreeSitter.node_type(sub)
+                  when "simple_identifier"
+                    name = Noir::TreeSitter.node_text(sub, source) if name.empty?
+                  when "user_type", "nullable_type"
+                    type_name = simple_declared_type(sub, source)
                   end
                 end
               when "simple_identifier"
@@ -868,7 +886,7 @@ module Noir
             fields << FieldInfo.new(
               name, visibility, true, init, null_validation_groups(member, source),
               server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source),
-              init_string, wire_name
+              init_string, wire_name, type_name
             )
             last_prop_name = name
           else
@@ -1232,6 +1250,7 @@ module Noir
             next if field.server_managed?
             next if field.null_for_any_group?(validation_groups)
             next unless json_body || field.access_modifier == "public" || field.has_setter?
+            next if !json_body && PAGING_TYPES.includes?(field.type_name)
             # `default_value` is an annotation-supplied value
             # (`@RequestParam(defaultValue = "all")`) and is already literal.
             # A field initialiser only becomes a value when it is one —
