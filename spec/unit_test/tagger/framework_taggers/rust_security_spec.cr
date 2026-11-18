@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -46,7 +47,39 @@ private def build_endpoint(path : String, line : Int32, url : String, method : S
   Endpoint.new(url, method, [] of Param, details)
 end
 
+# `url => tags` from `RustSecurityTagger` over an inline axum project.
+private def axum_security_tags(src : String, urls : Array(String)) : Hash(String, Array(String))
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("axum_security")
+  main = File.join(tmpdir, "src", "main.rs")
+  Dir.mkdir_p(File.dirname(main))
+  File.write(main, src)
+  CodeLocator.instance.register_path(main)
+  options = create_test_options
+  options["base"] = YAML::Any.new(tmpdir)
+  endpoints = urls.map { |url| build_endpoint(main, 1, url, "GET", "rust_axum") }
+  RustSecurityTagger.new(options).perform(endpoints)
+  FileUtils.rm_rf(tmpdir)
+  endpoints.to_h { |e| {e.url, e.tags.map(&.name).sort!} }
+end
+
 describe "RustSecurityTagger" do
+  it "does not read an imported protection type as an applied layer" do
+    src = <<-RUST
+      use axum::{
+          extract::{DefaultBodyLimit, Path},
+          routing::get,
+          Router,
+      };
+      use tower_governor::GovernorLayer;
+
+      pub fn routes() -> Router {
+          Router::new().route("/items", get(list_items))
+      }
+      RUST
+    axum_security_tags(src, ["/items"]).should eq({"/items" => [] of String})
+  end
+
   fixtures = File.expand_path("../../../functional_test/fixtures/rust/rust_security", __DIR__)
 
   describe "target techs" do

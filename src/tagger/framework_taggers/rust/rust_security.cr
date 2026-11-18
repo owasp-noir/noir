@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../ext/tree_sitter/tree_sitter"
 
 # Rust-specific security tagger.
 #
@@ -111,6 +112,11 @@ class RustSecurityTagger < FrameworkTagger
     {/\b(?:Json|Form|Payload)Config\b[^=]*\.limit\s*\(/, "actix config limit"},
   ]
 
+  ANY_PATTERN = Regex.union(
+    (CORS_PERMISSIVE_PATTERNS + CORS_PRESENT_PATTERNS + RATE_LIMIT_PATTERNS +
+     SECURITY_HEADER_PATTERNS + BODY_LIMIT_DISABLED_PATTERNS + BODY_LIMIT_PATTERNS).map(&.[0])
+  )
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @protections = [] of Protection
@@ -179,6 +185,7 @@ class RustSecurityTagger < FrameworkTagger
 
   private def scan_rust_source(content : String)
     lines = content.split("\n")
+    imports = import_rows(content)
 
     # `#[cfg(test)]` module skipping via brace depth.
     brace_depth = 0
@@ -202,7 +209,7 @@ class RustSecurityTagger < FrameworkTagger
         pending_test = false
       end
 
-      unless in_test || stripped.starts_with?("//")
+      unless in_test || stripped.starts_with?("//") || imports.includes?(idx)
         detect_line_protections(lines, idx, stripped)
       end
 
@@ -211,6 +218,19 @@ class RustSecurityTagger < FrameworkTagger
         in_test = false
       end
     end
+  end
+
+  # Rows of `use` declarations: naming a layer type applies nothing.
+  private def import_rows(content : String) : Set(Int32)
+    rows = Set(Int32).new
+    return rows unless content.includes?("use ") && content.matches?(ANY_PATTERN)
+    Noir::TreeSitter.parse_rust(content) do |root|
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "use_declaration"
+        (Noir::TreeSitter.node_start_row(node)..Noir::TreeSitter.node_end_row(node)).each { |row| rows << row }
+      end
+    end
+    rows
   end
 
   private def detect_line_protections(lines : Array(String), idx : Int32, stripped : String)
