@@ -348,14 +348,14 @@ module NoirPassiveScan
     # True when `value` — the text right after `name` and its separator —
     # starts with something that can hold a secret. Not a literal: a
     # reference, placeholder or empty string (`"$DSN" ./migrate`), the name
-    # itself (`const val NAME = "NAME"`, `cfg.NAME`, `x["NAME"]`), a type
+    # spelled out (`const val NAME = "NAME"`, `cfg.NAME`, `x["NAME"]`), a type
     # annotation (`NAME: str | None = None`), code (`build_url()`), a number,
     # or a credentialed URL whose password is a stand-in.
     private def self.literal_value?(value : String, name : String, separator : String) : Bool
       if QUOTE_BYTES.includes?(value.byte_at(0))
         close = value.index(value[0], 1)
         content = close ? value[1...close] : value[1..]
-        return true if content != name && !content.empty? && literal_token?(content)
+        return true if !content.empty? && !spells_name?(content, name) && literal_token?(content)
         # An empty or stand-in first string can sit before a real one:
         # `""" … """`, `"" if DEBUG else "…"`, `"${REF}" || "…"`.
         return embeds_credential_url?(value)
@@ -370,6 +370,14 @@ module NoirPassiveScan
       # Code can still pass a credentialed URL as a default argument.
       return embeds_credential_url?(value) if value.matches?(CODE_EXPRESSION) || token.includes?(name)
       !token.matches?(NUMBER_LITERAL) && literal_token?(token)
+    end
+
+    # True when a quoted value is only an identifier built on `name`, not
+    # key material: `"ITEM_PRIVATE_KEY"`, `"extra_order_private_key"`,
+    # `"demo-secret:VAULT_TOKEN"`. A digit beside the name keeps it a literal.
+    private def self.spells_name?(content : String, name : String) : Bool
+      spelled = content.upcase.tr("-", "_")
+      spelled.includes?(name) && !spelled.gsub(name, "").matches?(/\d/)
     end
 
     # The default of a shell / Spring expansion, read from just after the
