@@ -4757,3 +4757,11 @@ describe "SpringAuthTagger (WebSecurity ignoring)" do
     tags["GET /items/1"][0].should start_with("Protected by Shiro authc")
   end
 end
+
+describe "SpringAuthTagger (Gradle scripts outside the build)" do
+  it "does not read a CI init script under a dot directory as build logic" do
+    plain = "#{SPRING_WEB_STARTER}}\n"
+    gradle_items_guard(plain, {".github/ci/init.gradle" => "def core = gradle.rootProject.project(':api')\n"}).should be_empty
+    gradle_items_guard(plain, {"gradle/shared.gradle" => "dependencies { implementation project(':api') }\n"}).should eq(["Protected by Spring Security hasRole via anyRequest()"])
+  end
+end
