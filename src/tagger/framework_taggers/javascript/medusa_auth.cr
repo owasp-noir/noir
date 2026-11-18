@@ -23,15 +23,28 @@ class MedusaAuthTagger < FrameworkTagger
     ["js_medusa"]
   end
 
+  # The Medusa router authenticates these prefixes itself unless the route
+  # file exports `AUTHENTICATE = false`: `/admin` and `/store/customers/me`
+  # (the documented defaults) and `/rbac` (`ApiLoader#applyAuthMiddleware`).
+  DEFAULT_PROTECTED = %w[/admin /rbac /store/customers/me]
+  AUTH_OPT_OUT      = /\bexport\s+const\s+AUTHENTICATE\s*(?::\s*\w+\s*)?=\s*false\b/
+
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     matchers = auth_matchers
     endpoints.each do |endpoint|
-      guard = matchers.find { |matcher| covers?(matcher, endpoint) }
-      next unless guard
-
-      endpoint.add_tag(Tag.new("auth", "Protected by #{guard.call}", "medusa_auth", guard.path, guard.line))
+      if guard = matchers.find { |matcher| covers?(matcher, endpoint) }
+        endpoint.add_tag(Tag.new("auth", "Protected by #{guard.call}", "medusa_auth", guard.path, guard.line))
+      elsif prefix = default_protection(endpoint)
+        endpoint.add_tag(Tag.new("auth", "Protected by the Medusa router's default authentication on #{prefix}", "medusa_auth"))
+      end
     end
     endpoints
+  end
+
+  private def default_protection(endpoint : Endpoint) : String?
+    prefix = DEFAULT_PROTECTED.find { |stem| endpoint.url == stem || endpoint.url.starts_with?("#{stem}/") } || return
+    route = endpoint.details.code_paths.first?.try { |info| read_file(info.path) } || return
+    prefix unless Noir::JSRouteExtractor.strip_js_comments(route).matches?(AUTH_OPT_OUT)
   end
 
   private def auth_matchers : Array(AuthMatcher)
