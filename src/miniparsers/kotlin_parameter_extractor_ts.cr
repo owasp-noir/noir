@@ -1123,9 +1123,10 @@ module Noir
             # `leaf_type_name` keeps the first segment of `Outer.Inner`,
             # which names the outer class; bind the nested one it means.
             segments = type_segments(child, source)
+            # The longest dotted suffix the index knows, else the simple name.
             if segments.size > 1
-              qualified = segments.join('.')
-              type_name = class_fields.has_key?(qualified) ? qualified : segments.last
+              type_name = (0...segments.size - 1).map { |i| segments[i..].join('.') }
+                .find { |key| class_fields.has_key?(key) } || segments.last
             end
           end
         end
