@@ -19,6 +19,10 @@ describe "CLI analyzers and non-code" do
     cli_params("ruby/cli_comments").should eq(["DEFAULTED:env", "READ_ME:env", "real:flag"])
   end
 
+  it "crystal: reads no OptionParser or ARGV example inside a comment" do
+    cli_params("crystal/cli_comments").should eq(["real:flag"])
+  end
+
   it "perl: reads neither comments, POD, __END__ nor %ENV writes" do
     cli_params("perl/cli_comments").should eq(["READ_ME:env", "real:flag"])
   end
