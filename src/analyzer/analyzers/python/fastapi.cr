@@ -1445,7 +1445,12 @@ module Analyzer::Python
             next if function_codeblock.nil?
             params.concat(find_dictionary_params(function_codeblock, FunctionParameter.new(param.name, model, param.default)))
           else
-            params.concat(model_params_for(model, param.name, source, path, base_path))
+            fields = model_params_for(model, param.name, source, path, base_path)
+            # A model from a package the scan does not hold (a sibling
+            # project scanned alone) is still the body: one opaque field,
+            # as an unresolved `Body()` model is kept.
+            fields << Param.new(param.name, default_value, "json") if fields.empty? && foreign_project_model?(model, source, path, base_path)
+            params.concat(fields)
           end
         else
           params << Param.new(fastapi_wire_name(param, param_type), default_value, param_type)
@@ -1453,6 +1458,24 @@ module Analyzer::Python
       end
 
       params
+    end
+
+    NON_BODY_MODULES = %w[typing typing_extensions uuid datetime decimal enum pathlib ipaddress fastapi starlette pydantic]
+    FROM_IMPORT_RE   = /^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]*))/m
+
+    # Whether bare class `model` is imported (`from pkg.schemas import
+    # Model`) from a module the scan cannot resolve and that is no stdlib or
+    # framework module whose classes FastAPI reads as query values or injects.
+    # ponytail: an Enum from such a package is a query value, read as json.
+    private def foreign_project_model?(model : ::String, source : ::String, path : ::String, base_path : ::String) : Bool
+      return false unless VAR_NAME_FULL_RE.matches?(model)
+      return false if resolve_model_reference(model, source, path, base_path)
+      source.scan(FROM_IMPORT_RE) do |m|
+        names = (m[2]? || m[3]? || "").split(',').map(&.split(/\s+as\s+/).last.strip)
+        next unless names.includes?(model)
+        return !NON_BODY_MODULES.includes?(m[1].split('.').first)
+      end
+      false
     end
 
     # Whether no parameter but `param` is a body: a `Body()`, a container
