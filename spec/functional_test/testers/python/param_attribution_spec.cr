@@ -29,6 +29,12 @@ describe "Python param attribution", tags: "functional" do
     rows["POST /orders/raw"].should eq(["payload:json"])
   end
 
+  it "keeps a FastAPI body whose model is imported from outside the scan" do
+    rows = params_for.call("fastapi_unresolved_model")
+    rows["POST /acks/{item_id}"].should eq(["item_id:path", "payload:json"])
+    rows["GET /days/{day_id}"].should eq(["color:query", "day_id:path"])
+  end
+
   it "reads Flask fields through a request.form / request.args alias" do
     rows = params_for.call("flask_form_alias")
     rows["POST /users/action"].should eq(["first_name:form", "last_name:form"])
