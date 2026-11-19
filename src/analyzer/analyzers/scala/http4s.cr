@@ -20,14 +20,39 @@ module Analyzer::Scala
     # (parallel) per-file scan.
     @query_matcher_keys = Hash(String, Hash(String, String)).new
 
+    # `"/p" -> Owner.member(...)` / `"/p" -> inst.member` (with `val inst =
+    # new Owner(...)` beside it) mounts, keyed `Owner.member`, per configured
+    # base: the routes and the `Router` usually live in different files.
+    QUALIFIED_MOUNT_RE = /"(\/[^"]*)"\s*->\s*([A-Za-z_]\w*)\.([A-Za-z_]\w*)/
+    INSTANCE_DECL_RE   = /(?<![.\w])(?:val|var|lazy\s+val)\s+(\w+)\s*(?::\s*[\w\[\], ]+)?=\s*(?:new\s+)?([A-Z]\w*)/
+    TYPE_DECL_RE       = /(?<![.\w])(?:object|class|trait)\s+([A-Z]\w*)/
+    @qualified_mounts = Hash(String, Hash(String, String)).new
+
     def analyze
       scan_target_files.each do |path|
         content = read_file_content(path)
-        next unless content.includes?("QueryParam")
-        keys = @query_matcher_keys[configured_base_for(path)] ||= Hash(String, String).new
-        query_matcher_keys(content).each { |name, key| keys[name] ||= key }
+        if content.includes?("QueryParam")
+          keys = @query_matcher_keys[configured_base_for(path)] ||= Hash(String, String).new
+          query_matcher_keys(content).each { |name, key| keys[name] ||= key }
+        end
+        if content.includes?("->") && content.includes?("Router")
+          mounts = @qualified_mounts[configured_base_for(path)] ||= Hash(String, String).new
+          qualified_mounts(content).each { |key, prefix| mounts[key] ||= prefix }
+        end
       end
       super
+    end
+
+    private def qualified_mounts(content : String) : Hash(String, String)
+      code = scala_code_lines(content).join('\n')
+      instances = Hash(String, String).new
+      code.scan(INSTANCE_DECL_RE) { |m| instances[m[1]] ||= m[2] }
+      mounts = Hash(String, String).new
+      code.scan(QUALIFIED_MOUNT_RE) do |m|
+        owner = instances[m[2]]? || m[2]
+        mounts["#{owner}.#{m[3]}"] ||= m[1]
+      end
+      mounts
     end
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -53,8 +78,10 @@ module Analyzer::Scala
 
       routes_names = collect_routes_bindings(code_lines)
       mount_prefixes = collect_mount_prefixes(code_lines, routes_names)
+      qualified = @qualified_mounts[configured_base_for(path)]?
+      declared_types = [] of String
 
-      current_routes_name : String? = nil
+      current_prefix : String? = nil
       pending_def_name : String? = nil
 
       i = 0
@@ -66,18 +93,19 @@ module Analyzer::Scala
         # builder may sit on different lines (and the builder may be wrapped, as
         # in `def authRoutes = basicAuth(AuthedRoutes.of { … })`), so remember
         # the most recent binding name and attach it when the builder appears.
+        stripped.scan(TYPE_DECL_RE) { |m| declared_types << m[1] } if qualified
         if dm = stripped.match(/(?<![.\w])(?:val|def|lazy\s+val)\s+(\w+)\b/)
           pending_def_name = dm[1]
         end
-        if pending_def_name && stripped.matches?(/(?:HttpRoutes|AuthedRoutes)\.of\b/)
-          current_routes_name = pending_def_name
+        if (routes_name = pending_def_name) && stripped.matches?(/(?:HttpRoutes|AuthedRoutes)\.of\b/)
+          current_prefix = mount_prefixes[routes_name]? || qualified.try { |index| qualified_prefix(index, declared_types, routes_name) }
         end
 
         if case_line?(trimmed)
           header, end_index = collect_case_header(lines, code_lines, i)
           if data = parse_case_header(header, matcher_keys)
             methods, segments, path_params, query_params, binding_name = data
-            full_path = build_full_path(segments, current_routes_name, mount_prefixes)
+            full_path = build_full_path(segments, current_prefix)
             body_text = extract_case_body(lines, code_lines, masked_lines, end_index)
             body_type : String? = nil
             if binding_name
@@ -232,9 +260,21 @@ module Analyzer::Scala
       params
     end
 
-    private def build_full_path(segments : Array(String), routes_name : String?, mount_prefixes : Hash(String, String)) : String
+    # `Owner.name` mounted anywhere in the base. The nearest type declared
+    # above the binding is tried first; a `case class` in between only costs
+    # one miss.
+    private def qualified_prefix(index : Hash(String, String), declared_types : Array(String), name : String) : String?
+      declared_types.reverse_each do |owner|
+        if prefix = index["#{owner}.#{name}"]?
+          return prefix
+        end
+      end
+      nil
+    end
+
+    private def build_full_path(segments : Array(String), prefix : String?) : String
       route_path = segments.empty? ? "/" : "/" + segments.join("/")
-      if routes_name && (prefix = mount_prefixes[routes_name]?)
+      if prefix
         normalized = "#{prefix.rstrip('/')}#{route_path == "/" ? "" : route_path}"
         normalized = "/" if normalized.empty?
         normalized = "/#{normalized}" unless normalized.starts_with?("/")
