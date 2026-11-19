@@ -18,9 +18,10 @@ module Analyzer::CSharp
     TAGGER                       = "aspnet_core_mvc_analyzer"
     UNRESOLVED_ROUTE_DESCRIPTION = "Route template is a constant the analyzer cannot read; reported at the controller route"
 
-    CONTROLLER_PLACEHOLDER_RE = /\{controller[=:?}]/
-    ACTION_PLACEHOLDER_RE     = /\{action[=:?}]/
-    AREA_PLACEHOLDER_RE       = /\{area[=:?}]/
+    # Route value names are case-insensitive (`{Controller=Home}`).
+    CONTROLLER_PLACEHOLDER_RE = /\{controller[=:?}]/i
+    ACTION_PLACEHOLDER_RE     = /\{action[=:?}]/i
+    AREA_PLACEHOLDER_RE       = /\{area[=:?}]/i
 
     # A conventional route template plus the `controller`/`action`/`area` its
     # `defaults` pin. A template without a `{controller}`/`{action}`
@@ -820,7 +821,8 @@ module Analyzer::CSharp
         next unless owner.nil? || action.explicit
         next if skip.try(&.includes?(method.name))
         handler = Handler.new("#{(owner || type).name}.#{method.name}", file, method.line + 1)
-        action_name = action.renamed || method.name
+        # `SuppressAsyncSuffixInActionNames`, on by default since ASP.NET Core 3.0.
+        action_name = action.renamed || (method.name.size > 5 ? method.name.rchop("Async") : method.name)
         body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, method.header_end - line_offset)
         body_params = extract_params_from_block(body_block)
 
@@ -1013,22 +1015,22 @@ module Analyzer::CSharp
 
       normalized = route.strip
       if area
-        normalized = normalized.gsub("[area]", area)
+        normalized = normalized.gsub(AREA_ROUTE_TOKEN_RE, area)
         normalized = normalized.gsub(AREA_TOKEN_RE, area)
       end
-      normalized = normalized.gsub("[controller]", controller_name)
-      normalized = normalized.gsub("{controller}", controller_name)
-      normalized = normalized.gsub(/{controller=[^}]+}/, controller_name)
-      normalized = normalized.gsub("[action]", action_name)
-      normalized = normalized.gsub("{action}", action_name)
-      normalized = normalized.gsub(/{action=[^}]+}/, action_name)
+      normalized = normalized.gsub(CONTROLLER_TOKEN_RE, controller_name)
+      normalized = normalized.gsub(ACTION_TOKEN_RE, action_name)
 
       normalized
     end
 
     PLACEHOLDER_DEFAULT_RE = /\{([^{}=]+)=[^{}]*\}/
 
-    AREA_TOKEN_RE = /\{area(?:[:=][^}]*)?\}/
+    AREA_TOKEN_RE = /\{area(?:[:=][^}]*)?\}/i
+    # `[controller]`, `{controller}` and `{controller=Home}`, any case.
+    AREA_ROUTE_TOKEN_RE = /\[area\]/i
+    CONTROLLER_TOKEN_RE = /\[controller\]|\{controller(?:=[^}]+)?\}/i
+    ACTION_TOKEN_RE     = /\[action\]|\{action(?:=[^}]+)?\}/i
 
     private def normalize_route(route : String) : String
       normalized = route.strip
