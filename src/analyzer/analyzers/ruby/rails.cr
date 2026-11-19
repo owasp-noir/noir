@@ -167,7 +167,10 @@ module Analyzer::Ruby
       # Per method, the helpers it reads only by `[:key]`, with those keys.
       helper_keys_by_action : Hash(String, Hash(String, Set(String))) = Hash(String, Hash(String, Set(String))).new,
       # Methods whose body still runs Devise's param reads (see `DEVISE_READS`).
-      devise_reads : Set(String) = Set(String).new
+      devise_reads : Set(String) = Set(String).new,
+      # Per method, the bare identifiers it names that this file defines no
+      # method for: calls an ancestor or concern may answer.
+      external_calls_by_action : Hash(String, Set(String)) = Hash(String, Set(String)).new
 
     # A `concern :name do ... end` body: its routing lines, replayed wherever
     # `resources ..., concerns: :name` or `concerns :name` names it. Rails
@@ -231,6 +234,7 @@ module Analyzer::Ruby
     alias EngineMountKey = Tuple(String, String)
 
     @controller_data_cache = Hash(String, ControllerData).new
+    @chain_method_names = Hash(String, Set(String)).new
     # `<app>/app/views/<controller>/<action>` -> its first template file.
     @view_templates : Hash(String, String)? = nil
     # Per file, its helpers that return `params.require(key)`; see `params_wrappers`.
@@ -266,6 +270,7 @@ module Analyzer::Ruby
       files = all_files.reject { |file| ruby_non_production_path?(file) }
       @known_files = Set(String).new(files)
       @callback_chain = nil
+      @chain_method_names.clear
       @view_templates = nil
       @gemfile_public_roots = nil
       @public_file_candidates = nil
@@ -2323,13 +2328,15 @@ module Analyzer::Ruby
       end
 
       helper_keys_by_action = Hash(String, Hash(String, Set(String))).new
-      helper_calls_by_action = build_helper_call_map(method_bodies, defined_actions, helper_keys_by_action)
+      external_calls_by_action = Hash(String, Set(String)).new
+      helper_calls_by_action = build_helper_call_map(method_bodies, defined_actions, helper_keys_by_action, external_calls_by_action)
 
       devise_reads = Set(String).new
       method_bodies.each { |name, body| devise_reads << name if body.any?(&.matches?(DEVISE_READS)) }
 
       data = ControllerData.new(path, param_type, params_method, params_body_by_action, params_query_by_action,
-        defined_actions, helper_calls_by_action, callees_by_action, action_lines, helper_keys_by_action, devise_reads)
+        defined_actions, helper_calls_by_action, callees_by_action, action_lines, helper_keys_by_action, devise_reads,
+        external_calls_by_action)
       @controller_data_cache[path] = data
       data
     end
@@ -2663,10 +2670,46 @@ module Analyzer::Ruby
     private def action_params(data : ControllerData, action : String, verb : String,
                               controller_path : String = data.path) : Array(Param)
       result = [] of Param
-      each_helper(data, action) { |name, keys| merge_action_params(result, data, name, verb, keys) }
+      each_reachable_helper(data, action, controller_path) { |owner, name, keys| merge_action_params(result, owner, name, verb, keys) }
       merge_callback_params(result, controller_path, action, verb)
 
       result
+    end
+
+    # `each_helper`, then on into the methods those helpers call that their
+    # own file does not define, each from the nearest file along
+    # `controller_path`'s ancestors and concerns that does
+    # (`Api::BaseController#limit_param`), with that file's own helpers.
+    private def each_reachable_helper(data : ControllerData, name : String, controller_path : String,
+                                      & : ControllerData, String, Set(String)? ->)
+      queue = [{data, name}]
+      seen = Set{ {data.path, name} }
+      chain_names : Set(String)? = nil
+      while entry = queue.shift?
+        owner, start = entry
+        each_helper(owner, start) do |helper, keys|
+          yield owner, helper, keys
+          owner.external_calls_by_action[helper]?.try &.each do |token|
+            next unless (chain_names ||= chain_method_names(controller_path)).includes?(token)
+            next unless (found = action_owner(controller_path, token)) && seen.add?({found.path, token})
+            queue << {found, token}
+          end
+        end
+      end
+    end
+
+    # Every method defined along `controller_path`'s ancestors and concerns,
+    # so a call naming none of them costs no chain walk.
+    private def chain_method_names(controller_path : String) : Set(String)
+      @chain_method_names[controller_path] ||= begin
+        names = Set(String).new
+        callback_chain.controller_in(controller_path).try do |leaf|
+          callback_chain.resolve(leaf, nil).paths.each do |path|
+            names.concat(extract_controller_data(path).defined_actions) unless path == controller_path
+          end
+        end
+        names
+      end
     end
 
     # `name`, then the methods of its file it calls, transitively and each
@@ -2817,7 +2860,8 @@ module Analyzer::Ruby
     end
 
     private def build_helper_call_map(method_bodies : Hash(String, Array(String)), defined_actions : Set(String),
-                                      helper_keys : Hash(String, Hash(String, Set(String)))) : Hash(String, Array(String))
+                                      helper_keys : Hash(String, Hash(String, Set(String))),
+                                      external_calls : Hash(String, Set(String))) : Hash(String, Array(String))
       helper_calls = Hash(String, Array(String)).new
 
       # Tokenize each method body once into the set of identifiers it
@@ -2836,12 +2880,17 @@ module Analyzer::Ruby
         matches = Set(String).new
         keys = Hash(String, Set(String)).new
         whole = Set(String).new
+        external = Set(String).new
         body_lines.each do |line|
           # `render :show` / `render "posts/show"` name a view, not a call,
           # so symbol and string tokens must not pull `show`'s params in.
           blank_quoted(line).scan(HELPER_TOKEN) do |m|
             token = m[1]
-            next unless token != method_name && action_order.has_key?(token)
+            next if token == method_name
+            unless action_order.has_key?(token)
+              external << token
+              next
+            end
             matches << token
             if key = m[2]?
               (keys[token] ||= Set(String).new) << key
@@ -2851,6 +2900,7 @@ module Analyzer::Ruby
           end
         end
         whole.each { |token| keys.delete(token) }
+        external_calls[method_name] = external unless external.empty?
         helper_keys[method_name] = keys unless keys.empty?
         helper_calls[method_name] = matches.to_a.sort_by! { |action| action_order[action] } unless matches.empty?
       end
