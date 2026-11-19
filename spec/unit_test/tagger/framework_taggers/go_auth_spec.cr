@@ -1351,6 +1351,12 @@ describe "GoAuthTagger factories returning a library middleware" do
     endpoint.tags.map(&.name).should eq(["auth"])
   end
 
+  it "reads it whatever the factory's parameters are named" do
+    lines = source.call("return basicauth.New(basicauth.Config{\nUsers: returnTo,\n})").sub("users map", "returnTo map").lines
+    endpoint = run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("app.Get")) + 1, "go_fiber")
+    endpoint.tags.map(&.name).should eq(["auth"])
+  end
+
   it "does not tag a factory returning a library middleware that is no guard" do
     lines = source.call("return logger.New()").lines
     run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("app.Get")) + 1, "go_fiber").tags.should be_empty

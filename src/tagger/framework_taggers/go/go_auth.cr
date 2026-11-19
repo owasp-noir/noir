@@ -993,7 +993,7 @@ class GoAuthTagger < FrameworkTagger
     end
   end
 
-  FACTORY_RETURN = /\A[^{]*\{\s*return\s+(\w+)\s*\.\s*\w+\s*\((.*)\}\s*\z/m
+  FACTORY_RETURN = /\A[^{]*\{\s*return\s+((\w+)\s*\.\s*\w+\s*\(.*)\}\s*\z/m
 
   # The call a same-package factory `name` returns as its whole body, when
   # it is a constructor of an imported package outside the scan, with the
@@ -1003,8 +1003,8 @@ class GoAuthTagger < FrameworkTagger
     body = @bodies.functions_for(File.dirname(file))[name]? || return
     source = Noir::CComments.strip(body.source, quotes: %("'`))
     m = source.match(FACTORY_RETURN) || return
-    return if @dirs_by_base.has_key?(m[1]) || !file_imports(body.file_path).includes?(m[1])
-    {source.partition("return")[2].strip.rchop('}').strip, body.file_path}
+    return if @dirs_by_base.has_key?(m[2]) || !file_imports(body.file_path).includes?(m[2])
+    {m[1].strip, body.file_path}
   end
 
   # The expression first bound to `name` in `file`.
