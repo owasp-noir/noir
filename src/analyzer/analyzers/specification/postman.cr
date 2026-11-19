@@ -144,7 +144,7 @@ module Analyzer::Specification
                 parsed_variables = parse_json_lenient(variables_raw)
                 if variables_hash = parsed_variables.as_h?
                   variables_hash.each do |key, value|
-                    push_param_once(params, Param.new(key, value.to_s, "json"))
+                    push_param_once(params, Param.new(key, json_value_text(value), "json"))
                   end
                 end
               rescue

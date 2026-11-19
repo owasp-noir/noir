@@ -1,0 +1,19 @@
+### REST Client system variables, unquoted
+POST http://localhost:3000/system-vars
+Content-Type: application/json
+
+{
+  "request_id": "{{$guid}}",
+  "updated_at": {{$timestamp}},
+  "price": {{$randomInt 5 200}},
+  "address": {"city": "Seoul"}
+}
+
+### request-variable reference, unquoted
+POST http://localhost:3000/request-var
+Content-Type: application/json
+
+{
+  "order_id": {{createOrder.response.body.$.id}},
+  "note": "x"
+}

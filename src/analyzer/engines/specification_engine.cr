@@ -369,16 +369,22 @@ module Analyzer::Specification
 
     # Top-level keys (and stringified values) of a JSON object request body.
     # API clients allow an unquoted placeholder as a JSON value (`"n":
-    # {{count}}`), which is invalid JSON, so a failed parse is retried with
-    # every `placeholder` in value position nulled out. A quoted one
-    # (`"{{name}}"`) follows a `"`, so it keeps its text.
+    # {{count}}`, `{{$randomInt 5 200}}`), which is invalid JSON, so a failed
+    # parse is retried with every `placeholder` or `{{...}}` in value position
+    # nulled out. A quoted one (`"{{name}}"`) follows a `"`, so it keeps its text.
     protected def json_body_pairs(text : String, placeholder : Regex) : Array(Tuple(String, String))
       stripped = text.strip
       return [] of Tuple(String, String) unless stripped.starts_with?('{')
-      parsed = json_any?(stripped) || json_any?(stripped.gsub(/([:\[,]\s*)(?:#{placeholder})/) { "#{$1}null" })
+      parsed = json_any?(stripped) || json_any?(stripped.gsub(/([:\[,]\s*)(?:#{placeholder}|\{\{[^{}]*\}\})/) { "#{$1}null" })
       hash = parsed.try(&.as_h?)
       return [] of Tuple(String, String) unless hash
-      hash.map { |k, v| {k, v.to_s} }
+      hash.map { |k, v| {k, json_value_text(v)} }
+    end
+
+    # A JSON value as request text: nested objects and arrays as JSON, not
+    # `JSON::Any#to_s`'s Crystal inspect form.
+    protected def json_value_text(value : JSON::Any) : String
+      value.raw.is_a?(Hash) || value.raw.is_a?(Array) ? value.to_json : value.to_s
     end
 
     # `:name` and `{name}` placeholders in a request path.

@@ -42,3 +42,20 @@ FunctionalTester.new("fixtures/specification/postman/wrapped/", {
   ]),
   Endpoint.new("/workshop/api/shop/orders/42", "GET"),
 ]).perform_tests
+
+# Nested JSON body and GraphQL variable values are emitted as JSON text.
+FunctionalTester.new("fixtures/specification/postman/nested_body/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/orders", "POST", [
+    Param.new("customer", %({"id":7,"email":"a@b.c"}), "json"),
+    Param.new("items", %([{"sku":"x1","qty":2}]), "json"),
+    Param.new("note", "plain", "json"),
+    Param.new("sent_at", "", "json"),
+  ]),
+  Endpoint.new("/graphql", "POST", [
+    Param.new("filter", %({"status":"open"}), "json"),
+    Param.new("first", "10", "json"),
+  ]),
+]).perform_tests
