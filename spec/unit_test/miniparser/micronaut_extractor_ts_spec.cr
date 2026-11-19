@@ -366,4 +366,27 @@ describe Noir::TreeSitterMicronautExtractor do
       {"CatalogController", ["CatalogApi"], ["/api"]},
     ])
   end
+
+  it "binds an un-annotated scalar to the query or, on a body verb, to the body" do
+    source = <<-JAVA
+      package com.example.api;
+
+      import io.micronaut.http.annotation.*;
+
+      @Controller("/books")
+      public class BookController {
+          @Get("/{id}/pages{/section}")
+          public String pages(Long id, String section, Integer from) { return ""; }
+
+          @Post("/login")
+          public String login(String username, HttpRequest<?> request) { return ""; }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterMicronautExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.params.map { |p| {p.name, p.param_type} }} }.should eq([
+      {"GET", [{"from", "query"}]},
+      {"POST", [{"username", "json"}]},
+    ])
+  end
 end

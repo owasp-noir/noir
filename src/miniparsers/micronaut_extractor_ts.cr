@@ -304,7 +304,7 @@ module Noir
             normalized_path = uri_template_route_path(full_path)
             query_vars = uri_template_query_vars(full_path)
             path_vars = uri_template_path_vars(normalized_path)
-            params = collect_method_params(member, source, method_consumes, dto_index, constants, class_name, query_vars.to_set, path_vars.to_set)
+            params = collect_method_params(member, source, verb, method_consumes, dto_index, constants, class_name, query_vars.to_set, path_vars.to_set)
             merge_query_template_params(params, unbound_query_template_vars(member, source, query_vars))
             routes << Route.new(verb, normalized_path, class_name, method_name, line, params, callees,
               signature_line: Noir::TreeSitter.name_row(member))
@@ -369,7 +369,7 @@ module Noir
             normalized_path = uri_template_route_path(full_path)
             query_vars = uri_template_query_vars(full_path)
             path_vars = uri_template_path_vars(normalized_path)
-            params = collect_method_params(member, source, method_consumes, dto_index, constants, interface_name, query_vars.to_set, path_vars.to_set)
+            params = collect_method_params(member, source, verb, method_consumes, dto_index, constants, interface_name, query_vars.to_set, path_vars.to_set)
             merge_query_template_params(params, unbound_query_template_vars(member, source, query_vars))
             routes[interface_name] << Route.new(verb, normalized_path, interface_name, method_name, line, params, callees,
               signature_line: Noir::TreeSitter.name_row(member))
@@ -587,7 +587,7 @@ module Noir
     end
 
     private def normalize_uri_template_var(raw : String) : String
-      name = raw.strip.lstrip("*+")
+      name = raw.strip.lstrip("*+/")
       name = name.rstrip('*')
       if colon = name.index(':')
         name = name[...colon]
@@ -615,6 +615,7 @@ module Noir
 
     private def collect_method_params(method : LibTreeSitter::TSNode,
                                       source : String,
+                                      verb : String,
                                       method_format : String?,
                                       dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
                                       constants : Hash(String, String),
@@ -627,7 +628,7 @@ module Noir
 
       Noir::TreeSitter.each_named_child(formal) do |param|
         next unless Noir::TreeSitter.node_type(param) == "formal_parameter"
-        emit_param_for(param, source, method_format, dto_index, constants, current_class, params, query_template_vars, path_template_vars)
+        emit_param_for(param, source, verb, method_format, dto_index, constants, current_class, params, query_template_vars, path_template_vars)
       end
       params
     end
@@ -647,6 +648,7 @@ module Noir
 
     private def emit_param_for(param : LibTreeSitter::TSNode,
                                source : String,
+                               verb : String,
                                method_format : String?,
                                dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
                                constants : Hash(String, String),
@@ -700,16 +702,15 @@ module Noir
       end
 
       # `@Body` and un-annotated complex parameters share the same
-      # body-expansion path. Skip primitives (the `model: Model`
-      # equivalent in Spring) so framework-injected helpers don't
-      # leak into the param list.
+      # body-expansion path. An un-annotated scalar binds the query string,
+      # or a body property on a verb that carries a body.
       format = method_format || "json"
-      if ann_kind == :body && PRIMITIVE_TYPES.includes?(type_name.downcase)
-        sink << Param.new(ann_arg.presence || param_name, param_value(default_value, ""), format)
+      if PRIMITIVE_TYPES.includes?(type_name.downcase)
+        bound_format = ann_kind == :body ? format : implicit_scalar_format(verb, format)
+        sink << Param.new(ann_arg.presence || param_name, param_value(default_value, ""), bound_format)
         return
       end
 
-      return if PRIMITIVE_TYPES.includes?(type_name.downcase)
       return if INJECTED_PARAM_TYPES.includes?(type_name.downcase)
       if format == "form" && FORM_FILE_PARAM_TYPES.includes?(type_name.downcase)
         sink << Param.new(ann_arg.presence || param_name, param_value(default_value, ""), "form")
@@ -718,6 +719,12 @@ module Noir
       emit_dto_fields(type_name, dto_index, format, default_value, sink) do
         sink << Param.new(ann_arg.presence || param_name, param_value(default_value, type_name), format)
       end
+    end
+
+    BODY_VERBS = Set{"POST", "PUT", "PATCH"}
+
+    def implicit_scalar_format(verb : String, body_format : String) : String
+      BODY_VERBS.includes?(verb) ? body_format : "query"
     end
 
     private def emit_dto_fields(type_name : String,
