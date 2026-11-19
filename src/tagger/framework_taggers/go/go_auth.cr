@@ -251,7 +251,7 @@ class GoAuthTagger < FrameworkTagger
     @server_scopes = [] of {owner: Gate, tag: Tag}
     @parameter_scopes = [] of {owner: Gate, tag: Tag, prefix: String?}
     @group_uses = [] of {file: String, receiver: String, row: Int32, tag: Tag, last: Int32}
-    @registrar_tags = Hash({String, Int32}, Array(Tag)).new
+    @registrar_tags = Hash({String, Int32, String, String}, Array(Tag)).new
     @gozero_groups = Hash(String, Array({Range(Int32, Int32), Array(Tag)})).new
   end
 
@@ -3138,7 +3138,7 @@ class GoAuthTagger < FrameworkTagger
 
   FUNC_NAME = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)/
   # A one-line signature: the function name and its parameter list.
-  FUNC_SIGNATURE = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)\s*\(([^)]*)\)/
+  FUNC_SIGNATURE = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/
   IDENTIFIER     = /\A\w+\z/
 
   # Routers whose group middleware runs for every route under the group's
@@ -3217,22 +3217,21 @@ class GoAuthTagger < FrameworkTagger
   # derived from) above the call in the caller's function. A call handing it
   # anything else (an expression, its own parameter, the helper as a value)
   # leaves the route unguarded.
-  # ponytail: one hop; a registrar called by another registrar with its own
-  # parameter is unguarded.
+  # ponytail: three registrars deep (see `registrar_call_tags`).
   # An endpoint merged from several Go routes (the same method and path in
   # two registrars) needs the guard on each of them.
   private def registrar_guards(endpoint : Endpoint) : Array(Tag)
     return [] of Tag if @group_uses.empty? || PREFIX_MATCHED_MIDDLEWARE.includes?(endpoint.details.technology)
     per_route = endpoint.details.code_paths.compact_map do |path_info|
       next unless path_info.path.ends_with?(".go")
-      registrar_route_tags(path_info)
+      registrar_route_tags(path_info, endpoint.url)
     end
     common_guards(per_route)
   end
 
   # The guards every caller hands the registrar `path_info`'s route is
   # registered in, on its group parameter; empty for any other route.
-  private def registrar_route_tags(path_info : PathInfo) : Array(Tag)
+  private def registrar_route_tags(path_info : PathInfo, url : String) : Array(Tag)
     none = [] of Tag
     line = path_info.line || return none
     lines = read_file_lines(path_info.path) || return none
@@ -3243,18 +3242,45 @@ class GoAuthTagger < FrameworkTagger
     start = function_start(lines, line)
     return none if start < 0
     slot = parameter_slot(lines[start], chain.last[0]) || return none
-    @registrar_tags.put_if_absent(slot) { registrar_call_tags(*slot) }
+    @registrar_tags.put_if_absent({slot[0], slot[1], url, File.dirname(path_info.path)}) { registrar_call_tags(slot[0], slot[1], url, path_info.path) }
   end
 
   # The guard tags (one per name) every call of `fn` hands its group
-  # parameter at `index`; empty when any call does not.
-  private def registrar_call_tags(fn : String, index : Int32) : Array(Tag)
+  # parameter at `index`; empty when any call does not. A call whose path
+  # literal is not in `url` (`rx(r, "/translation")` for `/user/`) did not
+  # register it. A caller that hands on its own router parameter
+  # (`func addFoo(r chi.Router) { addBar(r) }`) passes on what its callers
+  # hand it, up to three registrars deep. An unexported `fn` (declared in
+  # `path`) is only called in its own package.
+  private def registrar_call_tags(fn : String, index : Int32, url : String, path : String, depth : Int32 = 0) : Array(Tag)
     calls = [] of {String, Int32, String, Int32}
-    (@go_files ||= collect_files_by_extension(".go")).each do |file|
-      next if file.ends_with?("_test.go")
+    files = fn[0].lowercase? ? package_files(path) : (@go_files ||= collect_files_by_extension(".go")).reject(&.ends_with?("_test.go"))
+    files.each do |file|
       calls.concat(call_arguments(file, fn, index, qualified: true) || return [] of Tag)
     end
-    common_guards(calls.map { |(file, caller, arg, row)| caller_group_tags(file, caller, arg, row) })
+    calls.reject! do |(file, _, _, row)|
+      call = read_file_lines(file).try(&.[row - 1]?) || ""
+      call.scan(/"(\/[^"]*)"/).any? do |literal|
+        path = literal[1].rchop('/')
+        !path.empty? && !url.includes?(path)
+      end
+    end
+    common_guards(calls.map do |(file, caller, arg, row)|
+      tags = caller_group_tags(file, caller, arg, row)
+      handed = depth < 3 ? handed_parameter(file, caller, arg, row) : nil
+      handed ? tags + registrar_call_tags(handed[0], handed[1], url, file, depth + 1) : tags
+    end)
+  end
+
+  # The function starting on `caller` (0-based) and the position of its
+  # router parameter that `arg`, handed out on `row`, is (or is derived
+  # from); nil for a router the caller builds or gets elsewhere.
+  private def handed_parameter(file : String, caller : Int32, arg : String, row : Int32) : {String, Int32}?
+    return if caller < 0
+    lines = read_file_lines(file) || return
+    chain, local = router_chain(file, lines, row, arg)
+    return if local
+    parameter_slot(lines[caller], chain.last[0])
   end
 
   # The first tag of each guard kind present in every one of `sets`; empty

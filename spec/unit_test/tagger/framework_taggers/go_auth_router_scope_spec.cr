@@ -690,6 +690,70 @@ describe "GoAuthTagger (router identity of .Use guards)" do
     guarded?(result["GET /shared"]).should be_false
   end
 
+  it "follows a registrar that hands its router parameter to another registrar (chi)" do
+    src = <<-GO
+      package main
+
+      import (
+      \t"net/http"
+
+      \t"github.com/go-chi/chi/v5"
+      )
+
+      func Authenticator(next http.Handler) http.Handler {
+      \treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+      \t\tif r.Header.Get("Authorization") == "" {
+      \t\t\thttp.Error(w, "unauthorized", http.StatusUnauthorized)
+      \t\t\treturn
+      \t\t}
+      \t\tnext.ServeHTTP(w, r)
+      \t})
+      }
+
+      type API struct{}
+
+      func (api *API) routes() http.Handler {
+      \tr := chi.NewRouter()
+      \trx(r, "/public", 0)
+      \tr.Group(func(r chi.Router) {
+      \t\tr.Use(Authenticator)
+      \t\tapi.addFoo(r)
+      \t\trx(r, "/user", "")
+      \t})
+      \treturn r
+      }
+
+      func (api *API) addFoo(r chi.Router) {
+      \taddBar(r)
+      }
+
+      func addBar(r chi.Router) {
+      \tr.Get("/bar", func(w http.ResponseWriter, r *http.Request) {})
+      }
+
+      func publicOnly(r chi.Router) {
+      \tr.Get("/login", func(w http.ResponseWriter, r *http.Request) {})
+      }
+
+      func rx[T any](r chi.Router, prefix string, repo T) {
+      \tr.Route(prefix, func(r chi.Router) {
+      \t\tr.Get("/", func(w http.ResponseWriter, r *http.Request) {})
+      \t})
+      }
+      GO
+    # Another package's local named like the unexported registrar is not a
+    # call of it.
+    other = "package other\n\nfunc f() int {\n\trx := 1\n\treturn rx\n}\n"
+    result = router_scope_scan({"go.mod" => "module c\n", "main.go" => src, "other/other.go" => other},
+      [{"GET", "/bar", "main.go", %("/bar")}, {"GET", "/login", "main.go", %("/login")},
+       {"GET", "/user/", "main.go", "r.Get(\"/\","}, {"GET", "/public/", "main.go", "r.Get(\"/\","}], "go_chi")
+    guarded?(result["GET /bar"]).should be_true
+    guarded?(result["GET /login"]).should be_false
+    # Each call's path literal says which endpoint it registers.
+    guarded?(result["GET /user/"]).should be_true
+    guarded?(result["GET /public/"]).should be_false
+  end
+
   it "still guards a subrouter mounted on the guarded router (chi Mount, mux Subrouter)" do
     chi = <<-GO
       package main
@@ -1326,7 +1390,7 @@ describe "GoAuthTagger (groups handed to a registrar in another file)" do
     end
   end
 
-  it "does not follow a registrar called by another registrar with its own parameter" do
+  it "follows a registrar called by another registrar with its own parameter" do
     result = registrar_scan(<<-GO)
       \tauthV1 := r.Group(conf.Base)
       \tauthV1.Use(Auth())
@@ -1337,7 +1401,7 @@ describe "GoAuthTagger (groups handed to a registrar in another file)" do
       \treg.RegisterAPI(g)
 
       GO
-    guarded?(result["GET /conversation"]).should be_false
+    guarded?(result["GET /conversation"]).should be_true
   end
 
   it "needs the guard on every route an endpoint was merged from" do
