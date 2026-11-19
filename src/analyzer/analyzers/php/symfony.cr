@@ -190,9 +190,11 @@ module Analyzer::Php
       content = read_file_content(path)
       # Controllers/services without route attributes dominate a Symfony
       # tree. Skip the annotation/attribute scans when neither form is
-      # present (`@Route` or `#[Route`).
-      return endpoints unless content.includes?("Route")
-      return endpoints unless content.includes?("@Route") || content.includes?("#[")
+      # present (`@Route` or `#[Route`), nor FOSRest's (`@Rest\Get`).
+      unless content.includes?("FOS\\RestBundle\\Controller\\Annotations")
+        return endpoints unless content.includes?("Route")
+        return endpoints unless content.includes?("@Route") || content.includes?("#[")
+      end
       # `Route` imported from another package (Spiral's `#[Route(route:
       # '/users')]`) is not Symfony's.
       if (imported = parse_use_imports(content)["Route"]?) && SYMFONY_ROUTE_NAMESPACES.none? { |ns| imported.lchop('\\').starts_with?(ns) }
@@ -246,7 +248,7 @@ module Analyzer::Php
                                          action : Action?,
                                          import_prefixes : Array(String),
                                          include_callee : Bool)
-      methods = extract_methods_from_symfony_context(attr.args)
+      methods = route_methods(attr)
       methods = ["GET"] if methods.empty?
       method_body = action.try(&.body)
       body_params = action.try(&.params) || [] of Param

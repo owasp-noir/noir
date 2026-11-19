@@ -10,11 +10,21 @@ module Analyzer::Php::SymfonyRouteAttributes
   # Packages whose `Route` is Symfony's (or extends it).
   SYMFONY_ROUTE_NAMESPACES = {"Symfony\\", "FOS\\RestBundle\\", "Sensio\\Bundle\\FrameworkExtraBundle\\"}
 
+  # FOSRestBundle's route attributes/annotations that fix their verb
+  # (`#[Rest\Get('/users')]`). Only through an import of this namespace: a
+  # bare `Get` is API Platform's or Spiral's otherwise.
+  FOS_REST_ANNOTATIONS = "FOS\\RestBundle\\Controller\\Annotations\\"
+  FOS_REST_VERBS       = %w[Get Post Put Patch Delete Head Options]
+
+  # A docblock annotation that may be a route: `@Route(`, `@Rest\Get(`, ...
+  ROUTE_ANNOTATION_RE = /@((?:\\?[A-Za-z_]\w*\\)*(?:Route|Get|Post|Put|Patch|Delete|Head|Options))\s*\(/
+
   # A `@Route(...)` annotation or `#[Route(...)]` attribute: where it
   # starts and ends, the text between its parentheses, and for an
   # attribute whether it sits on a class (nil for an annotation, which is
-  # judged by the text after it).
-  record RouteAttr, start : Int32, stop : Int32, args : String, on_class : Bool? = nil
+  # judged by the text after it), and the verb a FOSRest `Get`/`Post`/...
+  # fixes.
+  record RouteAttr, start : Int32, stop : Int32, args : String, on_class : Bool? = nil, verb : String? = nil
 
   # Every route annotation/attribute in `content` (the parser's source with
   # comments blanked), in source order. An attribute is what the parser
@@ -25,18 +35,21 @@ module Analyzer::Php::SymfonyRouteAttributes
   private def route_attributes(content : String, parser : Noir::PhpBlockParser) : Array(RouteAttr)
     attrs = [] of RouteAttr
     targets = {} of Int32 => Bool
+    imports = nil
     parser.each_node { |node| node.attributes.each { |attribute| targets[attribute.start] = node.kind.class? } }
     parser.attributes.each do |attribute|
-      next unless route_attribute?(attribute.name) && (args = attribute.args)
+      next unless args = attribute.args
+      next unless verb = route_attribute_verb(attribute.name) { imports ||= parse_use_imports(content) }
       stop = args.end + 1
       on_class = targets.has_key?(attribute.start) ? targets[attribute.start] : route_applies_to_class?(content, stop)
-      attrs << RouteAttr.new(attribute.start, stop, content[args], on_class)
+      attrs << RouteAttr.new(attribute.start, stop, content[args], on_class, verb.presence)
     end
-    content.scan(/@Route\s*\(/) do |m|
+    content.scan(ROUTE_ANNOTATION_RE) do |m|
+      next unless verb = route_attribute_verb(m[1]) { imports ||= parse_use_imports(content) }
       open = m.end(0) - 1
       block = content[open...(content.index("*/", open) || content.size)]
       next unless close = Noir::PhpLexer.new(block, php_mode: true).matching_delimiter(0)
-      attrs << RouteAttr.new(m.begin(0), open + close + 1, block[1...close].gsub(/\n\s*\*/, "\n"))
+      attrs << RouteAttr.new(m.begin(0), open + close + 1, block[1...close].gsub(/\n\s*\*/, "\n"), verb: verb.presence)
     end
     attrs.sort_by!(&.start)
   end
@@ -45,6 +58,24 @@ module Analyzer::Php::SymfonyRouteAttributes
   private def route_attribute?(name : String) : Bool
     return true if name == "Route"
     name.ends_with?("\\Route") && SYMFONY_ROUTE_NAMESPACES.any? { |ns| name.lchop('\\').starts_with?(ns) }
+  end
+
+  # nil unless `name` is a route attribute once resolved through the file's
+  # use-imports (`Rest\Route` under `use FOS\...\Annotations as Rest`); else
+  # the verb it fixes, or "" for a `Route`.
+  private def route_attribute_verb(name : String, & : -> Hash(String, String)) : String?
+    return "" if route_attribute?(name)
+    short = name.rpartition('\\').last
+    return unless short == "Route" || FOS_REST_VERBS.includes?(short)
+    fqcn = qualify_class(name, yield, nil)
+    return "" if route_attribute?(fqcn)
+    short.upcase if fqcn == "#{FOS_REST_ANNOTATIONS}#{short}" && short != "Route"
+  end
+
+  # The verbs a route declares: the one its FOSRest verb class fixes, else
+  # its `methods` argument.
+  private def route_methods(attr : RouteAttr) : Array(String)
+    attr.verb.try { |verb| [verb] } || extract_methods_from_symfony_context(attr.args)
   end
 
   # The top-level comma-separated arguments of an argument list.
