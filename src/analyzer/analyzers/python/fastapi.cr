@@ -180,7 +180,12 @@ module Analyzer::Python
         seed_unmounted_router_roots(include_router_map, fastapi_base_paths,
           (fastapi_app_instances + parameter_app_instances).to_set, prefix_visited)
 
+        emit_map = imported_instance_mounts(include_router_map, fastapi_base_paths)
         include_router_map.each do |path, router_map|
+          (emit_map[path] ||= [] of Tuple(::String, Router)).concat(router_map.flat_map { |name, registered| registered.mounts.map { |router| {name, router} } })
+        end
+
+        emit_map.each do |path, instance_mounts|
           source = read_file_content(path)
           import_base_path = fastapi_base_path_for(path, fastapi_base_paths)
           definition_base_path = python_base_path_for(path)
@@ -188,7 +193,7 @@ module Analyzer::Python
           codelines = source.split("\n")
           # A worked `@app.get(...)` example in a docstring is prose.
           in_docstring = Helper.docstring_line_flags(codelines)
-          router_map.flat_map { |name, registered| registered.mounts.map { |router| {name, router} } }.each do |instance_name, router_class|
+          instance_mounts.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
               next if in_docstring[index] || line.lstrip.starts_with?("#")
 
@@ -352,6 +357,31 @@ module Analyzer::Python
       Fiber.yield
 
       result
+    end
+
+    IMPORTED_DECORATOR_RE = /^[ \t]*@[ \t]*(#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})*)[ \t]*\.[ \t]*(?:get|post|put|patch|delete|head|options|trace|query|route|api_route|websocket)[ \t]*\(/m
+
+    # `{name, mounted router}` per file that decorates routes on an app or
+    # router declared in another module (`from srv.application import app`),
+    # served under the mounts of the instance it names.
+    private def imported_instance_mounts(include_router_map : Hash(::String, Hash(::String, Router)),
+                                         project_roots : Array(::String)) : Hash(::String, Array(Tuple(::String, Router)))
+      uses = Hash(::String, Array(Tuple(::String, Router))).new
+      python_source_files.each do |path|
+        source = read_file_content(path)
+        next unless source.includes?('@')
+        local = include_router_map[path]?
+        names = Set(::String).new
+        source.scan(IMPORTED_DECORATOR_RE) { |m| names << m[1] unless local.try(&.has_key?(m[1])) }
+        next if names.empty?
+        import_modules = find_fastapi_imported_modules(fastapi_base_path_for(path, project_roots), path, source)
+        names.each do |name|
+          next unless (target = resolve_router_reference(path, source, import_modules, include_router_map, name)) && target[0] != path
+          next unless router = include_router_map[target[0]]?.try(&.[target[1]]?)
+          (uses[path] ||= [] of Tuple(::String, Router)).concat(router.mounts.map { |mounted| {name, mounted} })
+        end
+      end
+      uses
     end
 
     # `APIRouter` and every project class deriving from it, directly or
@@ -791,7 +821,7 @@ module Analyzer::Python
       when 0
         # A router included from the SAME file (e.g. dispatch's
         # `api_router.include_router(authenticated_organization_api_router)`).
-        return {file, name} if include_router_map[file].has_key?(name)
+        return {file, name} if include_router_map[file]?.try(&.has_key?(name))
         return unless imported = import_modules[name]?
         import_module_path = imported.first
         return unless target_map = include_router_map[import_module_path]?
@@ -805,12 +835,27 @@ module Analyzer::Python
         # FastAPI accuracy bug on real apps (fastapi-realworld,
         # Netflix/dispatch) that lean on `import router as X`.
         {import_module_path, fastapi_original_import_name(file, source, name, import_module_path, target_map)}
-      when 1
-        module_name, attr = name.split(".")
+      else
+        # `module.router`, `pkg.router` re-exported by `pkg/__init__.py`, or
+        # a chain of modules (`api.v1.users.router`), read left to right.
+        module_name, _, rest = name.partition('.')
         return unless imported = import_modules[module_name]?
-        import_module_path = imported.first
-        return unless include_router_map.has_key?(import_module_path)
-        {import_module_path, attr}
+        current = imported.first
+        attrs = rest.split('.')
+        attrs.each_with_index do |attr, i|
+          last = i == attrs.size - 1
+          return {current, attr} if last && include_router_map.has_key?(current)
+          return if current.empty?
+          symbol = Noir::ImportGraph::Python.find_imported_symbols(fastapi_base_path_for(current, @fastapi_project_roots),
+            current, read_file_content(current))[attr]? || return
+          if symbol[1].empty?
+            current = symbol[0]
+          else
+            return unless last && include_router_map[symbol[0]]?.try(&.has_key?(symbol[1]))
+            return {symbol[0], symbol[1]}
+          end
+        end
+        nil
       end
     end
 
@@ -1439,7 +1484,13 @@ module Analyzer::Python
         end
 
         if param_type.nil?
-          next unless model
+          unless model
+            # `Literal[...]`, `conint(gt=0)`: a value, read from the query.
+            if fastapi_peeled_type(param.type).try(&.matches?(QUERY_VALUE_TYPE_RE))
+              params << Param.new(fastapi_wire_name(param, "query"), default_value, "query")
+            end
+            next
+          end
           if model.in?(%w[Request dict])
             function_codeblock = parse_code_block(codelines[def_line..])
             next if function_codeblock.nil?
@@ -1449,7 +1500,13 @@ module Analyzer::Python
             # A model from a package the scan does not hold (a sibling
             # project scanned alone) is still the body: one opaque field,
             # as an unresolved `Body()` model is kept.
-            fields << Param.new(param.name, default_value, "json") if fields.empty? && foreign_project_model?(model, source, path, base_path)
+            if fields.empty?
+              if foreign_project_model?(model, source, path, base_path)
+                fields << Param.new(param.name, default_value, "json")
+              elsif fastapi_query_value_type?(model, source, path, base_path)
+                fields << Param.new(fastapi_wire_name(param, "query"), default_value, "query")
+              end
+            end
             params.concat(fields)
           end
         else
@@ -1461,14 +1518,49 @@ module Analyzer::Python
     end
 
     NON_BODY_MODULES = %w[typing typing_extensions uuid datetime decimal enum pathlib ipaddress fastapi starlette pydantic]
-    FROM_IMPORT_RE   = /^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]*))/m
+    # Classes FastAPI injects instead of reading from the request.
+    INJECTED_TYPES      = %w[Request Response BackgroundTasks SecurityScopes HTTPConnection WebSocket]
+    ENUM_BASE_RE        = /(?:\A|\.)(?:\w*Enum|IntFlag|Flag)\z/
+    QUERY_VALUE_TYPE_RE = /\A(?:(?:typing(?:_extensions)?\.)?Literal\[|(?:pydantic\.)?con(?:int|float|str|decimal|date|bytes)\()/
+
+    @query_value_types = Hash(Tuple(::String, ::String, ::String), Bool).new
+
+    # Whether a model-less annotation that yields no body fields is a value
+    # FastAPI reads from the query: an unresolved name (`UUID`, `date`,
+    # `PositiveInt`, a stdlib-qualified `datetime.date`) or a project Enum.
+    # ponytail: an Enum is recognised by its own base names only, not through
+    # a project base class.
+    private def fastapi_query_value_type?(model : ::String, source : ::String, path : ::String, base_path : ::String) : Bool
+      @query_value_types.fetch({model, path, base_path}) do
+        receiver, _, name = model.rpartition('.')
+        @query_value_types[{model, path, base_path}] = if INJECTED_TYPES.includes?(name)
+                                                         false
+                                                       elsif resolved = resolve_model_reference(model, source, path, base_path)
+                                                         class_name, class_source, _ = resolved
+                                                         header = class_source.match(/^[ \t]*class[ \t]+#{Regex.escape(class_name)}[ \t]*\(([^)]*)\)/m)
+                                                         !!header && split_python_top_level(header[1], ',').any?(&.strip.matches?(ENUM_BASE_RE))
+                                                       else
+                                                         receiver.empty? || NON_BODY_MODULES.includes?(receiver.split('.').first)
+                                                       end
+      end
+    end
+
+    FROM_IMPORT_RE = /^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]*))/m
 
     # Whether bare class `model` is imported (`from pkg.schemas import
     # Model`) from a module the scan cannot resolve and that is no stdlib or
     # framework module whose classes FastAPI reads as query values or injects.
     # ponytail: an Enum from such a package is a query value, read as json.
+    @foreign_models = Hash(Tuple(::String, ::String, ::String), Bool).new
+
     private def foreign_project_model?(model : ::String, source : ::String, path : ::String, base_path : ::String) : Bool
       return false unless VAR_NAME_FULL_RE.matches?(model)
+      @foreign_models.fetch({model, path, base_path}) do
+        @foreign_models[{model, path, base_path}] = uncached_foreign_project_model?(model, source, path, base_path)
+      end
+    end
+
+    private def uncached_foreign_project_model?(model : ::String, source : ::String, path : ::String, base_path : ::String) : Bool
       return false if resolve_model_reference(model, source, path, base_path)
       source.scan(FROM_IMPORT_RE) do |m|
         names = (m[2]? || m[3]? || "").split(',').map(&.split(/\s+as\s+/).last.strip)
@@ -1742,11 +1834,22 @@ module Analyzer::Python
       type
     end
 
+    # Memoised per file: a module with many routes resolves the same model
+    # once per route, and each resolution scans the whole module. Copies are
+    # handed out because a param's tag list is shared between copies.
+    @model_params_memo = Hash(Tuple(::String, ::String, ::String, ::String, ::String), Array(Param)).new
+
     private def model_params_for(model : ::String, param_name : ::String, source : ::String,
                                  path : ::String, base_path : ::String, location : ::String = "json") : Array(Param)
-      return [] of Param unless resolved = resolve_model_reference(model, source, path, base_path)
-      class_name, class_source, class_path = resolved
-      find_base_model_params(class_source, class_name, param_name, path: class_path, base_path: base_path, location: location)
+      fields = @model_params_memo[{model, param_name, path, base_path, location}] ||= begin
+        if resolved = resolve_model_reference(model, source, path, base_path)
+          class_name, class_source, class_path = resolved
+          find_base_model_params(class_source, class_name, param_name, path: class_path, base_path: base_path, location: location)
+        else
+          [] of Param
+        end
+      end
+      fields.map(&.detached_copy)
     end
 
     QUALIFIED_NAME_RE = /^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})+$/
@@ -1755,8 +1858,18 @@ module Analyzer::Python
     # name, an import alias (`from .base import Item as BaseItem`), or a
     # module-qualified name (`schemas.Item`, `import app.schemas as s` then
     # `s.Item`). A generic subscript (`Page[Item]`) is dropped.
+    @model_references = Hash(Tuple(::String, ::String, ::String), Tuple(::String, ::String, ::String)?).new
+
+    # Memoised per file like `model_params_for`.
     private def resolve_model_reference(reference : ::String, source : ::String, path : ::String,
                                         base_path : ::String) : Tuple(::String, ::String, ::String)?
+      @model_references.fetch({reference, path, base_path}) do
+        @model_references[{reference, path, base_path}] = uncached_model_reference(reference, source, path, base_path)
+      end
+    end
+
+    private def uncached_model_reference(reference : ::String, source : ::String, path : ::String,
+                                         base_path : ::String) : Tuple(::String, ::String, ::String)?
       name = reference.strip.sub(/\[.*\]\z/m, "").strip
       if VAR_NAME_FULL_RE.matches?(name)
         if site = model_site(name, source, path, base_path)
@@ -1871,8 +1984,18 @@ module Analyzer::Python
       params
     end
 
+    # Memoised like `model_params_for`; the route only matters through the
+    # path parameter names, which are left out of the result.
+    @dependency_params_memo = Hash(Tuple(::String, ::String, ::String, Int32, Array(::String)), Array(Param)).new
+
     private def dependency_callee_params(callee : ::String, route_path : ::String, source : ::String,
                                          path : ::String, base_path : ::String, depth : Int32) : Array(Param)
+      key = {callee, path, base_path, depth, fastapi_path_param_names(route_path)}
+      (@dependency_params_memo[key] ||= uncached_dependency_callee_params(callee, route_path, source, path, base_path, depth)).map(&.detached_copy)
+    end
+
+    private def uncached_dependency_callee_params(callee : ::String, route_path : ::String, source : ::String,
+                                                  path : ::String, base_path : ::String, depth : Int32) : Array(Param)
       module_name, _, name = callee.rpartition('.')
       site = if module_name.empty?
                model_site(name, source, path, base_path, function: true)
