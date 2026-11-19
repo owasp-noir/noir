@@ -262,6 +262,61 @@ describe "CrystalAuthTagger" do
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
 
+  it "skips a Kemal::Handler whose refusal is not tied to a read of the caller" do
+    tmpdir = File.tempname("kemal_handler_unrelated_refusal")
+    Dir.mkdir_p(tmpdir)
+    handlers = File.join(tmpdir, "handlers.cr")
+    app = File.join(tmpdir, "app.cr")
+    File.write(File.join(tmpdir, "shard.yml"), "name: app\n")
+    File.write(handlers, <<-CR)
+      class CorsHandler < Kemal::Handler
+        exclude ["/health"]
+
+        def call(env)
+          return call_next env if exclude_match? env
+          if env.request.headers["Origin"]? != "https://app.example.com"
+            env.response.status_code = 403
+            return
+          end
+          env.response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+          call_next env
+        end
+      end
+
+      class LoggingHandler < Kemal::Handler
+        exclude ["/health"]
+
+        def call(env)
+          return call_next env if exclude_match? env
+          if RateLimiter.exceeded?(env.request.remote_address)
+            env.response.status_code = 403
+            return
+          end
+          Log.info { env.session.string?("user_id") }
+          call_next env
+        end
+      end
+      CR
+    File.write(app, <<-CR)
+      add_handler CorsHandler.new
+      add_handler LoggingHandler.new
+      get "/" do
+      end
+      CR
+
+    [handlers, app].each { |file| CodeLocator.instance.register_path(file) }
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    details = Details.new(PathInfo.new(app, 3))
+    details.technology = "crystal_kemal"
+    home = Endpoint.new("/", "GET", [] of Param, details)
+
+    CrystalAuthTagger.new(noir_options).perform([home])
+    home.tags.should be_empty
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
   it "returns correct target_techs" do
     CrystalAuthTagger.target_techs.should contain("crystal_kemal")
     CrystalAuthTagger.target_techs.should contain("crystal_amber")

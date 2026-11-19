@@ -60,10 +60,11 @@ class CrystalAuthTagger < FrameworkTagger
 
   SHARD_MANIFEST = /\Ashard\.yml\z/
 
-  # A handler that reads who the caller is and answers 401/403 or sends
-  # them to log in.
-  KEMAL_HANDLER_IDENTITY = /Authorization|\.session\b|cookies\[|current_user|basic_auth/i
-  KEMAL_HANDLER_REFUSAL  = /status_code\s*(?:=|:)\s*40[13]\b|\bhalt\b[^\n]*\b40[13]\b|redirect[^\n]*log_?in/i
+  # A handler that reads who the caller is from the request and, after that
+  # read, answers 401/403 or sends them to log in. A 403 issued before any
+  # such read (an Origin check, a rate limit) is not an auth refusal.
+  KEMAL_HANDLER_IDENTITY = /request\.headers\[\s*"authorization"|request\.cookies\b|\.session\.|current_user|basic_auth/i
+  KEMAL_HANDLER_REFUSAL  = /status_code\s*(?:=|:)\s*40[13]\b|\bhalt\b[^\n]*\b40[13]\b|redirect[^\n]*(?:log_?in|sign_?in)/i
 
   def initialize(options : Hash(String, YAML::Any))
     super
@@ -116,9 +117,10 @@ class CrystalAuthTagger < FrameworkTagger
       lines = content.split("\n")
       lines.each_with_index do |line, index|
         next unless (m = line.match(/^(\s*)class\s+(\w+)\s*<\s*Kemal::Handler\b/)) && (roots = installed[m[2]]?)
-        body = lines[index + 1..].take_while { |l| !l.matches?(/^#{m[1]}end\b/) }
+        body = lines[index + 1..].take_while { |l| !l.matches?(/^#{m[1]}end\b/) }.reject(&.lstrip.starts_with?('#'))
         text = body.join("\n")
-        next unless text.matches?(KEMAL_HANDLER_IDENTITY) && text.matches?(KEMAL_HANDLER_REFUSAL)
+        next unless read_at = body.index(&.matches?(KEMAL_HANDLER_IDENTITY))
+        next unless body[read_at..].any?(&.matches?(KEMAL_HANDLER_REFUSAL))
         only, exclude = kemal_path_rules(body)
         # `only` / `exclude` declare the lists; `call` must consult them.
         only.clear unless text.includes?("only_match?")
