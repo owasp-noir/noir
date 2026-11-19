@@ -2314,6 +2314,13 @@ module Noir
       handler_text = ""
       handler_args = [] of String
       Noir::TreeSitter.each_named_arg(args) do |arg|
+        # A route table's field (`r.Handle(rt.method, rt.path, rt.handler)`),
+        # bound by `table_routes`.
+        if path_lit.nil? && Noir::TreeSitter.node_type(arg) == "selector_expression" &&
+           (bound = string_values[Noir::TreeSitter.node_text(arg, source)]?)
+          method_lit.nil? ? (method_lit = bound) : (path_lit = bound)
+          next
+        end
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
           if method_lit.nil?
