@@ -108,25 +108,32 @@ module Analyzer::Specification
         msg_body = extract_brace_block(content, brace_pos, file_chars)
         next if msg_body.nil?
 
-        fields = [] of Param
-
-        msg_body.each_line do |line|
-          line = line.strip
-          next if line.empty? || line.starts_with?("//") || line.starts_with?("reserved") || line.starts_with?("option")
-          # Skip nested message/enum/oneof declarations
-          next if line.starts_with?("message ") || line.starts_with?("enum ") || line.starts_with?("oneof ")
-          next if line == "}"
-
-          # Match field patterns: [optional|repeated] type name = number;
-          if field_match = line.match(/^\s*(?:optional\s+|repeated\s+|required\s+)?(?:map<[\w.]+\s*,\s*[\w.]+>|[\w.]+)\s+(\w+)\s*=\s*\d+/)
-            fields << Param.new(field_match[1], "", "json")
-          end
-        end
-
-        messages[msg_name] = fields
+        messages[msg_name] = Grpc.message_fields(msg_body)
       end
 
       messages
+    end
+
+    # The fields a message body declares itself. A nested `message`, `enum` or
+    # `extend` block is skipped whole (it is parsed as its own message); a
+    # `oneof` body's members are fields of the enclosing message.
+    def self.message_fields(msg_body : String) : MessageFields
+      fields = [] of Param
+      nested_depth = 0
+      msg_body.each_line do |line|
+        line = line.strip
+        if nested_depth > 0 || line.matches?(/\A(?:message|enum|extend)\b/)
+          nested_depth += line.count('{') - line.count('}')
+          next
+        end
+        next if line.empty? || line.starts_with?("//") || line.matches?(/\A(?:reserved|option|oneof)\b/)
+
+        # [optional|repeated|required] type name = number;
+        if field_match = line.match(/^\s*(?:optional\s+|repeated\s+|required\s+)?(?:map<[\w.]+\s*,\s*[\w.]+>|[\w.]+)\s+(\w+)\s*=\s*\d+/)
+          fields << Param.new(field_match[1], "", "json")
+        end
+      end
+      fields
     end
 
     private def parse_services(content : String, file_path : String, package : String, registry : Hash(String, MessageFields))

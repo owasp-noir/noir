@@ -1,0 +1,28 @@
+syntax = "proto3";
+package acme.users.v1;
+
+service Users {
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+}
+
+message ListUsersRequest {
+  option deprecated = false;
+  string tenant = 1;
+  optional string cursor = 2;
+  optional int32 page_size = 3;
+  message Filter {
+    string role = 1;
+    message Range { int64 since = 1; }
+    Range created = 2;
+  }
+  enum Order {
+    ORDER_UNSPECIFIED = 0;
+  }
+  Filter filter = 4;
+  oneof scope {
+    string team_id = 5;
+    string org_id = 6;
+  }
+  Order order = 7;
+}
+message ListUsersResponse {}
