@@ -78,6 +78,29 @@ describe Noir::JSHttpRouteExtractor do
       ep.params.map(&.param_type).should eq(["json"])
     end
 
+    it "scopes a brace-less verb test to its path block, without sibling verbs" do
+      code = <<-JS
+        const http = require('node:http');
+        http.createServer((req, res) => {
+          const url = new URL(req.url, 'http://localhost');
+          const trace = req.headers['x-trace'];
+          if (url.pathname === '/login') {
+            return res.end(url.searchParams.get('redirect'));
+          }
+          if (url.pathname === '/items') {
+            const tenant = url.searchParams.get('tenant');
+            if (req.method === 'DELETE') return res.end('deleted');
+            if (req.method === 'POST') return res.end(req.headers['x-idempotency-key']);
+          }
+        });
+        JS
+
+      endpoints = Noir::JSHttpRouteExtractor.extract("app.js", code)
+      names = ->(method : String) { endpoints.find! { |e| e.url == "/items" && e.method == method }.params.map(&.name).sort! }
+      names.call("DELETE").should eq(["tenant", "x-trace"])
+      names.call("POST").should eq(["tenant", "x-idempotency-key", "x-trace"])
+    end
+
     it "finds a named handler declared with a non-ASCII type annotation" do
       # The handler offset was computed as `match.begin(0) + match[0].bytesize`,
       # mixing a char index with a byte length. Any multi-byte character in

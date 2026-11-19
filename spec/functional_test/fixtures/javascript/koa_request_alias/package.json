@@ -1,0 +1,1 @@
+{ "name": "c", "dependencies": { "koa": "^2", "@koa/router": "^12" } }

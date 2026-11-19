@@ -9,6 +9,7 @@ require "../utils/url_path"
 require "../utils/js_literal_scanner"
 require "../analyzer/analyzers/javascript/express_constants"
 require "../utils/text_file"
+require "./ts_class_fields"
 
 module Noir
   # JSRouteExtractor provides a unified interface for extracting routes from JavaScript files
@@ -2084,7 +2085,8 @@ module Noir
         # interpolated regex literal would recompile (full PCRE2 compile)
         # once per endpoint.
         direct_call_pattern = @@direct_call_res.fetch(method_alternation) do
-          @@direct_call_res[method_alternation] = /(?:\.\s*(?:#{method_alternation})|\[\s*['"](?:#{method_alternation})['"]\s*\])\s*\(/i
+          # `app.get<{ Querystring: Q }>(…)`: a paren-free type-argument list may sit before `(`.
+          @@direct_call_res[method_alternation] = /(?:\.\s*(?:#{method_alternation})|\[\s*['"](?:#{method_alternation})['"]\s*\])\s*(?:<[^()]*?>\s*)?\(/i
         end
         if direct_match = search_window.match(direct_call_pattern)
           candidate_idx = start_byte + direct_match.byte_begin(0)
@@ -2198,7 +2200,9 @@ module Noir
         end
       end
 
-      extract_multer_params(handler ? args_slice.byte_slice(0, handler[0]) : args_slice, endpoint)
+      middleware = handler ? args_slice.byte_slice(0, handler[0]) : args_slice
+      extract_multer_params(middleware, endpoint)
+      extract_zod_validator_params(middleware, content, endpoint)
 
       return unless handler
 
@@ -2552,6 +2556,36 @@ module Noir
       end
     end
 
+    # `@hono/zod-validator` middleware names the validated target and its
+    # schema: `zValidator('json', z.object({ title: z.string() }))`, or a
+    # same-file `const loginForm = z.object({...})`.
+    ZOD_VALIDATOR_RE    = /\bzValidator\s*\(\s*['"](json|form|query|header|cookie|param)['"]\s*,\s*(?:(z\s*\.\s*(?:object|strictObject|looseObject)\s*\(\s*\{)|([A-Za-z_$][\w$]*)\s*[,)])/
+    ZOD_VALIDATOR_TYPES = {"json" => "json", "form" => "form", "query" => "query", "header" => "header", "cookie" => "cookie", "param" => "path"}
+
+    private def self.extract_zod_validator_params(middleware : String, content : String, endpoint : Endpoint)
+      return unless middleware.includes?("zValidator")
+      middleware.scan(ZOD_VALIDATOR_RE) do |m|
+        fields = if m[2]?
+                   open = m.byte_end(0) - 1
+                   close = JSLiteralScanner.find_matching_brace_at_byte(middleware, open)
+                   close ? TsClassFields.members(middleware.byte_slice(open + 1, close - open - 1)) : [] of String
+                 else
+                   zod_object_fields(content, m[3])
+                 end
+        fields.each { |field| endpoint.push_param(Param.new(field, "", ZOD_VALIDATOR_TYPES[m[1]])) }
+      end
+    end
+
+    private def self.zod_object_fields(content : String, name : String) : Array(String)
+      content.scan(TsClassFields::ZOD_OBJECT_DECL) do |m|
+        next unless m[1] == name
+        open = m.byte_end(0) - 1
+        close = JSLiteralScanner.find_matching_brace_at_byte(content, open) || break
+        return TsClassFields.members(content.byte_slice(open + 1, close - open - 1))
+      end
+      [] of String
+    end
+
     def self.extract_body_params(handler_body : String, endpoint : Endpoint)
       handler_body = strip_request_writes(handler_body)
       # Look for req.body.X or const/let/var { X } = req.body
@@ -2588,23 +2622,7 @@ module Noir
 
       extract_destructured_prop_params(handler_body, "body", "json", endpoint)
 
-      # Hono-style: const { X } = await c.req.json()
-      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.json\s*\(/) do |match|
-        params = match[1].split(",").map(&.strip)
-        params.each do |param|
-          clean_param = clean_destructured_param(param)
-          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-        end
-      end
-
-      # Hono-style: const { X } = await c.req.parseBody()
-      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.parseBody\s*\(/) do |match|
-        params = match[1].split(",").map(&.strip)
-        params.each do |param|
-          clean_param = clean_destructured_param(param)
-          endpoint.push_param(Param.new(clean_param, "", "form")) unless clean_param.empty?
-        end
-      end
+      extract_hono_request_reads(handler_body, endpoint, query: false)
 
       # Oak-style: const { X } = await ctx.request.body.json()
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+ctx\.request\.body\.json\s*\(/) do |match|
@@ -2679,6 +2697,7 @@ module Noir
       handler_body.scan(/\w+\.req\.query\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         endpoint.push_param(Param.new(match[1], "", "query"))
       end
+      extract_hono_request_reads(handler_body, endpoint, query: true)
 
       # Hono-style: c.req.queries('param')
       handler_body.scan(/\w+\.req\.queries\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
@@ -2836,16 +2855,25 @@ module Noir
       end
     end
 
+    # `const body = req.body`, `const query = ctx.query || {}`: a local bound
+    # to the whole request property, read below like a destructured one.
+    # Koa's `ctx.body` is the response, so a body alias needs `ctx.request`.
+    REQUEST_ALIAS_RES = {"body", "query", "headers", "cookies", "params"}.to_h do |prop|
+      receiver = prop == "body" ? "req|request|ctx\\s*\\.\\s*request" : "req|request|ctx(?:\\s*\\.\\s*request)?"
+      {prop, /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]+)?=\s*(?:#{receiver})\s*\??\.\s*#{prop}\b(?:\s*(?:\|\||\?\?)\s*\{\s*\})?(?!\s*(?:[.\[(]|\?\.))/}
+    end
+
     # Extracts parameters when a request property (`body`, `query`, `params`,
     # `headers`, `cookies`) is destructured in a handler's parameter signature
-    # (`({ body: { name } }) => …`, `({ query, headers }) => { query.q }`) or
-    # from `req`/`request` (`const { body, query } = req`).
+    # (`({ body: { name } }) => …`, `({ query, headers }) => { query.q }`),
+    # from `req`/`request` (`const { body, query } = req`), or bound whole to
+    # a local (`const body = req.body`).
     private def self.extract_destructured_prop_params(handler_body : String, prop : String, param_type : String, endpoint : Endpoint)
-      return unless handler_body.includes?(prop) && handler_body.includes?('{')
-      clauses = request_destructured_clauses(handler_body)
-      return if clauses.empty?
-
+      return unless handler_body.includes?(prop)
       bound_vars = Set(String).new
+      handler_body.scan(REQUEST_ALIAS_RES[prop]) { |match| bound_vars << match[1] }
+
+      clauses = handler_body.includes?('{') ? request_destructured_clauses(handler_body) : [] of String
       clauses.each do |clause|
         next unless clause.includes?(prop)
         clause.scan(/\b#{prop}\s*:\s*\{\s*([^}]+)\s*\}/) do |match|
@@ -2860,20 +2888,44 @@ module Noir
         end
       end
 
-      bound_vars.each do |var_name|
-        escaped = Regex.escape(var_name)
-        handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*#{escaped}\b(?!\s*\.)/) do |match|
-          match[1].split(",").each do |param|
+      bound_vars.each { |var_name| extract_bound_var_reads(handler_body, var_name, param_type, endpoint) }
+    end
+
+    # Reads of a local holding request data: `const { a } = v`, `v.a`, `v['a']`.
+    private def self.extract_bound_var_reads(handler_body : String, var_name : String, param_type : String, endpoint : Endpoint)
+      escaped = Regex.escape(var_name)
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*#{escaped}\b(?!\s*\.)/) do |match|
+        match[1].split(",").each do |param|
+          clean_param = clean_destructured_param(param.strip)
+          endpoint.push_param(Param.new(clean_param, "", param_type)) unless clean_param.empty?
+        end
+      end
+      # `headers['accept'] = …` writes through the alias; `==`, `=>` and `||=` still read.
+      handler_body.scan(/(?<![.\w$])#{escaped}\??\.(\w++)(?!\s*\()(?!\s*=(?![=>]))/) do |match|
+        endpoint.push_param(Param.new(match[1], "", param_type))
+      end
+      handler_body.scan(/(?<![.\w$])#{escaped}(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\](?!\s*=(?![=>]))/) do |match|
+        endpoint.push_param(Param.new(match[1], "", param_type))
+      end
+    end
+
+    # Hono's request readers, destructured or bound to a local, with an
+    # optional type argument: `const { a } = await c.req.json<T>()`,
+    # `const body = await c.req.parseBody()`, `const q = c.req.query()`.
+    HONO_REQUEST_READ_RE = /\b(?:const|let|var)(?:\s*\{\s*([^}]+)\s*\}|\s+([A-Za-z_$][\w$]*))\s*(?::[^=;]+)?=\s*(?:await\s+)?\w+\.req\.(?:(json|parseBody)\s*(?:<[^()]*?>\s*)?\([^()]*\)|(query)\s*\(\s*\))/
+
+    private def self.extract_hono_request_reads(handler_body : String, endpoint : Endpoint, query : Bool)
+      return unless handler_body.includes?(".req.")
+      handler_body.scan(HONO_REQUEST_READ_RE) do |match|
+        next unless query == !match[4]?.nil?
+        param_type = query ? "query" : (match[3]? == "json" ? "json" : "form")
+        if names = match[1]?
+          names.split(",").each do |param|
             clean_param = clean_destructured_param(param.strip)
             endpoint.push_param(Param.new(clean_param, "", param_type)) unless clean_param.empty?
           end
-        end
-        # `headers['accept'] = …` writes through the alias; `==`, `=>` and `||=` still read.
-        handler_body.scan(/(?<![.\w$])#{escaped}\??\.(\w++)(?!\s*\()(?!\s*=(?![=>]))/) do |match|
-          endpoint.push_param(Param.new(match[1], "", param_type))
-        end
-        handler_body.scan(/(?<![.\w$])#{escaped}(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\](?!\s*=(?![=>]))/) do |match|
-          endpoint.push_param(Param.new(match[1], "", param_type))
+        elsif var_name = match[2]?
+          extract_bound_var_reads(handler_body, var_name, param_type, endpoint)
         end
       end
     end

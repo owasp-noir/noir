@@ -6,7 +6,8 @@ expected_endpoints = [
     ep.push_callee(Callee.new("todoService().get", line: 27))
     ep.push_callee(Callee.new("c.json", line: 28))
   end,
-  Endpoint.new("/todos", "POST").tap do |ep|
+  # `const body = await c.req.json(); body.todoText`
+  Endpoint.new("/todos", "POST", [Param.new("todoText", "", "json")]).tap do |ep|
     ep.push_callee(Callee.new("c.req.json", line: 31))
     ep.push_callee(Callee.new("auth.session", line: 32))
     ep.push_callee(Callee.new("todoService().add", line: 33))

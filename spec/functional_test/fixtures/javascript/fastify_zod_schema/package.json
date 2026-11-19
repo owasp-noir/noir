@@ -1,0 +1,1 @@
+{ "name": "fastify-schema", "version": "1.0.0", "dependencies": { "fastify": "^4.26.0", "zod": "^3.22.0", "fastify-type-provider-zod": "^1.1.9" } }
