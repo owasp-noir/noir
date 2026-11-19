@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../miniparsers/js_route_extractor"
 require "../../../utils/js_literal_scanner"
+require "../../../utils/text_file"
 
 @[Noir::TaggerFor(key: "medusa_auth", name: "Medusa Auth Tagger", desc: "Identifies Medusa routes covered by an authenticate() middleware matcher", order: 290)]
 class MedusaAuthTagger < FrameworkTagger
@@ -27,7 +28,12 @@ class MedusaAuthTagger < FrameworkTagger
   # file exports `AUTHENTICATE = false`: `/admin` and `/store/customers/me`
   # (the documented defaults) and `/rbac` (`ApiLoader#applyAuthMiddleware`).
   DEFAULT_PROTECTED = %w[/admin /rbac /store/customers/me]
-  AUTH_OPT_OUT      = /\bexport\s+const\s+AUTHENTICATE\s*(?::\s*\w+\s*)?=\s*false\b/
+  # The routes loader reads `!!routeExports.AUTHENTICATE`: any falsy value
+  # exported under that name opts out, however it is exported.
+  OPT_OUT_DECLARATION = /\b(export\s+)?(?:const|let|var)\s+AUTHENTICATE\s*(?::[^=;]*)?=(?!=)\s*/
+  OPT_OUT_COMMONJS    = /\b(?:module\s*\.\s*)?exports\s*\.\s*AUTHENTICATE\s*=(?!=)\s*/
+  OPT_OUT_NAMED       = /\bexport\s*\{[^}]*\bAUTHENTICATE\b[^}]*\}/
+  FALSY_VALUE         = /\A(?:false|0|null|undefined|''|""|``)(?![\w$])/
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     matchers = auth_matchers
@@ -44,7 +50,22 @@ class MedusaAuthTagger < FrameworkTagger
   private def default_protection(endpoint : Endpoint) : String?
     prefix = DEFAULT_PROTECTED.find { |stem| endpoint.url == stem || endpoint.url.starts_with?("#{stem}/") } || return
     route = endpoint.details.code_paths.first?.try { |info| read_file(info.path) } || return
-    prefix unless Noir::JSRouteExtractor.strip_js_comments(route).matches?(AUTH_OPT_OUT)
+    prefix unless opted_out?(route)
+  end
+
+  # Matched on the code with strings and comments blanked byte for byte;
+  # the value is read from the source at the same offset.
+  private def opted_out?(route : String) : Bool
+    code = Noir::JSLiteralScanner.blank_literals(route)
+    named = code.matches?(OPT_OUT_NAMED)
+    {OPT_OUT_DECLARATION, OPT_OUT_COMMONJS}.any? do |pattern|
+      hit = false
+      code.scan(pattern) do |m|
+        exported = pattern == OPT_OUT_COMMONJS || !m[1]?.nil? || named
+        hit ||= exported && Noir::TextFile.byte_window(route, m.byte_end(0), 16).matches?(FALSY_VALUE)
+      end
+      hit
+    end
   end
 
   private def auth_matchers : Array(AuthMatcher)

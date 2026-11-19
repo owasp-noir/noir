@@ -16,6 +16,11 @@ describe "MedusaAuthTagger" do
       "/store/customers/me"    => "export const GET = async (req, res) => {\n  res.json({})\n}\n",
       "/store/items"           => "export const GET = async (req, res) => {\n  res.json({})\n}\n",
       "/administrators/report" => "export const GET = async (req, res) => {\n  res.json({})\n}\n",
+      "/admin/let-export"      => "export const GET = async (req, res) => {\n  res.json({})\n}\nexport let AUTHENTICATE = false\n",
+      "/admin/named-export"    => "export const GET = async (req, res) => {\n  res.json({})\n}\nconst AUTHENTICATE = false\nexport { AUTHENTICATE }\n",
+      "/admin/zero"            => "export const GET = async (req, res) => {\n  res.json({})\n}\nexport const AUTHENTICATE = 0\n",
+      "/admin/string-note"     => "export const GET = async (req, res) => {\n  res.json({})\n}\nconst note = 'export const AUTHENTICATE = false'\n",
+      "/admin/truthy"          => "export const GET = async (req, res) => {\n  res.json({})\n}\nexport const AUTHENTICATE = true\n",
     }
     begin
       endpoints = routes.map do |url, source|
@@ -33,6 +38,9 @@ describe "MedusaAuthTagger" do
       verdicts["/admin/commented"].should eq(["Protected by the Medusa router's default authentication on /admin"])
       verdicts["/rbac/roles"].should eq(["Protected by the Medusa router's default authentication on /rbac"])
       verdicts["/store/customers/me"].should eq(["Protected by the Medusa router's default authentication on /store/customers/me"])
+      verdicts["/admin/string-note"].should eq(["Protected by the Medusa router's default authentication on /admin"])
+      verdicts["/admin/truthy"].should eq(["Protected by the Medusa router's default authentication on /admin"])
+      %w[/admin/let-export /admin/named-export /admin/zero].each { |url| verdicts[url].should be_empty }
       verdicts["/admin/public-info"].should be_empty
       verdicts["/store/items"].should be_empty
       verdicts["/administrators/report"].should be_empty
