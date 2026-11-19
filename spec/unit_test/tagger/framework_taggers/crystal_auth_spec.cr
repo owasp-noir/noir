@@ -204,7 +204,7 @@ describe "CrystalAuthTagger" do
     handlers = File.join(tmpdir, "handlers.cr")
     app = File.join(tmpdir, "app.cr")
     File.write(File.join(tmpdir, "shard.yml"), "name: app\n")
-    File.write(handlers, <<-'CR')
+    File.write(handlers, <<-CR)
       class TokenAuthHandler < Kemal::Handler
         {% for method in %w[GET DELETE] %}
           only ["/api/me/*"], {{ method }}
@@ -228,7 +228,7 @@ describe "CrystalAuthTagger" do
         end
       end
       CR
-    File.write(app, <<-'CR')
+    File.write(app, <<-CR)
       add_handler TokenAuthHandler.new
       add_handler FrameHandler.new
       get "/" do
