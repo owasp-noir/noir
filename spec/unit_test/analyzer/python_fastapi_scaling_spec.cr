@@ -3,19 +3,20 @@ require "../../spec_helper"
 require "../../../src/models/code_locator"
 require "../../../src/analyzer/analyzers/python/fastapi"
 
-# One module with thousands of routes sharing a body model and a dependency.
-# Each route used to resolve both by rescanning the whole module, so 2x the
+# One module with thousands of routes sharing a body model, a dependency and
+# an unresolved (stdlib) annotation.
+# Each route used to resolve them by rescanning the whole module, so 2x the
 # routes cost ~5x the time; they are resolved once per module now.
 private def timed_fastapi_scan(routes : Int32) : Tuple(Array(Endpoint), Time::Span)
   temp_dir = File.tempname("fastapi_scaling")
   CodeLocator.instance.clear_all
   source = String.build do |io|
-    io << "from fastapi import Depends, FastAPI, Query\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n"
+    io << "from uuid import UUID\nfrom fastapi import Depends, FastAPI, Query\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n"
     io << "class Item(BaseModel):\n    name: str\n    price: float\n\n"
     io << "def pagination(limit: int = 10):\n    return limit\n\n"
     routes.times do |i|
       io << %(@app.post("/r#{i}/{item_id}")\n)
-      io << "async def h#{i}(item_id: int, item: Item, q: str = Query(None), page: int = Depends(pagination)):\n    return {}\n\n"
+      io << "async def h#{i}(item_id: int, cid: UUID, item: Item, q: str = Query(None), page: int = Depends(pagination)):\n    return {}\n\n"
     end
   end
   path = File.join(temp_dir, "main.py")
@@ -42,7 +43,7 @@ describe "FastAPI large-module scaling" do
     large.size.should eq(2000)
     last = large.find! { |e| e.url == "/r1999/{item_id}" }
     last.params.map { |p| {p.name, p.param_type} }.should eq([
-      {"name", "json"}, {"price", "json"}, {"q", "query"}, {"limit", "query"},
+      {"cid", "query"}, {"name", "json"}, {"price", "json"}, {"q", "query"}, {"limit", "query"},
     ])
     # Linear is ~2x; the per-route rescans were ~5x.
     (large_time / {small_time, 1.millisecond}.max).should be < 3.5

@@ -1551,8 +1551,16 @@ module Analyzer::Python
     # Model`) from a module the scan cannot resolve and that is no stdlib or
     # framework module whose classes FastAPI reads as query values or injects.
     # ponytail: an Enum from such a package is a query value, read as json.
+    @foreign_models = Hash(Tuple(::String, ::String, ::String), Bool).new
+
     private def foreign_project_model?(model : ::String, source : ::String, path : ::String, base_path : ::String) : Bool
       return false unless VAR_NAME_FULL_RE.matches?(model)
+      @foreign_models.fetch({model, path, base_path}) do
+        @foreign_models[{model, path, base_path}] = uncached_foreign_project_model?(model, source, path, base_path)
+      end
+    end
+
+    private def uncached_foreign_project_model?(model : ::String, source : ::String, path : ::String, base_path : ::String) : Bool
       return false if resolve_model_reference(model, source, path, base_path)
       source.scan(FROM_IMPORT_RE) do |m|
         names = (m[2]? || m[3]? || "").split(',').map(&.split(/\s+as\s+/).last.strip)
@@ -1850,8 +1858,18 @@ module Analyzer::Python
     # name, an import alias (`from .base import Item as BaseItem`), or a
     # module-qualified name (`schemas.Item`, `import app.schemas as s` then
     # `s.Item`). A generic subscript (`Page[Item]`) is dropped.
+    @model_references = Hash(Tuple(::String, ::String, ::String), Tuple(::String, ::String, ::String)?).new
+
+    # Memoised per file like `model_params_for`.
     private def resolve_model_reference(reference : ::String, source : ::String, path : ::String,
                                         base_path : ::String) : Tuple(::String, ::String, ::String)?
+      @model_references.fetch({reference, path, base_path}) do
+        @model_references[{reference, path, base_path}] = uncached_model_reference(reference, source, path, base_path)
+      end
+    end
+
+    private def uncached_model_reference(reference : ::String, source : ::String, path : ::String,
+                                         base_path : ::String) : Tuple(::String, ::String, ::String)?
       name = reference.strip.sub(/\[.*\]\z/m, "").strip
       if VAR_NAME_FULL_RE.matches?(name)
         if site = model_site(name, source, path, base_path)
