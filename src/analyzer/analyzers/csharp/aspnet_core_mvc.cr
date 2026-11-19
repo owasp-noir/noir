@@ -817,7 +817,7 @@ module Analyzer::CSharp
         # An open generic method is never an action.
         next unless method.public? && method.type_params.nil?
         action = action_attributes(method.attributes, attribute_scope)
-        next if action.non_action || !action_method?(method.header, action.explicit)
+        next if action.non_action || !action_method?(method, action.explicit)
         next unless owner.nil? || action.explicit
         next if skip.try(&.includes?(method.name))
         handler = Handler.new("#{(owner || type).name}.#{method.name}", file, method.line + 1)
@@ -865,15 +865,15 @@ module Analyzer::CSharp
       end
     end
 
-    private def action_method?(signature : String, explicit_endpoint_attribute : Bool) : Bool
-      return true if explicit_endpoint_attribute
+    OBJECT_METHOD_NAMES = {"Dispose", "ToString", "Equals", "GetHashCode", "Finalize"}
 
-      signature.includes?("ActionResult") ||
-        signature.includes?("IActionResult") ||
-        signature.includes?("JsonResult") ||
-        signature.includes?("ViewResult") ||
-        signature.includes?("IResult") ||
-        signature.matches?(/Task\s*<\s*(?:IEnumerable|List|PagedResult|Result|Response|[A-Z]\w*)/)
+    # Every public instance method of a controller is an action, whatever it
+    # returns. An `override` without routing attributes is a framework hook
+    # (`OnActionExecuting`), which its base marks `[NonAction]`.
+    private def action_method?(method : Noir::CSharpDecl::Member, explicit_endpoint_attribute : Bool) : Bool
+      return true if explicit_endpoint_attribute
+      return false if method.static? || OBJECT_METHOD_NAMES.includes?(method.name)
+      (method.modifiers & %w[abstract override]).empty?
     end
 
     # The request source each `[FromX]` attribute binds a parameter from.
