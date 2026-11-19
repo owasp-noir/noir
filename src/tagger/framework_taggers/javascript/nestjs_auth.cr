@@ -148,6 +148,9 @@ class NestjsAuthTagger < FrameworkTagger
   RETURNS_REFUSE = /\breturn\s+(?:false\b|!|[^;\n]*?(?:===|!==|==|!=))/
   READS_REQUEST  = /getRequest|switchToHttp|\bheaders\b|\bcookies\b|\.user\b|\bsession\b/
   RETURN_STMT    = /\breturn\b\s*([^;\n]*)/
+  THROWN_CLASS   = /\bthrow\s+new\s+([A-Za-z_$][\w$]*)/
+  # `class HttpForbiddenException extends HttpException { constructor() { super('Forbidden', 403) } }`
+  FORBIDDEN_SUPER = /\bsuper\s*\([^;]*(?:\b403\b|\bFORBIDDEN\b)/
   # The start of the next top-level statement after a declaration: a line
   # that starts in column 0 with anything but a closing bracket.
   NEXT_TOP_LEVEL = /\n(?=[^\s})\]])/
@@ -698,7 +701,14 @@ class NestjsAuthTagger < FrameworkTagger
     bodies
   end
 
-  private def parse_route_specs(body : String) : Array(NestSpec)
+  # The elements text of `const name = [...]` in `source`.
+  private def array_const(source : String, name : String) : String?
+    m = source.match(/\b(?:const|let|var)\s+#{Regex.escape(name)}\s*(?::[^=]*)?=\s*\[/) || return
+    close = Noir::JSLiteralScanner.find_matching_bracket(source, m.end(0) - 1) || return
+    source[m.end(0)...close]
+  end
+
+  private def parse_route_specs(body : String, source : String) : Array(NestSpec)
     specs = [] of NestSpec
     Noir::TopLevelSplit.split(body, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |part|
       text = part.strip
