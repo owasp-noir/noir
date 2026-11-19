@@ -184,11 +184,8 @@ class PythonMiscAuthTagger < FrameworkTagger
   private def litestar_backend(name : String, kind : String, statement : String, scope : String) : LitestarBackend?
     exclude = [] of Regex
     if m = statement.match(/\bexclude\s*=\s*/)
-      value = m.post_match
-      literal = value.match(/\A\[[^\]]*\]/) || value.match(/\A#{PY_STRING.source}/) || return
-      literal[0].scan(PY_STRING) do |item|
-        exclude << (Regex.new(item[1]? || item[2]? || "") rescue return)
-      end
+      patterns = string_literals(m.post_match) || return
+      patterns.each { |pattern| exclude << (Regex.new(pattern) rescue return) }
     end
     opt_key = statement.match(/\bexclude_opt_key\s*=\s*["'](\w+)["']/).try(&.[1]) || "exclude_from_auth"
     methods = %w[OPTIONS HEAD]
@@ -197,6 +194,25 @@ class PythonMiscAuthTagger < FrameworkTagger
       methods = value[0].scan(/["'](\w+)["']/).map(&.[1].upcase)
     end
     LitestarBackend.new(name, kind, exclude, opt_key, methods, scope)
+  end
+
+  # The strings of the literal `text` opens with: one string, or a list or
+  # tuple of them, read past brackets inside the strings. nil for anything
+  # else (a name, a comprehension).
+  private def string_literals(text : String) : Array(String)?
+    if single = text.match(/\A#{PY_STRING.source}/)
+      return [single[1]? || single[2]? || ""]
+    end
+    close = {'[' => ']', '(' => ')'}[text[0]?]? || return
+    items = [] of String
+    rest = text[1..]
+    loop do
+      rest = rest.lstrip
+      return items if rest.starts_with?(close)
+      m = rest.match(/\A#{PY_STRING.source}\s*(?:,|(?=[\])]))/) || return
+      items << (m[1]? || m[2]? || "")
+      rest = m.post_match
+    end
   end
 
   # The guard named by the route decorator call `call` at `route_idx`,

@@ -371,5 +371,9 @@ describe "PythonMiscAuthTagger" do
       tag.call(svc_a, 10, "/a/me", "GET").map(&.name).should eq(["auth"])
       tag.call(svc_b, 3, "/b/public", "GET").should be_empty
     end
+
+    it "reads an exclude list whose patterns hold brackets" do
+      tag.call(svc_a, 13, "/health", "GET").should be_empty
+    end
   end
 end
