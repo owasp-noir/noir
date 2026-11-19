@@ -190,7 +190,7 @@ describe "NestjsAuthTagger" do
       noir_options["base"] = YAML::Any.new(tmpdir)
       endpoints = [4, 8, 12].map { |line| Endpoint.new("/items", "GET", [] of Param, Details.new(PathInfo.new(items, line))) }
       order = Endpoint.new("/orders", "GET", [] of Param, Details.new(PathInfo.new(orders, 4)))
-      (endpoints + [order]).each { |endpoint| endpoint.details.technology = "ts_tsoa" }
+      (endpoints + [order]).each(&.details.technology=("ts_tsoa"))
 
       NestjsAuthTagger.new(noir_options).perform(endpoints + [order])
 
@@ -208,8 +208,8 @@ describe "NestjsAuthTagger" do
     tmpdir = File.tempname("nest_forroutes_spread")
     controller = ->(name : String, path : String) { "@Controller('#{path}')\nexport class #{name} {\n  @Get()\n  list() {}\n}\n" }
     files = {
-      "package.json"             => "{}",
-      "src/api.module.ts"        => <<-TS,
+      "package.json"      => "{}",
+      "src/api.module.ts" => <<-TS,
         const authenticatedControllers = [ItemsController, OrdersController];
 
         @Module({ controllers: [...authenticatedControllers, PublicController] })
@@ -219,7 +219,7 @@ describe "NestjsAuthTagger" do
           }
         }
         TS
-      "src/token.middleware.ts"  => <<-TS,
+      "src/token.middleware.ts" => <<-TS,
         @Injectable()
         export class TokenMiddleware implements NestMiddleware {
           use(req: Request, res: Response, next: NextFunction) {
@@ -268,8 +268,8 @@ describe "NestjsAuthTagger" do
     tmpdir = File.tempname("nest_forroutes_403")
     controller = ->(name : String, path : String) { "@Controller('#{path}')\nexport class #{name} {\n  @Get()\n  list() {}\n}\n" }
     files = {
-      "package.json"              => "{}",
-      "src/api.module.ts"         => <<-TS,
+      "package.json"      => "{}",
+      "src/api.module.ts" => <<-TS,
         @Module({ controllers: [ItemsController, JobsController] })
         export class ApiModule implements NestModule {
           configure(consumer: MiddlewareConsumer) {
@@ -278,7 +278,7 @@ describe "NestjsAuthTagger" do
           }
         }
         TS
-      "src/token.middleware.ts"   => <<-TS,
+      "src/token.middleware.ts" => <<-TS,
         @Injectable()
         export class TokenMiddleware implements NestMiddleware {
           use(req: Request, res: Response, next: NextFunction) {
@@ -299,15 +299,15 @@ describe "NestjsAuthTagger" do
           }
         }
         TS
-      "src/exceptions.ts"         => <<-TS,
+      "src/exceptions.ts" => <<-TS,
         export class HttpForbiddenException extends HttpException {
           constructor() {
             super('Forbidden', 403);
           }
         }
         TS
-      "src/items.controller.ts"   => controller.call("ItemsController", "items"),
-      "src/jobs.controller.ts"    => controller.call("JobsController", "jobs"),
+      "src/items.controller.ts" => controller.call("ItemsController", "items"),
+      "src/jobs.controller.ts"  => controller.call("JobsController", "jobs"),
     }
     files.each do |rel, body|
       path = File.join(tmpdir, rel)
