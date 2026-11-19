@@ -272,6 +272,10 @@ class SpringSecurityTagger < FrameworkTagger
       next_idx = idx + 1
       while next_idx < lines.size && stmt_lines.size < 8
         stripped = lines[next_idx].strip
+        if stripped.starts_with?("//")
+          next_idx += 1
+          next
+        end
         break if stripped.empty?
         break if stripped.starts_with?("}") || stripped.matches?(/^(override|fun|class|public|private|protected|internal|return)\b/)
         break unless stripped.starts_with?(".") || stripped.includes?("allowedOrigin") || stripped.includes?("allowCredentials")

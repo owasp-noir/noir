@@ -417,6 +417,41 @@ describe "SpringSecurityTagger" do
 
       tag_named(endpoint, "cors").should be_nil
     end
+
+    it "reads a mapping chain with a comment line between its calls" do
+      config = <<-KOTLIN
+        package com.example
+
+        @Configuration
+        class WebConfig : WebMvcConfigurer {
+            override fun addCorsMappings(registry: CorsRegistry) {
+                registry.addMapping("/api/**")
+                    // TODO: narrow the origins
+                    .allowedOriginPatterns("*")
+                    .allowCredentials(true)
+            }
+        }
+        KOTLIN
+      root = File.tempname("spring_cors")
+      begin
+        Dir.mkdir_p(root)
+        path = File.join(root, "WebConfig.kt")
+        File.write(path, config)
+        CodeLocator.instance.register_path(path)
+        inside = build_endpoint(path, nil, "/api/items", "GET")
+        outside = build_endpoint(path, nil, "/web/items", "GET")
+
+        options = create_test_options
+        options["base"] = YAML::Any.new(root)
+        SpringSecurityTagger.new(options).perform([inside, outside])
+
+        tag_named(inside, "cors").try(&.description).should eq(
+          "Permissive CORS (global WebMvc config) — addMapping(\"/api/**\") allows all origins (*) with credentials, exposing authenticated responses cross-origin.")
+        tag_named(outside, "cors").should be_nil
+      ensure
+        FileUtils.rm_rf(root)
+      end
+    end
   end
 
   describe "cors via WebSocket/STOMP config" do
