@@ -130,6 +130,7 @@ class FastAPIAuthTagger < FrameworkTagger
     @includes_by_site = nil
     @include_scopes.clear
     @http_middlewares.clear
+    authz_candidates = [] of {String, String}
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
       next unless content
@@ -154,27 +155,51 @@ class FastAPIAuthTagger < FrameworkTagger
           end
         end
       end
-      index_authz_dependencies(path, content) if content.matches?(AUTHZ_FIELD)
+      authz_candidates << {path, content} if content.matches?(AUTHZ_FIELD) || content.matches?(FORBIDDEN)
     end
+    # After the alias index: judging a caller dependency reads it.
+    authz_candidates.each { |path, content| index_authz_dependencies(path, content) }
     super
   end
 
-  # Top-level `def`s whose body checks a role / ownership field, per file
-  # and (for the unresolved-import fallback) by bare name.
+  # Top-level `def`s whose body checks a role / ownership field, or
+  # refuses with 403 on a property of the caller it is handed, per file and
+  # (for the unresolved-import fallback) by bare name.
   private def index_authz_dependencies(path : String, content : String)
     name : String? = nil
+    header = ""
     body = [] of String
     (content.lines << "").each do |line|
       if !line.blank? && line[0].ascii_whitespace?
         body << line if name
         next
       end
-      if (current = name) && body.any?(&.matches?(AUTHZ_FIELD))
+      if (current = name) && (body.any?(&.matches?(AUTHZ_FIELD)) || caller_property_refusal?([header] + body, path))
         @authz_dependencies << current
         (@authz_defs[path] ||= Set(String).new) << current
       end
       body.clear
+      header = line
       name = line.match(PYTHON_DEF).try(&.[1])
+    end
+  end
+
+  # Whether a dependency `block` raises 403 under a condition on a property
+  # of the caller one of its parameters injects (`if not user.admin:` with
+  # `user = Depends(get_current_user)`): the caller is already identified,
+  # so the refusal judges what that caller may do. `if user is None` tests
+  # only that a caller is there.
+  private def caller_property_refusal?(block : Array(String), file : String) : Bool
+    return false unless block.any?(&.matches?(FORBIDDEN))
+    text = block.join('\n')
+    signature_end = text.index(/\)\s*(?:->[^\n:]*)?:\s*$/m) || return false
+    callers = handler_caller_names(text[0, signature_end + 1], file)
+    return false if callers.empty?
+    reads = callers.map { |caller| /(?<![\w.])#{Regex.escape(caller)}\s*\.\s*[A-Za-z_]|[A-Za-z_]\w*\s*\(\s*#{Regex.escape(caller)}\b/ }
+    refusal_sites(block, file, FORBIDDEN).any? do |idx, inline|
+      conditions = governing_conditions(block, idx).map(&.[0])
+      conditions << inline if inline
+      conditions.any? { |cond| reads.any? { |read| cond.matches?(read) } }
     end
   end
 

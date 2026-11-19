@@ -282,20 +282,22 @@ describe "FastAPIAuthTagger" do
       f, g, h, i = at.call(22), at.call(23), at.call(27), at.call(30)
       j = at.call(34)
       FastAPIAuthTagger.new(noir_options).perform([a, b, c, d, e, f, g, h, i, j])
+      # check_admin refuses an identified account that is not the super user.
+      admin = [{"auth", "Protected by FastAPI Depends(check_admin)"}, {"authz", "Protected by FastAPI Depends(check_admin)"}]
       a.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_account_exists)"])
-      b.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_admin)"])
+      b.tags.map { |t| {t.name, t.description} }.should eq(admin)
       # A 503 refuses everyone on a setting, not an unknown caller.
       c.tags.should be_empty
       # A route stacked below guards only itself, a paren in a string
       # notwithstanding.
       d.tags.should be_empty
-      e.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_admin)"])
-      f.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_admin)"])
+      e.tags.map { |t| {t.name, t.description} }.should eq(admin)
+      f.tags.map { |t| {t.name, t.description} }.should eq(admin)
       # The shared signature still guards every stacked route.
       g.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_account_exists)"])
       # Another router's route is a sibling too, past a triple-quoted string.
       h.tags.should be_empty
-      i.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_admin)"])
+      i.tags.map { |t| {t.name, t.description} }.should eq(admin)
       # A sibling whose string reads as unclosed still ends at the `def`.
       j.tags.map(&.description).should eq(["Protected by FastAPI Depends(check_account_exists)"])
     ensure
@@ -534,6 +536,37 @@ describe "FastAPIAuthTagger" do
     verdicts["/literal"].should eq(["Protected by FastAPI Depends(require_internal)"])
     verdicts["/open"].should be_empty
     verdicts["/limited"].should be_empty
+  end
+
+  # fastapi_guard_helpers: role checks on the caller a dependency is
+  # handed, and refusing helpers called as plain functions.
+  describe "guard helpers" do
+    base = File.expand_path("../../../functional_test/fixtures/python/fastapi_guard_helpers", __DIR__)
+    verdicts = ->(routes : Hash(Int32, String)) do
+      app = "#{base}/app.py"
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(base)
+      endpoints = routes.map { |line, url| Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(app, line))) }
+      CodeLocator.instance.clear_all
+      CodeLocator.instance.register_path(app)
+      begin
+        endpoints = FastAPIAuthTagger.new(noir_options).perform(endpoints)
+      ensure
+        CodeLocator.instance.clear_all
+      end
+      endpoints.map { |ep| {ep.url, ep.tags.map { |tag| "#{tag.name}: #{tag.description}" }} }.to_h
+    end
+
+    it "reads a dependency's 403 on a property of the caller it is handed as authorization" do
+      found = verdicts.call({38 => "/admin/stats", 43 => "/me", 48 => "/signup"})
+      found["/admin/stats"].should eq([
+        "auth: Protected by FastAPI Depends(get_admin_user)",
+        "authz: Protected by FastAPI Depends(get_admin_user)",
+      ])
+      # A 403 for a caller who is missing, or on a setting, checks no role.
+      found["/me"].should eq(["auth: Protected by FastAPI Depends(get_active_user)"])
+      found["/signup"].none?(&.starts_with?("authz")).should be_true
+    end
   end
 
   # fastapi_middleware_auth: an `@app.middleware("http")` function that
