@@ -2585,23 +2585,7 @@ module Noir
 
       extract_destructured_prop_params(handler_body, "body", "json", endpoint)
 
-      # Hono-style: const { X } = await c.req.json()
-      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.json\s*\(/) do |match|
-        params = match[1].split(",").map(&.strip)
-        params.each do |param|
-          clean_param = clean_destructured_param(param)
-          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-        end
-      end
-
-      # Hono-style: const { X } = await c.req.parseBody()
-      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.parseBody\s*\(/) do |match|
-        params = match[1].split(",").map(&.strip)
-        params.each do |param|
-          clean_param = clean_destructured_param(param)
-          endpoint.push_param(Param.new(clean_param, "", "form")) unless clean_param.empty?
-        end
-      end
+      extract_hono_request_reads(handler_body, endpoint, query: false)
 
       # Oak-style: const { X } = await ctx.request.body.json()
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+ctx\.request\.body\.json\s*\(/) do |match|
@@ -2676,6 +2660,7 @@ module Noir
       handler_body.scan(/\w+\.req\.query\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
         endpoint.push_param(Param.new(match[1], "", "query"))
       end
+      extract_hono_request_reads(handler_body, endpoint, query: true)
 
       # Hono-style: c.req.queries('param')
       handler_body.scan(/\w+\.req\.queries\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
@@ -2833,16 +2818,25 @@ module Noir
       end
     end
 
+    # `const body = req.body`, `const query = ctx.query || {}`: a local bound
+    # to the whole request property, read below like a destructured one.
+    # Koa's `ctx.body` is the response, so a body alias needs `ctx.request`.
+    REQUEST_ALIAS_RES = {"body", "query", "headers", "cookies", "params"}.to_h do |prop|
+      receiver = prop == "body" ? "req|request|ctx\\s*\\.\\s*request" : "req|request|ctx(?:\\s*\\.\\s*request)?"
+      {prop, /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;]+)?=\s*(?:#{receiver})\s*\??\.\s*#{prop}\b(?:\s*(?:\|\||\?\?)\s*\{\s*\})?(?!\s*(?:[.\[(]|\?\.))/}
+    end
+
     # Extracts parameters when a request property (`body`, `query`, `params`,
     # `headers`, `cookies`) is destructured in a handler's parameter signature
-    # (`({ body: { name } }) => …`, `({ query, headers }) => { query.q }`) or
-    # from `req`/`request` (`const { body, query } = req`).
+    # (`({ body: { name } }) => …`, `({ query, headers }) => { query.q }`),
+    # from `req`/`request` (`const { body, query } = req`), or bound whole to
+    # a local (`const body = req.body`).
     private def self.extract_destructured_prop_params(handler_body : String, prop : String, param_type : String, endpoint : Endpoint)
-      return unless handler_body.includes?(prop) && handler_body.includes?('{')
-      clauses = request_destructured_clauses(handler_body)
-      return if clauses.empty?
-
+      return unless handler_body.includes?(prop)
       bound_vars = Set(String).new
+      handler_body.scan(REQUEST_ALIAS_RES[prop]) { |match| bound_vars << match[1] }
+
+      clauses = handler_body.includes?('{') ? request_destructured_clauses(handler_body) : [] of String
       clauses.each do |clause|
         next unless clause.includes?(prop)
         clause.scan(/\b#{prop}\s*:\s*\{\s*([^}]+)\s*\}/) do |match|
@@ -2857,20 +2851,44 @@ module Noir
         end
       end
 
-      bound_vars.each do |var_name|
-        escaped = Regex.escape(var_name)
-        handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*#{escaped}\b(?!\s*\.)/) do |match|
-          match[1].split(",").each do |param|
+      bound_vars.each { |var_name| extract_bound_var_reads(handler_body, var_name, param_type, endpoint) }
+    end
+
+    # Reads of a local holding request data: `const { a } = v`, `v.a`, `v['a']`.
+    private def self.extract_bound_var_reads(handler_body : String, var_name : String, param_type : String, endpoint : Endpoint)
+      escaped = Regex.escape(var_name)
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*#{escaped}\b(?!\s*\.)/) do |match|
+        match[1].split(",").each do |param|
+          clean_param = clean_destructured_param(param.strip)
+          endpoint.push_param(Param.new(clean_param, "", param_type)) unless clean_param.empty?
+        end
+      end
+      # `headers['accept'] = …` writes through the alias; `==`, `=>` and `||=` still read.
+      handler_body.scan(/(?<![.\w$])#{escaped}\??\.(\w++)(?!\s*\()(?!\s*=(?![=>]))/) do |match|
+        endpoint.push_param(Param.new(match[1], "", param_type))
+      end
+      handler_body.scan(/(?<![.\w$])#{escaped}(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\](?!\s*=(?![=>]))/) do |match|
+        endpoint.push_param(Param.new(match[1], "", param_type))
+      end
+    end
+
+    # Hono's request readers, destructured or bound to a local, with an
+    # optional type argument: `const { a } = await c.req.json<T>()`,
+    # `const body = await c.req.parseBody()`, `const q = c.req.query()`.
+    HONO_REQUEST_READ_RE = /\b(?:const|let|var)(?:\s*\{\s*([^}]+)\s*\}|\s+([A-Za-z_$][\w$]*))\s*(?::[^=;]+)?=\s*(?:await\s+)?\w+\.req\.(?:(json|parseBody)\s*(?:<[^()]*?>\s*)?\([^()]*\)|(query)\s*\(\s*\))/
+
+    private def self.extract_hono_request_reads(handler_body : String, endpoint : Endpoint, query : Bool)
+      return unless handler_body.includes?(".req.")
+      handler_body.scan(HONO_REQUEST_READ_RE) do |match|
+        next unless query == !match[4]?.nil?
+        param_type = query ? "query" : (match[3]? == "json" ? "json" : "form")
+        if names = match[1]?
+          names.split(",").each do |param|
             clean_param = clean_destructured_param(param.strip)
             endpoint.push_param(Param.new(clean_param, "", param_type)) unless clean_param.empty?
           end
-        end
-        # `headers['accept'] = …` writes through the alias; `==`, `=>` and `||=` still read.
-        handler_body.scan(/(?<![.\w$])#{escaped}\??\.(\w++)(?!\s*\()(?!\s*=(?![=>]))/) do |match|
-          endpoint.push_param(Param.new(match[1], "", param_type))
-        end
-        handler_body.scan(/(?<![.\w$])#{escaped}(?:\?\.)?\s*\[\s*['"]([^'"]+)['"]\s*\](?!\s*=(?![=>]))/) do |match|
-          endpoint.push_param(Param.new(match[1], "", param_type))
+        elsif var_name = match[2]?
+          extract_bound_var_reads(handler_body, var_name, param_type, endpoint)
         end
       end
     end

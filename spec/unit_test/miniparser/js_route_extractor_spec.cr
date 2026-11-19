@@ -135,6 +135,27 @@ describe Noir::JSRouteExtractor do
       endpoint.params.any? { |p| p.name == "file" && p.param_type == "form" }.should be_true
       endpoint.params.any? { |p| p.name == "description" && p.param_type == "form" }.should be_true
     end
+
+    it "reads a local bound to the request body" do
+      handler = "{ const body = req.body || {}; const data = ctx.request.body; const { email } = data; f(body.title, body['slug']); }"
+      endpoint = Endpoint.new("/test", "POST")
+      Noir::JSRouteExtractor.extract_body_params(handler, endpoint)
+      endpoint.params.map { |p| {p.name, p.param_type} }.sort!.should eq([{"email", "json"}, {"slug", "json"}, {"title", "json"}])
+    end
+
+    it "does not alias a member of the body or Koa's response body" do
+      handler = "{ const user = req.body.user; const out = ctx.body; f(user.name, out.id); }"
+      endpoint = Endpoint.new("/test", "POST")
+      Noir::JSRouteExtractor.extract_body_params(handler, endpoint)
+      endpoint.params.map(&.name).should eq(["user"])
+    end
+
+    it "reads Hono json/parseBody locals and type arguments" do
+      handler = "{ const body = await c.req.json<{ a: string }>(); const form = await c.req.parseBody({ all: true }); const { n } = await c.req.json<T>(); f(body.a, form['avatar'], n); }"
+      endpoint = Endpoint.new("/test", "POST")
+      Noir::JSRouteExtractor.extract_body_params(handler, endpoint)
+      endpoint.params.map { |p| {p.name, p.param_type} }.sort!.should eq([{"a", "json"}, {"avatar", "form"}, {"n", "json"}])
+    end
   end
 
   describe "extract_query_params" do
@@ -165,6 +186,13 @@ describe Noir::JSRouteExtractor do
       endpoint = Endpoint.new("/test", "GET")
       Noir::JSRouteExtractor.extract_query_params(handler, endpoint)
       endpoint.params.any? { |p| p.name == "tag" && p.param_type == "query" }.should be_true
+    end
+
+    it "reads Hono's whole-query object, not a single-key read" do
+      handler = "{ const { page } = c.req.query(); const q = c.req.query(); const s = c.req.query('s'); f(q.limit, s.length); }"
+      endpoint = Endpoint.new("/test", "GET")
+      Noir::JSRouteExtractor.extract_query_params(handler, endpoint)
+      endpoint.params.map(&.name).sort!.should eq(["limit", "page", "s"])
     end
   end
 
