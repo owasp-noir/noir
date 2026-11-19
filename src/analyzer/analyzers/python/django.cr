@@ -2396,6 +2396,14 @@ module Analyzer::Python
             end
           end
 
+          # A stock `CreateAPIView.post` / `UpdateAPIView.put` validates the body.
+          if drf_generic_class
+            {"POST" => "create", "PUT" => "update", "PATCH" => "partial_update"}.each do |verb, action|
+              next if method_lines.has_key?(verb) || !suspicious_http_methods.includes?(verb)
+              method_params[verb].concat drf_serializer_params(STOCK_SERIALIZER_CALL, filepath, chain, action)
+            end
+          end
+
           if declared = declared_http_method_names(view_file, class_codeblock, class_define_line)
             suspicious_http_methods = declared
           end
@@ -2561,15 +2569,17 @@ module Analyzer::Python
     end
 
     # `XSerializer(data=request.data)` / `self.get_serializer(data=...)`.
-    SERIALIZER_DATA_RE = /\b([A-Za-z_][A-Za-z0-9_.]*)\s*\(\s*(?:[^()]*?,\s*)?data\s*=\s*[^,()]*\brequest\.data\b/
+    # DRF's mixins make the second call for a stock create/update.
+    STOCK_SERIALIZER_CALL = "self.get_serializer(data=request.data)"
+    SERIALIZER_DATA_RE    = /\b([A-Za-z_][A-Za-z0-9_.]*)\s*\(\s*(?:[^()]*?,\s*)?data\s*=\s*[^,()]*\brequest\.data\b/
     # A declared serializer field: `name = serializers.CharField(`.
     SERIALIZER_FIELD_RE = /^(\s+)([a-z_][a-z0-9_]*)\s*=\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)*([A-Z][A-Za-z0-9_]*(?:Field|Serializer))\s*\(/
 
     # Body fields a handler reads through the DRF serializer it hands
     # `request.data`: the fields that serializer class (or a project base)
     # declares. `get_serializer` means the view's `serializer_class`.
-    # ponytail: declared fields only; a ModelSerializer's `Meta.fields`
-    # model columns are not resolved.
+    # ponytail: declared fields plus a literal `Meta.fields` list; `"__all__"`
+    # and `Meta.exclude` need the model's columns and are not read.
     SERIALIZER_CLASS_RE         = /^\s+serializer_class\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$/m
     GET_SERIALIZER_CLASS_DEF_RE = /^\s+def\s+get_serializer_class\s*\(/
     ACTION_BRANCH_RE            = /\A(?:if|elif)\s+self\.action\s*(==|in)\s*(.+?):\s*(.*)\z/
@@ -2708,7 +2718,31 @@ module Analyzer::Python
           fields << field[2]
         end
       end
+      meta_fields(target).each { |name| fields << name if declared.add?(name) }
       fields
+    end
+
+    META_FIELDS_RE           = /^\s+fields\s*=\s*[\[(]([^\])]*)[\])]/m
+    META_READ_ONLY_FIELDS_RE = /^\s+read_only_fields\s*=\s*[\[(]([^\])]*)[\])]/m
+
+    # The names a literal `class Meta: fields = [...]` lists, from the
+    # nearest class declaring one, minus its `read_only_fields`, the model
+    # pk and a hyperlinked serializer's own `url`.
+    private def meta_fields(target : Tuple(::String, ::String)) : Array(::String)
+      chain = drf_class_chain(target[0], target[1])
+      chain.each do |klass|
+        lines = klass.codeblock.split("\n")
+        index = lines.index(&.matches?(/^\s+class\s+Meta\b/)) || next
+        meta = parse_code_block(lines[index..]) || next
+        # The nearest `Meta` decides; `"__all__"` or no list reads nothing.
+        listed = meta.match(META_FIELDS_RE) || return [] of ::String
+        names = listed[1].scan(/['"](\w+)['"]/).map(&.[1])
+        names -= meta.match(META_READ_ONLY_FIELDS_RE).try(&.[1].scan(/['"](\w+)['"]/).map(&.[1])) || [] of ::String
+        names -= %w[id pk]
+        names.delete("url") if chain.any? { |base| base.header.includes?("HyperlinkedModelSerializer") }
+        return names
+      end
+      [] of ::String
     end
 
     # `WebhookForm(request.POST)` / `SearchForm(data=request.GET)`: a form
@@ -3347,10 +3381,15 @@ module Analyzer::Python
       # `get_object()`, which calls it in turn.
       queryset_reads = {} of Bool => Array(Param)
       actions.each do |action|
-        next unless action.name.in?("list", "retrieve", "update", "partial_update", "destroy")
+        next unless action.name.in?("list", "create", "retrieve", "update", "partial_update", "destroy")
         if action.handler
           _, body_lines, offset = method_sites[action.name]? || next
           next unless parse_code_block(body_lines[offset..]).try(&.matches?(/\bsuper\(\s*\)\.#{action.name}\s*\(/))
+        end
+        # The mixin's `create` / `update` validate the request body.
+        if action.name.in?("create", "update", "partial_update")
+          action.body_params.concat drf_serializer_params(STOCK_SERIALIZER_CALL, own.filepath, chain, action.name)
+          next if action.name == "create"
         end
         calls = action.detail ? "self.get_object()\nself.get_queryset()" : "self.get_queryset()"
         reads = queryset_reads[action.detail] ||= cbv_body_params(calls, own.filepath, chain, "GET")

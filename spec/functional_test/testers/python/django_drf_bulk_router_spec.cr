@@ -11,25 +11,27 @@ require "../../func_spec.cr"
 #   `get_serializer` resolves `serializer_class` where the viewset declares
 #   it, and a `self` helper handed `request` adds the header it reads;
 # - a `get_serializer_class` override choosing by `self.action` decides the
-#   serializer of that action;
+#   serializer of that action, and the stock `create` / `partial_update`
+#   validate the `get_serializer` one;
 # - a verb method needing a kwarg the route does not pass
 #   (`def delete(self, request, key)` on the list route) is not routed.
 pk = Param.new("pk", "", "path")
 note = Param.new("note", "", "form")
+name = Param.new("name", "", "form")
 extracted_endpoints = [
   Endpoint.new("/tags/", "GET"),
-  Endpoint.new("/tags/", "POST"),
+  Endpoint.new("/tags/", "POST", [name]),
   Endpoint.new("/tags/", "DELETE", [note]),
   Endpoint.new("/tags/{pk}/", "GET", [pk]),
-  Endpoint.new("/tags/{pk}/", "PUT", [Param.new("if-match", "", "header"), Param.new("name", "", "form"), pk]),
-  Endpoint.new("/tags/{pk}/", "PATCH", [pk]),
+  Endpoint.new("/tags/{pk}/", "PUT", [Param.new("if-match", "", "header"), name, pk]),
+  Endpoint.new("/tags/{pk}/", "PATCH", [name, pk]),
   Endpoint.new("/tags/{pk}/", "DELETE", [note, pk]),
   Endpoint.new("/notes/", "GET"),
-  Endpoint.new("/notes/", "POST"),
+  Endpoint.new("/notes/", "POST", [name]),
   Endpoint.new("/notes/", "DELETE", [note]),
   Endpoint.new("/notes/{pk}/", "GET", [pk]),
   Endpoint.new("/notes/{pk}/", "PUT", [Param.new("if-match", "", "header"), note, pk]),
-  Endpoint.new("/notes/{pk}/", "PATCH", [pk]),
+  Endpoint.new("/notes/{pk}/", "PATCH", [name, pk]),
   Endpoint.new("/notes/{pk}/", "DELETE", [note, pk]),
   Endpoint.new("/config/", "GET"),
   Endpoint.new("/config/", "PATCH", [Param.new("theme", "", "form")]),
