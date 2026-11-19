@@ -143,9 +143,9 @@ module Analyzer::Rust
             next if RustEngine.inside_test_region?(call, test_regions)
 
             if builder_route = extract_builder_route(call, source, scope_prefixes)
-              route_path, methods, handler_name = builder_route
+              route_paths, methods, handler_name = builder_route
               details = Details.new(PathInfo.new(path, call_line(call)))
-              configure_route_paths(route_path, call, configure_ranges, path).each do |rp|
+              route_paths.flat_map { |route_path| configure_route_paths(route_path, call, configure_ranges, path) }.each do |rp|
                 canonical = canonicalize_actix_path(rp)
                 methods.each do |raw_verb|
                   RustEngine.fan_out_verbs(raw_verb).each do |verb|
@@ -165,11 +165,12 @@ module Analyzer::Rust
             # in between) registers `handler` for any method — actix's
             # verb-less resource form. Emit a single GET so the route
             # surfaces without fanning out seven near-duplicate endpoints.
+            # `web::resource("/p").get(h).post(h2)` binds one verb each.
             if resource_to = extract_resource_to(call, source, scope_prefixes)
-              route_path, handler_name = resource_to
+              route_paths, verb, handler_name = resource_to
               details = Details.new(PathInfo.new(path, call_line(call)))
-              configure_route_paths(route_path, call, configure_ranges, path).each do |rp|
-                endpoint = Endpoint.new(canonicalize_actix_path(rp), "GET", details)
+              route_paths.flat_map { |route_path| configure_route_paths(route_path, call, configure_ranges, path) }.each do |rp|
+                endpoint = Endpoint.new(canonicalize_actix_path(rp), verb, details)
                 extract_path_params(rp, endpoint)
                 if handler_name
                   endpoint.handler = attach_builder_handler_context(endpoint, handler_name, function_index, source, path, include_callee)
@@ -809,7 +810,7 @@ module Analyzer::Rust
     # `/a/b/...`).
     private def extract_builder_route(call : LibTreeSitter::TSNode,
                                       source : String,
-                                      scope_prefixes : Hash(Int32, String)) : Tuple(String, Array(String), String?)?
+                                      scope_prefixes : Hash(Int32, String)) : Tuple(Array(String), Array(String), String?)?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "field_expression"
@@ -839,7 +840,8 @@ module Analyzer::Rust
         path_lit = enc[1]
         methods = extract_web_verbs(named[0], source)
         return if methods.empty?
-        return {path_lit, methods, verb_handler_name(named[0], source)}
+        paths = find_resource_in_chain(receiver, source).try { |(res_node, _)| resource_paths(res_node, path_lit, source) } || [path_lit]
+        return {paths, methods, verb_handler_name(named[0], source)}
       end
 
       # actix uses `.route("", ...)` to register at the scope root; an
@@ -857,7 +859,7 @@ module Analyzer::Rust
         path_lit = scoped_route_path(enc[1], path_lit)
       end
 
-      {path_lit, methods, verb_handler_name(named[1], source)}
+      {[path_lit], methods, verb_handler_name(named[1], source)}
     end
 
     # `web::resource("/p").to(handler)` / `resource("/p").wrap(m).to(handler)`
@@ -866,18 +868,38 @@ module Analyzer::Rust
     # resource path is composed with any enclosing scope prefix.
     private def extract_resource_to(call : LibTreeSitter::TSNode,
                                     source : String,
-                                    scope_prefixes : Hash(Int32, String)) : Tuple(String, String?)?
+                                    scope_prefixes : Hash(Int32, String)) : Tuple(Array(String), String, String?)?
       function = Noir::TreeSitter.field(call, "function")
       return unless function && Noir::TreeSitter.node_type(function) == "field_expression"
       field = Noir::TreeSitter.field(function, "field")
-      return unless field && handler_binder?(Noir::TreeSitter.node_text(field, source))
+      return unless field
+      name = Noir::TreeSitter.node_text(field, source)
+      verb = if handler_binder?(name)
+               "GET"
+             elsif HTTP_VERBS.includes?(name) || name == "trace"
+               name.upcase
+             end
+      return unless verb
       receiver = Noir::TreeSitter.field(function, "value")
       return unless receiver
       res = find_resource_in_chain(receiver, source)
       return unless res
       res_node, res_path = res
       full = scope_prefixes[node_byte(res_node)]? || res_path
-      {full, resource_to_handler(call, source)}
+      {resource_paths(res_node, full, source), verb, resource_to_handler(call, source)}
+    end
+
+    # `web::resource(["/a", "/b"])` answers every listed pattern; `full` is
+    # the first one under its composed scope prefix.
+    private def resource_paths(res_node : LibTreeSitter::TSNode, full : String, source : String) : Array(String)
+      args = Noir::TreeSitter.field(res_node, "arguments")
+      array = args.try { |a| named_children(a).first? }
+      return [full] unless array && Noir::TreeSitter.node_type(array) == "array_expression"
+      patterns = named_children(array).compact_map { |lit| string_literal_content(lit, source) }
+      first = patterns.first?.try(&.lstrip('/'))
+      return [full] unless first && patterns.size > 1 && full.ends_with?(first)
+      prefix = full.rchop(first).rstrip('/')
+      patterns.map { |pattern| scoped_route_path(prefix, pattern) }
     end
 
     # Walk a `.to` receiver chain to its base `resource("/p")` call, skipping
@@ -1071,9 +1093,15 @@ module Analyzer::Rust
         next if found
         next unless Noir::TreeSitter.node_type(call) == "call_expression"
         fn = Noir::TreeSitter.field(call, "function")
-        next unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
-        field = Noir::TreeSitter.field(fn, "field")
-        next unless field && handler_binder?(Noir::TreeSitter.node_text(field, source))
+        next unless fn
+        binder = case Noir::TreeSitter.node_type(fn)
+                 when "field_expression"
+                   Noir::TreeSitter.field(fn, "field").try { |field| handler_binder?(Noir::TreeSitter.node_text(field, source)) }
+                 when "identifier", "scoped_identifier"
+                   # `web::to(handler)`
+                   Noir::TreeSitter.node_text(fn, source).split("::").last == "to"
+                 end
+        next unless binder
         cargs = Noir::TreeSitter.field(call, "arguments")
         next unless cargs
         Noir::TreeSitter.each_named_arg(cargs) do |arg|
@@ -1327,8 +1355,9 @@ module Analyzer::Rust
         last = text.split("::").last
         if HTTP_VERBS.includes?(last)
           verbs << last.upcase
-        elsif last == "route"
-          # `web::route()` answers every method unless a guard narrows it.
+        elsif last == "route" || last == "to"
+          # `web::route()` / `web::to(h)` answer every method unless a guard
+          # narrows it.
           any = true
         elsif last == "method" || (last == "Method" && text.includes?("guard::"))
           # `web::method(Method::PATCH)` / `guard::Method(Method::PATCH)`.
