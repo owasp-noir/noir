@@ -46,6 +46,7 @@ module Analyzer::Java
       path_configs = path_configs_for(file_list)
       quarkus_roots = quarkus_project_roots_for(file_list)
       application_base_paths = application_base_paths_for(file_list, quarkus_roots)
+      parent_types = jaxrs_parent_types_for(file_list)
 
       path_configs.each do |project_root, path_config|
         next unless quarkus_roots.includes?(project_root)
@@ -62,7 +63,7 @@ module Analyzer::Java
         next unless quarkus_roots.includes?(project_root_for(path))
 
         content = read_file_content(path)
-        next unless quarkus_route_source?(content)
+        next unless quarkus_route_source?(content) || implements_jaxrs_parent?(content, parent_types)
 
         if path.ends_with?(".kt")
           analyze_kotlin_file(path, content, kotlin_dto_builder, path_configs, application_base_paths, include_callee)

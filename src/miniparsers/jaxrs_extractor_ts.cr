@@ -923,6 +923,13 @@ module Noir
         return
       end
 
+      # A class whose fields carry parameter annotations is a bean even
+      # without `@BeanParam` (Quarkus REST makes the annotation optional).
+      if (fields = bean_index[type_name]?) && !fields.empty?
+        fields.each { |field| sink << Param.new(field.name, field.value, field.param_type) }
+        return
+      end
+
       # Un-annotated parameter — request body. Expand DTO fields when
       # we know them, otherwise emit a single `body` param so the
       # caller still sees something.

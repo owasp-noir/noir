@@ -95,7 +95,7 @@ module Noir
             normalized_path = TreeSitterMicronautExtractor.uri_template_route_path(full_path)
             query_vars = TreeSitterMicronautExtractor.uri_template_query_vars(full_path)
             path_vars = TreeSitterMicronautExtractor.uri_template_path_vars(normalized_path)
-            params = micronaut_params(member, source, consumes, dto_index, constants, query_vars, path_vars)
+            params = micronaut_params(member, source, verb, consumes, dto_index, constants, query_vars, path_vars)
             routes << TreeSitterMicronautExtractor::Route.new(verb, normalized_path, class_name, method_name,
               verb_line, params, callees, signature_line: function_name_row(member))
           end
@@ -130,6 +130,7 @@ module Noir
 
     private def micronaut_params(func : LibTreeSitter::TSNode,
                                  source : String,
+                                 verb : String,
                                  consumes : String?,
                                  dto_index : KotlinDtoIndex,
                                  constants : Hash(String, String),
@@ -173,7 +174,7 @@ module Noir
         name = body_name.try(&.presence) || param_name
         lower = type_name.downcase
         if KOTLIN_SCALAR_TYPES.includes?(lower)
-          params << Param.new(name, "", format) if body_name
+          params << Param.new(name, "", body_name ? format : TreeSitterMicronautExtractor.implicit_scalar_format(verb, format))
           next
         end
         next if TreeSitterMicronautExtractor::INJECTED_PARAM_TYPES.includes?(lower)

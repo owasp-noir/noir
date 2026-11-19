@@ -309,6 +309,33 @@ module Analyzer::Java
       path.ends_with?(".java") || path.ends_with?(".kt")
     end
 
+    JAXRS_PARENT_DECL_RE = /\b(?:interface|abstract\s+class)\s+(\w+)/
+    JAXRS_SUPERTYPES_RE  = /\b(?:implements|extends)\s+([\w\s.,<>?]+)/
+    WS_RS_SOURCE_RE      = Regex.union("jakarta.ws.rs", "javax.ws.rs")
+
+    # Simple names of interfaces and abstract classes declared in JAX-RS
+    # sources that carry `@Path`. A generated `interfaceOnly` resource puts
+    # every annotation there, so its implementation need not import `ws.rs`.
+    private def jaxrs_parent_types_for(file_list : Array(String)) : Set(String)
+      names = Set(String).new
+      file_list.each do |path|
+        next unless jvm_source?(path)
+        next unless File.exists?(path)
+        content = read_file_content(path)
+        next unless content_matches?(content, WS_RS_SOURCE_RE) && content.includes?("@Path")
+        content.scan(JAXRS_PARENT_DECL_RE) { |match| names << match[1] }
+      end
+      names
+    end
+
+    private def implements_jaxrs_parent?(content : String, parents : Set(String)) : Bool
+      return false if parents.empty?
+      content.scan(JAXRS_SUPERTYPES_RE) do |match|
+        return true if match[1].scan(/\w+/).any? { |word| parents.includes?(word[0]) }
+      end
+      false
+    end
+
     # Record a Kotlin `@ApplicationPath` under `{project root, package}`,
     # the key `application_base_path_for` reads.
     private def add_kotlin_application_path(path : String,

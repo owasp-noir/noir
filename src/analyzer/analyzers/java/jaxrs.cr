@@ -34,6 +34,7 @@ module Analyzer::Java
       file_list = all_files()
       application_base_paths = application_base_paths_for(file_list)
       derivative_project_roots = derivative_project_roots_for(file_list)
+      parent_types = jaxrs_parent_types_for(file_list)
       file_list.each do |path|
         next unless jvm_source?(path)
         next if JavaEngine.test_path?(base_relative_path(path))
@@ -45,7 +46,7 @@ module Analyzer::Java
         # Cheap pre-filter: only files that mention JAX-RS bindings
         # carry resource classes. Avoids parsing the entire source
         # tree for unrelated `.java` files.
-        next unless jaxrs_or_websocket_source?(content)
+        next unless jaxrs_or_websocket_source?(content) || implements_jaxrs_parent?(content, parent_types)
 
         # Skip files claimed by a derived framework (Quarkus,
         # Dropwizard) so the same resource class doesn't surface as
