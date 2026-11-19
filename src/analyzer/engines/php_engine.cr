@@ -185,6 +185,14 @@ module Analyzer::Php
       namespace ? "#{namespace}\\#{ref}" : ref
     end
 
+    # Route-group bodies nested deeper than this are not followed: each level
+    # is one recursion, and a hostile depth overflows the stack.
+    ROUTE_GROUP_MAX_DEPTH = 32
+
+    protected def record_route_group_depth_skip(path : String) : Nil
+      Noir::SkippedFiles.record(tech, path, "route groups nested deeper than #{ROUTE_GROUP_MAX_DEPTH} levels were not followed")
+    end
+
     # Route composition helper. Will migrate to a PHP route extractor when that
     # layer is introduced; kept here for now so Laravel/CakePHP/Symfony stop
     # duplicating it.

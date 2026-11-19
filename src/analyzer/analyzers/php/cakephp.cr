@@ -45,7 +45,8 @@ module Analyzer::Php
                                        prefix : String,
                                        file_path : String,
                                        include_callee : Bool,
-                                       base_line : Int32 = 1) : Array(Endpoint)
+                                       base_line : Int32 = 1,
+                                       depth : Int32 = 0) : Array(Endpoint)
       endpoints = [] of Endpoint
       offsets = Noir::CharOffsets.new(content)
       # Line of a route matched at byte offset `byte`.
@@ -126,9 +127,13 @@ module Analyzer::Php
       end
 
       # 4. Recurse into each scope/prefix/plugin body with its prefix applied.
-      scopes.each do |scope|
-        new_prefix = build_full_path(prefix, scope.prefix)
-        endpoints.concat(analyze_routes_content(scope.body, new_prefix, file_path, include_callee, line_at.call(scope.body_start)))
+      if depth >= ROUTE_GROUP_MAX_DEPTH
+        record_route_group_depth_skip(file_path) unless scopes.empty?
+      else
+        scopes.each do |scope|
+          new_prefix = build_full_path(prefix, scope.prefix)
+          endpoints.concat(analyze_routes_content(scope.body, new_prefix, file_path, include_callee, line_at.call(scope.body_start), depth + 1))
+        end
       end
 
       endpoints

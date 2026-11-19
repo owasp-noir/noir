@@ -61,7 +61,8 @@ module Analyzer::Php
                                        prefix : String,
                                        file_path : String,
                                        include_callee : Bool,
-                                       base_line : Int32 = 1) : Array(Endpoint)
+                                       base_line : Int32 = 1,
+                                       depth : Int32 = 0) : Array(Endpoint)
       endpoints = [] of Endpoint
       route_groups = extract_route_groups(content)
       offsets = Noir::CharOffsets.new(content)
@@ -159,10 +160,14 @@ module Analyzer::Php
       end
 
       # 4. Recurse into groups
-      route_groups.each do |group|
-        new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
-        group_base_line = base_line + offsets.line(group.body_start) - 1
-        endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line))
+      if depth >= ROUTE_GROUP_MAX_DEPTH
+        record_route_group_depth_skip(file_path) unless route_groups.empty?
+      else
+        route_groups.each do |group|
+          new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
+          group_base_line = base_line + offsets.line(group.body_start) - 1
+          endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, depth + 1))
+        end
       end
 
       endpoints
