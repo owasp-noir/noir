@@ -308,7 +308,7 @@ class PhpAuthTagger < FrameworkTagger
   # what the first rule matching a guest says (a rule with no `roles`, or
   # with `'?'`); no matching rule denies. `'@'` and named roles never match
   # a guest.
-  YII_ACCESS_CONTROL = /\bAccessControl::class\b/
+  YII_ACCESS_CONTROL = /\bAccessControl::(?:class\b|className\s*\()/
   YII_RULE_UNKNOWN   = Set{"verbs", "ips", "matchCallback", "controllers", "permissions"}
 
   @php_parsers = Hash(String, Noir::PhpBlockParser).new
@@ -326,10 +326,14 @@ class PhpAuthTagger < FrameworkTagger
       open = enclosing_bracket(lexer.masked, pos) || next
       filter = yii_entries(parser, open)
       next unless yii_selects?(lexer, filter, action)
-      rules = filter["rules"]?.try { |range| parser.array_entries(range.begin) } || [] of Noir::PhpBlockParser::ArrayEntry
+      # Rules the scan cannot read (`$this->accessRules()`) decide nothing it can see.
+      rules = if rules_range = filter["rules"]?
+                parser.array_entries(array_open(lexer, rules_range) || return) || return
+              else
+                [] of Noir::PhpBlockParser::ArrayEntry
+              end
       rules.each do |entry|
-        next unless lexer.masked[entry.value.begin]? == '['
-        rule = yii_entries(parser, entry.value.begin)
+        rule = yii_entries(parser, array_open(lexer, entry.value) || return)
         actions = rule["actions"]?.try { |range| yii_strings(lexer, range) }
         next if actions && !actions.includes?(action)
         roles = rule["roles"]?.try { |range| yii_strings(lexer, range) }
@@ -344,20 +348,30 @@ class PhpAuthTagger < FrameworkTagger
     nil
   end
 
-  # The `[` of the innermost array literal holding `pos`.
+  # The `[` (or `array(`'s `(`) of the innermost array literal holding `pos`.
   private def enclosing_bracket(masked : Array(Char), pos : Int32) : Int32?
     depth = 0
     (pos - 1).downto(0) do |i|
       case masked[i]
       when ']', ')' then depth += 1
-      when '('      then depth -= 1
       when '['
         return i if depth == 0
+        depth -= 1
+      when '('
+        return i if depth == 0 && masked[[i - 5, 0].max...i].join.rstrip.downcase.ends_with?("array")
         depth -= 1
       end
       return if depth < 0
     end
     nil
+  end
+
+  # Where the array literal spanning `range` opens: its `[`, or the `(` of
+  # `array(`. Nil for anything else (a call, a variable).
+  private def array_open(lexer : Noir::PhpLexer, range : Range(Int32, Int32)) : Int32?
+    text = lexer.source(range)
+    return range.begin if text.starts_with?('[')
+    text.match(/\Aarray\s*\(/i).try { |m| range.begin + m.end(0) - 1 }
   end
 
   # An array literal's string-keyed entries, key => value range.

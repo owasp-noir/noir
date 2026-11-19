@@ -653,4 +653,61 @@ describe "PhpAuthTagger (expanded targets)" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "skips Yii AccessControl rules it cannot read and reads array() rules and className()" do
+    tmpdir = File.tempname("php_yii_edges")
+    Dir.mkdir_p(tmpdir)
+    files = {
+      "RulesController.php" => <<-'PHP',
+        <?php
+        class RulesController extends Controller
+        {
+            public function behaviors()
+            {
+                return ['access' => ['class' => AccessControl::class, 'rules' => $this->accessRules()]];
+            }
+            public function actionView() {}
+        }
+        PHP
+      "LongController.php" => <<-'PHP',
+        <?php
+        class LongController extends Controller
+        {
+            public function behaviors()
+            {
+                return array('access' => array('class' => AccessControl::class, 'rules' => array(array('allow' => true, 'actions' => array('page')))));
+            }
+            public function actionPage() {}
+        }
+        PHP
+      "OldController.php" => <<-'PHP',
+        <?php
+        class OldController extends Controller
+        {
+            public function behaviors()
+            {
+                return ['access' => ['class' => AccessControl::className(), 'rules' => [['allow' => true, 'roles' => ['@']]]]];
+            }
+            public function actionSecret() {}
+        }
+        PHP
+    }
+    endpoints = files.map do |name, body|
+      path = File.join(tmpdir, name)
+      File.write(path, body)
+      details = Details.new(PathInfo.new(path, 8))
+      details.technology = "php_yii"
+      {name, Endpoint.new("/#{name}", "GET", [] of Param, details)}
+    end.to_h
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      PhpAuthTagger.new(noir_options).perform(endpoints.values)
+
+      endpoints.select { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys.should eq(["OldController.php"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end
