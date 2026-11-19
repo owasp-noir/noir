@@ -387,6 +387,10 @@ module Analyzer::Kotlin
         params << Param.new(name, "", "form")
       end
 
+      route.cookie_params.each do |name|
+        params << Param.new(name, "", "cookie")
+      end
+
       endpoint = Endpoint.new(route.path, route.verb, params, details)
 
       # 1-hop callees out of the handler lambda body. The Route

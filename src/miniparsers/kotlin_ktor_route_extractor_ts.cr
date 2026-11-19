@@ -116,12 +116,13 @@ module Noir
       getter callees : Array(Tuple(String, Int32))
       # Byte offset of the verb call, for placing it in its enclosing function.
       getter byte : Int32
+      getter cookie_params : Array(String)
 
-      def initialize(@verb, @path, @line, @receive_type, @has_body, @query_params, @header_params, @form_params, @callees, @byte = 0)
+      def initialize(@verb, @path, @line, @receive_type, @has_body, @query_params, @header_params, @form_params, @callees, @byte = 0, @cookie_params = [] of String)
       end
 
       def with_path(path : String) : Route
-        Route.new(@verb, path, @line, @receive_type, @has_body, @query_params, @header_params, @form_params, @callees, @byte)
+        Route.new(@verb, path, @line, @receive_type, @has_body, @query_params, @header_params, @form_params, @callees, @byte, @cookie_params)
       end
     end
 
@@ -597,10 +598,11 @@ module Noir
       query_params = resource_query_params.dup
       header_params = [] of String
       form_params = [] of String
+      cookie_params = [] of String
       callees = [] of Tuple(String, Int32)
 
       if body = call_lambda_body(node)
-        receive_type = scan_handler_body(body, source, query_params, header_params, form_params)
+        receive_type = scan_handler_body(body, source, query_params, header_params, form_params, cookie_params)
         has_body = !!receive_type || handler_reads_body?(body, source)
         if include_callees
           Noir::KotlinCalleeExtractor.callees_in_lambda(body, source, "").each do |entry|
@@ -611,7 +613,7 @@ module Noir
       end
 
       query_params.uniq!
-      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees, start_byte(node))
+      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees, start_byte(node), cookie_params)
     end
 
     # ---- traversal ----------------------------------------------------
@@ -779,10 +781,11 @@ module Noir
       query_params = (path_arg.nil? ? resource_query_params.dup : [] of String)
       header_params = [] of String
       form_params = [] of String
+      cookie_params = [] of String
       callees = [] of Tuple(String, Int32)
 
       if body = call_lambda_body(node)
-        scan_handler_body(body, source, query_params, header_params, form_params).tap do |rt|
+        scan_handler_body(body, source, query_params, header_params, form_params, cookie_params).tap do |rt|
           receive_type = rt unless rt.nil?
         end
         has_body = has_body || !!receive_type || handler_reads_body?(body, source)
@@ -800,7 +803,7 @@ module Noir
       end
 
       query_params.uniq!
-      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees, start_byte(node))
+      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees, start_byte(node), cookie_params)
     end
 
     private def emit_method_route(node : LibTreeSitter::TSNode,
@@ -821,7 +824,8 @@ module Noir
       end
       header_params = [] of String
       form_params = [] of String
-      receive_type = scan_handler_body(body, source, query_params, header_params, form_params)
+      cookie_params = [] of String
+      receive_type = scan_handler_body(body, source, query_params, header_params, form_params, cookie_params)
       has_body = !!receive_type || handler_reads_body?(body, source)
 
       callees = [] of Tuple(String, Int32)
@@ -833,7 +837,7 @@ module Noir
       end
 
       query_params.uniq!
-      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees, start_byte(node))
+      routes << Route.new(verb, full_path, line, receive_type, has_body, query_params, header_params, form_params, callees, start_byte(node), cookie_params)
     end
 
     # ---- call shape helpers ------------------------------------------
@@ -1213,21 +1217,40 @@ module Noir
                                   source : String,
                                   query_params : Array(String),
                                   header_params : Array(String),
-                                  form_params : Array(String)) : String?
+                                  form_params : Array(String),
+                                  cookie_params : Array(String)) : String?
       receive_type : String? = nil
-      form_vars = Set(String).new
-      walk_handler(node, source, query_params, header_params, form_params, form_vars, 0) do |type|
+      sinks = {:query => query_params, :header => header_params, :form => form_params, :cookie => cookie_params}
+      walk_handler(node, source, sinks, Hash(String, Symbol).new, 0) do |type|
         receive_type ||= type
       end
       receive_type
     end
 
+    # `get`/`getOrFail`/`getAll` read one name off a `Parameters`/`Headers`
+    # value, like `[name]` does.
+    PARAMETER_READ_METHODS = Set{"get", "getOrFail", "getAll"}
+
+    # The request input a receiver reads: `call.parameters`, Ktor 3's
+    # `call.queryParameters`, `call.request.headers` / `.cookies`, or a local
+    # `val` holding one of them (or the `receiveParameters()` form).
+    private def input_kind(chain : Array(String), aliases : Hash(String, Symbol)) : Symbol?
+      case chain
+      when ["call", "parameters"], ["call", "queryParameters"], ["call", "request", "queryParameters"]
+        :query
+      when ["call", "request", "headers"]
+        :header
+      when ["call", "request", "cookies"]
+        :cookie
+      else
+        aliases[chain.first]? if chain.size == 1
+      end
+    end
+
     private def walk_handler(node : LibTreeSitter::TSNode,
                              source : String,
-                             query_params : Array(String),
-                             header_params : Array(String),
-                             form_params : Array(String),
-                             form_vars : Set(String),
+                             sinks : Hash(Symbol, Array(String)),
+                             aliases : Hash(String, Symbol),
                              depth : Int32,
                              &block : String ->)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
@@ -1236,9 +1259,16 @@ module Noir
 
       case ty
       when "property_declaration"
-        if receive_parameters_assignment?(node, source)
-          if name = property_name(node, source)
-            form_vars << name
+        if name = property_name(node, source)
+          if receive_parameters_assignment?(node, source)
+            aliases[name] = :form
+          else
+            Noir::TreeSitter.each_named_child(node) do |child|
+              next unless Noir::TreeSitter.node_type(child) == "navigation_expression"
+              if kind = input_kind(navigation_chain(child, source), aliases)
+                aliases[name] = kind
+              end
+            end
           end
         end
       when "call_expression"
@@ -1254,41 +1284,29 @@ module Noir
           first = Noir::TreeSitter.first_named_child(node)
           if first
             chain = navigation_chain(first, source)
-            if chain == ["call", "parameters", "get"] || chain == ["call", "request", "queryParameters", "get"]
-              query_params << name
-            elsif chain == ["call", "request", "headers", "get"] || chain == ["call", "request", "header"]
-              header_params << name
-            elsif chain.size == 2 && form_vars.includes?(chain.first) && chain.last == "get"
-              form_params << name
+            if chain == ["call", "request", "header"]
+              sinks[:header] << name
+            elsif PARAMETER_READ_METHODS.includes?(chain.last?) && (kind = input_kind(chain[0...-1], aliases))
+              sinks[kind] << name
             end
           end
         end
       when "indexing_expression"
         target = Noir::TreeSitter.first_named_child(node)
         if target
-          chain = navigation_chain(target, source)
-          if chain == ["call", "parameters"]
-            if name = indexing_string_key(node, source)
-              query_params << name
-            end
-          elsif chain == ["call", "request", "queryParameters"]
-            if name = indexing_string_key(node, source)
-              query_params << name
-            end
-          elsif chain == ["call", "request", "headers"]
-            if name = indexing_string_key(node, source)
-              header_params << name
-            end
-          elsif chain.size == 1 && form_vars.includes?(chain.first)
-            if name = indexing_string_key(node, source)
-              form_params << name
-            end
+          kind = if Noir::TreeSitter.node_type(target) == "call_expression"
+                   :form if call_receives_parameters?(target, source)
+                 else
+                   input_kind(navigation_chain(target, source), aliases)
+                 end
+          if kind && (name = indexing_string_key(node, source))
+            sinks[kind] << name
           end
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_handler(child, source, query_params, header_params, form_params, form_vars, depth + 1, &block)
+        walk_handler(child, source, sinks, aliases, depth + 1, &block)
       end
     end
 
