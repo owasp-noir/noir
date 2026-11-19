@@ -62,7 +62,7 @@ module Analyzer::Php
         # ponytail: a class-level `#[Route]` (a prefix) is skipped, not applied.
         next unless attr.on_class == false
         next unless route_path = extract_symfony_route_path(attr.args).presence
-        methods = extract_methods_from_symfony_context(attr.args)
+        methods = route_methods(attr)
         methods = ["GET"] if methods.empty?
         requirements = {} of String => String
         if expr = attribute_args(attr.args)[0]["requirements"]?

@@ -2,6 +2,7 @@ require "../../engines/php_engine"
 require "../../../utils/spec_line_index"
 require "./symfony_security"
 require "./symfony_route_attributes"
+require "../../../miniparsers/php_class_members"
 
 module Analyzer::Php
   class Symfony < PhpEngine
@@ -36,7 +37,7 @@ module Analyzer::Php
     # Attributes every caller, anonymous included, is granted.
     PUBLIC_ATTRIBUTES = %w[PUBLIC_ACCESS IS_AUTHENTICATED_ANONYMOUSLY]
 
-    REQUEST_READ_RE = /\$request->(query|request|headers|cookies|files)->(?:get|all|has|getInt|getBoolean|getAlpha|getAlnum|getDigits|getString|getEnum|filter)\s*\(\s*['"]([^'"]+)['"]|\$request->(query|request)->all\(\s*\)\s*\[\s*['"]([^'"]+)['"]|\$request->get\s*\(\s*['"]([^'"]+)['"]/
+    REQUEST_READ_RE = /\$request->(query|request|headers|cookies|files)->(?:get|all|has|getInt|getBoolean|getAlpha|getAlnum|getDigits|getString|getEnum|filter)\s*\(\s*['"]([^'"]+)['"]|\$request->(query|request)->all\(\s*\)\s*\[\s*['"]([^'"]+)['"]|\$request->get\s*\(\s*['"]([^'"]+)['"]|\$request->getPayload\(\)->(?:get|all|has|getInt|getBoolean|getAlpha|getAlnum|getDigits|getString|getEnum|filter)\s*\(\s*['"]([^'"]+)['"]/
     REQUEST_BAGS    = {"query" => "query", "request" => "form", "headers" => "header", "cookies" => "cookie", "files" => "file"}
 
     # `$this->forward('Fqcn::method', ...)`: a sub-request on the same input.
@@ -132,8 +133,8 @@ module Analyzer::Php
     end
 
     # Every directory/file import declared in the YAML route configs.
-    # Imports of other route files (`.yaml`/`.xml`) and bundle paths
-    # (`@AcmeBundle/...`) are not followed.
+    # Imports of XML route files and bundle paths (`@AcmeBundle/...`) are
+    # not followed.
     private def collect_route_imports : Array(RouteImport)
       imports = [] of RouteImport
       php_source_files.each do |path|
@@ -151,7 +152,7 @@ module Analyzer::Php
           next unless route_h
           resource_node = route_h[YAML::Any.new("resource")]?
           resource = resource_node.try { |node| node.as_s? || node.as_h?.try(&.[YAML::Any.new("path")]?.try(&.as_s?)) }
-          next if resource.nil? || resource.starts_with?('@') || resource.matches?(/\.(?:ya?ml|xml)\z/i)
+          next if resource.nil? || resource.starts_with?('@') || resource.matches?(/\.xml\z/i)
 
           # `prefix` is one path, or a locale => path map.
           prefix_node = route_h[YAML::Any.new("prefix")]?
@@ -176,9 +177,11 @@ module Analyzer::Php
     # same file in the same routing file replaces the earlier one's routes,
     # unless a different `name_prefix`, or a localized prefix (whose routes
     # are renamed `name.<locale>`) over other locales, keeps the names apart.
-    private def import_prefixes_for(path : String) : Array(String)
+    # A YAML routing file takes only the imports naming it: a directory
+    # import loads the controllers under it, not its routing files.
+    private def import_prefixes_for(path : String, routing_file : Bool = false) : Array(String)
       file = File.expand_path(path)
-      prefixes = @route_imports.select(&.covers?(file))
+      prefixes = @route_imports.select { |import| routing_file ? import.path == file : import.covers?(file) }
         .group_by { |import| {import.source, import.name_prefix, import.locales} }.values
         .flat_map(&.last.prefixes).uniq!
       prefixes.empty? ? [""] : prefixes
@@ -190,9 +193,11 @@ module Analyzer::Php
       content = read_file_content(path)
       # Controllers/services without route attributes dominate a Symfony
       # tree. Skip the annotation/attribute scans when neither form is
-      # present (`@Route` or `#[Route`).
-      return endpoints unless content.includes?("Route")
-      return endpoints unless content.includes?("@Route") || content.includes?("#[")
+      # present (`@Route` or `#[Route`), nor FOSRest's (`@Rest\Get`).
+      unless content.includes?("FOS\\RestBundle\\Controller\\Annotations")
+        return endpoints unless content.includes?("Route")
+        return endpoints unless content.includes?("@Route") || content.includes?("#[")
+      end
       # `Route` imported from another package (Spiral's `#[Route(route:
       # '/users')]`) is not Symfony's.
       if (imported = parse_use_imports(content)["Route"]?) && SYMFONY_ROUTE_NAMESPACES.none? { |ns| imported.lchop('\\').starts_with?(ns) }
@@ -201,6 +206,7 @@ module Analyzer::Php
       parser = Noir::PhpBlockParser.new(content)
       lexer = parser.lexer
       content = lexer.without_comments
+      offsets = Noir::CharOffsets.new(content)
 
       attrs = route_attributes(content, parser)
       classes = extract_classes(content, parser, attrs)
@@ -215,8 +221,8 @@ module Analyzer::Php
 
         klass = classes.find { |c| attr.start >= c.body_start && attr.start < c.body_end }
         routed_classes << klass.body_start if klass
-        action = (sig = content.match(SIGNATURE_RE, attr.stop)) ? action_at(path, content, lexer, sig, klass) : nil
-        emit_attribute_endpoints(endpoints, path, content, attr, route_paths, klass, action, import_prefixes, include_callee)
+        action = (sig = offsets.match(SIGNATURE_RE, attr.stop)) ? action_at(path, offsets, lexer, sig, klass) : nil
+        emit_attribute_endpoints(endpoints, path, offsets, attr, route_paths, klass, action, import_prefixes, include_callee)
       end
 
       # Class-level `#[Route]` on an invocable controller (`__invoke`): only
@@ -227,10 +233,10 @@ module Analyzer::Php
         next if docblock_orphaned?(content, attr)
         route_paths = klass.prefixes
         next if route_paths.empty?
-        next unless sig = content.match(SIGNATURE_RE, invoke_start)
+        next unless sig = offsets.match(SIGNATURE_RE, invoke_start)
 
-        action = action_at(path, content, lexer, sig, klass)
-        emit_attribute_endpoints(endpoints, path, content, attr, route_paths, nil, action, import_prefixes, include_callee)
+        action = action_at(path, offsets, lexer, sig, klass)
+        emit_attribute_endpoints(endpoints, path, offsets, attr, route_paths, nil, action, import_prefixes, include_callee)
       end
 
       endpoints
@@ -238,18 +244,20 @@ module Analyzer::Php
 
     private def emit_attribute_endpoints(endpoints : Array(Endpoint),
                                          path : String,
-                                         content : String,
+                                         offsets : Noir::CharOffsets,
                                          attr : RouteAttr,
                                          route_paths : Array(Tuple(String?, String)),
                                          klass : ClassInfo?,
                                          action : Action?,
                                          import_prefixes : Array(String),
                                          include_callee : Bool)
-      methods = extract_methods_from_symfony_context(attr.args)
+      # A class-level `#[Route(methods: ...)]` adds its verbs to each route's.
+      methods = (klass.try(&.route_attr).try { |class_attr| route_methods(class_attr) } || [] of String)
+      methods = (methods + route_methods(attr)).uniq
       methods = ["GET"] if methods.empty?
       method_body = action.try(&.body)
       body_params = action.try(&.params) || [] of Param
-      route_line = line_number_for_index(content, attr.start)
+      route_line = offsets.line(attr.start)
 
       combine_symfony_paths(klass.try(&.prefixes), route_paths).each do |class_path|
         import_prefixes.each do |import_prefix|
@@ -313,9 +321,9 @@ module Analyzer::Php
     # Start of the attributes/docblock in front of the declaration at `pos`:
     # just past the previous `;`, `{` or `}` that is code.
     private def member_prelude_start(content : String, lexer : Noir::PhpLexer, pos : Int32) : Int32
-      i = pos
-      while i > 0 && (i = content.rindex(/[;{}]/, i - 1))
-        return i + 1 if lexer.in_code?(i)
+      masked = lexer.masked
+      (pos - 1).downto(0) do |i|
+        return i + 1 if (masked[i] == ';' || masked[i] == '{' || masked[i] == '}') && lexer.in_code?(i)
       end
       0
     end
@@ -335,13 +343,15 @@ module Analyzer::Php
     end
 
     # Handler, request params and guard of the method whose signature is `sig`.
-    private def action_at(path : String, content : String, lexer : Noir::PhpLexer, sig : Regex::MatchData, klass : ClassInfo?) : Action
-      body = extract_php_method_body_after(content, sig.begin(0))
+    private def action_at(path : String, offsets : Noir::CharOffsets, lexer : Noir::PhpLexer, sig : Regex::MatchData, klass : ClassInfo?) : Action
+      content = offsets.content
+      sig_start = offsets.begin(sig)
+      body = body_after(content, sig).try { |code, brace| {code, offsets.line(offsets.char(brace))} }
       name = klass ? "#{klass.name}::#{sig[1]}" : sig[1]
-      handler = Handler.new(name, path, line_number_for_index(content, sig.begin(1)))
-      prelude = content[member_prelude_start(content, lexer, sig.begin(0))...sig.begin(0)]
+      handler = Handler.new(name, path, offsets.line(offsets.begin(sig, 1)))
+      prelude = offsets.slice(member_prelude_start(content, lexer, sig_start), sig_start)
       guard = security_attribute_guard(prelude) || klass.try(&.guard)
-      params = fos_rest_params(prelude)
+      params = fos_rest_params(prelude) + argument_params(offsets, lexer, sig)
       if body
         sources = [{content, body[0]}] + callee_bodies(content, body[0])
         sources.each { |source, code| params.concat(extract_method_params(code) + form_params(source, code)) }
@@ -364,6 +374,65 @@ module Analyzer::Php
         params << Param.new(key, "", FOS_PARAM_BAGS[m[1]]) if key
       end
       params
+    end
+
+    # The request input the action's arguments are mapped from:
+    # `#[MapQueryParameter]` / `#[MapUploadedFile]` (the argument, or the
+    # attribute's `name`), and the fields of the DTO `#[MapQueryString]` /
+    # `#[MapRequestPayload]` deserializes.
+    private def argument_params(offsets : Noir::CharOffsets, lexer : Noir::PhpLexer, sig : Regex::MatchData) : Array(Param)
+      params = [] of Param
+      open = offsets.end(sig) - 1
+      return params unless close = lexer.matching_delimiter(open)
+      signature = offsets.slice(open + 1, close)
+      return params unless signature.includes?("Map")
+      split_php_args(signature).each do |rest|
+        attrs = [] of String
+        while rest.starts_with?("#[") && (stop = Noir::PhpLexer.new(rest, php_mode: true).matching_delimiter(1))
+          attrs.concat(split_php_args(rest[2...stop]))
+          rest = rest[(stop + 1)..].lstrip
+        end
+        next unless decl = rest.match(MAP_ARGUMENT_RE)
+        attrs.each do |attr|
+          next unless m = attr.match(MAP_ATTRIBUTE_RE)
+          named, positional = attribute_args(m[2]? || "")
+          case m[1]
+          when "MapQueryParameter"
+            params << Param.new((named["name"]? || positional.first?).try { |e| php_literal(e) } || decl[2], "", "query")
+          when "MapUploadedFile"
+            params << Param.new(named["name"]?.try { |e| php_literal(e) } || decl[2], "", "file")
+          else
+            location = m[1] == "MapQueryString" ? "query" : "json"
+            decl[1]?.try { |type| dto_fields(type, offsets.content).each { |field| params << Param.new(field, "", location) } }
+          end
+        end
+      end
+      params
+    end
+
+    MAP_ATTRIBUTE_RE = /\A\\?(?:[\w\\]*\\)?(MapQueryParameter|MapQueryString|MapRequestPayload|MapUploadedFile)\b\s*(?:\((.*)\))?\z/m
+    MAP_ARGUMENT_RE  = /\A(?:(?:public|protected|private|readonly)\s+)*(?:\?\s*)?(\\?[\w\\]+)?\s*&?\s*(?:\.\.\.\s*)?\$(\w+)/
+
+    # What the serializer fills on a DTO: its public properties and its
+    # constructor's arguments.
+    private def dto_fields(type : String, content : String) : Array(String)
+      fqcn = qualify_class(type, parse_use_imports(content), php_namespace(content))
+      fields = [] of String
+      return fields unless file = class_file(fqcn)
+      short = fqcn.rpartition('\\').last
+      parser = Noir::PhpBlockParser.new(read_file_content(file))
+      parser.each_node do |node|
+        next unless node.kind.class? && node.name == short
+        Noir::PhpClassMembers.each(parser, node) do |member|
+          next if member.static
+          if !member.method
+            fields << member.name
+          elsif member.name == "__construct"
+            fields.concat(member.args)
+          end
+        end
+      end
+      fields.uniq
     end
 
     # `Endpoint` is a struct: callers keep the returned copy.
@@ -415,7 +484,16 @@ module Analyzer::Php
 
     private def method_body(content : String, name : String) : String?
       sig = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+#{Regex.escape(name)}\s*\(/)
-      sig.try { |m| extract_php_method_body_after(content, m.begin(0)).try(&.[0]) }
+      sig.try { |m| body_after(content, m).try(&.[0]) }
+    end
+
+    # {body, byte offset of its `{`} of the method whose signature is `sig`,
+    # cut as `extract_php_method_body_after` would, without copying the rest
+    # of the file or counting lines from the top.
+    private def body_after(content : String, sig : Regex::MatchData) : Tuple(String, Int32)?
+      brace = content.byte_index('{'.ord.to_u8, sig.byte_end(0)) || return
+      close = find_matching_php_close_brace_at_byte(content, brace)
+      {content.byte_slice(brace + 1, close - brace - 1), brace} if close && close > brace + 1
     end
 
     private def php_namespace(content : String) : String?
@@ -424,10 +502,14 @@ module Analyzer::Php
 
     # The file declaring `fqcn`: a `<Short>.php` whose namespace matches.
     private def class_file(fqcn : String) : String?
+      @cache_mutex.synchronize do
+        return @class_files[fqcn] if @class_files.has_key?(fqcn)
+      end
       namespace, _, short = fqcn.lchop('\\').rpartition('\\')
-      get_files_by_basename("#{short}.php").find do |file|
+      found = get_files_by_basename("#{short}.php").find do |file|
         (php_namespace(read_file_content(file)) || "") == namespace
       end
+      @cache_mutex.synchronize { @class_files[fqcn] = found }
     end
 
     # The parent class's comment-stripped source, or "" when it is not in the tree.
@@ -642,6 +724,7 @@ module Analyzer::Php
         # A route in a Symfony YAML routing file is declared by its name key,
         # so that key's line is where a reviewer has to look.
         line_index = Noir::SpecLineIndex.yaml(content, max_depth: 1)
+        import_prefixes = import_prefixes_for(path, routing_file: true)
         if routes = yaml.as_h?
           routes.each do |route_name, route|
             route_h = route.as_h?
@@ -651,18 +734,21 @@ module Analyzer::Php
             next unless route_path
 
             route_path = normalize_symfony_placeholders(route_path)
+            routes_prefixed = import_prefixes.map { |prefix| prefix.empty? ? route_path : build_full_path(prefix, route_path).presence || "/" }
             methods = extract_yaml_methods(route_h[YAML::Any.new("methods")]?)
             methods = ["GET"] if methods.empty?
 
             action = yaml_action(route_h)
-            params = dedup_params(extract_brace_path_params(route_path) + (action.try(&.params) || [] of Param))
             route_line = route_name.as_s?.try { |name| line_index.line(name) }
 
-            methods.each do |method|
-              details = Details.new(PathInfo.new(path, route_line))
-              endpoint = Endpoint.new(route_path, method.upcase, params, details)
-              endpoint = apply_action(endpoint, action)
-              endpoints << endpoint
+            routes_prefixed.each do |full_path|
+              params = dedup_params(extract_brace_path_params(full_path) + (action.try(&.params) || [] of Param))
+              methods.each do |method|
+                details = Details.new(PathInfo.new(path, route_line))
+                endpoint = Endpoint.new(full_path, method.upcase, params, details)
+                endpoint = apply_action(endpoint, action)
+                endpoints << endpoint
+              end
             end
           end
         end
@@ -682,13 +768,33 @@ module Analyzer::Php
             route_h[YAML::Any.new("defaults")]?.try(&.as_h?).try(&.[YAML::Any.new("_controller")]?).try(&.as_s?)
       return unless ref && (m = ref.match(/\A\\?([A-Za-z_][\w\\]*)(?:::(\w+))?\z/))
       return unless file = class_file(m[1])
+      source = yaml_controller(file)
+      return unless sig = source.signatures[m[2]? || "__invoke"]?
+      sig_start = source.offsets.begin(sig)
+      klass = source.classes.find { |c| sig_start >= c.body_start && sig_start < c.body_end }
+      action_at(file, source.offsets, source.lexer, sig, klass)
+    end
+
+    # A parsed controller and the first signature of each method name in it.
+    private record YamlController, lexer : Noir::PhpLexer, offsets : Noir::CharOffsets,
+      classes : Array(ClassInfo), signatures : Hash(String, Regex::MatchData)
+
+    @yaml_controllers = {} of String => YamlController
+    @class_files = {} of String => String?
+    @cache_mutex = Mutex.new
+
+    # A YAML-routed controller parsed once, however many routes name it.
+    # `analyze_file` runs in parallel workers, hence the lock.
+    private def yaml_controller(file : String) : YamlController
+      if cached = @cache_mutex.synchronize { @yaml_controllers[file]? }
+        return cached
+      end
       parser = Noir::PhpBlockParser.new(read_file_content(file))
-      lexer = parser.lexer
-      content = lexer.without_comments
-      method = Regex.escape(m[2]? || "__invoke")
-      return unless sig = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+(#{method})\s*\(/)
-      klass = extract_classes(content, parser, [] of RouteAttr).find { |c| sig.begin(0) >= c.body_start && sig.begin(0) < c.body_end }
-      action_at(file, content, lexer, sig, klass)
+      content = parser.lexer.without_comments
+      signatures = {} of String => Regex::MatchData
+      content.scan(SIGNATURE_RE) { |sig| signatures[sig[1]] ||= sig }
+      controller = YamlController.new(parser.lexer, Noir::CharOffsets.new(content), extract_classes(content, parser, [] of RouteAttr), signatures)
+      @cache_mutex.synchronize { @yaml_controllers[file] ||= controller }
     end
 
     private def extract_yaml_methods(node : YAML::Any?) : Array(String)
@@ -704,8 +810,9 @@ module Analyzer::Php
     end
 
     # `$request->query->get('x')`, `->all('x')`, `->getInt('x')`, ... per
-    # request bag, `$request->request->all()['x']`, and the bag-agnostic
-    # `$request->get('x')` (reported as query).
+    # request bag, `$request->request->all()['x']`, the bag-agnostic
+    # `$request->get('x')` (reported as query) and the decoded body's
+    # `$request->getPayload()->get('x')`.
     private def extract_method_params(method_body : String) : Array(Param)
       params = [] of Param
       return params unless method_body.includes?("$request")
@@ -715,8 +822,10 @@ module Analyzer::Php
           params << Param.new(m[2], "", REQUEST_BAGS[bag])
         elsif bag = m[3]?
           params << Param.new(m[4], "", REQUEST_BAGS[bag])
+        elsif name = m[5]?
+          params << Param.new(name, "", "query")
         else
-          params << Param.new(m[5], "", "query")
+          params << Param.new(m[6], "", "json")
         end
       end
       dedup_params(params)
