@@ -133,8 +133,8 @@ module Analyzer::Php
     end
 
     # Every directory/file import declared in the YAML route configs.
-    # Imports of other route files (`.yaml`/`.xml`) and bundle paths
-    # (`@AcmeBundle/...`) are not followed.
+    # Imports of XML route files and bundle paths (`@AcmeBundle/...`) are
+    # not followed.
     private def collect_route_imports : Array(RouteImport)
       imports = [] of RouteImport
       php_source_files.each do |path|
@@ -152,7 +152,7 @@ module Analyzer::Php
           next unless route_h
           resource_node = route_h[YAML::Any.new("resource")]?
           resource = resource_node.try { |node| node.as_s? || node.as_h?.try(&.[YAML::Any.new("path")]?.try(&.as_s?)) }
-          next if resource.nil? || resource.starts_with?('@') || resource.matches?(/\.(?:ya?ml|xml)\z/i)
+          next if resource.nil? || resource.starts_with?('@') || resource.matches?(/\.xml\z/i)
 
           # `prefix` is one path, or a locale => path map.
           prefix_node = route_h[YAML::Any.new("prefix")]?
@@ -177,9 +177,11 @@ module Analyzer::Php
     # same file in the same routing file replaces the earlier one's routes,
     # unless a different `name_prefix`, or a localized prefix (whose routes
     # are renamed `name.<locale>`) over other locales, keeps the names apart.
-    private def import_prefixes_for(path : String) : Array(String)
+    # A YAML routing file takes only the imports naming it: a directory
+    # import loads the controllers under it, not its routing files.
+    private def import_prefixes_for(path : String, routing_file : Bool = false) : Array(String)
       file = File.expand_path(path)
-      prefixes = @route_imports.select(&.covers?(file))
+      prefixes = @route_imports.select { |import| routing_file ? import.path == file : import.covers?(file) }
         .group_by { |import| {import.source, import.name_prefix, import.locales} }.values
         .flat_map(&.last.prefixes).uniq!
       prefixes.empty? ? [""] : prefixes
@@ -720,6 +722,7 @@ module Analyzer::Php
         # A route in a Symfony YAML routing file is declared by its name key,
         # so that key's line is where a reviewer has to look.
         line_index = Noir::SpecLineIndex.yaml(content, max_depth: 1)
+        import_prefixes = import_prefixes_for(path, routing_file: true)
         if routes = yaml.as_h?
           routes.each do |route_name, route|
             route_h = route.as_h?
@@ -729,18 +732,21 @@ module Analyzer::Php
             next unless route_path
 
             route_path = normalize_symfony_placeholders(route_path)
+            routes_prefixed = import_prefixes.map { |prefix| prefix.empty? ? route_path : build_full_path(prefix, route_path).presence || "/" }
             methods = extract_yaml_methods(route_h[YAML::Any.new("methods")]?)
             methods = ["GET"] if methods.empty?
 
             action = yaml_action(route_h)
-            params = dedup_params(extract_brace_path_params(route_path) + (action.try(&.params) || [] of Param))
             route_line = route_name.as_s?.try { |name| line_index.line(name) }
 
-            methods.each do |method|
-              details = Details.new(PathInfo.new(path, route_line))
-              endpoint = Endpoint.new(route_path, method.upcase, params, details)
-              endpoint = apply_action(endpoint, action)
-              endpoints << endpoint
+            routes_prefixed.each do |full_path|
+              params = dedup_params(extract_brace_path_params(full_path) + (action.try(&.params) || [] of Param))
+              methods.each do |method|
+                details = Details.new(PathInfo.new(path, route_line))
+                endpoint = Endpoint.new(full_path, method.upcase, params, details)
+                endpoint = apply_action(endpoint, action)
+                endpoints << endpoint
+              end
             end
           end
         end

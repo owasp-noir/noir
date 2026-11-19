@@ -20,9 +20,11 @@ expected_endpoints = [
   Endpoint.new("/en/sso/login", "GET"),
   # The later `site` import excludes Admin/, so it never replaces /admin.
   Endpoint.new("/admin/panel", "GET"),
+  # A YAML routing file imported with a prefix.
+  Endpoint.new("/extra/dash", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/symfony_route_imports/", {
   :techs     => 2,
-  :endpoints => 8,
+  :endpoints => 9,
 }, expected_endpoints).perform_tests

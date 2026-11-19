@@ -35,3 +35,7 @@ site:
     exclude:
         - '../src/Controller/{Admin,Web}/'
         - ../src/Controller/Api/
+
+extra:
+    resource: routes_extra/admin.yaml
+    prefix: /extra
