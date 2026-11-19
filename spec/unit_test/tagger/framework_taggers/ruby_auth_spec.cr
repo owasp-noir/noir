@@ -1297,6 +1297,91 @@ describe "RubyAuthTagger (Grape route scope)" do
       FileUtils.rm_rf(dir)
     end
   end
+
+  it "reads an authenticate*! statement of the route body or a before block" do
+    CodeLocator.instance.clear_all
+    dir = File.tempname("noir_grape_body_mount")
+    Dir.mkdir_p(dir)
+    root = File.join(dir, "root.rb")
+    File.write(root, <<-RB)
+      module V1
+        class Root < Grape::API
+          helpers do
+            def authenticate!
+              error!("401 Unauthorized", 401) unless current_user
+            end
+          end
+
+          get :status do
+            { ok: true }
+          end
+
+          get :timeline do
+            authenticate!
+            current_user.items
+          end
+
+          get :feed do
+            authenticate! if params[:private]
+            Item.all
+          end
+
+          resource :pages do
+            before do
+              load_site
+              authenticate_account!
+            end
+            get do
+              Page.all
+            end
+          end
+
+          mount V1::Public
+          namespace :account do
+            before { authenticate! }
+            mount V1::Items
+          end
+        end
+      end
+      RB
+    items = File.join(dir, "items.rb")
+    File.write(items, "module V1\n  class Items < Grape::API\n    resource :items do\n      get do\n        Item.all\n      end\n    end\n  end\nend\n")
+    open = File.join(dir, "public.rb")
+    File.write(open, "module V1\n  class Public < Grape::API\n    get :ping do\n      \"pong\"\n    end\n  end\nend\n")
+    admin = File.join(dir, "admin.rb")
+    File.write(admin, "class Admin < Grape::API\n  get :report do\n    authenticate!\n    authorize Report, :index?\n    Report.all\n  end\nend\n")
+    [root, items, open, admin].each { |file| CodeLocator.instance.register_path(file) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(file : String, url : String, line : Int32) do
+        details = Details.new(PathInfo.new(file, line))
+        details.technology = "ruby_grape"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      status = at.call(root, "/status", 9)
+      timeline = at.call(root, "/timeline", 13)
+      feed = at.call(root, "/feed", 18)
+      pages = at.call(root, "/pages", 28)
+      listed = at.call(items, "/account/items", 4)
+      ping = at.call(open, "/ping", 3)
+      report = at.call(admin, "/report", 2)
+      RubyAuthTagger.new(noir_options).perform([status, timeline, feed, pages, listed, ping, report])
+
+      status.tags.should be_empty
+      timeline.tags.map(&.name).should eq(["auth"])
+      feed.tags.should be_empty
+      pages.tags.map(&.name).should eq(["auth"])
+      listed.tags.should be_empty
+      ping.tags.should be_empty
+      # A Pundit call in the body does not hide the route's authentication.
+      report.tags.map(&.name).sort.should eq(["auth", "authz"])
+    ensure
+      FileUtils.rm_rf(dir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end
 
 describe "RubyAuthTagger (Devise route blocks)" do

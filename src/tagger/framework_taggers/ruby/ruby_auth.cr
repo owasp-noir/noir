@@ -59,7 +59,7 @@ class RubyAuthTagger < FrameworkTagger
   # Grape patterns (before blocks, http_basic, helpers)
   GRAPE_AUTH_PATTERNS = [
     {/before\s+do.*authenticate/, "Grape before authenticate"},
-    {/before\s*\{\s*authenticate!/, "Grape authenticate!"},
+    {/before\s*\{\s*authenticate\w*!/, "Grape authenticate!"},
     {/before\s*\{\s*require_auth/, "Grape require_auth"},
     {/http_basic\s+do/, "Grape http_basic auth"},
     {/helpers\s+do.*authenticate/, "Grape helpers authenticate"},
@@ -295,16 +295,18 @@ class RubyAuthTagger < FrameworkTagger
       if authn_desc.nil? && authz_desc.nil? && (policy = body[:anonymous])
         endpoint.add_tag(Tag.new("anonymous", "Pundit #{policy} admits anonymous callers", "ruby_auth"))
       end
-      return if authn_desc || authz_desc || body[:anonymous] || skipped || opted_out || dispatch
+      tech = endpoint.details.technology
+      # A Grape/Sinatra route's Pundit call authenticates no one: its scope is still read.
+      return if authn_desc || (authz_desc && tech == "ruby_rails") || body[:anonymous] || skipped || opted_out || dispatch
 
-      if endpoint.details.technology == "ruby_rails" && (block = devise_route_block(path, lines, line_idx))
+      if tech == "ruby_rails" && (block = devise_route_block(path, lines, line_idx))
         endpoint.add_tag(Tag.new("auth", "Protected by Devise `#{block}` routes block", "ruby_auth"))
         return
       end
 
       # Sinatra/Rack patterns first, then Grape (before blocks, http_basic,
       # etc.), both over the same route scope.
-      scope = route_scope(path, lines, line_idx, endpoint.url)
+      scope = route_scope(path, lines, line_idx, endpoint.url, {"ruby_grape", "ruby_sinatra"}.includes?(tech))
       description = match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS)
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
@@ -1442,9 +1444,14 @@ class RubyAuthTagger < FrameworkTagger
   # own `protected!` call.
   # ponytail: filters declared below the route are not seen; Sinatra applies
   # them anyway — scan forward too if that shape turns up.
-  private def route_scope(path : String, lines : Array(String), route_line : Int32, url : String) : Array(String)
+  #
+  # A bare call that runs unconditionally in a `before do` block, or at the
+  # top of the route body (`own_body`, Grape's documented `get do;
+  # authenticate!; ...`), reads as the one-line `before { authenticate! }`.
+  private def route_scope(path : String, lines : Array(String), route_line : Int32, url : String, own_body : Bool = false) : Array(String)
     index = scope_lines(path, lines)
     scope = ruby_block_lines(index, route_line)
+    unconditional_calls(index, route_line).each { |call| scope << "before { #{call} }" } if own_body
     indent = line_indent(lines[route_line])
     idx = route_line - 1
     while idx >= 0 && index.skip?(idx)
@@ -1461,15 +1468,30 @@ class RubyAuthTagger < FrameworkTagger
       if filter_covers?(stripped, url)
         block = ruby_block_lines(index, idx)
         scope.concat(block)
-        # `before do` / `authenticate!` / `end` reads as the one-line
-        # `before { authenticate! }`, but only when that first statement is
-        # an unconditional bare call (not `if x` / `authenticate! if x`).
-        scope << "before { #{block[1]} }" if block.size > 1 && block[0].matches?(/^before\s+do\s*$/) && block[1].matches?(/\A\w+[!?]?\z/)
+        unconditional_calls(index, idx).each { |call| scope << "before { #{call} }" } if block[0].matches?(/^before\s+do\s*$/)
       end
       idx = index.prev_level[idx]
       idx = index.filter_up[idx] if idx >= 0
     end
     scope
+  end
+
+  # The bare calls (`authenticate!`, not `if x` / `authenticate! if x`) at
+  # the top level of the block opened at `idx`, up to an early `return` /
+  # `next` that would skip the rest.
+  private def unconditional_calls(index : ScopeLines, idx : Int32) : Array(String)
+    calls = [] of String
+    depth : Int32? = nil
+    ((idx + 1)...index.stripped.size).each do |j|
+      next if index.skip?(j)
+      break if index.indent[j] <= index.indent[idx]
+      depth ||= index.indent[j]
+      next unless index.indent[j] == depth
+      statement = index.stripped[j]
+      break if statement.matches?(/\A(?:return|next)\b/)
+      calls << statement if statement.matches?(/\A\w+[!?]?\z/)
+    end
+    calls
   end
 
   # Devise's routes helpers: `authenticate :user do` runs
