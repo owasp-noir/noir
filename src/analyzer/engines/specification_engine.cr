@@ -660,13 +660,23 @@ module Analyzer::Specification
       end
     end
 
+    # YAML 1.1 boolean spellings that Crystal's core schema resolves to Bool,
+    # as a mapping key or a `name:` value. OpenAPI is YAML 1.2, where
+    # `on`/`off`/`yes`/`no` are strings, so they are quoted before parsing.
+    YAML11_BOOL_KEY  = /^([ \t]*(?:-[ \t]+)*)(yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF)([ \t]*:(?:[ \t\r]|$))/m
+    YAML11_BOOL_NAME = /^([ \t]*(?:-[ \t]+)*name[ \t]*:[ \t]+)(yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF)([ \t\r]*(?:#[^\n]*)?)$/m
+
+    protected def parse_spec_yaml(content : String) : YAML::Any
+      parse_yaml(content.gsub(YAML11_BOOL_KEY, %(\\1"\\2"\\3)).gsub(YAML11_BOOL_NAME, %(\\1"\\2"\\3)))
+    end
+
     private def external_yaml_doc(from_path : String, file_ref : String) : SpecDoc(YAML::Any)?
       return unless path = external_ref_path(from_path, file_ref)
       return @external_yaml_docs[path] if @external_yaml_docs.has_key?(path)
 
       @external_yaml_docs[path] = begin
         if content = read_ref_file(from_path, path, file_ref)
-          SpecDoc.new(parse_yaml(content), path)
+          SpecDoc.new(parse_spec_yaml(content), path)
         end
       rescue e
         record_ref_gap(from_path, file_ref, e.message.presence || e.class.name)

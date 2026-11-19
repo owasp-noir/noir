@@ -469,7 +469,7 @@ module Analyzer::Specification
 
       each_spec_file_with_details(Noir::LocatorKeys::OAS3_YAML) do |oas3_yaml, details|
         content = read_file_content(oas3_yaml)
-        yaml_obj = parse_yaml(content)
+        yaml_obj = parse_spec_yaml(content)
 
         base_path = @url
         begin

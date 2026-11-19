@@ -342,7 +342,7 @@ module Analyzer::Specification
       return unless File.exists?(swagger_yaml)
       details = Details.new(PathInfo.new(swagger_yaml))
       content = read_file_content(swagger_yaml)
-      yaml_obj = parse_yaml(content)
+      yaml_obj = parse_spec_yaml(content)
       line_index = Noir::SpecLineIndex.yaml(content, "paths")
       base_path = ""
       begin
