@@ -37,7 +37,7 @@ module Analyzer::Rust
     # legacy fallback the regex analyzer used. `any` covers
     # `axum::routing::any(handler)` — a verb-agnostic registration
     # commonly used for WebSocket upgrades and reverse-proxy fallbacks.
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options", "any", "query"}
+    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace", "any", "query"}
 
     # Method emitted for service-shaped registrations (`route_service`,
     # `nest_service`, `fallback_service`). Services aren't bound to a
@@ -131,7 +131,7 @@ module Analyzer::Rust
         end
 
         walk_router_builders(root, source, "", test_regions, mounted_router_names, let_router_builders, mounted_router_ranges) do |node, prefix|
-          route = extract_route(node, source)
+          route = extract_route(node, source, let_router_builders, router_functions)
           next unless route
 
           path_str, handlers = route
@@ -180,7 +180,7 @@ module Analyzer::Rust
           next unless router_function
 
           walk_router_builders(router_function, source, prefix, test_regions, Set(String).new, let_router_builders, mounted_router_ranges) do |node, active_prefix|
-            route = extract_route(node, source)
+            route = extract_route(node, source, let_router_builders, router_functions)
             next unless route
 
             path_str, handlers = route
@@ -607,7 +607,9 @@ module Analyzer::Rust
     # * `fallback(handler)` / `fallback_service(svc)` — catch-all
     #   registration; we emit at `/*` so the endpoint surfaces in
     #   downstream tooling without colliding with a real path.
-    private def extract_route(call : LibTreeSitter::TSNode, source : String) : Tuple(String, Array(Tuple(String, String?)))?
+    private def extract_route(call : LibTreeSitter::TSNode, source : String,
+                              let_calls : Hash(String, LibTreeSitter::TSNode),
+                              router_functions : Hash(String, LibTreeSitter::TSNode)) : Tuple(String, Array(Tuple(String, String?)))?
       kind = field_call_name(call, source)
       return unless kind
 
@@ -623,7 +625,7 @@ module Analyzer::Rust
         return if named.size < 2
         path = string_literal_content(named[0], source)
         return unless path
-        {path, decode_handler(named[1], source)}
+        {path, decode_handler(resolve_method_router(named[1], source, let_calls, router_functions), source)}
       when "route_service"
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
@@ -736,6 +738,49 @@ module Analyzer::Rust
 
       handlers << {"GET", nil.as(String?)} if handlers.empty?
       handlers
+    end
+
+    # `.route("/p", submit)` with `let submit = post(h);`, or
+    # `.route("/p", login_routes())` with `fn login_routes() -> MethodRouter { post(h) }`:
+    # the method router the name stands for, read from this file.
+    private def resolve_method_router(node : LibTreeSitter::TSNode, source : String,
+                                      let_calls : Hash(String, LibTreeSitter::TSNode),
+                                      router_functions : Hash(String, LibTreeSitter::TSNode)) : LibTreeSitter::TSNode
+      4.times do
+        case Noir::TreeSitter.node_type(node)
+        when "identifier"
+          node = let_calls[Noir::TreeSitter.node_text(node, source)]? || break
+        when "call_expression"
+          fn_node = Noir::TreeSitter.field(node, "function")
+          break unless fn_node && Noir::TreeSitter.node_type(fn_node) == "identifier"
+          name = Noir::TreeSitter.node_text(fn_node, source)
+          break if normalize_method_verb(name) || on_method_filter_call?(name)
+          body = router_functions[name]? || break
+          node = block_tail_expression(body) || break
+        else
+          break
+        end
+      end
+      node
+    end
+
+    # The value a fn body evaluates to: its trailing expression, or the
+    # operand of a final `return`.
+    private def block_tail_expression(body : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      last = nil.as(LibTreeSitter::TSNode?)
+      Noir::TreeSitter.each_named_child(body) do |child|
+        last = child unless Noir::TreeSitter.node_type(child).ends_with?("comment")
+      end
+      {"expression_statement", "return_expression"}.each do |wrapper|
+        return unless last
+        last = first_named_child(last) if Noir::TreeSitter.node_type(last) == wrapper
+      end
+      last
+    end
+
+    private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(node) { |child| return child }
+      nil
     end
 
     private def on_method_filter_call?(name : String) : Bool
