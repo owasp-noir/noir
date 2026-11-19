@@ -111,7 +111,7 @@ module GoRouteGroupScope
     property row = 0
     # Whether a `.Use` path matches as a plain string prefix (see
     # `FIBER_PLAIN_USE`).
-    property plain_use_prefix = false
+    property? plain_use_prefix = false
 
     # The innermost enclosing closure group, or Global at file scope.
     def current : Scope
@@ -200,8 +200,10 @@ module GoRouteGroupScope
     # Fiber's `app.Use("/admin", mw)` runs `mw` only under that path.
     if m = stripped.match(USE_WITH_PATH)
       scope = scopes.extend(scopes.receiver(receiver), m[1])
-      return scope unless scopes.plain_use_prefix && scope[:kind] == ScopeKind::Group && !m[1].delete('/').empty?
-      return {kind: scope[:kind], prefix: scope[:prefix] + "*"}
+      if scopes.plain_use_prefix? && scope[:kind] == ScopeKind::Group && !m[1].delete('/').empty?
+        return {kind: scope[:kind], prefix: scope[:prefix] + "*"}
+      end
+      return scope
     end
     scopes.receiver(receiver)
   end
