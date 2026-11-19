@@ -701,13 +701,16 @@ module Analyzer::CSharp
       {routes, area}
     end
 
-    # What an action's attributes declare: one `{verb, route}` per verb
-    # attribute (`[HttpGet("a"), HttpHead("a")]` is two), the verb-less
-    # `[Route]` a bare verb inherits, whether any routing attribute is
-    # present, `[NonAction]`, the verbs whose route argument is a constant
-    # the analyzer cannot read, and an `[ActionName]` rename.
-    record ActionAttributes, verb_routes : Array(Tuple(String, String)), route_attr : String,
-      explicit : Bool, non_action : Bool, unresolved : Set(String), renamed : String?
+    # What an action's attributes declare: its selectors, whether any
+    # routing attribute is present, `[NonAction]`, and an `[ActionName]`
+    # rename. A selector is `{verb, route, unresolved}`: `route` is nil when
+    # the action has no template of its own, `unresolved` when its template
+    # is a constant the analyzer cannot read. As in ASP.NET Core, every
+    # `[Route]` and every verb attribute with a template is a selector;
+    # template-less verbs join each `[Route]` (ANY when there are none), or
+    # stand alone at the controller route when the action has no `[Route]`.
+    record ActionAttributes, selectors : Array(Tuple(String, String?, Bool)),
+      explicit : Bool, non_action : Bool, renamed : String?
 
     VERB_ATTRIBUTES = {
       "HttpGet" => "GET", "HttpPost" => "POST", "HttpPut" => "PUT", "HttpDelete" => "DELETE",
@@ -726,22 +729,31 @@ module Analyzer::CSharp
     HTTP_METHODS_ARG_RE = /\A(?:\w+\.)*HttpMethods\s*\.\s*([A-Za-z]+)\z/
 
     private def action_attributes(attrs : Array(Noir::CSharpDecl::Attribute), scope : String) : ActionAttributes
-      verb_routes = [] of Tuple(String, String)
-      route_attr = ""
+      templated = [] of Tuple(String, String?, Bool)
+      bare_verbs = [] of String
+      routes = [] of Tuple(String?, Bool)
       explicit = false
       non_action = false
-      unresolved = Set(String).new
       renamed = nil
       attrs.each do |attr|
         next unless attr.target.nil? || attr.target == "method"
         if verb = VERB_ATTRIBUTES[attr.name]?
           arg = template_arg(attr)
-          template = arg.try(&.literal).presence
-          verb_routes << {verb, template || route_attr}
-          unresolved << verb if template.nil? && arg && arg.positional? && arg.text.matches?(UNREAD_ROUTE_ARG_RE)
+          if template = arg.try(&.literal)
+            templated << {verb, template, false}
+          elsif arg && arg.positional? && arg.text.matches?(UNREAD_ROUTE_ARG_RE)
+            templated << {verb, nil, true}
+          else
+            bare_verbs << verb
+          end
           explicit = true
         elsif attr.name == "Route"
-          route_attr = template_arg(attr).try(&.literal).presence || route_attr
+          arg = template_arg(attr)
+          if template = arg.try(&.literal)
+            routes << {template, false}
+          elsif arg && arg.positional? && arg.text.matches?(UNREAD_ROUTE_ARG_RE)
+            routes << {nil, true}
+          end
           explicit = true
         elsif attr.name == "AcceptVerbs"
           # `[AcceptVerbs("PUT", "PATCH")]` / `[AcceptVerbs("PUT", Route =
@@ -752,8 +764,11 @@ module Analyzer::CSharp
             token if ACCEPT_VERB_TOKENS.includes?(token)
           end.uniq!
           next if verbs.empty?
-          route = attr.property("Route").try(&.literal).presence || route_attr
-          verbs.each { |accept_verb| verb_routes << {accept_verb, route} }
+          if route = attr.property("Route").try(&.literal)
+            verbs.each { |accept_verb| templated << {accept_verb, route, false} }
+          else
+            bare_verbs.concat(verbs)
+          end
           explicit = true
         elsif attr.name == "NonAction"
           non_action = true
@@ -765,16 +780,22 @@ module Analyzer::CSharp
           # `unresolved-route` tag a built-in `[HttpGet(Routes.Item)]` gets.
           template = found.template
           first = attr.positional.first?
-          if template && !template.includes?('"')
-            verb_routes << {verb, template.presence || route_attr}
+          if template && !template.includes?('"') && !template.empty?
+            templated << {verb, template, false}
+          elsif template.nil? && first && first.text.matches?(UNREAD_ROUTE_ARG_RE)
+            templated << {verb, nil, true}
           else
-            verb_routes << {verb, route_attr}
-            unresolved << verb if template.nil? && first && first.text.matches?(UNREAD_ROUTE_ARG_RE)
+            bare_verbs << verb
           end
           explicit = true
         end
       end
-      ActionAttributes.new(verb_routes, route_attr, explicit, non_action, unresolved, renamed)
+      selectors = templated
+      routes.each do |route, unread|
+        (bare_verbs.empty? ? ["ANY"] : bare_verbs).each { |route_verb| selectors << {route_verb, route, unread} }
+      end
+      bare_verbs.each { |bare_verb| selectors << {bare_verb, nil, false} } if routes.empty?
+      ActionAttributes.new(selectors.uniq, explicit, non_action, renamed)
     end
 
     private def analyze_controller(file : String, lexer : Noir::CSharpLexer, type : Noir::CSharpType,
@@ -800,24 +821,22 @@ module Analyzer::CSharp
         next if skip.try(&.includes?(method.name))
         handler = Handler.new("#{(owner || type).name}.#{method.name}", file, method.line + 1)
         action_name = action.renamed || method.name
-        route_attr = action.route_attr
         body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, method.header_end - line_offset)
         body_params = extract_params_from_block(body_block)
 
-        # No `[Http*]` attribute → convention-based (verb GET, route from
-        # any `[Route]` base or the controller convention). An action with a
-        # `[Route]` of its own and no verb attribute accepts every method.
-        emit_pairs = action.verb_routes.empty? ? [{route_attr.empty? ? "GET" : "ANY", route_attr}] : action.verb_routes
-        emit_pairs.each do |emit_verb, emit_route|
-          # A bare `[HttpGet]` whose `[Route("x")]` base came after it
-          # collected an empty route — fall back to the base so
-          # verb-then-`[Route]` ordering matches `[Route]`-then-verb.
-          emit_route = route_attr if emit_route.empty? && !route_attr.empty?
+        # No routing attribute → convention-based (verb GET, at the
+        # controller route or the conventional templates).
+        selectors = action.selectors.empty? ? [{"GET", nil, false}] : action.selectors
+        selectors.each do |emit_verb, emit_route, unresolved|
           parameters = extract_parameters(method.params, emit_verb, file, lines, masked_lines, api_controller)
           parameters = merge_params(parameters, body_params, emit_verb)
           routes = controller_routes.flat_map do |controller_route|
-            effective_action_route = emit_route
-            if !controller_route.empty? && controller_route == effective_action_route
+            effective_action_route = emit_route || ""
+            # An empty template of the action's own (`[Route("")]`) is the
+            # controller route, or the site root without one.
+            if emit_route == "" && controller_route.empty?
+              effective_action_route = "/"
+            elsif !controller_route.empty? && controller_route == effective_action_route
               effective_action_route = ""
             end
             resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns, area)
@@ -836,7 +855,7 @@ module Analyzer::CSharp
               endpoint.params << param
             end
 
-            endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if action.unresolved.includes?(emit_verb)
+            endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if unresolved
             attach_csharp_callees(endpoint, body_block, file, line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
             @result << endpoint
           end
