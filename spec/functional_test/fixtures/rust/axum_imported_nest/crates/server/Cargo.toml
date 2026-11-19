@@ -1,0 +1,11 @@
+[package]
+name = "server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+utoipa = "5"
+utoipa-axum = "0.2"
+web-api = { path = "../web-api" }
+acme_api = { path = "../api" }

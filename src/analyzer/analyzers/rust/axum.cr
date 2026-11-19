@@ -99,9 +99,10 @@ module Analyzer::Rust
         handler_context_cache = {} of String => HandlerContext
         router_functions = build_router_function_index(root, source)
         let_router_builders = build_let_call_index(root, source)
-        mounted_router_names = collect_mounted_router_names(root, source, test_regions, let_router_builders)
+        ambiguous = duplicate_function_names(root, source)
+        merged_router_names = Set(String).new
+        mounted_router_names = collect_mounted_router_names(root, source, test_regions, let_router_builders, ambiguous, merged_router_names)
         mounted_router_ranges = mounted_router_value_ranges(root, source, test_regions, let_router_builders)
-        nested_router_prefixes = collect_nested_router_prefixes(root, source, test_regions, "", mounted_router_names, let_router_builders)
 
         # Cross-file nest: a router-builder fn DEFINED in this file is mounted
         # under a path prefix by a `.nest("/p", var=mod::fn())` in another
@@ -113,16 +114,20 @@ module Analyzer::Rust
         # top-level `router` and its inner `mod development { fn router }`)
         # would suppress BOTH at the root while the queue re-emits only one —
         # a net loss. Only relocate a fn whose name is unique in the file.
+        # Marked mounted before the nested-prefix pass, so that pass does not
+        # also read the fn's body at the root and record its sub-routers there.
         cross_nest = file_cross_nest_prefixes(path)
-        unless cross_nest.empty?
-          ambiguous = duplicate_function_names(root, source)
-          cross_nest.each do |fn_name, prefixes|
-            next unless router_functions.has_key?(fn_name)
-            next if ambiguous.includes?(fn_name)
-            mounted_router_names.add(fn_name)
-            bucket = (nested_router_prefixes[fn_name] ||= [] of String)
-            prefixes.each { |p| bucket << p unless bucket.includes?(p) }
-          end
+        relocated = {} of String => Array(String)
+        cross_nest.each do |fn_name, prefixes|
+          next unless router_functions.has_key?(fn_name)
+          next if ambiguous.includes?(fn_name)
+          mounted_router_names.add(fn_name)
+          relocated[fn_name] = prefixes
+        end
+        nested_router_prefixes = collect_nested_router_prefixes(root, source, test_regions, "", mounted_router_names, let_router_builders, mounted_router_ranges, merged_router_names)
+        relocated.each do |fn_name, prefixes|
+          bucket = (nested_router_prefixes[fn_name] ||= [] of String)
+          prefixes.each { |p| bucket << p unless bucket.includes?(p) }
         end
 
         walk_router_builders(root, source, "", test_regions, mounted_router_names, let_router_builders, mounted_router_ranges) do |node, prefix|
@@ -174,7 +179,7 @@ module Analyzer::Rust
           router_function = router_functions[router_name]?
           next unless router_function
 
-          walk_router_builders(router_function, source, prefix, test_regions, Set(String).new, let_router_builders) do |node, active_prefix|
+          walk_router_builders(router_function, source, prefix, test_regions, Set(String).new, let_router_builders, mounted_router_ranges) do |node, active_prefix|
             route = extract_route(node, source)
             next unless route
 
@@ -195,7 +200,7 @@ module Analyzer::Rust
             end
           end
 
-          collect_nested_router_prefixes(router_function, source, test_regions, prefix, Set(String).new, let_router_builders).each do |nested_name, prefixes|
+          collect_nested_router_prefixes(router_function, source, test_regions, prefix, Set(String).new, let_router_builders, mounted_router_ranges, merged_router_names).each do |nested_name, prefixes|
             # A router whose body nests another router resolved (by bare name)
             # back to itself — e.g. `user_routes::create_routes` nesting
             # `token_routes::create_routes`, both leaf `create_routes` — would
@@ -304,7 +309,7 @@ module Analyzer::Rust
           stack << {node, prefix, skip_ranges, binding, true}
         end
 
-        next if prefix.empty? && node_inside_byte_ranges?(node, skip_ranges)
+        next if node_inside_byte_ranges?(node, skip_ranges)
 
         if prefix.empty? && Noir::TreeSitter.node_type(node) == "function_item"
           if name = function_name(node, source)
@@ -397,19 +402,28 @@ module Analyzer::Rust
     private def collect_mounted_router_names(root : LibTreeSitter::TSNode,
                                              source : String,
                                              test_regions : Array(Tuple(Int32, Int32)),
-                                             let_router_builders : Hash(String, LibTreeSitter::TSNode)) : Set(String)
+                                             let_router_builders : Hash(String, LibTreeSitter::TSNode),
+                                             ambiguous : Set(String),
+                                             merged : Set(String)) : Set(String)
       names = Set(String).new
 
       walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
         next if RustEngine.inside_test_region?(node, test_regions)
 
-        nest = extract_nest_call(node, source)
-        next unless nest
-
-        _, nested_router = nest
-        router_name = local_router_function_call_name(resolve_router_argument(nested_router, source, let_router_builders), source)
-        names.add(router_name) if router_name
+        if nest = extract_nest_call(node, source)
+          router_name = local_router_function_call_name(resolve_router_argument(nest[1], source, let_router_builders), source)
+          names.add(router_name) if router_name
+        elsif merge_arg = extract_merge_call(node, source)
+          # `.merge(local_fn())` mounts at the merging router's prefix, so it
+          # is queued like a nest instead of emitted from the root walk. A
+          # name defined twice in the file can't be queued by bare name.
+          router_name = local_router_function_call_name(resolve_router_argument(merge_arg, source, let_router_builders), source)
+          if router_name && !ambiguous.includes?(router_name)
+            names.add(router_name)
+            merged.add(router_name)
+          end
+        end
       end
 
       names
@@ -444,9 +458,11 @@ module Analyzer::Rust
                                                test_regions : Array(Tuple(Int32, Int32)),
                                                active_prefix : String,
                                                skip_function_names : Set(String),
-                                               let_router_builders : Hash(String, LibTreeSitter::TSNode)) : Hash(String, Array(String))
+                                               let_router_builders : Hash(String, LibTreeSitter::TSNode),
+                                               skip_ranges : Array(ByteRange),
+                                               merged_router_names : Set(String)) : Hash(String, Array(String))
       prefixes = {} of String => Array(String)
-      collect_nested_router_prefixes(root, source, test_regions, active_prefix, skip_function_names, let_router_builders, prefixes)
+      collect_nested_router_prefixes(root, source, test_regions, active_prefix, skip_function_names, let_router_builders, skip_ranges, merged_router_names, prefixes)
       prefixes
     end
 
@@ -458,19 +474,25 @@ module Analyzer::Rust
                                                active_prefix : String,
                                                skip_function_names : Set(String),
                                                let_router_builders : Hash(String, LibTreeSitter::TSNode),
+                                               skip_ranges : Array(ByteRange),
+                                               merged_router_names : Set(String),
                                                prefixes : Hash(String, Array(String)))
       resolving = Set(Int32).new
-      stack = [{node, active_prefix, nil.as(Int32?), false}]
+      stack = [{node, active_prefix, skip_ranges, nil.as(Int32?), false}]
       while item = stack.pop?
-        node, active_prefix, binding, leaving = item
+        node, active_prefix, skip_ranges, binding, leaving = item
         if binding
           if leaving
             resolving.delete(binding)
             next
           end
           resolving.add(binding)
-          stack << {node, active_prefix, binding, true}
+          stack << {node, active_prefix, skip_ranges, binding, true}
         end
+
+        # A let initializer nested by name is read through its `.nest`, not
+        # again by plain descent at the enclosing prefix.
+        next if node_inside_byte_ranges?(node, skip_ranges)
 
         if Noir::TreeSitter.node_type(node) == "function_item"
           if name = function_name(node, source)
@@ -486,7 +508,7 @@ module Analyzer::Rust
             nest_prefix, nested_router = nest
             mounted_prefix = nest_join(active_prefix, nest_prefix)
             resolved_router = resolve_router_argument(nested_router, source, let_router_builders)
-            stack << {receiver, active_prefix, nil, false} if receiver
+            stack << {receiver, active_prefix, skip_ranges, nil, false} if receiver
 
             if router_name = local_router_function_call_name(resolved_router, source)
               entries = prefixes[router_name] ||= [] of String
@@ -495,20 +517,26 @@ module Analyzer::Rust
               resolved_byte = LibTreeSitter.ts_node_start_byte(resolved_router).to_i
               nested_binding = resolved_byte == LibTreeSitter.ts_node_start_byte(nested_router).to_i ? nil : resolved_byte
               unless nested_binding && resolving.includes?(nested_binding)
-                stack << {resolved_router, mounted_prefix, nested_binding, false}
+                stack << {resolved_router, mounted_prefix, [] of ByteRange, nested_binding, false}
               end
             end
             next
           end
 
           if merge_arg = extract_merge_call(node, source)
-            stack << {receiver, active_prefix, nil, false} if receiver
-            stack << {merge_arg, active_prefix, nil, false}
+            stack << {receiver, active_prefix, skip_ranges, nil, false} if receiver
+            router_name = local_router_function_call_name(resolve_router_argument(merge_arg, source, let_router_builders), source)
+            if router_name && merged_router_names.includes?(router_name)
+              entries = prefixes[router_name] ||= [] of String
+              entries << active_prefix unless entries.includes?(active_prefix)
+            else
+              stack << {merge_arg, active_prefix, skip_ranges, nil, false}
+            end
             next
           end
         end
 
-        push_named_children_reversed(stack, node) { |child| {child, active_prefix, nil.as(Int32?), false} }
+        push_named_children_reversed(stack, node) { |child| {child, active_prefix, skip_ranges, nil.as(Int32?), false} }
       end
     end
 
@@ -1277,7 +1305,7 @@ module Analyzer::Rust
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
             let_calls = build_let_call_index(root, src)
-            collect_cross_router_edges(root, src, base, primary_module(fpath), test_regions, let_calls, edges)
+            collect_cross_router_edges(root, src, base, primary_module(fpath), fpath, test_regions, let_calls, edges)
           end
         rescue e
           logger.debug "axum cross-nest index error #{fpath}: #{e}"
@@ -1301,9 +1329,11 @@ module Analyzer::Rust
                                            source : String,
                                            base : String,
                                            file_mod : String,
+                                           fpath : String,
                                            test_regions : Array(Tuple(Int32, Int32)),
                                            let_calls : Hash(String, LibTreeSitter::TSNode),
                                            edges : Hash(NestScopedKey, Array(NestEdge)))
+      inline_ranges = inline_nest_ranges(root, source, test_regions, let_calls)
       walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "function_item"
         next if RustEngine.inside_test_region?(node, test_regions)
@@ -1326,7 +1356,9 @@ module Analyzer::Rust
             next if args.empty?
             child = resolve_router_call(args[0], source, let_calls)
             next unless child
-            add_cross_edge(edges, parent, child, "", source, base)
+            enclosing_nest_prefixes(call, inline_ranges).each do |outer|
+              add_cross_edge(edges, parent, child, outer, source, base, fpath)
+            end
           else
             next unless NEST_NAMES.includes?(field)
             args = named_arguments(call)
@@ -1335,10 +1367,57 @@ module Analyzer::Rust
             next unless prefix
             child = resolve_router_call(args[1], source, let_calls)
             next unless child
-            add_cross_edge(edges, parent, child, prefix, source, base)
+            enclosing_nest_prefixes(call, inline_ranges).each do |outer|
+              add_cross_edge(edges, parent, child, join_nest(outer, prefix), source, base, fpath)
+            end
           end
         end
       end
+    end
+
+    # `{start, end} => [prefix]` of every router built inline under a nest:
+    # `.nest("/p", Router::new()..)` or `.nest("/p", api)` with
+    # `let api = Router::new()..`. Mounts inside that chain sit under `/p`.
+    private def inline_nest_ranges(root : LibTreeSitter::TSNode, source : String,
+                                   test_regions : Array(Tuple(Int32, Int32)),
+                                   let_calls : Hash(String, LibTreeSitter::TSNode)) : Hash(ByteRange, Array(String))
+      ranges = {} of ByteRange => Array(String)
+      walk(root) do |call|
+        next unless Noir::TreeSitter.node_type(call) == "call_expression"
+        next if RustEngine.inside_test_region?(call, test_regions)
+        nest = extract_nest_call(call, source)
+        next unless nest
+        target = resolve_router_call(nest[1], source, let_calls)
+        next unless target && inline_router_chain?(target, source)
+        bucket = (ranges[node_byte_range(target)] ||= [] of String)
+        bucket << nest[0] unless bucket.includes?(nest[0])
+      end
+      ranges
+    end
+
+    # A chain that starts from a constructor (`Router::new()`,
+    # `OpenApiRouter::new()`), not from a call to a router-builder fn.
+    private def inline_router_chain?(call : LibTreeSitter::TSNode, source : String) : Bool
+      base_call = innermost_router_call(call, source)
+      return false unless base_call
+      fn = Noir::TreeSitter.field(base_call, "function")
+      return false unless fn
+      fn = unwrap_generic_function(fn)
+      Noir::TreeSitter.node_type(fn) == "scoped_identifier" && Noir::TreeSitter.node_text(fn, source).ends_with?("::new")
+    end
+
+    # Every prefix the inline nests enclosing `call` compose to, outermost
+    # first; `[""]` outside any. A chain nested under two prefixes yields two.
+    private def enclosing_nest_prefixes(call : LibTreeSitter::TSNode, ranges : Hash(ByteRange, Array(String))) : Array(String)
+      result = [""]
+      return result if ranges.empty?
+      start_byte = LibTreeSitter.ts_node_start_byte(call).to_i
+      ranges.keys.sort!.each do |range|
+        s, e = range
+        next unless start_byte >= s && start_byte < e
+        result = result.flat_map { |outer| ranges[range].map { |p| join_nest(outer, p) } }.uniq!
+      end
+      result
     end
 
     private def add_cross_edge(edges : Hash(NestScopedKey, Array(NestEdge)),
@@ -1346,14 +1425,33 @@ module Analyzer::Rust
                                child_call : LibTreeSitter::TSNode,
                                prefix : String,
                                source : String,
-                               base : String)
-      mod, leaf = scoped_module_leaf(child_call, source)
-      return unless mod && leaf
+                               base : String,
+                               fpath : String)
+      if target = resolve_router_fn(child_call, source, fpath)
+        file, leaf = target
+        # A fn defined in this file is left to the per-file mount machinery.
+        return if Noir::PathScope.expand(file) == Noir::PathScope.expand(fpath)
+        child = {crate_scope_for(file), primary_module(file), leaf}
+      else
+        mod, leaf = scoped_module_leaf(child_call, source)
+        return unless mod && leaf
+        child = {base, mod, leaf}
+      end
 
-      child = {base, mod, leaf}
       edge = {child, prefix}
       bucket = (edges[parent] ||= [] of NestEdge)
       bucket << edge unless bucket.includes?(edge)
+    end
+
+    # `{file, leaf}` of the fn a router-builder call names, followed through
+    # `use` imports, aliases, re-exports and workspace crate names.
+    private def resolve_router_fn(call : LibTreeSitter::TSNode, source : String, fpath : String) : Tuple(String, String)?
+      base_call = innermost_router_call(call, source) || return
+      fn = Noir::TreeSitter.field(base_call, "function") || return
+      fn = unwrap_generic_function(fn)
+      return unless Noir::TreeSitter.node_type(fn).in?("identifier", "scoped_identifier")
+      file, leaf, _ = resolve_rust_fn(Noir::TreeSitter.node_text(fn, source), fpath) || return
+      {file, leaf}
     end
 
     private def propagate_cross_prefix(parent : NestScopedKey,
@@ -1541,7 +1639,7 @@ module Analyzer::Rust
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
-            collect_utoipa_fns(root, src, base, file_mod, test_regions, nest_edges, nested_set, fn_routes)
+            collect_utoipa_fns(root, src, base, file_mod, fpath, test_regions, nest_edges, nested_set, fn_routes)
           end
         rescue e
           logger.debug "axum utoipa index scan error #{fpath}: #{e}"
@@ -1563,7 +1661,7 @@ module Analyzer::Rust
       index
     end
 
-    private def collect_utoipa_fns(root : LibTreeSitter::TSNode, source : String, base : String, file_mod : String,
+    private def collect_utoipa_fns(root : LibTreeSitter::TSNode, source : String, base : String, file_mod : String, fpath : String,
                                    test_regions : Array(Tuple(Int32, Int32)),
                                    nest_edges : Hash(UtoipaScopedKey, Array(UtoipaNestEdge)),
                                    nested_set : Set(UtoipaScopedKey),
@@ -1591,7 +1689,7 @@ module Analyzer::Rust
             next if named.size < 2
             prefix = string_literal_content(named[0], source)
             next unless prefix
-            child_key = nest_child_key(named[1], source, base, file_mod)
+            child_key = nest_child_key(named[1], source, base, file_mod, fpath)
             next unless child_key
             (nest_edges[fn_key] ||= [] of UtoipaNestEdge) << {child_key, prefix}
             nested_set.add(child_key)
@@ -1600,8 +1698,12 @@ module Analyzer::Rust
       end
     end
 
-    private def nest_child_key(node : LibTreeSitter::TSNode, source : String, base : String, file_mod : String) : UtoipaScopedKey?
+    private def nest_child_key(node : LibTreeSitter::TSNode, source : String, base : String, file_mod : String, fpath : String) : UtoipaScopedKey?
       return unless Noir::TreeSitter.node_type(node) == "call_expression"
+      if target = resolve_router_fn(node, source, fpath)
+        file, leaf = target
+        return {crate_scope_for(file), primary_module(file), leaf}
+      end
       fn = Noir::TreeSitter.field(node, "function")
       return unless fn
       case Noir::TreeSitter.node_type(fn)
