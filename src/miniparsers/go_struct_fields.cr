@@ -93,6 +93,23 @@ module Noir::GoStructFields
       flatten(fields, decl_path, depth)
     end
 
+    # `{package dir, type name}` of each named struct field `name` the
+    # package at `dir` declares (`User *handler.UserHandler`), the type's
+    # package read off the declaring file's imports.
+    def field_types(dir : String, name : String) : Array(Tuple(String, String))
+      found = [] of Tuple(String, String)
+      structs_for(dir).each_value do |(file, fields)|
+        fields.each do |field|
+          next if field.name != name || field.embedded
+          qualifier, _, type = field.type.lchop('*').rpartition('.')
+          next unless type.matches?(/\A[A-Za-z_]\w*\z/)
+          type_dir = qualifier.empty? ? dir : (imports_of(file)[qualifier]?.try { |import_path| @import_dirs[import_path]? } || next)
+          found << {type_dir, type}
+        end
+      end
+      found.uniq
+    end
+
     # Where a bind target's type is declared in a body: `var req T`, `req T`
     # in a `var (...)` block, `req := T{` / `&T{` / `new(T)`, or an anonymous
     # `struct {` literal.
