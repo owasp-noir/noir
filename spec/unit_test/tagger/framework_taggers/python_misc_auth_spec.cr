@@ -375,5 +375,9 @@ describe "PythonMiscAuthTagger" do
     it "reads an exclude list whose patterns hold brackets" do
       tag.call(svc_a, 13, "/health", "GET").should be_empty
     end
+
+    it "leaves a Controller's routes open when its opt excludes them" do
+      tag.call(svc_a, 20, "/pub/info", "GET").should be_empty
+    end
   end
 end

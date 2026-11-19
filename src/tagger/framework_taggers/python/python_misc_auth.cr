@@ -52,7 +52,7 @@ class PythonMiscAuthTagger < FrameworkTagger
           endpoint.add_tag(Tag.new("auth", "Protected by Litestar guards=[#{guard}]", "python_misc_auth"))
           return
         end
-        if backend = litestar_backend_guard(endpoint, path_info.path, call)
+        if backend = litestar_backend_guard(endpoint, path_info.path, call, lines, line_idx)
           endpoint.add_tag(Tag.new("auth", "Protected by #{backend}", "python_misc_auth"))
           return
         end
@@ -120,7 +120,7 @@ class PythonMiscAuthTagger < FrameworkTagger
   # puts its middleware in front of every route of that app. It lets a
   # request through when the path matches an `exclude` pattern anywhere
   # (Litestar joins them into one regex and `findall`s the path), when the
-  # route's opt carries `exclude_opt_key`
+  # route's opt (its own or its Controller's) carries `exclude_opt_key`
   # (`exclude_from_auth=True`), or for an `exclude_http_methods` verb
   # (OPTIONS and HEAD by default).
   LITESTAR_AUTH_BACKEND = /^([A-Za-z_]\w*)\s*(?::[^=\n]+)?=\s*(?:[\w.]+\.)?(JWTAuth|JWTCookieAuth|OAuth2PasswordBearerAuth|SessionAuth)\b/
@@ -132,14 +132,15 @@ class PythonMiscAuthTagger < FrameworkTagger
 
   @litestar_backends : Array(LitestarBackend)? = nil
 
-  private def litestar_backend_guard(endpoint : Endpoint, path : String, call : String) : String?
+  private def litestar_backend_guard(endpoint : Endpoint, path : String, call : String, lines : Array(String), route_idx : Int32) : String?
     file = File.expand_path(path)
     url = endpoint.url.sub(/\A[a-zA-Z][\w+.-]*:\/\/[^\/]*/, "")
     litestar_backends.each do |backend|
       next unless file.starts_with?(backend.scope)
       next if backend.methods.includes?(endpoint.method.upcase)
       key = Regex.escape(backend.opt_key)
-      next if call.matches?(/\b#{key}\s*=\s*True\b|["']#{key}["']\s*:\s*True\b/)
+      opt = /\b#{key}\s*=\s*True\b|["']#{key}["']\s*:\s*True\b/
+      next if call.matches?(opt) || controller_attribute(lines, route_idx, "opt").try(&.matches?(opt))
       next if backend.exclude.any?(&.matches?(url))
       return "Litestar #{backend.kind} #{backend.name} (outside its exclude paths)"
     end
@@ -221,7 +222,12 @@ class PythonMiscAuthTagger < FrameworkTagger
     if m = call.match(LITESTAR_GUARDS_RE)
       return m[1]
     end
+    controller_attribute(lines, route_idx, "guards").try(&.match(/\Aguards\s*(?::[^=]+)?=\s*\[\s*([A-Za-z_][\w.]*)/)).try(&.[1])
+  end
 
+  # The `name = ...` statement in the body of the class enclosing the route
+  # at `route_idx`, joined across lines.
+  private def controller_attribute(lines : Array(String), route_idx : Int32, name : String) : String?
     route_indent = lines[route_idx].size - lines[route_idx].lstrip.size
     return if route_indent == 0
     idx = route_idx - 1
@@ -236,8 +242,8 @@ class PythonMiscAuthTagger < FrameworkTagger
           body_line = lines[body]
           body_stripped = body_line.lstrip
           break if !body_stripped.empty? && !body_stripped.starts_with?('#') && body_line.size - body_stripped.size <= indent
-          if body_line.size - body_stripped.size == route_indent && (m = body_stripped.match(/\Aguards\s*(?::[^=]+)?=\s*\[\s*([A-Za-z_][\w.]*)/))
-            return m[1]
+          if body_line.size - body_stripped.size == route_indent && body_stripped.matches?(/\A#{name}\s*(?::[^=]+)?=/)
+            return route_call(lines, body).strip
           end
           body += 1
         end
