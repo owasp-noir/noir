@@ -969,7 +969,7 @@ module Analyzer::Python
             method_extra_params = is_class_router ? "" : extra_params
             indirect_params = indirect_request_params(codeblock_lines, path)
             (prefixes || [prefix]).flat_map { |p| get_endpoints(method, route_path, method_extra_params, codeblock_lines, p) }.each do |endpoint|
-              get_filtered_params(endpoint.method, indirect_params).each { |param| endpoint.push_param(param) }
+              get_filtered_params(endpoint.method, indirect_params + reqparse_params(codeblock_lines, path, endpoint.method)).each { |param| endpoint.push_param(param) }
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint.details = details
               endpoint.handler = handler_at(lines, _class_def_index, path)
@@ -1102,7 +1102,8 @@ module Analyzer::Python
             codeblock_lines = codeblock.split("\n")
 
             # Extract parameters from method body
-            suspicious_params = extract_request_params(codeblock_lines) + indirect_request_params(codeblock_lines, method_file)
+            suspicious_params = extract_request_params(codeblock_lines) + indirect_request_params(codeblock_lines, method_file) +
+                                reqparse_params(codeblock_lines, method_file, http_method)
             params = get_filtered_params(http_method, suspicious_params)
 
             prefixes.each do |route_prefix|
@@ -2073,6 +2074,70 @@ module Analyzer::Python
         end
       end
       params
+    end
+
+    REQPARSE_RECEIVER_RE = /\b((?:self\.)?[A-Za-z_]\w*)\.parse_args\s*\(/
+    # reqparse `location=` -> param type (`values` is args on GET, form else).
+    REQPARSE_LOCATIONS = {"args" => "query", "form" => "form", "files" => "form", "json" => "json",
+                          "headers" => "header", "cookies" => "cookie"}
+    @reqparse_binding_res = Hash(::String, Regex).new
+    @module_reqparse_args = Hash(Tuple(::String, ::String), Array(Tuple(::String, Array(::String)))?).new
+
+    # flask-restful / flask-restx `reqparse` arguments a handler reads with
+    # `<parser>.parse_args()`, the parser built in the handler, at module
+    # level (in `path` or imported) or as `self.<parser>` in the class. An
+    # argument without `location=` is a query param on GET, JSON otherwise.
+    private def reqparse_params(codeblock_lines : Array(::String), path : ::String, method : ::String) : Array(Param)
+      params = [] of Param
+      return params unless codeblock_lines.any?(&.includes?(".parse_args("))
+      # Dedented, so the syntax tree reads the handler's own calls.
+      margin = codeblock_lines.reject(&.blank?).min_of? { |line| line.size - line.lstrip.size } || 0
+      body = codeblock_lines.map { |line| line.blank? ? "" : line[margin..] }.join("\n")
+      body.scan(REQPARSE_RECEIVER_RE) do |match|
+        receiver = match[1]
+        arguments = reqparse_arguments(body, receiver) || module_reqparse_arguments(path, receiver) || next
+        arguments.each do |name, locations|
+          types = locations.empty? ? [method == "GET" ? "query" : "json"] : locations.compact_map { |location| location == "values" ? (method == "GET" ? "query" : "form") : REQPARSE_LOCATIONS[location]? }
+          types.uniq.each { |type| params << Param.new(name, "", type) }
+        end
+      end
+      params
+    end
+
+    # {wire name, locations} of each `add_argument` on `receiver` in
+    # `source`, or nil when `source` does not bind `receiver` to a
+    # `RequestParser(...)`, `<api>.parser()` or `<parser>.copy()` (whose
+    # arguments it inherits).
+    private def reqparse_arguments(source : ::String, receiver : ::String, depth : Int32 = 0) : Array(Tuple(::String, Array(::String)))?
+      binding_re = @reqparse_binding_res[receiver] ||=
+        /^[ \t]*#{Regex.escape(receiver)}[ \t]*(?::[^=\n]*)?=[ \t]*(?:[\w.]*RequestParser[ \t]*\(|[\w.]+\.parser[ \t]*\(|((?:self\.)?[A-Za-z_]\w*)\.copy[ \t]*\()/m
+      binding = source.match(binding_re) || return
+      arguments = [] of Tuple(::String, Array(::String))
+      if (parent = binding[1]?) && depth < 3
+        reqparse_arguments(source, parent, depth + 1).try { |inherited| arguments.concat(inherited) }
+      end
+      Noir::TreeSitterPythonRouteExtractor.extract_attribute_calls(source, ["add_argument"]).each do |call|
+        next unless call.receiver == receiver && call.literals.includes?("#0")
+        locations = call.keywords["location"]?.try(&.scan(/\w+/).map(&.[0])) || [] of ::String
+        arguments << {call.args[0], locations}
+      end
+      arguments
+    end
+
+    # A parser declared at module level in `path` or in the module it is
+    # imported from; `self.<parser>` is read off the whole file.
+    # ponytail: two classes of one file binding the same `self.<parser>`
+    # share their arguments.
+    private def module_reqparse_arguments(path : ::String, receiver : ::String) : Array(Tuple(::String, Array(::String)))?
+      file, name = receiver.starts_with?("self.") ? {path, receiver} : imported_declaration(path, receiver) || {path, receiver}
+      key = {file, name}
+      return @module_reqparse_args[key] if @module_reqparse_args.has_key?(key)
+      source = if name.starts_with?("self.")
+                 fetch_file_content(file)
+               else
+                 fold_python_continuations(fetch_file_lines(file)).reject { |line| line.empty? || line[0].ascii_whitespace? }.join("\n")
+               end
+      @module_reqparse_args[key] = reqparse_arguments(source, name)
     end
 
     # `request.*` reads in the functions the `def` in `source` (in `path`)

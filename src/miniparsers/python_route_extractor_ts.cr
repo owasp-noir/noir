@@ -332,9 +332,9 @@ module Noir
     # A `<receiver>.<attribute>(...)` call: positional arguments (string
     # literals decoded, anything else as source text) and keywords.
     # `literals` names the string arguments: keyword names, and `#<index>`
-    # for positional ones.
+    # for positional ones. `receiver` is the source text before `.<attribute>`.
     record AttributeCall, attribute : String, args : Array(String), keywords : Hash(String, String),
-      literals : Set(String) = Set(String).new
+      literals : Set(String) = Set(String).new, receiver : String = ""
 
     # Every `<x>.<attribute>(...)` call whose attribute is in `attributes`
     # — mount calls such as `app.include_router(router, prefix="/v1")`.
@@ -368,7 +368,8 @@ module Noir
               args << argument_text(arg, source)
             end
           end
-          calls << AttributeCall.new(name, args, keywords, literals)
+          receiver = Noir::TreeSitter.field(function, "object").try { |object| Noir::TreeSitter.node_text(object, source) } || ""
+          calls << AttributeCall.new(name, args, keywords, literals, receiver)
         end
       end
       calls
