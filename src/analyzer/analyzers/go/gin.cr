@@ -300,26 +300,31 @@ module Analyzer::Go
       is_bind_line = line.matches?(BIND_LINE)
 
       unless is_bind_line
-        ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
-          if line.includes?("#{pattern}(")
-            add_param_to_endpoint(get_param(line), target)
-          end
-        end
+        line.scan(ACCESSOR_RE) { |m| add_param_to_endpoint(Param.new(m[2], "", accessor_type(m[1])), target) }
       end
       if is_bind_line && bind_marker
         add_param_to_endpoint(Param.new("body", "", bind_param_type(line)), target)
       end
-      # Read accessor only: `.Cookie("name")`. The `.Cookie(` anchor excludes
-      # Header.Get/Cookie.Get; the SetCookie exclusion avoids the write API.
-      if line.includes?(".Cookie(") && !line.includes?("SetCookie(")
-        match = line.match(/\.Cookie\s*\(\s*"([^"]*)"/)
-        if match
-          target.params << Param.new(match[1], "", "cookie")
-        end
+      # `c.Cookie("name")`, and the stdlib request behind the context
+      # (`c.Request.URL.Query().Get("q")`, `c.Request.Header.Get("X")`).
+      Noir::GoRequestParamExtractor.line_params(line, target.method).each { |param| add_param_to_endpoint(param, target) }
+    end
+
+    # The context's readers, every one on the line: `Query` with its
+    # `Default` / `Get` / `Array` / `Map` forms, the same `PostForm` family,
+    # `FormFile`, `GetHeader` and `Param`.
+    ACCESSOR_RE = /\.((?:Default|Get)?Query(?:Array|Map)?|(?:Default|Get)?PostForm(?:Array|Map)?|FormFile|GetHeader|Param)\s*\(\s*"([^"]*)"/
+
+    private def accessor_type(accessor : String) : String
+      if accessor.includes?("Query")
+        "query"
+      elsif accessor == "GetHeader"
+        "header"
+      elsif accessor == "Param"
+        "path"
+      else
+        "form"
       end
-      # `c.Request.Header.Get("X")` / `req.Header["X"]`: the stdlib read
-      # `c.GetHeader` wraps.
-      Noir::GoRequestParamExtractor.header_params(line).each { |header| add_param_to_endpoint(header, target) }
     end
 
     # Where a bind call reads from: `ShouldBindQuery(&q)` and
@@ -333,36 +338,6 @@ module Analyzer::Go
       when /binding\.Form(?:Post|Multipart)?\b/  then "form"
       else                                            "json"
       end
-    end
-
-    def get_param(line : String) : Param
-      param_type = "json"
-      if line.includes?("Query(")
-        param_type = "query"
-      end
-      if line.includes?("PostForm(")
-        param_type = "form"
-      end
-      if line.includes?("GetHeader(")
-        param_type = "header"
-      end
-      # `c.Param("id")` — Gin path variable accessor. The optimizer
-      # also derives `:id` path params from the URL pattern, but
-      # surfacing the accessor lets us catch handlers whose route
-      # path was resolved cross-file and avoids depending on the
-      # optimizer pass for direct-analyzer consumers.
-      if line.includes?(".Param(")
-        param_type = "path"
-      end
-
-      # Capture only the accessor's first string-literal argument. Naive
-      # split("(")/split(")") desyncs when DefaultQuery/DefaultPostForm's
-      # default-value argument contains nested calls (e.g. strconv.Itoa(n)).
-      if match = line.match(/(?:Query|PostForm|GetHeader|Param)\s*\(\s*"([^"]*)"/)
-        return Param.new(match[1], "", param_type)
-      end
-
-      Param.new("", "", "")
     end
   end
 end
