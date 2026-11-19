@@ -402,14 +402,22 @@ module Analyzer::CSharp::Common
     if short == type_name && (decl = member_defs_in(type_name, lines, masked_lines))
       return with_inherited_members(decl, file)
     end
+    # Memoised: a project's DTOs often share one file, which every action
+    # naming one of them would otherwise re-read.
+    @type_member_defs_cache[{type_name, file}] ||= declared_member_defs(type_name, short, file)
+  end
+
+  @type_member_defs_cache = Hash(Tuple(String, String), Array(String)).new
+
+  private def declared_member_defs(type_name : String, short : String, file : String) : Array(String)
     candidates = csharp_type_files[short]? || return [] of String
     # The declaration the name reaches through namespaces and `using`s; else
     # (an import the scan cannot see, e.g. a project-file `<Using>`) the one
     # sharing the most of the handler's path.
     path, namespace = resolve_type_file(type_name, file) ||
                       {candidates.max_by? { |candidate| common_prefix_size(candidate, file) } || return([] of String), nil}
-    lexer = Noir::CSharpLexer.new(read_file_content(path))
-    decl = member_defs_in(short, lexer.code_lines, lexer.masked_lines, namespace) || return [] of String
+    lexer = csharp_code(path)
+    decl = member_defs_in(short, lexer.code_lines, lexer.masked_lines, namespace, type_decl_lines(path)[short]?) || return [] of String
     with_inherited_members(decl, path)
   end
 
@@ -430,8 +438,8 @@ module Analyzer::CSharp::Common
       name = base.split('.').last
       path, namespace = resolve_type_file(base, file) || break
       break unless seen.add?("#{path}\0#{base}")
-      lexer = Noir::CSharpLexer.new(read_file_content(path))
-      inherited = member_defs_in(name, lexer.code_lines, lexer.masked_lines, namespace) || break
+      lexer = csharp_code(path)
+      inherited = member_defs_in(name, lexer.code_lines, lexer.masked_lines, namespace, type_decl_lines(path)[name]?) || break
       inherited.defs.each { |member| defs << member unless names.includes?(Common.member_name(member)) }
       names.concat(inherited.names)
       base = inherited.base
@@ -472,7 +480,7 @@ module Analyzer::CSharp::Common
                enclosing + [""] + masked.scan(USING_DECL_RE).map(&.[1]) + (@csharp_global_usings[project]? || [] of String)
              end
     declared = candidates.to_h do |path|
-      namespaces = read_file_content(path).scan(NAMESPACE_DECL_RE).map(&.[1])
+      namespaces = @file_namespaces[path] ||= read_file_content(path).scan(NAMESPACE_DECL_RE).map(&.[1])
       {path, namespaces.empty? ? [""] : namespaces}
     end
     scopes.each do |scope|
@@ -487,6 +495,26 @@ module Analyzer::CSharp::Common
 
   # The namespace each line of a file sits in (`""` for the global one),
   # following file-scoped and nested block `namespace` declarations.
+  @file_namespaces = Hash(String, Array(String)).new
+
+  # Type name => the lines of `path` that declare it, as `member_defs_in`
+  # finds them, read once per file rather than once per lookup.
+  TYPE_DECL_NAME_RE = /\b(?:record|class|struct)\s+(?:class\s+|struct\s+)?(\w+)/
+  @type_decl_index = Hash(String, Hash(String, Array(Int32))).new
+
+  private def type_decl_lines(path : String) : Hash(String, Array(Int32))
+    @type_decl_index[path] ||= begin
+      index = Hash(String, Array(Int32)).new
+      csharp_code(path).code_lines.each_with_index do |line, i|
+        line.scan(TYPE_DECL_NAME_RE) do |m|
+          found = index[m[1]] ||= [] of Int32
+          found << i unless found.last? == i
+        end
+      end
+      index
+    end
+  end
+
   private def line_namespaces(masked_lines : Array(String)) : Array(String)
     file_scoped = [] of String
     stack = [] of Tuple(String, Int32)
@@ -532,11 +560,11 @@ module Analyzer::CSharp::Common
   # `$"{{{RouteValue.SeName}}}"`. `csharp_string_value` reads the value an
   # expression has when it is fixed by the source: a literal, an
   # interpolation of readable holes, a local or `const`/`static` string, a
-  # `Type.Member` constant the scan declares, or a parameterless string
+  # `Type.Member` constant the scan declares, a parameterless string
   # method's single `return` (or an empty fall-through after
-  # setting-gated early returns). Anything else (a parameter, a
-  # concatenation, a ternary, a call with arguments) is nil, and the caller
-  # keeps its old behaviour.
+  # setting-gated early returns), or a `+` concatenation of readable
+  # operands. Anything else (a parameter, a ternary, a call with arguments)
+  # is nil, and the caller keeps its old behaviour.
   MAX_STRING_VALUE_DEPTH    =    6
   MAX_STRING_VALUE_STEPS    =   64
   MAX_STRING_VALUE_SIZE     = 1024
@@ -565,7 +593,11 @@ module Analyzer::CSharp::Common
   end
 
   private def string_value_of(expr : String, file : String, before : String, depth : Int32) : String?
-    if m = expr.match(STRING_LITERAL_VALUE_RE)
+    if operands = concatenation_operands(expr)
+      io = String::Builder.new
+      operands.each { |operand| io << (csharp_string_value(operand, file, before, depth + 1) || return) }
+      io.to_s
+    elsif m = expr.match(STRING_LITERAL_VALUE_RE)
       m[1].gsub(/\\(.)/) { |_, esc| esc[1] }
     elsif m = expr.match(VERBATIM_LITERAL_VALUE_RE)
       m[1].gsub("\"\"", "\"")
@@ -582,6 +614,28 @@ module Analyzer::CSharp::Common
     elsif m = expr.match(MEMBER_ACCESS_VALUE_RE)
       member_string_value(m[1], m[2], file, depth)
     end
+  end
+
+  # The operands of `expr` when it is a `+` chain at its top level (outside
+  # strings and brackets), else nil.
+  private def concatenation_operands(expr : String) : Array(String)?
+    return unless expr.includes?('+')
+    chars = expr.chars
+    operands = [] of String
+    nest = 0
+    start = 0
+    Noir::CSharpLexer.new(expr).masked.each_with_index do |char, i|
+      case char
+      when '(', '[', '{' then nest += 1
+      when ')', ']', '}' then nest -= 1
+      when '+'
+        next unless nest == 0
+        operands << chars[start...i].join
+        start = i + 1
+      end
+    end
+    return if operands.empty?
+    operands << chars[start..].join
   end
 
   # The text between the quotes of `expr` when the whole of it is one
@@ -773,11 +827,11 @@ module Analyzer::CSharp::Common
   # What `lines` declares for `type_name` (in `namespace` when given and the
   # file declares the name more than once), or nil when it does not.
   private def member_defs_in(type_name : String, lines : Array(String), masked_lines : Array(String),
-                             namespace : String? = nil) : TypeMembers?
+                             namespace : String? = nil, decl_lines : Array(Int32)? = nil) : TypeMembers?
     # Hoisted out of the loop: an interpolated regex literal recompiles
     # (PCRE2 JIT) on every evaluation, i.e. once per line.
     type_decl_regex = /\b(?:record|class|struct)\s+(?:class\s+|struct\s+)?#{Regex.escape(type_name)}\b/
-    decl_lines = (0...lines.size).select do |i|
+    decl_lines ||= (0...lines.size).select do |i|
       lines[i].includes?(type_name) && lines[i].matches?(type_decl_regex)
     end
     def_idx = decl_lines.first? || return
@@ -937,7 +991,7 @@ module Analyzer::CSharp::Common
   end
 
   # The members of the body type of handler parameter `param_def` bound
-  # from `param_type` (`json`/`form`), or nil when its type is not a plain
+  # from `param_type` (`json`/`form`/`query`), or nil when its type is not a plain
   # type the scan declares (a primitive, a generic). A JSON collection body
   # (`IEnumerable<EventModel>`, `EventModel[]`) is an array of that element,
   # so its inputs are the element's members.
@@ -962,7 +1016,11 @@ module Analyzer::CSharp::Common
     return if member_def.matches?(JSON_IGNORE_RE)
     cleaned = member_def.gsub(ATTRIBUTE_LIST_RE, "").sub(/=.*/m, "").strip
     name = cleaned.match(/([A-Za-z_]\w*)\s*\z/).try(&.[1]) || return
-    if explicit = member_def.match(JSON_PROPERTY_NAME_RE)
+    # A model-bound member's `[FromQuery(Name = "x")]`/`[FromForm(…)]` wins;
+    # a query string never reads a serializer name.
+    if param_type != "json" && (bound = Common.explicit_binding_name(member_def))
+      name = bound
+    elsif param_type != "query" && (explicit = member_def.match(JSON_PROPERTY_NAME_RE))
       name = explicit[1]
     elsif param_type == "json"
       name = Common.json_camel_case(name)

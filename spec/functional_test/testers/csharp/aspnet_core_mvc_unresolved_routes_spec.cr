@@ -2,11 +2,12 @@ require "../../func_spec.cr"
 
 # A verb attribute whose route is a constant (`[HttpGet(ApiRoutes.X)]`) is
 # reported at the controller route and tagged `unresolved-route`; the string
-# literal of a sibling attribute (`Authorize("Admin")`) is never its route.
+# literal of a sibling attribute (`Authorize("Admin")`) is never its route,
+# while a readable `nameof(Remove)` is.
 expected_endpoints = [
   Endpoint.new("/api/Reports", "GET"),
   Endpoint.new("/api/Reports", "POST"),
-  Endpoint.new("/api/Reports", "DELETE"),
+  Endpoint.new("/api/Reports/Remove", "DELETE"),
   Endpoint.new("/api/Reports/{id}", "GET", [Param.new("id", "", "path")]),
 ]
 
@@ -35,7 +36,7 @@ describe "ASP.NET Core MVC unresolved route tags", tags: "functional" do
 
     tags.call("GET", "/api/Reports").should eq ["unresolved-route"]
     tags.call("POST", "/api/Reports").should eq ["unresolved-route"]
-    tags.call("DELETE", "/api/Reports").should eq ["unresolved-route"]
+    tags.call("DELETE", "/api/Reports/Remove").should be_empty
     tags.call("GET", "/api/Reports/{id}").should be_empty
     app.endpoints.map(&.url).should_not contain("/Admin")
   end

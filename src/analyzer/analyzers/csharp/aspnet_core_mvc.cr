@@ -18,9 +18,10 @@ module Analyzer::CSharp
     TAGGER                       = "aspnet_core_mvc_analyzer"
     UNRESOLVED_ROUTE_DESCRIPTION = "Route template is a constant the analyzer cannot read; reported at the controller route"
 
-    CONTROLLER_PLACEHOLDER_RE = /\{controller[=:?}]/
-    ACTION_PLACEHOLDER_RE     = /\{action[=:?}]/
-    AREA_PLACEHOLDER_RE       = /\{area[=:?}]/
+    # Route value names are case-insensitive (`{Controller=Home}`).
+    CONTROLLER_PLACEHOLDER_RE = /\{controller[=:?}]/i
+    ACTION_PLACEHOLDER_RE     = /\{action[=:?}]/i
+    AREA_PLACEHOLDER_RE       = /\{area[=:?}]/i
 
     # A conventional route template plus the `controller`/`action`/`area` its
     # `defaults` pin. A template without a `{controller}`/`{action}`
@@ -234,15 +235,15 @@ module Analyzer::CSharp
     # `~/x`) stays as it is; `[Route("")]`, kept as `/`, is the prefix itself.
     # ponytail: only controllers with their own `[Route]` take the prefix; a
     # convention that also roots route-less controllers is not modelled.
-    private def prefixed_class_routes(routes : Array(String), prefix : String?) : Array(String)
+    private def prefixed_class_routes(routes : Array(ClassRoute), prefix : String?) : Array(ClassRoute)
       return routes unless prefix
-      routes.map do |route|
+      routes.map do |route, unread|
         if route == "/"
-          prefix
+          {prefix, unread}
         elsif route.starts_with?('/') || route.starts_with?("~/")
-          route
+          {route, unread}
         else
-          "#{prefix}/#{route}"
+          {"#{prefix}/#{route}", unread}
         end
       end
     end
@@ -420,8 +421,8 @@ module Analyzer::CSharp
 
       # Selected controllers grouped by file so a file holding several of them
       # is lexed once, not once per class.
-      selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes, Array(Noir::CSharpType)))).new do |hash, key|
-        hash[key] = [] of Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes, Array(Noir::CSharpType))
+      selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes, Array(Noir::CSharpType), Bool))).new do |hash, key|
+        hash[key] = [] of Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes, Array(Noir::CSharpType), Bool)
       end
       # A base class may live in another project of the solution
       # (`Squidex.Web`'s `ApiController`): names the scope does not declare
@@ -449,7 +450,7 @@ module Analyzer::CSharp
           routes = inherited_class_routes(parts, index, class_routes)
           routes = {prefixed_class_routes(routes[0], @convention_prefixes[scope]?), routes[1]}
           patterns = @closed_scopes.includes?(scope) ? route_patterns : area_patterns(route_patterns, routes[1])
-          selected[file] << {type, patterns, routes, ancestor_types(parts, index)}
+          selected[file] << {type, patterns, routes, ancestor_types(parts, index), attributes.includes?("ApiController")}
         end
       end
 
@@ -457,19 +458,19 @@ module Analyzer::CSharp
       selected.each do |file, controllers|
         lexer = file_lexer(file)
         next unless lexer
-        controllers.each do |type, route_patterns, routes, ancestors|
-          analyze_controller(file, lexer, type, route_patterns, routes, include_callee)
+        controllers.each do |type, route_patterns, routes, ancestors, api_controller|
+          analyze_controller(file, lexer, type, route_patterns, routes, include_callee, api_controller)
           next if ancestors.empty?
           # ASP.NET builds an action from every public method a controller
           # inherits, and a CRUD base (`RestController<T>`) is where most of
           # a project's attributed actions live. One the controller redeclares
           # (`override`, `new`, an overload) is the controller's own.
-          declared = declared_method_names(lexer, type)
+          declared = declared_method_names(type, file)
           ancestors.each do |ancestor|
             ancestor_file = @type_files[ancestor]? || next
             ancestor_lexer = ancestor_file == file ? lexer : (lexers[ancestor_file] ||= file_lexer(ancestor_file) || next)
-            analyze_controller(ancestor_file, ancestor_lexer, ancestor, route_patterns, routes, include_callee, owner: type, owner_path: PathInfo.new(file, type.start_line + type.header.count('\n') + 1), skip: declared)
-            declared = declared | declared_method_names(ancestor_lexer, ancestor)
+            analyze_controller(ancestor_file, ancestor_lexer, ancestor, route_patterns, routes, include_callee, api_controller, owner: type, owner_path: PathInfo.new(file, type.start_line + type.header.count('\n') + 1), skip: declared)
+            declared = declared | declared_method_names(ancestor, ancestor_file)
           end
         end
       end
@@ -490,9 +491,17 @@ module Analyzer::CSharp
       found
     end
 
-    # Names of the public methods a class declares.
-    private def declared_method_names(lexer : Noir::CSharpLexer, type : Noir::CSharpType) : Set(String)
-      type.decl.methods.select { |method| method.public? && method.type_params.nil? }.map(&.name).to_set
+    # Names of the public methods a class declares, less the `override`s
+    # without routing attributes: those keep the overridden action's
+    # routing (`[Http*]`/`[Route]` are inherited), so it is reported.
+    private def declared_method_names(type : Noir::CSharpType, file : String) : Set(String)
+      scope = route_scope_for(file, @project_roots)
+      type.decl.methods.select do |method|
+        next false unless method.public? && method.type_params.nil?
+        next true unless method.modifiers.includes?("override")
+        action = action_attributes(method.attributes, scope, file)
+        action.explicit || action.non_action || !action.renamed.nil?
+      end.map(&.name).to_set
     end
 
     # Moves the files naming one of `names` out of `pool` and returns them.
@@ -614,7 +623,10 @@ module Analyzer::CSharp
     end
 
     # The `[Route]` templates and `[Area]` name a controller class declares.
-    alias ClassRoutes = Tuple(Array(String), String?)
+    # A template is `{template, unread}`: `unread` when it is a constant the
+    # analyzer can only read in part (see `partial_route_template`).
+    alias ClassRoute = Tuple(String, Bool)
+    alias ClassRoutes = Tuple(Array(ClassRoute), String?)
 
     # The project's own route attributes (`[V3ApiController("series")]`,
     # `[RestGetById]`), read from their definitions.
@@ -647,35 +659,52 @@ module Analyzer::CSharp
       attr.argument("template")
     end
 
+    # A template argument's value: a literal, or a constant expression the
+    # scan can read (`ApiRoutes.Posts.Get`, `Base + "/tags"`).
+    private def route_template(arg : Noir::CSharpDecl::Arg, file : String) : String?
+      arg.literal || csharp_string_value(arg.text, file)
+    end
+
     # Reads the class's own attribute list, however many lines and other
     # attributes it spans. `[Route("")]` is a real template: it roots the
     # actions at `/` and, being the class's own, replaces an inherited
     # `[Route("[controller]")]`, so it is kept as `/`. `[Route(Constants.
     # PrefixApi)]`: a constant the scan declares is read; one it cannot read
-    # contributes no route.
+    # is still the controller's route, kept with placeholders.
     private def class_header_routes(lexer : Noir::CSharpLexer, type : Noir::CSharpType, file : String) : ClassRoutes
-      routes = [] of String
-      custom = [] of String
+      routes = [] of ClassRoute
+      custom = [] of ClassRoute
       area = nil
       scope = route_scope_for(file, @project_roots)
       type.decl.attributes.each do |attr|
         case attr.name
         when "Route"
           arg = template_arg(attr) || next
-          template = arg.literal || (arg.text.matches?(IDENTIFIER_PATH_RE) ? csharp_string_value(arg.text, file) : nil)
-          routes << (template.empty? ? "/" : template) if template
+          if template = route_template(arg, file)
+            routes << {template.empty? ? "/" : template, false}
+          else
+            routes << {partial_route_template(arg.text, file), true}
+          end
         when "Area"
           area ||= attr.argument("areaName").try { |arg| csharp_string_value(arg.text, file) }
         else
           found = custom_route(attr, scope) || next
           template = found.template
-          custom << (template.empty? ? "/" : template) if found.verb.nil? && template
+          custom << {template.empty? ? "/" : template, false} if found.verb.nil? && template
         end
       end
       {routes + custom, area.presence}
     end
 
-    IDENTIFIER_PATH_RE = /\A[A-Za-z_][\w.]*\z/
+    # `"{cryptoCode}/" + PayjoinClient.BIP21EndpointKey` with the constant
+    # outside the scan: each readable operand of the concatenation, each
+    # unreadable one a `{BIP21EndpointKey}` placeholder named after it.
+    private def partial_route_template(expr : String, file : String) : String
+      operands = concatenation_operands(expr.strip) || [expr]
+      operands.join do |operand|
+        csharp_string_value(operand, file) || "{#{operand.strip.match(/\A[\w.]*?(\w+)\z/).try(&.[1]) || "route"}}"
+      end
+    end
 
     # `[Route]` and `[Area]` are `Inherited = true`: a controller without its
     # own takes them from the nearest base class that declares them.
@@ -683,7 +712,7 @@ module Analyzer::CSharp
                                        index : Hash(String, Array(Noir::CSharpType)),
                                        class_routes : Hash(Noir::CSharpType, ClassRoutes),
                                        visited = Set(String).new) : ClassRoutes
-      routes = parts.flat_map { |part| class_routes[part]?.try(&.[0]) || [] of String }.uniq!
+      routes = parts.flat_map { |part| class_routes[part]?.try(&.[0]) || [] of ClassRoute }.uniq!
       area = parts.compact_map { |part| class_routes[part]?.try(&.[1]) }.first?
       return {routes, area} if !routes.empty? && area
       return {routes, area} unless visited.add?(parts.first.name)
@@ -701,22 +730,26 @@ module Analyzer::CSharp
       {routes, area}
     end
 
-    # What an action's attributes declare: one `{verb, route}` per verb
-    # attribute (`[HttpGet("a"), HttpHead("a")]` is two), the verb-less
-    # `[Route]` a bare verb inherits, whether any routing attribute is
-    # present, `[NonAction]`, the verbs whose route argument is a constant
-    # the analyzer cannot read, and an `[ActionName]` rename.
-    record ActionAttributes, verb_routes : Array(Tuple(String, String)), route_attr : String,
-      explicit : Bool, non_action : Bool, unresolved : Set(String), renamed : String?
+    # What an action's attributes declare: its selectors, whether any
+    # routing attribute is present, `[NonAction]`, and an `[ActionName]`
+    # rename. A selector is `{verb, route, unresolved}`: `route` is nil when
+    # the action has no template of its own, `unresolved` when its template
+    # is a constant the analyzer cannot read. As in ASP.NET Core, every
+    # `[Route]` and every verb attribute with a template is a selector;
+    # template-less verbs join each `[Route]` (ANY when there are none), or
+    # stand alone at the controller route when the action has no `[Route]`.
+    record ActionAttributes, selectors : Array(Tuple(String, String?, Bool)),
+      explicit : Bool, non_action : Bool, renamed : String?
 
     VERB_ATTRIBUTES = {
       "HttpGet" => "GET", "HttpPost" => "POST", "HttpPut" => "PUT", "HttpDelete" => "DELETE",
       "HttpPatch" => "PATCH", "HttpHead" => "HEAD", "HttpOptions" => "OPTIONS",
     }
 
-    # A route argument that is a name (`ApiRoutes.Item`, `Const + "/x"`): the
-    # route exists but cannot be read here, so the action is reported at the
-    # class route with an `unresolved-route` tag.
+    # A route argument the analyzer cannot read (`ApiRoutes.Item` the scan
+    # does not declare): the route exists, so the action is reported at the
+    # class route, or conventionally without one, with an `unresolved-route`
+    # tag. For a custom route attribute, only a name argument counts.
     UNREAD_ROUTE_ARG_RE = /\A[A-Za-z_]/
 
     # ASP.NET Core routing has always accepted an arbitrary method string
@@ -725,23 +758,32 @@ module Analyzer::CSharp
     ACCEPT_VERB_TOKENS  = %w[GET POST PUT DELETE PATCH HEAD OPTIONS QUERY]
     HTTP_METHODS_ARG_RE = /\A(?:\w+\.)*HttpMethods\s*\.\s*([A-Za-z]+)\z/
 
-    private def action_attributes(attrs : Array(Noir::CSharpDecl::Attribute), scope : String) : ActionAttributes
-      verb_routes = [] of Tuple(String, String)
-      route_attr = ""
+    private def action_attributes(attrs : Array(Noir::CSharpDecl::Attribute), scope : String, file : String) : ActionAttributes
+      templated = [] of Tuple(String, String?, Bool)
+      bare_verbs = [] of String
+      routes = [] of Tuple(String?, Bool)
       explicit = false
       non_action = false
-      unresolved = Set(String).new
       renamed = nil
       attrs.each do |attr|
         next unless attr.target.nil? || attr.target == "method"
         if verb = VERB_ATTRIBUTES[attr.name]?
           arg = template_arg(attr)
-          template = arg.try(&.literal).presence
-          verb_routes << {verb, template || route_attr}
-          unresolved << verb if template.nil? && arg && arg.positional? && arg.text.matches?(UNREAD_ROUTE_ARG_RE)
+          if template = arg.try { |template_arg| route_template(template_arg, file) }
+            templated << {verb, template, false}
+          elsif arg
+            templated << {verb, nil, true}
+          else
+            bare_verbs << verb
+          end
           explicit = true
         elsif attr.name == "Route"
-          route_attr = template_arg(attr).try(&.literal).presence || route_attr
+          arg = template_arg(attr)
+          if template = arg.try { |template_arg| route_template(template_arg, file) }
+            routes << {template, false}
+          elsif arg
+            routes << {nil, true}
+          end
           explicit = true
         elsif attr.name == "AcceptVerbs"
           # `[AcceptVerbs("PUT", "PATCH")]` / `[AcceptVerbs("PUT", Route =
@@ -752,8 +794,11 @@ module Analyzer::CSharp
             token if ACCEPT_VERB_TOKENS.includes?(token)
           end.uniq!
           next if verbs.empty?
-          route = attr.property("Route").try(&.literal).presence || route_attr
-          verbs.each { |accept_verb| verb_routes << {accept_verb, route} }
+          if route = attr.property("Route").try { |route_arg| route_template(route_arg, file) }
+            verbs.each { |accept_verb| templated << {accept_verb, route, false} }
+          else
+            bare_verbs.concat(verbs)
+          end
           explicit = true
         elsif attr.name == "NonAction"
           non_action = true
@@ -765,21 +810,27 @@ module Analyzer::CSharp
           # `unresolved-route` tag a built-in `[HttpGet(Routes.Item)]` gets.
           template = found.template
           first = attr.positional.first?
-          if template && !template.includes?('"')
-            verb_routes << {verb, template.presence || route_attr}
+          if template && !template.includes?('"') && !template.empty?
+            templated << {verb, template, false}
+          elsif template.nil? && first && first.text.matches?(UNREAD_ROUTE_ARG_RE)
+            templated << {verb, nil, true}
           else
-            verb_routes << {verb, route_attr}
-            unresolved << verb if template.nil? && first && first.text.matches?(UNREAD_ROUTE_ARG_RE)
+            bare_verbs << verb
           end
           explicit = true
         end
       end
-      ActionAttributes.new(verb_routes, route_attr, explicit, non_action, unresolved, renamed)
+      selectors = templated
+      routes.each do |route, unread|
+        (bare_verbs.empty? ? ["ANY"] : bare_verbs).each { |route_verb| selectors << {route_verb, route, unread} }
+      end
+      bare_verbs.each { |bare_verb| selectors << {bare_verb, nil, false} } if routes.empty?
+      ActionAttributes.new(selectors.uniq, explicit, non_action, renamed)
     end
 
     private def analyze_controller(file : String, lexer : Noir::CSharpLexer, type : Noir::CSharpType,
                                    route_patterns : Array(ConventionalRoute), class_routes : ClassRoutes,
-                                   include_callee : Bool, owner : Noir::CSharpType? = nil, owner_path : PathInfo? = nil, skip : Set(String)? = nil)
+                                   include_callee : Bool, api_controller : Bool, owner : Noir::CSharpType? = nil, owner_path : PathInfo? = nil, skip : Set(String)? = nil)
       controller_name = (owner || type).name.sub(CONTROLLER_SUFFIX_RE, "")
       # Slice the file's already-lexed views down to this class. `line_offset`
       # puts the reported line back in file coordinates.
@@ -789,41 +840,42 @@ module Analyzer::CSharp
       attribute_scope = route_scope_for(file, @project_roots)
       # One route per controller `[Route]`; none falls back to conventional routing.
       controller_routes, area = class_routes
-      controller_routes = [""] if controller_routes.empty?
+      controller_routes = [{"", false}] if controller_routes.empty?
 
       type.decl.methods.each do |method|
         # An open generic method is never an action.
         next unless method.public? && method.type_params.nil?
-        action = action_attributes(method.attributes, attribute_scope)
-        next if action.non_action || !action_method?(method.header, action.explicit)
+        action = action_attributes(method.attributes, attribute_scope, file)
+        next if action.non_action || !action_method?(method, action.explicit)
         next unless owner.nil? || action.explicit
         next if skip.try(&.includes?(method.name))
         handler = Handler.new("#{(owner || type).name}.#{method.name}", file, method.line + 1)
-        action_name = action.renamed || method.name
-        route_attr = action.route_attr
+        # `SuppressAsyncSuffixInActionNames`, on by default since ASP.NET Core 3.0.
+        action_name = action.renamed || (method.name.size > 5 ? method.name.rchop("Async") : method.name)
         body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, method.header_end - line_offset)
         body_params = extract_params_from_block(body_block)
 
-        # No `[Http*]` attribute → convention-based (verb GET, route from
-        # any `[Route]` base or the controller convention). An action with a
-        # `[Route]` of its own and no verb attribute accepts every method.
-        emit_pairs = action.verb_routes.empty? ? [{route_attr.empty? ? "GET" : "ANY", route_attr}] : action.verb_routes
-        emit_pairs.each do |emit_verb, emit_route|
-          # A bare `[HttpGet]` whose `[Route("x")]` base came after it
-          # collected an empty route — fall back to the base so
-          # verb-then-`[Route]` ordering matches `[Route]`-then-verb.
-          emit_route = route_attr if emit_route.empty? && !route_attr.empty?
-          parameters = extract_parameters(method.params, emit_verb, file, lines, masked_lines)
+        # No routing attribute → convention-based (verb GET, at the
+        # controller route or the conventional templates).
+        selectors = action.selectors.empty? ? [{"GET", nil, false}] : action.selectors
+        selectors.each do |emit_verb, emit_route, unresolved|
+          parameters = extract_parameters(method.params, emit_verb, file, lines, masked_lines, api_controller)
           parameters = merge_params(parameters, body_params, emit_verb)
-          routes = controller_routes.flat_map do |controller_route|
-            effective_action_route = emit_route
-            if !controller_route.empty? && controller_route == effective_action_route
+          routes = controller_routes.flat_map do |controller_route, unread_class_route|
+            effective_action_route = emit_route || ""
+            # An empty template of the action's own (`[Route("")]`) is the
+            # controller route, or the site root without one.
+            if emit_route == "" && controller_route.empty?
+              effective_action_route = "/"
+            elsif !controller_route.empty? && controller_route == effective_action_route
               effective_action_route = ""
             end
+            overrides = effective_action_route.starts_with?('/') || effective_action_route.starts_with?("~/")
             resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns, area)
-          end.uniq!
+              .map { |route| {route, unread_class_route && !overrides} }
+          end.uniq!(&.[0])
 
-          routes.each do |route|
+          routes.each do |route, unread_class_route|
             details = Details.new(PathInfo.new(file, method.line + 1))
             endpoint = Endpoint.new(route, emit_verb, details)
             endpoint.handler = handler
@@ -836,7 +888,7 @@ module Analyzer::CSharp
               endpoint.params << param
             end
 
-            endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if action.unresolved.includes?(emit_verb)
+            endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if unresolved || unread_class_route
             attach_csharp_callees(endpoint, body_block, file, line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
             @result << endpoint
           end
@@ -844,15 +896,15 @@ module Analyzer::CSharp
       end
     end
 
-    private def action_method?(signature : String, explicit_endpoint_attribute : Bool) : Bool
-      return true if explicit_endpoint_attribute
+    OBJECT_METHOD_NAMES = {"Dispose", "ToString", "Equals", "GetHashCode", "Finalize"}
 
-      signature.includes?("ActionResult") ||
-        signature.includes?("IActionResult") ||
-        signature.includes?("JsonResult") ||
-        signature.includes?("ViewResult") ||
-        signature.includes?("IResult") ||
-        signature.matches?(/Task\s*<\s*(?:IEnumerable|List|PagedResult|Result|Response|[A-Z]\w*)/)
+    # Every public instance method of a controller is an action, whatever it
+    # returns. An `override` without routing attributes is a framework hook
+    # (`OnActionExecuting`), which its base marks `[NonAction]`.
+    private def action_method?(method : Noir::CSharpDecl::Member, explicit_endpoint_attribute : Bool) : Bool
+      return true if explicit_endpoint_attribute
+      return false if method.static? || OBJECT_METHOD_NAMES.includes?(method.name)
+      (method.modifiers & %w[abstract override]).empty?
     end
 
     # The request source each `[FromX]` attribute binds a parameter from.
@@ -868,7 +920,7 @@ module Analyzer::CSharp
     }
 
     private def extract_parameters(params : Array(Noir::CSharpDecl::Parameter), http_method : String, file : String,
-                                   lines : Array(String), masked_lines : Array(String)) : Array(Param)
+                                   lines : Array(String), masked_lines : Array(String), api_controller : Bool) : Array(Param)
       parameters = [] of Param
       default_param_type = default_param_type(http_method)
 
@@ -893,14 +945,28 @@ module Analyzer::CSharp
           next if type_token && Common.csharp_service_type?(type_token)
         end
 
-        bound = param_type || default_param_type
+        bound = param_type
+        bound ||= api_controller && explicit_name.nil? ? api_controller_binding(param, file, lines, masked_lines) : default_param_type
         # A model-bound complex type (`LoginInputModel model`) is the members
         # a client sends, not a field named after the argument.
-        members = body_type_params("#{param.type} #{param.name}", bound, file, lines, masked_lines) if bound.in?("json", "form") && explicit_name.nil?
+        # `[FromQuery] PagingQuery query` binds its members from the query string.
+        expand = bound.in?("json", "form") || (bound == "query" && param_type == "query")
+        members = body_type_params("#{param.type} #{param.name}", bound, file, lines, masked_lines) if expand && explicit_name.nil?
         members ? parameters.concat(members) : (parameters << Param.new(explicit_name || param.name, "", bound))
       end
 
       parameters
+    end
+
+    FORM_FILE_TYPE_RE = /\bIFormFile(?:Collection)?\b/
+
+    # What `[ApiController]` infers for a parameter without `[FromX]`: the
+    # body for a complex type, the form for an upload, else the query string
+    # (a parameter named after a route value is matched to it later).
+    private def api_controller_binding(param : Noir::CSharpDecl::Parameter, file : String,
+                                       lines : Array(String), masked_lines : Array(String)) : String
+      return "form" if param.type.matches?(FORM_FILE_TYPE_RE)
+      body_type_params("#{param.type} #{param.name}", "json", file, lines, masked_lines) ? "json" : "query"
     end
 
     private def default_param_type(http_method : String) : String
@@ -982,22 +1048,22 @@ module Analyzer::CSharp
 
       normalized = route.strip
       if area
-        normalized = normalized.gsub("[area]", area)
+        normalized = normalized.gsub(AREA_ROUTE_TOKEN_RE, area)
         normalized = normalized.gsub(AREA_TOKEN_RE, area)
       end
-      normalized = normalized.gsub("[controller]", controller_name)
-      normalized = normalized.gsub("{controller}", controller_name)
-      normalized = normalized.gsub(/{controller=[^}]+}/, controller_name)
-      normalized = normalized.gsub("[action]", action_name)
-      normalized = normalized.gsub("{action}", action_name)
-      normalized = normalized.gsub(/{action=[^}]+}/, action_name)
+      normalized = normalized.gsub(CONTROLLER_TOKEN_RE, controller_name)
+      normalized = normalized.gsub(ACTION_TOKEN_RE, action_name)
 
       normalized
     end
 
     PLACEHOLDER_DEFAULT_RE = /\{([^{}=]+)=[^{}]*\}/
 
-    AREA_TOKEN_RE = /\{area(?:[:=][^}]*)?\}/
+    AREA_TOKEN_RE = /\{area(?:[:=][^}]*)?\}/i
+    # `[controller]`, `{controller}` and `{controller=Home}`, any case.
+    AREA_ROUTE_TOKEN_RE = /\[area\]/i
+    CONTROLLER_TOKEN_RE = /\[controller\]|\{controller(?:=[^}]+)?\}/i
+    ACTION_TOKEN_RE     = /\[action\]|\{action(?:=[^}]+)?\}/i
 
     private def normalize_route(route : String) : String
       normalized = route.strip
@@ -1038,11 +1104,12 @@ module Analyzer::CSharp
     # (`{productid}` binds `int productId`): the parameter takes the
     # template's spelling, which is what the client sends. A parameter that
     # spells it exactly takes it alone: a body member `Id` beside `Guid id`
-    # stays a form field.
+    # stays a form field. A JSON body member is never a route value.
     private def align_params_with_route(params : Array(Param), route : String) : Array(Param)
       path_keys = extract_route_placeholders(route)
 
       mapped = params.map do |param|
+        next Param.new(param.name, param.value, param.param_type) if param.param_type == "json"
         key = path_keys.find { |path_key| path_key == param.name } ||
               path_keys.find { |path_key| path_key.compare(param.name, case_insensitive: true) == 0 && params.none? { |other| other.name == path_key } }
         if key
@@ -1053,7 +1120,7 @@ module Analyzer::CSharp
       end
 
       path_keys.each do |key|
-        unless mapped.any? { |param| param.name == key }
+        unless mapped.any? { |param| param.name == key && param.param_type != "json" }
           mapped << Param.new(key, "", "path")
         end
       end
