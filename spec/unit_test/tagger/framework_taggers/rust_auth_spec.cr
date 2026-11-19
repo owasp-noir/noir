@@ -879,6 +879,26 @@ describe "RustAuthTagger actix extractors that fail with a 401 error variant" do
   end
 end
 
+# Auth tag descriptions of the handler fn `name` in a one-file Rocket app.
+private def handler_guard_tags(src : String, name : String) : Array(String)
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("rocket_macro_guards")
+  main = File.join(tmpdir, "src", "main.rs")
+  Dir.mkdir_p(File.dirname(main))
+  File.write(main, src)
+  CodeLocator.instance.register_path(main)
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(tmpdir)
+  line = src.lines.index!(&.includes?("fn #{name}(")) + 1
+  details = Details.new(PathInfo.new(main, line - 1))
+  details.technology = "rust_rocket"
+  endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+  endpoint.handler = Handler.new(name, main, line)
+  RustAuthTagger.new(noir_options).perform([endpoint])
+  FileUtils.rm_rf(tmpdir)
+  endpoint.tags.map(&.description)
+end
+
 describe "RustAuthTagger request guards a macro_rules! generates" do
   src = <<-RUST
     use rocket::http::Status;
@@ -959,24 +979,7 @@ describe "RustAuthTagger request guards a macro_rules! generates" do
     fn list_items(locale: Locale) -> &'static str { "items" }
     RUST
 
-  tag_handler = ->(name : String) do
-    CodeLocator.instance.clear_all
-    tmpdir = File.tempname("rocket_macro_guards")
-    main = File.join(tmpdir, "src", "main.rs")
-    Dir.mkdir_p(File.dirname(main))
-    File.write(main, src)
-    CodeLocator.instance.register_path(main)
-    noir_options = create_test_options
-    noir_options["base"] = YAML::Any.new(tmpdir)
-    line = src.lines.index!(&.includes?("fn #{name}(")) + 1
-    details = Details.new(PathInfo.new(main, line - 1))
-    details.technology = "rust_rocket"
-    endpoint = Endpoint.new("/x", "GET", [] of Param, details)
-    endpoint.handler = Handler.new(name, main, line)
-    RustAuthTagger.new(noir_options).perform([endpoint])
-    FileUtils.rm_rf(tmpdir)
-    endpoint.tags.map(&.description)
-  end
+  tag_handler = ->(name : String) { handler_guard_tags(src, name) }
 
   it "tags each guard type a macro invocation names, doc comments and all" do
     tag_handler.call("create_item").should eq(["Protected by Rust Manager request guard"])
@@ -1056,5 +1059,45 @@ describe "RustAuthTagger axum middleware that hands some paths on unchecked" do
       }
       RUST
     axum_guarded_urls({"src/main.rs" => src}, ["/admin", "/items"]).should eq(["/admin", "/items"])
+  end
+end
+
+describe "RustAuthTagger request guards a multi-arm macro_rules! generates" do
+  it "binds each invocation to the arm it matches, not to an argument position" do
+    src = <<-RUST
+      macro_rules! extractor {
+          ($name:ident, optional) => {
+              impl<S: Send + Sync> FromRequestParts<S> for $name {
+                  type Rejection = Infallible;
+                  async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Self::Rejection> {
+                      Ok($name(parts.headers.get("authorization").cloned()))
+                  }
+              }
+          };
+          ($name:ident) => {
+              impl<S: Send + Sync> FromRequestParts<S> for $name {
+                  type Rejection = StatusCode;
+                  async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Self::Rejection> {
+                      let v = parts.headers.get("authorization").ok_or(StatusCode::UNAUTHORIZED)?;
+                      Ok($name(v.clone()))
+                  }
+              }
+          };
+          ($name:ident, alias) => {
+              pub type $name = Option<String>;
+          };
+      }
+
+      extractor!(Required);
+      extractor!(Maybe, optional);
+      extractor!(Loose, alias);
+
+      async fn secure(_u: Required) {}
+      async fn open(_u: Maybe) {}
+      async fn loose(_u: Loose) {}
+      RUST
+    handler_guard_tags(src, "secure").should eq(["Protected by Rust Required request guard"])
+    handler_guard_tags(src, "open").should be_empty
+    handler_guard_tags(src, "loose").should be_empty
   end
 end
