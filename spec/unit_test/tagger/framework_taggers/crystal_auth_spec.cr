@@ -198,6 +198,70 @@ describe "CrystalAuthTagger" do
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
 
+  it "applies an installed Kemal::Handler to the paths and methods its only list names" do
+    tmpdir = File.tempname("kemal_handler")
+    Dir.mkdir_p(tmpdir)
+    handlers = File.join(tmpdir, "handlers.cr")
+    app = File.join(tmpdir, "app.cr")
+    File.write(File.join(tmpdir, "shard.yml"), "name: app\n")
+    File.write(handlers, <<-'CR')
+      class TokenAuthHandler < Kemal::Handler
+        {% for method in %w[GET DELETE] %}
+          only ["/api/me/*"], {{ method }}
+        {% end %}
+        only ["/admin"]
+
+        def call(env)
+          return call_next env unless only_match? env
+          return call_next env if env.request.headers["Authorization"]? == "Bearer secret"
+          env.response.status_code = 401
+        end
+      end
+
+      class FrameHandler < Kemal::Handler
+        exclude ["/embed/*"]
+
+        def call(env)
+          return call_next env if exclude_match? env
+          env.response.headers["X-Frame-Options"] = "sameorigin"
+          call_next env
+        end
+      end
+      CR
+    File.write(app, <<-'CR')
+      add_handler TokenAuthHandler.new
+      add_handler FrameHandler.new
+      get "/" do
+      end
+      CR
+
+    CodeLocator.instance.register_path(handlers)
+    CodeLocator.instance.register_path(app)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    at = ->(url : String, method : String) do
+      details = Details.new(PathInfo.new(app, 3))
+      details.technology = "crystal_kemal"
+      Endpoint.new(url, method, [] of Param, details)
+    end
+    home = at.call("/", "GET")
+    profile = at.call("/api/me/profile", "GET")
+    session = at.call("/api/me/sessions/:id", "DELETE")
+    admin = at.call("/admin", "GET")
+    admin_post = at.call("/admin", "POST")
+    embed = at.call("/embed/:id", "GET")
+
+    CrystalAuthTagger.new(noir_options).perform([home, profile, session, admin, admin_post, embed])
+    home.tags.should be_empty
+    admin_post.tags.should be_empty
+    embed.tags.should be_empty
+    [profile, session, admin].each do |endpoint|
+      endpoint.tags.map(&.description).should eq(["Protected by Kemal TokenAuthHandler handler"])
+    end
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
   it "returns correct target_techs" do
     CrystalAuthTagger.target_techs.should contain("crystal_kemal")
     CrystalAuthTagger.target_techs.should contain("crystal_amber")
