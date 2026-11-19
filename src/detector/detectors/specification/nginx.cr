@@ -7,8 +7,10 @@ module Detector::Specification
     #
     # `.conf` is by far the most common extension for Nginx fragments;
     # `.tmpl`/`.template` files are common in docker-gen and deployment
-    # repositories that render Nginx configs from templates.
-    detector_for "nginx", idempotent: false, extensions: %w[.conf .tmpl .template]
+    # repositories that render Nginx configs from templates, `.j2` in Ansible
+    # roles. Debian's `sites-available/<name>` vhosts carry no extension.
+    detector_for "nginx", idempotent: false, extensions: %w[.conf .tmpl .template .j2],
+      path_segments: %w[/sites-available/ /sites-enabled/]
 
     LOCATION_RE = /^\s*location\s+(?:(?:=|~\*|~|\^~)\s+)?\S+/
     # A `server` block whose locations all sit in `include`d files.
@@ -23,6 +25,8 @@ module Detector::Specification
     # the vast majority of `.conf` / `.tmpl` files that carry no location
     # block.
     SHAPE_GUARD = /location|include|\{\{/
+
+    JINJA_COMMENT_RE = /\{#.*?#\}/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
@@ -49,6 +53,9 @@ module Detector::Specification
 
     # Shared with `Analyzer::Specification::Nginx`.
     def self.strip_comment(line : String) : String
+      # A Jinja `{# ... #}` comment goes whole: cutting at its `#` would leave
+      # an unmatched `{`.
+      line = line.gsub(JINJA_COMMENT_RE, "") if line.includes?("{#")
       previous = '\0'
       line.each_char_with_index do |ch, idx|
         if ch == '#' && (idx == 0 || previous.whitespace? || previous.in?(';', '{', '}'))

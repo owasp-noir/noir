@@ -558,6 +558,29 @@ describe "Nginx Analyzer" do
     end
   end
 
+  # A stray `{` from a Jinja tag would keep the first server open, and the
+  # second server's location would take its host too.
+  it "keeps Jinja tags and comments out of the brace count" do
+    endpoints = analyze_nginx <<-CONF
+      {# managed by ansible #}
+      server {
+          server_name a.example.com;
+      {% if enable_api %}
+          location /a { proxy_pass http://a; }
+      {% endif %}
+      }
+      server {
+          server_name b.example.com;
+          location /b { proxy_pass http://b; }
+      }
+      CONF
+
+    endpoints.map { |e| {e.url, tag_descriptions(e, "nginx-host")} }.sort!.should eq([
+      {"/a", ["a.example.com"]},
+      {"/b", ["b.example.com"]},
+    ])
+  end
+
   it "tracks multiple server blocks independently" do
     endpoints = analyze_nginx <<-CONF
       server {
