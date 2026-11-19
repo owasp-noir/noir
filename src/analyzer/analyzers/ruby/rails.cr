@@ -2153,8 +2153,8 @@ module Analyzer::Ruby
             permit_buf = nil
             heads = class_heads ||= permit_heads(class_body)
             scope = PermitScope.new(method_bodies[this_method]? || [] of String, class_body, heads)
-            names = permit_mask.match(PERMIT_OPEN).try(&.[0].includes?("expect")) ? expect_names(args, scope) : permit_names(args, scope)
-            if !names.empty? && (root = permit_mask.match(/params\.require\s*\(\s*:(\w+)/))
+            names = permit_mask.match(PERMIT_OPEN).try(&.[0].matches?(/expect\s*\(\z/)) ? expect_names(args, scope) : permit_names(args, scope)
+            if !names.empty? && (root = permit_mask.match(/params(?:\.require\s*\(|\[)\s*:(\w+)/))
               permit_roots << root[1]
             end
             names.each do |name|
@@ -2207,7 +2207,7 @@ module Analyzer::Ruby
             tail = line[m.end..]
             if m[0].includes?("require")
               chained = tail.strip.empty? ? controller_lines[index + 1]?.to_s : tail
-              next if chained.matches?(/\A\s*\.\s*(?:permit|expect|fetch|dig)\b/)
+              next if chained.matches?(/\A\s*\.\s*(?:permit|expect|fetch|dig|require)\b/)
             end
             while nested = tail.match(/\A\s*\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/)
               name = (nested[1]? || nested[2]?).to_s
@@ -2287,11 +2287,18 @@ module Analyzer::Ruby
     end
 
     # The line a permit list opens on, with the `params.require(:post)` a
-    # chained `.permit(` on its own line continues.
+    # chained `.permit(` on its own line continues, over any `.require(...)`
+    # lines between them (`params` / `.require(:post)` / `.permit(...)`).
     private def permit_opener(line : String, lines : Array(String), index : Int32) : String
       return line unless index > 0 && line.matches?(/\A\s*\.\s*(?:permit|expect)\s*\(/)
-      previous = strip_inline_comment(lines[index - 1]).strip
-      previous.matches?(/(?<![\w.])params(?:\.(?:require|fetch)\s*\([^)]*\))?\z/) ? "#{previous}#{line.lstrip}" : line
+      joined = line.lstrip
+      (index - 1).downto(Math.max(0, index - 4)) do |i|
+        previous = strip_inline_comment(lines[i]).strip
+        joined = "#{previous}#{joined}"
+        return joined if previous.matches?(PERMIT_RECEIVER_END)
+        break unless previous.starts_with?('.')
+      end
+      line
     end
 
     # A helper call `params_for(:post)` or a local `post` read as params
@@ -2354,9 +2361,12 @@ module Analyzer::Ruby
 
     PERMIT_MAX_LINES = 200
     PERMIT_SPLIT     = Noir::TopLevelSplit::Rules.new
-    # `params.permit(`, `params.require(...).permit(`, `params.fetch(...).permit(`,
-    # or Rails 8's `params.expect(` (anchored to bare `params`).
-    PERMIT_OPEN = /(?<![\w.])params\.(?:expect\s*\(|(?:(?:require|fetch)\s*\([^)]*\)\s*\.)?permit\s*\()|(?<![\w.])permit\s*\(/
+    # `params.permit(`, `.permit(` after any chain of `.require(...)`,
+    # `.fetch(...)`, `.slice(...)`, `.except(...)` and `[:key]` on bare
+    # `params`, or Rails 8's `params.expect(`.
+    PERMIT_CHAIN        = %q{(?:\s*\.\s*(?:require|fetch|slice|except)\s*\([^)]*\)|\s*\[[^\]]*\])}
+    PERMIT_OPEN         = /(?<![\w.])params(?:\s*\.\s*expect\s*\(|#{PERMIT_CHAIN}*\s*\.\s*permit\s*\()|(?<![\w.])permit\s*\(/
+    PERMIT_RECEIVER_END = /(?<![\w.])params#{PERMIT_CHAIN}*\z/
 
     # Text between the parens of the first `permit(` / `params.expect(`, or nil
     # while unbalanced. `mask` is `text` with string literals blanked (see
@@ -2403,7 +2413,7 @@ module Analyzer::Ruby
 
     # A read that treats the value as a hash rather than a field.
     # `is_a?(String)` asks whether the value is a scalar, which is a field.
-    CONTAINER_USE = /\A\s*&?\.\s*(?:(?:is_a\?|kind_of\?|instance_of\?)\s*\(?\s*(?:Hash|ActionController::Parameters|Array)\b|key\?|has_key\?|keys\b|each\b|to_unsafe_h\b|to_h\b|slice\b|except\b)/
+    CONTAINER_USE = /\A\s*&?\.\s*(?:(?:is_a\?|kind_of\?|instance_of\?)\s*\(?\s*(?:Hash|ActionController::Parameters|Array)\b|key\?|has_key\?|keys\b|each\b|to_unsafe_h\b|to_h\b|slice\b|except\b|permit\b|require\b)/
 
     # `lines` with the bodies of classes and modules nested in the file's
     # first class blanked: a `class Serializer` inside a controller holds
