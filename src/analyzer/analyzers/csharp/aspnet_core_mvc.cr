@@ -465,12 +465,12 @@ module Analyzer::CSharp
           # inherits, and a CRUD base (`RestController<T>`) is where most of
           # a project's attributed actions live. One the controller redeclares
           # (`override`, `new`, an overload) is the controller's own.
-          declared = declared_method_names(lexer, type)
+          declared = declared_method_names(type, file)
           ancestors.each do |ancestor|
             ancestor_file = @type_files[ancestor]? || next
             ancestor_lexer = ancestor_file == file ? lexer : (lexers[ancestor_file] ||= file_lexer(ancestor_file) || next)
             analyze_controller(ancestor_file, ancestor_lexer, ancestor, route_patterns, routes, include_callee, api_controller, owner: type, owner_path: PathInfo.new(file, type.start_line + type.header.count('\n') + 1), skip: declared)
-            declared = declared | declared_method_names(ancestor_lexer, ancestor)
+            declared = declared | declared_method_names(ancestor, ancestor_file)
           end
         end
       end
@@ -491,9 +491,17 @@ module Analyzer::CSharp
       found
     end
 
-    # Names of the public methods a class declares.
-    private def declared_method_names(lexer : Noir::CSharpLexer, type : Noir::CSharpType) : Set(String)
-      type.decl.methods.select { |method| method.public? && method.type_params.nil? }.map(&.name).to_set
+    # Names of the public methods a class declares, less the `override`s
+    # without routing attributes: those keep the overridden action's
+    # routing (`[Http*]`/`[Route]` are inherited), so it is reported.
+    private def declared_method_names(type : Noir::CSharpType, file : String) : Set(String)
+      scope = route_scope_for(file, @project_roots)
+      type.decl.methods.select do |method|
+        next false unless method.public? && method.type_params.nil?
+        next true unless method.modifiers.includes?("override")
+        action = action_attributes(method.attributes, scope, file)
+        action.explicit || action.non_action || !action.renamed.nil?
+      end.map(&.name).to_set
     end
 
     # Moves the files naming one of `names` out of `pool` and returns them.
