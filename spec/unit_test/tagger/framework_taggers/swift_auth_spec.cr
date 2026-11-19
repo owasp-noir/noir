@@ -159,4 +159,29 @@ describe "SwiftAuthTagger" do
   ensure
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
+
+  it "treats a redirectMiddleware group as guarded" do
+    tmpdir = File.tempname("swift_redirect_mw")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "routes.swift")
+    File.write(routes, <<-SWIFT)
+      func routes(_ app: Application) throws {
+          let sessions = app.grouped(User.sessionAuthenticator())
+          sessions.get("login", use: WebController.login)
+          let members = sessions.grouped(User.redirectMiddleware(path: "/login"))
+          members.get("account", use: WebController.account)
+      }
+      SWIFT
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    at = ->(line : Int32) { Endpoint.new("/x", "GET", [] of Param, Details.new(PathInfo.new(routes, line))) }
+    login, account = at.call(3), at.call(5)
+    SwiftAuthTagger.new(noir_options).perform([login, account])
+
+    login.tags.should be_empty
+    account.tags.map(&.description).should eq(["Protected by Vapor redirectMiddleware"])
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
 end

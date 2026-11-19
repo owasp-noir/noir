@@ -19,6 +19,8 @@ class SwiftAuthTagger < FrameworkTagger
     {/#{GROUPED_ARG}Token\.authenticator\(\)/, "Vapor Token.authenticator()"},
     {/#{GROUPED_ARG}User\.guardMiddleware\(\)/, "Vapor User.guardMiddleware()"},
     {/#{GROUPED_ARG}\w+\.guardMiddleware\(\)/, "Vapor guardMiddleware"},
+    # Sends an unauthenticated caller to the login page instead of a 401.
+    {/#{GROUPED_ARG}\w+\.redirectMiddleware\s*\(/, "Vapor redirectMiddleware"},
     # After the guardMiddleware patterns so
     # `grouped(UserToken.authenticator(), User.guardMiddleware())` keeps the
     # guard description. `UserToken` has no `[Aa]uth` and is neither `User.`
