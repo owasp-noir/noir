@@ -86,11 +86,11 @@ module Analyzer::Rust
 
           # `a.or(b)` is two routes, not one: build each alternative on
           # its own so their path segments and verbs don't merge.
-          or_alternatives(value, source, mounts[:route_fns]) do |branch, suffix|
+          or_alternatives(value, source, mounts[:route_fns]) do |branch, suffix, lead|
             next unless warp_chain?(branch, source)
             # The calls chained after the `.or` apply to every alternative:
             # `a.or(b).unify().and(warp::post())`.
-            parts = branch_filter_parts(branch, source, mounts[:route_fns]).then(suffix)
+            parts = lead.then(branch_filter_parts(branch, source, mounts[:route_fns])).then(suffix)
 
             # `warp::path("api").and(backend(config))` is a mount, not a
             # leaf — its real routes live in the mounted fns (emitted with
@@ -142,7 +142,7 @@ module Analyzer::Rust
     private def collect_warp_mounts(root : LibTreeSitter::TSNode, source : String)
       fn_ranges = [] of Tuple(String, Int32, Int32)
       route_fns = Set(String).new
-      mount_prefix = Hash(String, Array(String)).new
+      fn_calls = Hash(String, Set(String)).new
 
       walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "function_item"
@@ -162,8 +162,25 @@ module Analyzer::Rust
         if body
           btext = Noir::TreeSitter.node_text(body, source)
           route_fns << name if btext.matches?(ROUTE_FN_EVIDENCE_RE)
+          calls = (fn_calls[name] ||= Set(String).new)
+          walk(body) do |c|
+            next unless Noir::TreeSitter.node_type(c) == "call_expression"
+            f = Noir::TreeSitter.field(c, "function")
+            calls << Noir::TreeSitter.node_text(f, source) if f && Noir::TreeSitter.node_type(f) == "identifier"
+          end
         end
       end
+      # A fn that only composes route fns (`todos_list().or(todos_create())`)
+      # is route-bearing too.
+      loop do
+        grown = fn_calls.select { |name, calls| !route_fns.includes?(name) && calls.any? { |c| route_fns.includes?(c) } }.keys
+        break if grown.empty?
+        route_fns.concat(grown)
+      end
+
+      # `{mounted fn => [{mounting fn, local prefix}]}`; a route fn called
+      # by a route fn without a prefix inherits the caller's prefixes.
+      edges = Hash(String, Array(Tuple(String, String))).new
 
       walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
@@ -174,8 +191,21 @@ module Analyzer::Rust
         next unless recv
         prefix = extract_prefix_path(recv, source)
         next if prefix.empty?
-        bucket = (mount_prefix[arg_fn] ||= [] of String)
-        bucket << prefix unless bucket.includes?(prefix)
+        (edges[arg_fn] ||= [] of Tuple(String, String)) << {enclosing_fn_name(node, fn_ranges), prefix}
+      end
+      fn_calls.each do |caller, calls|
+        next unless route_fns.includes?(caller)
+        calls.each do |callee|
+          next if callee == caller || !route_fns.includes?(callee)
+          next if edges[callee]?.try &.any? { |from, _| from == caller }
+          (edges[callee] ||= [] of Tuple(String, String)) << {caller, ""}
+        end
+      end
+      mount_prefix = Hash(String, Array(String)).new
+      memo = Hash(String, Array(String)).new
+      edges.each_key do |name|
+        prefixes = composed_mount_prefixes(name, edges, memo, Set(String).new)
+        mount_prefix[name] = prefixes unless prefixes.empty?
       end
 
       # Let-bound prefix filters: `let api = warp::path("api"); … api.and(
@@ -196,9 +226,17 @@ module Analyzer::Rust
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           next unless warp_field_name(node, source) == "and"
           recv = warp_receiver(node)
-          next unless recv && Noir::TreeSitter.node_type(recv) == "identifier"
-          recv_key = let_key(node, Noir::TreeSitter.node_text(recv, source), fn_ranges)
-          next unless recv_value = lets[recv_key]?
+          next unless recv
+          # `api.and(..)` with a prefix let `api`, or the prefix written
+          # inline (`warp::path("api").and(..)`), making the let holding the
+          # whole chain the prefix-only binding.
+          if Noir::TreeSitter.node_type(recv) == "identifier"
+            recv_key = let_key(node, Noir::TreeSitter.node_text(recv, source), fn_ranges)
+            next unless recv_value = lets[recv_key]?
+          else
+            recv_value = recv
+            recv_key = enclosing_let_key(node, source, fn_ranges)
+          end
           prefix = extract_prefix_path(recv_value, source)
           next if prefix.empty?
           args = Noir::TreeSitter.field(node, "arguments")
@@ -206,7 +244,7 @@ module Analyzer::Rust
           targets = Set(String).new
           collect_route_lets(args, source, node, lets, fn_ranges, targets, Set(String).new)
           next if targets.empty?
-          prefix_lets << recv_key
+          prefix_lets << recv_key if recv_key
           targets.each do |target|
             bucket = (let_prefix[target] ||= [] of String)
             bucket << prefix unless bucket.includes?(prefix)
@@ -216,6 +254,59 @@ module Analyzer::Rust
 
       {route_fns: route_fns, mount_prefix: mount_prefix, fn_ranges: fn_ranges,
        let_prefix: let_prefix, prefix_lets: prefix_lets}
+    end
+
+    private def composed_mount_prefixes(name : String, edges : Hash(String, Array(Tuple(String, String))),
+                                        memo : Hash(String, Array(String)), visiting : Set(String)) : Array(String)
+      if cached = memo[name]?
+        return cached
+      end
+      return [] of String unless visiting.add?(name)
+      result = [] of String
+      edges[name]?.try &.each do |from, prefix|
+        outer = composed_mount_prefixes(from, edges, memo, visiting)
+        if outer.empty?
+          result << prefix unless prefix.empty?
+        else
+          outer.each { |o| result << filter_chain_join(o, prefix) }
+        end
+      end
+      visiting.delete(name)
+      memo[name] = result.uniq
+    end
+
+    # Name of the smallest fn enclosing `node` ("" at the top level).
+    private def enclosing_fn_name(node : LibTreeSitter::TSNode, fn_ranges : Array(Tuple(String, Int32, Int32))) : String
+      b = LibTreeSitter.ts_node_start_byte(node).to_i
+      best = ""
+      best_size = Int32::MAX
+      fn_ranges.each do |name, s, e|
+        next unless b >= s && b < e && e - s < best_size
+        best = name
+        best_size = e - s
+      end
+      best
+    end
+
+    # `let_key` of the `let` whose value is the chain `node` sits on, unless
+    # an `.or` above it adds alternatives that are not under the prefix.
+    private def enclosing_let_key(node : LibTreeSitter::TSNode, source : String,
+                                  fn_ranges : Array(Tuple(String, Int32, Int32))) : String?
+      current = node
+      while current = Noir::TreeSitter.parent(current)
+        case Noir::TreeSitter.node_type(current)
+        when "let_declaration"
+          name = let_binding_name(current, source) || return
+          return let_key(current, name, fn_ranges)
+        when "field_expression"
+          next
+        when "call_expression"
+          return if warp_field_name(current, source) == "or"
+        else
+          return
+        end
+      end
+      nil
     end
 
     # Route-bearing lets (`warp::path(..)` / `path!`) named in `node`,
@@ -229,6 +320,8 @@ module Analyzer::Rust
                                    visited : Set(String))
       walk(node) do |child|
         next unless Noir::TreeSitter.node_type(child) == "identifier"
+        # The `delete` of `warp::delete()` is a path segment, not a let.
+        next if Noir::TreeSitter.parent(child).try { |p| Noir::TreeSitter.node_type(p) == "scoped_identifier" }
         key = let_key(site, Noir::TreeSitter.node_text(child, source), fn_ranges)
         next unless (value = lets[key]?) && visited.add?(key)
         if Noir::TreeSitter.node_text(value, source).matches?(ROUTE_FN_EVIDENCE_RE)
@@ -328,32 +421,49 @@ module Analyzer::Rust
     # `unify`/`and(post)` parts. An `.or` nested inside an argument
     # (`.and(get().or(head()))`) is not on the spine and stays part of its
     # branch. A chain without `.or` is yielded as-is with empty parts.
+    #
+    # `prefix.and(a.or(b))` with path-bearing alternatives yields `a` and
+    # `b` with `prefix`'s parts as the third value, the parts that come
+    # before each alternative.
     private def or_alternatives(value : LibTreeSitter::TSNode, source : String, route_fns : Set(String), &)
       # Stack, left alternative pushed last so it pops first.
-      pending = [{value, FilterParts::EMPTY}]
+      pending = [{value, FilterParts::EMPTY, FilterParts::EMPTY}]
       while item = pending.pop?
-        node, suffix = item
+        node, suffix, lead = item
         above = [] of LibTreeSitter::TSNode # calls above the topmost `.or`, outermost first
         split = nil
+        and_or = nil
         cur = node
         while Noir::TreeSitter.node_type(cur) == "call_expression" && (recv = warp_receiver(cur))
-          if warp_field_name(cur, source) == "or"
+          field = warp_field_name(cur, source)
+          if field == "or"
             args = Noir::TreeSitter.field(cur, "arguments")
             split = {recv, args ? Noir::TreeSitter.first_named_child(args) : nil}
+            break
+          end
+          if field == "and" && (arg = Noir::TreeSitter.field(cur, "arguments").try { |a| Noir::TreeSitter.first_named_child(a) }) &&
+             Noir::TreeSitter.node_type(arg) == "call_expression" && warp_field_name(arg, source) == "or" &&
+             Noir::TreeSitter.node_text(arg, source).matches?(ROUTE_FN_EVIDENCE_RE)
+            and_or = {recv, arg}
             break
           end
           above << cur
           cur = recv
         end
 
-        if split
-          left, alt = split
-          # Each side may itself be an `x.or(y)` chain.
+        if split || and_or
           inner = above.empty? ? suffix : call_filter_parts(above, source, route_fns).then(suffix)
-          pending << {alt, inner} if alt
-          pending << {left, inner}
+          if split
+            left, alt = split
+            # Each side may itself be an `x.or(y)` chain.
+            pending << {alt, inner, lead} if alt
+            pending << {left, inner, lead}
+          elsif and_or
+            recv, alternatives = and_or
+            pending << {alternatives, inner, lead.then(branch_filter_parts(recv, source, route_fns))}
+          end
         else
-          yield node, suffix
+          yield node, suffix, lead
         end
       end
     end

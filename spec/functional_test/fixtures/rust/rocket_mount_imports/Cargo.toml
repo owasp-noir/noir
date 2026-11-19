@@ -1,0 +1,8 @@
+[package]
+name = "rocket_mount_imports"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rocket = "0.5"
+rocket_okapi = "0.8"

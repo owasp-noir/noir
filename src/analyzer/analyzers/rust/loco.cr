@@ -22,6 +22,44 @@ module Analyzer::Rust
     REST_ACTIONS = Set{"index", "show", "new", "create", "edit", "update", "destroy", "delete"}
     HTTP_VERBS   = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
 
+    # `{file, fn line} => prefix` of each controller `routes()` fn added
+    # under an app-level `AppRoutes::..().prefix("/api").add_route(..)`.
+    @app_prefixes = {} of Tuple(String, Int32) => String
+
+    def analyze
+      @app_prefixes = build_app_prefixes
+      super
+    end
+
+    private def build_app_prefixes : Hash(Tuple(String, Int32), String)
+      index = {} of Tuple(String, Int32) => String
+      scan_target_files.each do |path|
+        next unless scan_accepts?(path)
+        source = read_file_content(path)
+        next unless source.includes?(".add_route(")
+        begin
+          Noir::TreeSitter.parse_rust(source) do |root|
+            walk(root) do |node|
+              next unless Noir::TreeSitter.node_type(node) == "call_expression"
+              fn_node = Noir::TreeSitter.field(node, "function")
+              next unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+              next unless (f = Noir::TreeSitter.field(fn_node, "field")) && Noir::TreeSitter.node_text(f, source) == "add_route"
+              prefix = find_chain_prefix(node, source) || next
+              arg = nil.as(LibTreeSitter::TSNode?)
+              Noir::TreeSitter.each_named_arg(Noir::TreeSitter.field(node, "arguments") || next) { |a| arg ||= a }
+              next unless arg && Noir::TreeSitter.node_type(arg) == "call_expression"
+              callee = Noir::TreeSitter.field(arg, "function") || next
+              file, _, line = resolve_rust_fn(Noir::TreeSitter.node_text(callee, source), path) || next
+              index[{file, line}] = prefix
+            end
+          end
+        rescue e
+          logger.debug "loco app-prefix scan error #{path}: #{e}"
+        end
+      end
+      index
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
@@ -132,6 +170,9 @@ module Analyzer::Rust
         # Elsewhere it filters out unrelated `.add(...)` calls.
         next unless route_path.starts_with?("/") || prefix || routes_new_chain?(node, source)
         full_path = absolute_scope_join(prefix, route_path)
+        if app_prefix = enclosing_app_prefix(node, source, path)
+          full_path = absolute_scope_join(app_prefix, full_path)
+        end
         row = call_line(node)
 
         verb_handlers.each do |verb, handler_name|
@@ -196,6 +237,16 @@ module Analyzer::Rust
         node = receiver
       end
       nil
+    end
+
+    private def enclosing_app_prefix(node : LibTreeSitter::TSNode, source : String, path : String) : String?
+      return if @app_prefixes.empty?
+      fn_node = node
+      while fn_node = Noir::TreeSitter.parent(fn_node)
+        break if Noir::TreeSitter.node_type(fn_node) == "function_item"
+      end
+      name = fn_node.try { |f| Noir::TreeSitter.field(f, "name") } || return
+      @app_prefixes[{path, Noir::TreeSitter.node_start_row(name) + 1}]?
     end
 
     # True when the `.add(...)` receiver chain bottoms out at `Routes::new()`.
