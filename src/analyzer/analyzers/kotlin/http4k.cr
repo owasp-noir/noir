@@ -64,8 +64,10 @@ module Analyzer::Kotlin
       @result
     end
 
+    # `Paths.API` or `com.example.Paths.API`; a bare name collides
+    # across files too often to share.
     private def fully_qualified_constant?(name : String) : Bool
-      name.count('.') >= 2
+      name.includes?('.')
     end
 
     private def build_endpoint(route : Noir::TreeSitterHttp4kExtractor::Route, path : String) : Endpoint

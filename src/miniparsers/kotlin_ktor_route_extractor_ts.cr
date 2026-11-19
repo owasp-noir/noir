@@ -1,8 +1,8 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./kotlin_callee_extractor"
-require "./kotlin_source_mask"
 require "./jvm_ts_helpers"
+require "./kotlin_route_extractor_ts"
 
 module Noir
   # Tree-sitter-backed Ktor DSL route extractor.
@@ -223,59 +223,11 @@ module Noir
       file
     end
 
-    # Blank out string/char literal contents (keeping the quotes) so structural
-    # brace counting ignores braces that live inside a string value.
-    private def structural_only(line : String) : String
-      line.gsub(/"(?:[^"\\]|\\.)*"/, %("")).gsub(/'(?:[^'\\]|\\.)*'/, "''")
-    end
-
+    # `Type.NAME`, `pkg.Type.NAME` and bare names, with `"$OTHER/x"` and
+    # `OTHER + "/x"` values resolved against the same file. Same table the
+    # Kotlin Spring extractor builds.
     def extract_string_constants(source : String) : Hash(String, String)
-      constants = Hash(String, String).new
-      package_name = ""
-      current_type = ""
-      current_depth = 0
-
-      # Comment-free copy that still carries the literal values. Read the
-      # raw source instead and a commented-out `const val PATH = "/old"`
-      # above the live declaration wins the `||=` below and permanently
-      # shadows it, so every route built from that constant reports a URL
-      # that does not exist while the real one is lost.
-      Noir::KotlinSourceMask.code_only(source).each_line do |line|
-        if package_name.empty?
-          if match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)/)
-            package_name = match[1]
-          end
-        end
-
-        if match = line.match(/^\s*(?:class|object|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/)
-          current_type = match[1]
-          current_depth = 0
-        end
-
-        if match = line.match(/\b(?:const\s+)?val\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*String)?\s*=\s*"([^"]*)"/)
-          name = match[1]
-          value = match[2]
-          constants[name] ||= value
-          unless current_type.empty?
-            constants["#{current_type}.#{name}"] ||= value
-            constants["#{package_name}.#{current_type}.#{name}"] ||= value unless package_name.empty?
-          end
-        end
-
-        unless current_type.empty?
-          # Count braces on a string-blanked copy so a `}` inside a const string
-          # value (regex/JSON/template) can't close the enclosing type early.
-          structural = structural_only(line)
-          current_depth += structural.count("{")
-          current_depth -= structural.count("}")
-          if current_depth <= 0 && structural.includes?("}")
-            current_type = ""
-            current_depth = 0
-          end
-        end
-      end
-
-      constants
+      TreeSitterKotlinRouteExtractor.extract_string_constants(source)
     end
 
     # ---- type-safe resource routing ----------------------------------
@@ -1189,7 +1141,10 @@ module Noir
       nil
     end
 
-    private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
+    private def decode_string_literal(node : LibTreeSitter::TSNode,
+                                      source : String,
+                                      constants : Hash(String, String)? = nil,
+                                      local_constants : Hash(String, String)? = nil) : String
       # Walk the string's children. A plain string has one
       # `string_content` child; a Kotlin template string interleaves
       # `string_content` with `interpolated_identifier` ("$var",
@@ -1218,10 +1173,16 @@ module Noir
           when "interpolated_identifier", "interpolated_expression"
             # node_text for these children is the identifier / inner
             # expression with the leading `$` (and `{…}` for the
-            # expression form) already stripped by the grammar.
-            io << '{' unless in_placeholder
-            io << Noir::TreeSitter.node_text(child, source).strip
-            io << '}' unless in_placeholder
+            # expression form) already stripped by the grammar. A known
+            # constant is its value, as in `CONST + "/x"`.
+            ident = Noir::TreeSitter.node_text(child, source).strip
+            if !in_placeholder && (value = local_constants.try(&.[ident]?) || constants.try(&.[ident]?))
+              io << value
+            else
+              io << '{' unless in_placeholder
+              io << ident
+              io << '}' unless in_placeholder
+            end
           end
         end
       end

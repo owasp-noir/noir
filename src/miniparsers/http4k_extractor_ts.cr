@@ -4,6 +4,7 @@ require "../models/endpoint"
 require "./kotlin_callee_extractor"
 require "./kotlin_source_mask"
 require "./jvm_ts_helpers"
+require "./kotlin_route_extractor_ts"
 require "./extraction_result_cache"
 
 module Noir
@@ -169,7 +170,7 @@ module Noir
         end
       end
 
-      constants
+      TreeSitterKotlinRouteExtractor.expand_constant_interpolations(constants)
     end
 
     # ---- traversal --------------------------------------------------
@@ -556,16 +557,22 @@ module Noir
       nil
     end
 
-    private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
+    private def decode_string_literal(node : LibTreeSitter::TSNode,
+                                      source : String,
+                                      constants : Hash(String, String)? = nil,
+                                      local_constants : Hash(String, String)? = nil) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
           case Noir::TreeSitter.node_type(child)
           when "string_content"
             io << Noir::TreeSitter.kotlin_string_content(child, node, source)
           when "interpolated_identifier", "interpolated_expression"
-            io << '{'
-            io << Noir::TreeSitter.node_text(child, source).strip
-            io << '}'
+            ident = Noir::TreeSitter.node_text(child, source).strip
+            if value = local_constants.try(&.[ident]?) || constants.try(&.[ident]?)
+              io << value
+            else
+              io << '{' << ident << '}'
+            end
           end
         end
       end

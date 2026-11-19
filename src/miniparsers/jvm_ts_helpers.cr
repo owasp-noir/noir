@@ -411,7 +411,8 @@ module Noir
     end
 
     # Ktor and http4k expressions share constant/concatenation resolution,
-    # but each keeps its own decode_string_literal for template placeholders.
+    # but each keeps its own decode_string_literal for template placeholders;
+    # it gets both tables so `"$CONST/x"` resolves like `CONST + "/x"`.
     module KotlinStringValues
       private def resolve_string_value(node : LibTreeSitter::TSNode,
                                        source : String,
@@ -419,7 +420,7 @@ module Noir
                                        local_string_constants : Hash(String, String)) : String?
         case Noir::TreeSitter.node_type(node)
         when "string_literal"
-          decode_string_literal(node, source)
+          decode_string_literal(node, source, string_constants, local_string_constants)
         when "simple_identifier"
           local_string_constants[Noir::TreeSitter.node_text(node, source)]?
         when "navigation_expression"
