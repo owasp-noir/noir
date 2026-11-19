@@ -65,6 +65,8 @@ shards install
 shards build
 ```
 
+Linux에서는 `just build`로 빌드하거나, 명령에 `--link-flags=-Wl,--no-export-dynamic`을 붙이세요. 그대로 동적 빌드하면 내보내는 심볼이 너무 많아서, 바이너리가 시작하자마자 `symbol lookup error`로 끝납니다. `just` 레시피는 이 플래그를 알아서 붙입니다.
+
 프로덕션 빌드는 `--release`를 붙여 만듭니다(컴파일은 느리지만 실행은 2~3배 빠릅니다). 벤치마크를 돌리거나 배포된 릴리스와 비교할 때 쓰세요. 디버그 빌드는 눈에 띄게 느려서 멀쩡한 빌드가 성능 회귀처럼 보일 수 있습니다. `just` 레시피는 공식 릴리스 빌드와 같은 플래그(`--release --no-debug --production`)를 씁니다.
 
 ```sh

@@ -65,6 +65,8 @@ Build the project. The compiled binary ends up at `./bin/noir`.
 shards build
 ```
 
+On Linux, build with `just build` instead, or add `--link-flags=-Wl,--no-export-dynamic` to the command. A plain dynamic build exports too many symbols for the loader, and the binary exits at start with `symbol lookup error`. The `just` recipes add the flag for you.
+
 For a production-grade build (slower compile, 2 to 3× faster runtime), pass `--release`. Use it when you run benchmarks or compare against a published release. Debug builds are noticeably slower and can make a healthy build look like a regression. The `just` recipe uses the same flags as the official release builds (`--release --no-debug --production`).
 
 ```sh
