@@ -1,0 +1,1 @@
+{ "name": "fastify-register-const-prefix", "version": "1.0.0", "dependencies": { "fastify": "^4.26.0" } }

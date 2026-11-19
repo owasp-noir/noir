@@ -4,7 +4,7 @@ require "../../../../../src/models/code_locator"
 require "../../../../../src/analyzer/analyzers/javascript/fastify"
 require "../../../../../src/analyzer/analyzers/javascript/restify"
 
-private def fastify_urls(files : Hash(String, String), analyzer = Analyzer::Javascript::Fastify) : Array(String)
+private def fastify_urls(files : Hash(String, String), analyzer = Analyzer::Javascript::Fastify, *, with_resolution = false) : Array(String)
   dir = File.tempname("fastify_tree_spec")
   locator = CodeLocator.instance
   locator.clear_all
@@ -18,7 +18,7 @@ private def fastify_urls(files : Hash(String, String), analyzer = Analyzer::Java
     options = create_test_options
     options["base"] = YAML::Any.new([YAML::Any.new(dir)])
     # The analyzer leaves de-duplication to the optimizer.
-    analyzer.new(options).analyze.map { |e| "#{e.method} #{e.url}" }.uniq!.sort!
+    analyzer.new(options).analyze.map { |e| "#{e.method} #{e.url}#{" #{e.resolution}" if with_resolution && e.resolution}" }.uniq!.sort!
   ensure
     locator.clear_all
     FileUtils.rm_rf(dir)
@@ -71,6 +71,8 @@ describe "Fastify cross-file plugin tree" do
     }, Analyzer::Javascript::Restify).should eq(["GET /a/admin", "GET /a/users"])
   end
 
+  # `{ prefix: base }` (unknown) keeps the parent's prefix; the endpoint is
+  # marked `prefix: unresolved` instead of looking final at its bare path.
   it "reads an empty prefix as no prefix and a 'prefix' string value as no prefix key" do
     fastify_urls({
       "app.js"   => "const fastify = require('fastify')()\nfastify.register(require('./api'), { prefix: '/api' })\n",
@@ -78,7 +80,17 @@ describe "Fastify cross-file plugin tree" do
       "empty.js" => plugin("  app.get('/empty', async () => 1)"),
       "redis.js" => plugin("  app.get('/redis', async () => 1)"),
       "dyn.js"   => plugin("  app.get('/dyn', async () => 1)"),
-    }).should eq(["GET /api/empty", "GET /api/redis", "GET /dyn"])
+    }).should eq(["GET /api/dyn", "GET /api/empty", "GET /api/redis"])
+  end
+
+  it "reads a prefix built from a constant and marks an unknown one unresolved" do
+    fastify_urls({
+      "app.js"    => "const fastify = require('fastify')()\nconst { API } = require('./config')\nfastify.register(require('./a'), { prefix: `${API}/a` })\nfastify.register(require('./b'), { prefix: API + '/b' })\nfastify.register(require('./c'), { prefix: opts.base })\n",
+      "config.js" => "const API = '/api'\nmodule.exports = { API }\n",
+      "a.js"      => plugin("  app.get('/x', async () => 1)"),
+      "b.js"      => plugin("  app.get('/y', async () => 1)"),
+      "c.js"      => plugin("  app.get('/z', async () => 1)"),
+    }, with_resolution: true).should eq(["GET /api/a/x", "GET /api/b/y", %(GET /z {"prefix" => "unresolved"})])
   end
 
   it "serves a directory autoloaded under two prefixes under both" do
