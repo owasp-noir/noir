@@ -1,0 +1,17 @@
+_format_version: "3.0"
+services:
+  - name: web
+    url: http://web.internal:8080
+    routes:
+      - name: api
+        paths: [/api]
+      # Matched by host alone: every path on that host.
+      - name: host-only
+        hosts: [admin.example.com]
+      - name: method-only
+        methods: [DELETE]
+# decK also takes routes at the top level.
+routes:
+  - name: top-level
+    service: {name: web}
+    paths: [/top-level]

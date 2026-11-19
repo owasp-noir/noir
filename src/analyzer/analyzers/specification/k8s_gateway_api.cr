@@ -39,6 +39,9 @@ module Analyzer::Specification
       return unless rule_h
 
       matches = rule_h[YAML::Any.new("matches")]?.try(&.as_a?) || [] of YAML::Any
+      # A rule without `matches` is one `PathPrefix /` match. A templated
+      # `matches:` (null once untemplated) is unknown, not absent.
+      matches = [YAML::Any.new({} of YAML::Any => YAML::Any)] unless rule_h.has_key?(YAML::Any.new("matches"))
       filters = rule_h[YAML::Any.new("filters")]?.try(&.as_a?) || [] of YAML::Any
       url_rewrite = url_rewrite_from(filters)
 

@@ -1,0 +1,30 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata: {name: web}
+spec:
+  hosts: ["web.example.com"]
+  gateways: [public-gateway]
+  http:
+    - match:
+        - uri: {prefix: /api}
+      route: [{destination: {host: api}}]
+    - match:
+        - headers: {x-canary: {exact: "1"}}
+          queryParams: {debug: {exact: "on"}}
+      route: [{destination: {host: web-canary}}]
+    - route:
+        - destination: {host: web}
+---
+# Bound to the mesh only: in-cluster routing, so its catch-all routes are not
+# reported.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata: {name: internal}
+spec:
+  hosts: [reviews]
+  http:
+    - match:
+        - headers: {end-user: {exact: jason}}
+      route: [{destination: {host: reviews, subset: v2}}]
+    - route:
+        - destination: {host: reviews, subset: v1}

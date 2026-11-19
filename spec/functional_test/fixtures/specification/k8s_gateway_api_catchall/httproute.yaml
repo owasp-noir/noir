@@ -1,0 +1,13 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: bar-route}
+spec:
+  parentRefs: [{name: example-gateway}]
+  hostnames: ["bar.example.com"]
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /login}
+      backendRefs: [{name: auth-svc, port: 8080}]
+    # No `matches`: one `PathPrefix /` match.
+    - backendRefs:
+        - {name: bar-svc, port: 8080}
