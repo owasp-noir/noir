@@ -2,6 +2,7 @@ require "../../engines/php_engine"
 require "../../../utils/spec_line_index"
 require "./symfony_security"
 require "./symfony_route_attributes"
+require "../../../miniparsers/php_class_members"
 
 module Analyzer::Php
   class Symfony < PhpEngine
@@ -36,7 +37,7 @@ module Analyzer::Php
     # Attributes every caller, anonymous included, is granted.
     PUBLIC_ATTRIBUTES = %w[PUBLIC_ACCESS IS_AUTHENTICATED_ANONYMOUSLY]
 
-    REQUEST_READ_RE = /\$request->(query|request|headers|cookies|files)->(?:get|all|has|getInt|getBoolean|getAlpha|getAlnum|getDigits|getString|getEnum|filter)\s*\(\s*['"]([^'"]+)['"]|\$request->(query|request)->all\(\s*\)\s*\[\s*['"]([^'"]+)['"]|\$request->get\s*\(\s*['"]([^'"]+)['"]/
+    REQUEST_READ_RE = /\$request->(query|request|headers|cookies|files)->(?:get|all|has|getInt|getBoolean|getAlpha|getAlnum|getDigits|getString|getEnum|filter)\s*\(\s*['"]([^'"]+)['"]|\$request->(query|request)->all\(\s*\)\s*\[\s*['"]([^'"]+)['"]|\$request->get\s*\(\s*['"]([^'"]+)['"]|\$request->getPayload\(\)->(?:get|all|has|getInt|getBoolean|getAlpha|getAlnum|getDigits|getString|getEnum|filter)\s*\(\s*['"]([^'"]+)['"]/
     REQUEST_BAGS    = {"query" => "query", "request" => "form", "headers" => "header", "cookies" => "cookie", "files" => "file"}
 
     # `$this->forward('Fqcn::method', ...)`: a sub-request on the same input.
@@ -346,7 +347,7 @@ module Analyzer::Php
       handler = Handler.new(name, path, offsets.line(offsets.begin(sig, 1)))
       prelude = offsets.slice(member_prelude_start(content, lexer, sig_start), sig_start)
       guard = security_attribute_guard(prelude) || klass.try(&.guard)
-      params = fos_rest_params(prelude)
+      params = fos_rest_params(prelude) + argument_params(offsets, lexer, sig)
       if body
         sources = [{content, body[0]}] + callee_bodies(content, body[0])
         sources.each { |source, code| params.concat(extract_method_params(code) + form_params(source, code)) }
@@ -369,6 +370,65 @@ module Analyzer::Php
         params << Param.new(key, "", FOS_PARAM_BAGS[m[1]]) if key
       end
       params
+    end
+
+    # The request input the action's arguments are mapped from:
+    # `#[MapQueryParameter]` / `#[MapUploadedFile]` (the argument, or the
+    # attribute's `name`), and the fields of the DTO `#[MapQueryString]` /
+    # `#[MapRequestPayload]` deserializes.
+    private def argument_params(offsets : Noir::CharOffsets, lexer : Noir::PhpLexer, sig : Regex::MatchData) : Array(Param)
+      params = [] of Param
+      open = offsets.end(sig) - 1
+      return params unless close = lexer.matching_delimiter(open)
+      signature = offsets.slice(open + 1, close)
+      return params unless signature.includes?("Map")
+      split_php_args(signature).each do |rest|
+        attrs = [] of String
+        while rest.starts_with?("#[") && (stop = Noir::PhpLexer.new(rest, php_mode: true).matching_delimiter(1))
+          attrs.concat(split_php_args(rest[2...stop]))
+          rest = rest[(stop + 1)..].lstrip
+        end
+        next unless decl = rest.match(MAP_ARGUMENT_RE)
+        attrs.each do |attr|
+          next unless m = attr.match(MAP_ATTRIBUTE_RE)
+          named, positional = attribute_args(m[2]? || "")
+          case m[1]
+          when "MapQueryParameter"
+            params << Param.new((named["name"]? || positional.first?).try { |e| php_literal(e) } || decl[2], "", "query")
+          when "MapUploadedFile"
+            params << Param.new(named["name"]?.try { |e| php_literal(e) } || decl[2], "", "file")
+          else
+            location = m[1] == "MapQueryString" ? "query" : "json"
+            decl[1]?.try { |type| dto_fields(type, offsets.content).each { |field| params << Param.new(field, "", location) } }
+          end
+        end
+      end
+      params
+    end
+
+    MAP_ATTRIBUTE_RE = /\A\\?(?:[\w\\]*\\)?(MapQueryParameter|MapQueryString|MapRequestPayload|MapUploadedFile)\b\s*(?:\((.*)\))?\z/m
+    MAP_ARGUMENT_RE  = /\A(?:(?:public|protected|private|readonly)\s+)*(?:\?\s*)?(\\?[\w\\]+)?\s*&?\s*(?:\.\.\.\s*)?\$(\w+)/
+
+    # What the serializer fills on a DTO: its public properties and its
+    # constructor's arguments.
+    private def dto_fields(type : String, content : String) : Array(String)
+      fqcn = qualify_class(type, parse_use_imports(content), php_namespace(content))
+      fields = [] of String
+      return fields unless file = class_file(fqcn)
+      short = fqcn.rpartition('\\').last
+      parser = Noir::PhpBlockParser.new(read_file_content(file))
+      parser.each_node do |node|
+        next unless node.kind.class? && node.name == short
+        Noir::PhpClassMembers.each(parser, node) do |member|
+          next if member.static
+          if !member.method
+            fields << member.name
+          elsif member.name == "__construct"
+            fields.concat(member.args)
+          end
+        end
+      end
+      fields.uniq
     end
 
     # `Endpoint` is a struct: callers keep the returned copy.
@@ -742,8 +802,9 @@ module Analyzer::Php
     end
 
     # `$request->query->get('x')`, `->all('x')`, `->getInt('x')`, ... per
-    # request bag, `$request->request->all()['x']`, and the bag-agnostic
-    # `$request->get('x')` (reported as query).
+    # request bag, `$request->request->all()['x']`, the bag-agnostic
+    # `$request->get('x')` (reported as query) and the decoded body's
+    # `$request->getPayload()->get('x')`.
     private def extract_method_params(method_body : String) : Array(Param)
       params = [] of Param
       return params unless method_body.includes?("$request")
@@ -753,8 +814,10 @@ module Analyzer::Php
           params << Param.new(m[2], "", REQUEST_BAGS[bag])
         elsif bag = m[3]?
           params << Param.new(m[4], "", REQUEST_BAGS[bag])
+        elsif name = m[5]?
+          params << Param.new(name, "", "query")
         else
-          params << Param.new(m[5], "", "query")
+          params << Param.new(m[6], "", "json")
         end
       end
       dedup_params(params)
