@@ -591,7 +591,7 @@ module Noir
     # `h.Register(v1)`), keyed by the method name. With `qualifier`, the
     # parameter type must be exactly `qualifier.type_name` (bare `type_name`
     # for `""`), not any type whose last segment is `type_name`.
-    def collect_router_group_builders(source : String, type_name : String = "RouterGroup", qualifier : String? = nil) : Hash(String, RouterBuilder)
+    def collect_router_group_builders(source : String, type_name : String | Array(String) = "RouterGroup", qualifier : String? = nil) : Hash(String, RouterBuilder)
       result = Hash(String, RouterBuilder).new
       duplicates = Set(String).new
       Noir::TreeSitter.parse_go(source) do |root|
@@ -618,7 +618,7 @@ module Noir
 
     # Returns the sole `*gin.RouterGroup` parameter's name, or nil when
     # the function has zero or more than one such parameter.
-    private def router_group_param_name(params : LibTreeSitter::TSNode, source : String, type_name : String, qualifier : String? = nil) : String?
+    private def router_group_param_name(params : LibTreeSitter::TSNode, source : String, type_name : String | Array(String), qualifier : String? = nil) : String?
       found = nil
       count = 0
       Noir::TreeSitter.each_named_child(params) do |decl|
@@ -631,6 +631,8 @@ module Noir
         written = Noir::TreeSitter.node_text(type_node, source).lchop('*').split('[').first
         if qualifier
           next unless written == (qualifier.empty? ? type_name : "#{qualifier}.#{type_name}")
+        elsif type_name.is_a?(Array)
+          next unless type_name.includes?(written.split('.').last)
         else
           next unless written.split('.').last == type_name
         end
@@ -808,12 +810,20 @@ module Noir
     # it (go-admin's `routerCheckRole = append(routerCheckRole,
     # registerDictRouter)`): a call on the value of a `range` over that slice
     # (`for _, f := range routerCheckRole { f(v, auth) }`) calls each of them.
+    #
+    # Inside one of the `scopes` builders, an argument that is its group
+    # parameter or a group built off it (`orders := rg.Group("/orders")`,
+    # an inline `rg.Group("/users")`) comes back as `HANDED_PREFIX` followed
+    # by the path relative to the parameter: its prefix is whatever the
+    # builder is handed.
     def collect_router_builder_callsites(source : String, builders : Set(String),
                                          groups : Hash(String, String) = Hash(String, String).new,
-                                         slice_builders : Hash(String, Array(String)) = Hash(String, Array(String)).new) : Array(Tuple(String, String, String, Int32))
+                                         slice_builders : Hash(String, Array(String)) = Hash(String, Array(String)).new,
+                                         scopes : Hash(String, RouterBuilder) = Hash(String, RouterBuilder).new) : Array(Tuple(String, String, String, Int32))
       calls = [] of Tuple(String, String, String, Int32)
       return calls if builders.empty?
       Noir::TreeSitter.parse_go(source) do |root|
+        scope_groups = builder_param_groups(root, source, scopes)
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           fn = Noir::TreeSitter.field(node, "function")
@@ -831,23 +841,26 @@ module Noir
           next if targets.empty?
           args = Noir::TreeSitter.field(node, "arguments")
           next unless args
+          row = Noir::TreeSitter.node_start_row(node)
+          scoped = scope_groups.find { |(first, last, _)| first <= row <= last }.try(&.[2])
+          call_groups = scoped ? groups.merge(scoped) : groups
           first_text = nil
           first_seen = false
           arg_text = nil
           Noir::TreeSitter.each_named_arg(args) do |arg|
-            text = builder_arg_text(arg, source, groups)
+            text = builder_arg_text(arg, source, call_groups)
+            text = scoped[text]? || text if scoped && text && Noir::TreeSitter.node_type(arg) == "identifier"
             unless first_seen
               first_seen = true
               first_text = text
             end
-            if text && (text.starts_with?('/') || unread_prefix?(text) || groups.has_key?(text))
+            if text && (text.starts_with?('/') || unread_prefix?(text) || text.includes?(HANDED_PREFIX) || groups.has_key?(text))
               arg_text = text
               break
             end
           end
           next unless first_seen
           arg_text ||= first_text
-          row = Noir::TreeSitter.node_start_row(node)
           # Non-identifier, non-inline-Group arg (e.g. expr, func result,
           # root router, etc.) — record so caller can apply "all sites must
           # resolve" guard and fall back to whole-file pass.
@@ -861,6 +874,38 @@ module Noir
     # unprefixed; each builder's expansion re-walks its package, so a
     # 2000-builder slice would cost minutes.
     MAX_SLICE_BUILDERS = 200
+
+    # Stands for the prefix a builder is handed (see
+    # `collect_router_builder_callsites`).
+    HANDED_PREFIX = '\u{FDD1}'
+
+    # `{start_row, end_row, groups}` per `scopes` builder: its group
+    # parameter bound to `HANDED_PREFIX`, and each group its body builds off
+    # it (`Group`, iris's `Party`, mux's `Subrouter`) to `HANDED_PREFIX` and
+    # the path below the parameter.
+    private def builder_param_groups(root : LibTreeSitter::TSNode, source : String,
+                                     scopes : Hash(String, RouterBuilder)) : Array(Tuple(Int32, Int32, Hash(String, String)))
+      found = [] of Tuple(Int32, Int32, Hash(String, String))
+      return found if scopes.empty?
+      no_values = Hash(String, String).new
+      Noir::TreeSitter.each_named_child(root) do |decl|
+        next unless {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(decl))
+        name = Noir::TreeSitter.field(decl, "name").try { |n| Noir::TreeSitter.node_text(n, source) } || next
+        rb = scopes[name]? || next
+        next unless rb.start_row == Noir::TreeSitter.node_start_row(decl)
+        groups = {rb.param => HANDED_PREFIX.to_s}
+        Noir::TreeSitter.field(decl, "body").try do |body|
+          Noir::TreeSitter.walk(body) do |node|
+            next unless group_assignment_node?(node)
+            collect_group(node, source, groups, "Group", string_values: no_values, extra_group_methods: ["Party"])
+            collect_group(node, source, groups, "Subrouter", string_values: no_values)
+          end
+        end
+        groups.select! { |_, prefix| prefix.includes?(HANDED_PREFIX) }
+        found << {rb.start_row, rb.end_row, groups}
+      end
+      found
+    end
 
     # The slice `var` ranges over in the `for _, var := range slice` around
     # `call` (in the same function), or nil, also when the declaration it
@@ -975,7 +1020,7 @@ module Noir
       return unless gfn && Noir::TreeSitter.node_type(gfn) == "selector_expression"
       operand = Noir::TreeSitter.field(gfn, "operand")
       case Noir::TreeSitter.node_text(gfn, source).split(".").last
-      when "Group"
+      when "Group", "Party"
         gargs = Noir::TreeSitter.field(arg, "arguments")
         return unless gargs
         lit = nil

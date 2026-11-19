@@ -16,6 +16,9 @@ module Analyzer::Go
     # Struct field types that hold a router (`s.app.Get(...)`).
     ROUTER_TYPES = {IMPORT_MARKER                         => %w[Application Party],
                     "github.com/kataras/iris/core/router" => %w[Party APIBuilder]}
+    # Helper parameter types a party is handed as (see
+    # `GoEngine#resolve_router_builder_prefixes`).
+    BUILDER_TYPES = ["iris.Party", "router.Party"]
 
     def analyze
       # Iris uses `.Party(...)` for route groups; pass that into both the
@@ -25,6 +28,7 @@ module Analyzer::Go
       package_function_bodies = lazy_package_bodies(file_contents)
       named_scope = named_handler_scope(file_contents)
       router_fields = package_router_fields(file_contents, ROUTER_TYPES, named_scope.import_dirs, package_groups)
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPES)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
@@ -34,6 +38,8 @@ module Analyzer::Go
         last_endpoint = Endpoint.new("", "")
 
         receivers, cross_file_groups = file_router_receivers(router_fields, path, content, ts_groups_for_directory(package_groups, File.dirname(path)))
+        expand_builders = router_builder_expansions(content, BUILDER_TYPES, builder_prefixes_by_dir[File.dirname(path)]?, cross_file_groups)
+        suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
         ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
           content, cross_file_groups, group_method: "Party",
           # `app.Handle("GET", "/x", h)` is Iris's method-first
@@ -61,6 +67,8 @@ module Analyzer::Go
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
         lines.each_with_index do |line, index|
+          # A builder helper's routes come from the expansion below.
+          next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
           details = Details.new(PathInfo.new(path, index + 1))
@@ -92,6 +100,17 @@ module Analyzer::Go
           end
 
           add_iris_param_patterns(line, last_endpoint)
+        end
+
+        expanded = [] of Endpoint
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle", into: expanded, group_method: "Party") do |line, ep|
+          add_iris_param_patterns(line, ep)
+        end
+        expanded.each do |ep|
+          subdomain, clean = split_iris_subdomain(ep.url)
+          ep.url = normalize_iris_path(clean)
+          ep.add_tag(Tag.new("subdomain", subdomain, "iris_analyzer")) if subdomain
+          result << ep
         end
 
         named.each_attribution { |line, ep| add_iris_param_patterns(line, ep) }

@@ -525,8 +525,9 @@ module Analyzer::Go
     # receive their group as an argument, so the prefix lives at the call
     # site (`addUserRoutes(router.Group("/v1"))`) and has to be grafted onto
     # the helper's routes. `builder_type` is the group parameter type as
-    # written (`*gin.RouterGroup`, `*echo.Group`, `*route.RouterGroup`); its
-    # text gates the per-file parse and its last segment is the type name.
+    # written (`*gin.RouterGroup`, `*echo.Group`, `*route.RouterGroup`), or
+    # several (`gin.IRouter` too); its text gates the per-file parse and its
+    # last segment is the type name.
     #
     # Builds `{dir => {builder_fn => set(prefixes)}}` by (1) collecting
     # every helper across the directory's files and (2) resolving each call
@@ -540,8 +541,9 @@ module Analyzer::Go
     # keeps its routes.
     def resolve_router_builder_prefixes(file_contents : Hash(String, String),
                                         package_groups : Hash(String, Hash(String, String)),
-                                        builder_type : String) : Hash(String, Hash(String, Set(String)))
-      type_name = builder_type.split('.').last
+                                        builder_type : String | Array(String)) : Hash(String, Hash(String, Set(String)))
+      builder_types = builder_type.is_a?(Array) ? builder_type : [builder_type]
+      type_names = builder_types.map(&.split('.').last)
       result = Hash(String, Hash(String, Set(String))).new
       files_by_dir = Hash(String, Array(String)).new
       file_contents.each_key { |p| (files_by_dir[File.dirname(p)] ||= [] of String) << p }
@@ -553,8 +555,8 @@ module Analyzer::Go
         duplicates = Set(String).new
         paths.each do |p|
           content = file_contents[p]?
-          next unless content && content.includes?(builder_type)
-          (file_builders[p] = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name)).each_key do |fn|
+          next unless content && builder_types.any? { |t| content.includes?(t) }
+          (file_builders[p] = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_names)).each_key do |fn|
             # Only methods can share a name across a package's files; such a
             # name is ambiguous at a `h.Register(g)` call site.
             duplicates << fn unless builders.add?(fn)
@@ -595,11 +597,13 @@ module Analyzer::Go
       prefixes_by_dir = Hash(String, Hash(String, Set(String))).new
       unresolved_by_dir = Hash(String, Set(String)).new
       # A call made inside another builder that hands on its own parameter
-      # (vikunja's `registerAPIRoutesV2(e, a)` calling `m.Register(a)`): the
-      # argument is whatever that builder was handed, not a package group
-      # of the same name. {target dir, fn, caller's dir, caller builder,
-      # the by-name prefix used when the caller never resolves}.
-      handed = [] of {String, String, String, String, String?}
+      # (vikunja's `registerAPIRoutesV2(e, a)` calling `m.Register(a)`), or a
+      # group built off it (`v1.Register(rg.Group("/users"))`): the argument
+      # is whatever that builder was handed, not a package group of the same
+      # name. {target dir, fn, caller's dir, caller builder, the by-name
+      # prefix used when the caller never resolves, the path below the
+      # caller's parameter}.
+      handed = [] of {String, String, String, String, String?, String}
       files_by_dir.each do |dir, paths|
         group_map = package_groups[dir]? || Hash(String, String).new
         paths.each do |p|
@@ -613,7 +617,8 @@ module Analyzer::Go
           aliases = nil
           own_builders = file_builders[p]?
           slices = slices_by_dir[dir]? || Hash(String, Array(String)).new
-          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map, slices).each do |fn, arg, qualifier, row|
+          scopes = own_builders.try(&.select { |fn, _| builders_by_dir[dir]?.try(&.includes?(fn)) }) || Hash(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder).new
+          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map, slices, scopes).each do |fn, arg, qualifier, row|
             local = dir if builders_by_dir[dir]?.try(&.includes?(fn))
             target = if qualifier.empty?
                        local
@@ -632,9 +637,12 @@ module Analyzer::Go
                        end
                      end
             next unless target
-            if (enclosing = own_builders.try &.find { |_, rb| rb.param == arg && rb.start_row <= row <= rb.end_row }) &&
-               builders_by_dir[dir]?.try(&.includes?(enclosing[0]))
-              handed << {target, fn, dir, enclosing[0], group_map[arg]?}
+            if arg.includes?(Noir::TreeSitterGoRouteExtractor::HANDED_PREFIX) &&
+               (enclosing = scopes.find { |_, rb| rb.start_row <= row <= rb.end_row })
+              tail = arg.delete(Noir::TreeSitterGoRouteExtractor::HANDED_PREFIX)
+              by_name = group_map[enclosing[1].param]?
+              by_name = by_name ? builder_prefix_join(by_name, tail) : tail unless tail.empty?
+              handed << {target, fn, dir, enclosing[0], by_name, tail}
               next
             end
             prefix = group_map[arg]?
@@ -651,15 +659,16 @@ module Analyzer::Go
       # Through chains of builders: a caller settles once every call handing
       # it a group has. One whose call sites never resolve falls back to the
       # argument's name, as a call outside any builder does.
-      settled = Set({String, String, String, String, String?}).new
+      settled = Set({String, String, String, String, String?, String}).new
       (handed.size + 1).times do
         progressed = false
         handed.each do |dep|
           next if settled.includes?(dep)
-          target, fn, from_dir, from_fn, _ = dep
+          target, fn, from_dir, from_fn, _, tail = dep
           next if unresolved_by_dir[from_dir]?.try(&.includes?(from_fn))
           next if handed.any? { |other| !settled.includes?(other) && other[0] == from_dir && other[1] == from_fn }
           from = prefixes_by_dir[from_dir]?.try(&.[from_fn]?) || next
+          from = from.map { |p| builder_prefix_join(p, tail) } unless tail.empty?
           ((prefixes_by_dir[target] ||= Hash(String, Set(String)).new)[fn] ||= Set(String).new).concat(from)
           settled << dep
           progressed = true
@@ -668,7 +677,7 @@ module Analyzer::Go
       end
       handed.each do |dep|
         next if settled.includes?(dep)
-        target, fn, _, _, by_name = dep
+        target, fn, _, _, by_name, _ = dep
         if by_name
           ((prefixes_by_dir[target] ||= Hash(String, Set(String)).new)[fn] ||= Set(String).new) << by_name
         else
@@ -693,6 +702,10 @@ module Analyzer::Go
       result
     end
 
+    private def builder_prefix_join(prefix : String, tail : String) : String
+      tail.empty? ? prefix : "#{prefix.rstrip('/')}/#{tail.lstrip('/')}"
+    end
+
     # The router-builder helpers defined in `content` to expand, with their
     # resolved call-site prefixes. A helper whose group parameter name is
     # also a package-level group (both named `v1`) is resolved by the
@@ -702,12 +715,13 @@ module Analyzer::Go
     # of `RegisterRoutes`' `a`: the name is the parameter's, scoped to the
     # helper.
     def router_builder_expansions(content : String,
-                                  builder_type : String,
+                                  builder_type : String | Array(String),
                                   dir_prefixes : Hash(String, Set(String))?,
                                   cross_file_groups : Hash(String, String)) : Array(Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String)))
       expansions = [] of Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))
-      return expansions unless dir_prefixes && content.includes?(builder_type)
-      Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, builder_type.split('.').last).each do |fn, rb|
+      builder_types = builder_type.is_a?(Array) ? builder_type : [builder_type]
+      return expansions unless dir_prefixes && builder_types.any? { |t| content.includes?(t) }
+      Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, builder_types.map(&.split('.').last)).each do |fn, rb|
         pset = dir_prefixes[fn]?
         next if pset.nil? || pset.empty?
         next if (shadowed = cross_file_groups[rb.param]?) && pset == Set{shadowed}
