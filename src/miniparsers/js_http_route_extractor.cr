@@ -620,10 +620,10 @@ module Noir
         elsif !methods.empty?
           # A method test alone guards a verb inside some path's block; its
           # one-statement form (`if (m === 'GET') return f(q)`) must not cut
-          # off the params that block read before it.
-          block_start = block_end = nil unless braced
-          method_hits << ValueHit.new(methods, offset, block_start, block_end)
-          if block_start && block_end
+          # off the params that block read before it, but other routes'
+          # blocks and sibling verb statements are cut (see without_sibling_scopes).
+          method_hits << ValueHit.new(methods, offset, block_start, block_end, !braced)
+          if braced && block_start && block_end
             method_regions << Region.new(methods, block_start, block_end)
           end
         elsif !paths.empty?
