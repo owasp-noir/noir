@@ -61,9 +61,7 @@ module Analyzer::CSharp
 
       Noir::CSharpDeclParser.parse(lexer).types.each do |type|
         next unless type.kind == "class" && type.bases.any?(&.matches?(MODULE_BASE_RE))
-        # `public DirectorsModule() : base("/directors")` — Carter's
-        # constructor base path. `base()` with no literal leaves it empty.
-        prefix = type.constructors.find(&.initializer.== "base").try(&.initializer_args).try(&.first?).try(&.literal) || ""
+        prefix = module_base_path(file, type) || ""
         # Extraction is scoped to `AddRoutes` bodies so MapGroup prefixes
         # and base paths don't leak between modules declared in one file.
         type.methods.each do |method|
@@ -73,13 +71,29 @@ module Analyzer::CSharp
       end
     end
 
+    PRIMARY_BASE_RE = /\ACarterModule\s*\(([\s\S]*)\)\z/
+
+    # Carter's base path: `public DirectorsModule() : base("/directors")`, or
+    # the C# 12 primary-constructor base `class K() : CarterModule("/k")`.
+    # The argument may be a constant (`base(BasePath)`).
+    private def module_base_path(file : String, type : Noir::CSharpDecl::TypeDecl) : String?
+      if ctor = type.constructors.find(&.initializer.== "base")
+        arg = ctor.initializer_args.try(&.first?).try(&.text)
+        line = ctor.line
+      elsif m = type.bases.compact_map(&.match(PRIMARY_BASE_RE)).first?
+        arg = split_csharp_parameters(m[1]).first?
+        line = type.line
+      end
+      route_template_value(arg, file, line) if arg && line
+    end
+
     private def analyze_add_routes_body(file : String, lines : Array(String), masked_lines : Array(String),
                                         body_start : Int32, body_end : Int32,
                                         prefix : String, include_callee : Bool)
       body_text = lines[body_start..Math.min(body_end, lines.size - 1)].join('\n')
-      group_prefixes = extract_map_group_prefixes(body_text)
+      group_prefixes = extract_map_group_prefixes(body_text, file, body_start)
 
-      each_map_block(lines, masked_lines, body_start..Math.min(body_end, lines.size - 1), group_prefixes) do |block, idx, chain_prefix|
+      each_map_block(lines, masked_lines, body_start..Math.min(body_end, lines.size - 1), group_prefixes, file) do |block, idx, chain_prefix|
         extract_endpoints_from_map_block(block, group_prefixes, file, idx + 1,
           lines, masked_lines, include_callee, prefix, chain_prefix).each do |endpoint|
           @result << endpoint
