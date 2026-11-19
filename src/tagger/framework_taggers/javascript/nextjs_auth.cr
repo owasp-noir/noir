@@ -560,7 +560,9 @@ class NextjsAuthTagger < FrameworkTagger
         end
         previous = char unless char.whitespace?
       end
-      break if opened ? depth <= 0 : text.rstrip.ends_with?(';')
+      # A `;` inside the parameter list ends a member of its type
+      # (`{ id: string; name: string }` across lines), not the statement.
+      break if opened ? depth <= 0 : parens == 0 && text.rstrip.ends_with?(';')
     end
     body
   end

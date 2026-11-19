@@ -68,6 +68,10 @@ describe "NextjsAuthTagger" do
     tag.call("app/actions/items.ts", 14).should be_empty
   end
 
+  it "reads a handler whose destructured parameter is typed across lines" do
+    tag.call("app/actions/items.ts", 38).map(&.name).should eq(["auth"])
+  end
+
   it "tags a handler that compares the caller's key with a process.env secret" do
     tag.call("app/api/cron/route.ts", 3).map(&.name).should eq(["auth"])
   end

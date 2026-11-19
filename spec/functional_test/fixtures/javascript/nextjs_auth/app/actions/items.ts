@@ -34,3 +34,18 @@ export async function previewItems() {
   }
   return [];
 }
+
+export async function shareItem({
+  itemId,
+  visibility,
+}: {
+  itemId: string;
+  visibility: string;
+}) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized");
+  }
+
+  await saveVisibility(itemId, visibility);
+}
