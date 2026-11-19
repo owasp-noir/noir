@@ -31,10 +31,15 @@ class SwiftAuthTagger < FrameworkTagger
     {/#{GROUPED_ARG}SessionAuthenticator/, "Vapor SessionAuthenticator"},
   ]
 
-  # Auth requirement in route handler
-  HANDLER_AUTH_PATTERNS = [
+  # Calls that throw 401 when the request is unauthenticated.
+  REQUIRE_AUTH_PATTERNS = [
     {/req\.auth\.require\s*\(/, "Vapor req.auth.require"},
     {/request\.auth\.require\s*\(/, "Vapor request.auth.require"},
+    {/\bcontext\.requireIdentity\s*\(/, "Hummingbird requireIdentity"},
+  ]
+
+  # Auth requirement in route handler
+  HANDLER_AUTH_PATTERNS = REQUIRE_AUTH_PATTERNS + [
     {/req\.auth\.get\s*\(/, "Vapor req.auth.get"},
     {/guard.*req\.auth/, "Vapor auth guard"},
   ]
@@ -167,6 +172,22 @@ class SwiftAuthTagger < FrameworkTagger
       break if brace_depth <= 0
     end
 
+    check_named_handler(masked_lines, route_line)
+  end
+
+  # `use: self.current` / `use: current`: the handler method of this file.
+  private def check_named_handler(masked_lines : Array(String), route_line : Int32) : String?
+    return unless m = masked_lines[route_line].match(/\buse:\s*(?:self\.)?(\w+)\s*\)/)
+    head = /\bfunc\s+#{Regex.escape(m[1])}\s*[(<]/
+    return unless start = masked_lines.index(&.matches?(head))
+    depth = 0
+    masked_lines[start, 80].each do |line|
+      REQUIRE_AUTH_PATTERNS.each do |pattern, desc|
+        return desc if line.matches?(pattern)
+      end
+      depth += line.count('{') - line.count('}')
+      break if depth <= 0 && line.includes?('}')
+    end
     nil
   end
 end

@@ -160,6 +160,42 @@ describe "SwiftAuthTagger" do
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
 
+  it "reads the named handler method a route registers with use:" do
+    tmpdir = File.tempname("swift_named_handler")
+    Dir.mkdir_p(tmpdir)
+    controller = File.join(tmpdir, "UserController.swift")
+    File.write(controller, <<-SWIFT)
+      struct UserController {
+          func addRoutes(to group: RouterGroup<AppRequestContext>) {
+              group.post(use: self.create)
+              group.add(middleware: self.sessionAuthenticator)
+                  .get(use: self.current)
+          }
+
+          func create(_ request: Request, context: AppRequestContext) async throws -> UserResponse {
+              let user = try await request.decode(as: CreateUser.self, context: context)
+              return UserResponse(from: user)
+          }
+
+          func current(_ request: Request, context: AppRequestContext) throws -> UserResponse {
+              let user = try context.requireIdentity()
+              return UserResponse(from: user)
+          }
+      }
+      SWIFT
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    at = ->(line : Int32) { Endpoint.new("/x", "GET", [] of Param, Details.new(PathInfo.new(controller, line))) }
+    create, current = at.call(3), at.call(5)
+    SwiftAuthTagger.new(noir_options).perform([create, current])
+
+    create.tags.should be_empty
+    current.tags.map(&.description).should eq(["Protected by Hummingbird requireIdentity"])
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
   it "treats a redirectMiddleware group as guarded" do
     tmpdir = File.tempname("swift_redirect_mw")
     Dir.mkdir_p(tmpdir)
