@@ -91,6 +91,13 @@ describe "NextjsAuthTagger" do
     tag.call("app/api/runner/route.ts", 8).should be_empty
   end
 
+  it "credits only an unauthorized throw or return inside the body the session check opens" do
+    tag.call("app/api/feed/route.ts", 3).should be_empty
+    tag.call("app/api/feed/route.ts", 12).should be_empty
+    tag.call("app/api/feed/route.ts", 21).should be_empty
+    tag.call("app/api/feed/route.ts", 30).map(&.name).should eq(["auth"])
+  end
+
   it "does not count a parenthesis in a regex literal on the export line" do
     tag.call("app/api/pattern/route.ts", 4).should be_empty
     tag.call("app/api/pattern/route.ts", 6).map(&.name).should eq(["auth"])

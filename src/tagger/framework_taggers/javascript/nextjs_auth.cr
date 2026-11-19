@@ -69,9 +69,11 @@ class NextjsAuthTagger < FrameworkTagger
   # string, so this is matched on text that still has strings. The `{` sits
   # between `throw` and the word, and the object may wrap a line or two.
   THROWN_UNAUTHORIZED = /\bthrow\b[\s\S]{0,240}unauthori[sz]ed/i
-  # `return new AppError("unauthorized:chat").toResponse()`: an error type
-  # that maps its code to the status. Within the one statement.
-  RETURNED_UNAUTHORIZED = /\breturn\b[^;]{0,240}unauthori[sz]ed/i
+  # `"Unauthorized"`, `"unauthorized:chat"` in a string, or `new
+  # UnauthorizedError(`: not a substring of a name (`showUnauthorizedBanner`).
+  UNAUTHORIZED_TOKEN = /["'`][^"'`\n]*\bunauthori[sz]ed\b[^"'`\n]*["'`]|\bnew\s+[\w$]*Unauthori[sz]ed[\w$]*\s*\(/i
+  REFUSAL_KEYWORD    = /\b(throw|return)\b/
+  IF_OPEN            = /\bif\s*\(/
 
   # A refusal found in a body: the `if` it sits under, the status, whether
   # it throws (stopping its caller too) or returns a response (which its
@@ -141,13 +143,10 @@ class NextjsAuthTagger < FrameworkTagger
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{refusal.condition}` (replies #{refusal.status})", "nextjs_auth"))
       return
     end
-    # A server action has no response to put a status on: it throws.
-    if condition = unauthorized_denial(raw, code)
-      endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{condition}` (throws unauthorized)", "nextjs_auth"))
-      return
-    end
-    if condition = unauthorized_denial(raw, code, RETURNED_UNAUTHORIZED)
-      endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{condition}` (returns unauthorized)", "nextjs_auth"))
+    # A server action has no response to put a status on: it throws, or
+    # returns an error type that maps its code to one.
+    if denial = handler_denial(code, raw)
+      endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{denial[0]}` (#{denial[1]} unauthorized)", "nextjs_auth"))
       return
     end
     if found = helper_refusal(code, raw, path, 0)
@@ -556,25 +555,77 @@ class NextjsAuthTagger < FrameworkTagger
     end
   end
 
+  # A throw that says unauthorized (in `raw`, strings kept) under a session
+  # denial (in `code`).
   private def thrown_unauthorized?(raw : Array(String), code : Array(String)) : Bool
-    !unauthorized_denial(raw, code).nil?
-  end
-
-  # The session denial (in `code`) a throw that says unauthorized (in `raw`,
-  # strings kept) sits under.
-  private def unauthorized_denial(raw : Array(String), code : Array(String), mark : Regex = THROWN_UNAUTHORIZED) : String?
-    verb = verb_matcher(code)
     raw.each_with_index do |_, i|
-      # As in `session_refusal`: past a verb branch the check guards only some verbs.
-      break if method_branch?(code, i, verb)
-      next unless raw[i, 4].join('\n').matches?(mark)
+      next unless raw[i, 4].join('\n').matches?(THROWN_UNAUTHORIZED)
       i.downto({i - CONDITION_LOOKBACK, 0}.max) do |j|
         stripped = code[j].strip
         break if j < i && stripped == "}"
-        return stripped.rchop('{').strip if code[j].matches?(SESSION_DENIED) || secret_list_denied?(code[j], raw[j])
+        return true if code[j].matches?(SESSION_DENIED) || secret_list_denied?(code[j], raw[j])
         break if j < i && stripped.matches?(ELSE_BRANCH)
       end
     end
+    false
+  end
+
+  # The handler's own `if (!session) { throw new Error("Unauthorized") }`
+  # (or `return new AppError("unauthorized:chat").toResponse()`): the
+  # condition and "throws" or "returns". The throw or return must sit in the
+  # body the `if` opens, and say unauthorized in a string or an error type
+  # within its own statement.
+  private def handler_denial(code : Array(String), raw : Array(String)) : {String, String}?
+    verb = verb_matcher(code)
+    text = raw.join('\n')
+    masked = Noir::JSLiteralScanner.blank_literals(text)
+    bytes = masked.to_slice
+    line_start = 0
+    code.each_with_index do |line, j|
+      from = line_start
+      line_start += (raw[j]? || "").bytesize + 1
+      # As in `session_refusal`: past a verb branch the check guards only some verbs.
+      break if method_branch?(code, j, verb)
+      next unless line.matches?(SESSION_DENIED) || secret_list_denied?(line, raw[j]? || "")
+      row = masked.byte_slice(from, Math.min((raw[j]? || "").bytesize, masked.bytesize - from))
+      head = row.match(IF_OPEN) || next
+      open = from + (row.char_index_to_byte_index(head.end(0) - 1) || next)
+      close = Noir::JSLiteralScanner.find_matching_paren_at_byte(masked, open) || next
+      start = close + 1
+      while start < bytes.size && bytes[start].unsafe_chr.ascii_whitespace?
+        start += 1
+      end
+      next if start >= bytes.size
+      body_from, body_to = if bytes[start] == '{'.ord
+                             {start + 1, Noir::JSLiteralScanner.find_matching_brace_at_byte(masked, start) || next}
+                           else
+                             {start, statement_end(bytes, start, bytes.size)}
+                           end
+      body = masked.byte_slice(body_from, body_to - body_from)
+      body.scan(REFUSAL_KEYWORD) do |m|
+        at = body_from + (body.char_index_to_byte_index(m.begin(0)) || next)
+        statement = text.byte_slice(at, statement_end(bytes, at, body_to) - at)
+        next unless statement.matches?(UNAUTHORIZED_TOKEN)
+        return {line.strip.rchop('{').strip, m[1] == "throw" ? "throws" : "returns"}
+      end
+    end
+  end
+
+  # The byte offset where the statement starting at `from` ends: its `;`, or
+  # the end of its line once every bracket it opened is closed, or `limit`.
+  private def statement_end(bytes : Bytes, from : Int32, limit : Int32) : Int32
+    depth = 0
+    (from...limit).each do |i|
+      case bytes[i]
+      when '('.ord, '['.ord, '{'.ord then depth += 1
+      when ')'.ord, ']'.ord, '}'.ord
+        depth -= 1
+        return i if depth < 0
+      when ';'.ord  then return i if depth == 0
+      when '\n'.ord then return i if depth == 0
+      end
+    end
+    limit
   end
 
   # The comment-stripped lines from `start` to the brace that closes the
