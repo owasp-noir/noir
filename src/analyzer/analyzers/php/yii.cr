@@ -358,7 +358,7 @@ module Analyzer::Php
       offset = 0
       # Only public methods are actions; Yii never routes to a protected or
       # private `actionX()`.
-      content.scan(/(?:^|[\s;{}])((?:(?:public|protected|private|static|final|abstract)\s+)*)function\s+action([A-Z]\w*)\s*\(([^)]*)\)\s*\{/) do |match|
+      content.scan(/(?:^|[\s;{}])((?:(?:public|protected|private|static|final|abstract)\s+)*)function\s+action([A-Z]\w*)\s*\(([^)]*)\)\s*(?::\s*[^{;]+)?\{/) do |match|
         next if match[1].matches?(/\b(?:protected|private)\b/)
         action_name = match[2]
         param_sig = match[3]
