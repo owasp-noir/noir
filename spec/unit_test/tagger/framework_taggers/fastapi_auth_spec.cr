@@ -569,10 +569,11 @@ describe "FastAPIAuthTagger" do
     end
 
     it "follows a refusing helper a handler or a dependency calls first" do
-      found = verdicts.call({53 => "/search", 60 => "/maybe", 67 => "/session"})
+      found = verdicts.call({53 => "/search", 60 => "/maybe", 67 => "/session", 81 => "/internal/jobs"})
       found["/search"].should eq(["auth: Protected by FastAPI handler call to check_token"])
       found["/maybe"].should be_empty
       found["/session"].should be_empty
+      found["/internal/jobs"].should eq(["auth: Protected by FastAPI Depends(require_internal)"])
     end
   end
 

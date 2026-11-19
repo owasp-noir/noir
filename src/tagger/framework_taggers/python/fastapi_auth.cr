@@ -224,7 +224,7 @@ class FastAPIAuthTagger < FrameworkTagger
         scopes.concat(include_dependencies(path_info.path, receiver))
       end
       scopes.concat(class_dependencies(lines, line_num - 1, path_info.path))
-      scopes.concat(scopes.flat_map { |text, file| dependency_variables(text, file) })
+      scopes.concat(scopes.flat_map { |text, file| dependency_variables(text, file, file == path_info.path ? {lines, line_num - 1} : nil) })
 
       description = nil
       authz = nil
@@ -1502,7 +1502,11 @@ class FastAPIAuthTagger < FrameworkTagger
   # The assignment each bare name in a `dependencies=[...]` list is bound
   # to (`internal = Depends(require_internal)`; `dependencies=[internal]`),
   # with the file that declares it.
-  private def dependency_variables(text : String, path : String) : Array({String, String})
+  #
+  # A route declared inside an app factory also reads a name the factory
+  # binds (`internal = Depends(require_internal)` above the route), given
+  # the route's `lines` and line index as `route`.
+  private def dependency_variables(text : String, path : String, route : {Array(String), Int32}? = nil) : Array({String, String})
     found = [] of {String, String}
     text.scan(DEPENDENCIES_LIST) do |list|
       Noir::TopLevelSplit.split(list[1], ',', SPLIT_RULES).each do |item|
@@ -1514,8 +1518,15 @@ class FastAPIAuthTagger < FrameworkTagger
                elsif (symbol = python_imported_symbols(path)[module_name]?) && symbol[1].empty?
                  python_definition_site(symbol[0], leaf)
                end
+        depends_re = /^#{Regex.escape(site ? site[1] : leaf)}\s*(?::[^=\n]+)?=\s*(?:Depends|Security)\s*\(/
+        if site.nil? && module_name.empty? && route && route[0][route[1]].starts_with?(/\s/)
+          if idx = local_assignment(route[0], route[1], leaf, depends_re)
+            found << {joined_statement(route[0], idx).strip, path}
+          end
+          next
+        end
         next unless site
-        statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=\s*(?:Depends|Security)\s*\(/) || next
+        statement = definition_block(site[0], depends_re) || next
         found << {statement, site[0]}
       end
     end
