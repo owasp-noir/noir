@@ -1110,25 +1110,36 @@ module Analyzer::Ruby
       replay_concerns(parse_symbol_list(args), scan, scan.stack)
     end
 
-    # resources :foo / resource :foo
+    # resources :foo / resource :foo / resources :photos, :books
     private def handle_resources(kind_kw : String, args : String, opens_block : Bool, scan : RouteFileState)
       stack = scan.stack
-      return unless name = parse_first_route_name(args)
+      return unless first = parse_first_route_name(args)
       options = with_options_for(stack).merge(parse_options(args))
-
-      existing_controller_path = emit_resource_routes(scan.framework_root, stack, kind_kw, name, options)
-
-      # A `module:` on the resources line also scopes nested
-      # resources/routes inside its block, so carry it on the frame's
-      # controller_subdir for children to inherit. Its concerns run in the
-      # same scope as the block, ahead of it.
-      frame = Frame.new(:resources, path: options["path"]?.try { |p| normalize_route_prefix(p) } || name, resource_name: options["as"]?.presence || name,
-        controller_path: existing_controller_path, controller_subdir: options["module"]? || "",
-        shallow: options["shallow"]? == "true", shallow_member: shallow_nested?(stack, options),
-        param_name: resource_param_name(options, kind_kw == "resource"))
       concern_names = parse_symbol_list(options["concerns"]?)
-      replay_concerns(concern_names, scan, stack + [frame]) unless concern_names.empty?
-      stack << frame if opens_block
+      names = [first]
+      rest = args.sub(/\A\s*(?::[A-Za-z_]\w*|['"][^'"]+['"])/, "")
+      while m = rest.match(/\A\s*,\s*(?::([A-Za-z_]\w*)|['"]([^'"]+)['"])(?![\w:]|\s*=>)/)
+        names << (m[1]? || m[2]).to_s
+        rest = m.post_match
+      end
+
+      # ponytail: a block opened by several names nests under the first
+      # one only; Rails runs it once per name.
+      frames = names.map do |name|
+        existing_controller_path = emit_resource_routes(scan.framework_root, stack, kind_kw, name, options)
+
+        # A `module:` on the resources line also scopes nested
+        # resources/routes inside its block, so carry it on the frame's
+        # controller_subdir for children to inherit. Its concerns run in the
+        # same scope as the block, ahead of it.
+        frame = Frame.new(:resources, path: options["path"]?.try { |p| normalize_route_prefix(p) } || name, resource_name: options["as"]?.presence || name,
+          controller_path: existing_controller_path, controller_subdir: options["module"]? || "",
+          shallow: options["shallow"]? == "true", shallow_member: shallow_nested?(stack, options),
+          param_name: resource_param_name(options, kind_kw == "resource"))
+        replay_concerns(concern_names, scan, stack + [frame]) unless concern_names.empty?
+        frame
+      end
+      stack << frames.first if opens_block
     end
 
     private def resource_param_name(options : Hash(String, String), singular : Bool) : String?
