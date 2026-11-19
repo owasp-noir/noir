@@ -270,6 +270,17 @@ module Analyzer::Python
         # Path params are added later from the fully-resolved URL.
         next if path_param_names.includes?(param.name)
 
+        # `filters: Query[Filters]` / `filters: Filters = Query(...)` take a
+        # whole schema from that location, so report the schema's fields.
+        if marker_schema = ninja_marker_schema(param)
+          location, schema_type = marker_schema
+          if schema_params = resolve_schema_params(schema_type, source, base, import_modules, location)
+            # Path fields are already read off the URL.
+            params.concat(schema_params) unless location == "path"
+            next
+          end
+        end
+
         if param_type = infer_ninja_param_type(param)
           default_value = return_literal_value(param.default)
           params << Param.new(ninja_wire_name(param), default_value, param_type)
@@ -279,7 +290,7 @@ module Analyzer::Python
         # No explicit marker and not a known scalar — most likely a
         # `ninja.Schema` body. Expand its fields; fall back to a query
         # param when the class can't be resolved.
-        if schema_params = resolve_schema_params(param, source, base, import_modules)
+        if schema_params = resolve_schema_params(strip_type_wrappers(param.type), source, base, import_modules, "json")
           params.concat(schema_params) unless schema_params.empty?
           next unless schema_params.empty?
         end
@@ -330,6 +341,24 @@ module Analyzer::Python
       nil
     end
 
+    NINJA_MARKER_LOCATIONS = {
+      "Query" => "query", "Form" => "form", "File" => "form", "Body" => "json",
+      "Header" => "header", "Cookie" => "cookie", "Path" => "path",
+    }
+
+    private def ninja_marker_schema(param : FunctionParameter) : Tuple(::String, ::String)?
+      if m = param.type.strip.match(/^(\w+)\[\s*([A-Za-z_][\w.]*)\s*\]$/)
+        location = NINJA_MARKER_LOCATIONS[m[1]]?
+        return {location, m[2].split(".").last} if location
+      end
+      if m = param.default.strip.match(/^(\w+)\s*\(/)
+        location = NINJA_MARKER_LOCATIONS[m[1]]?
+        type = strip_type_wrappers(param.type)
+        return {location, type} if location && !type.empty? && !SCALAR_TYPES.includes?(type)
+      end
+      nil
+    end
+
     private def strip_type_wrappers(type : ::String) : ::String
       core = type.strip
       if core.includes?("Annotated[")
@@ -344,11 +373,11 @@ module Analyzer::Python
       core.gsub(/[\[\]]/, "").strip
     end
 
-    private def resolve_schema_params(param : FunctionParameter,
+    private def resolve_schema_params(type : ::String,
                                       source : ::String,
                                       base : ::String,
-                                      import_modules : Hash(::String, Tuple(::String, Int32))) : Array(Param)?
-      type = strip_type_wrappers(param.type)
+                                      import_modules : Hash(::String, Tuple(::String, Int32)),
+                                      location : ::String) : Array(Param)?
       return unless type.matches?(/^[A-Za-z_][A-Za-z0-9_]*$/)
 
       if import_modules.has_key?(type)
@@ -359,13 +388,13 @@ module Analyzer::Python
         rescue
           return
         end
-        return find_schema_params(schema_source, type)
+        return find_schema_params(schema_source, type, location)
       end
 
-      find_schema_params(source, type)
+      find_schema_params(source, type, location)
     end
 
-    private def find_schema_params(source : ::String, class_name : ::String) : Array(Param)?
+    private def find_schema_params(source : ::String, class_name : ::String, location : ::String) : Array(Param)?
       class_codeblock = parse_code_block(source, /\s*class\s+#{Regex.escape(class_name)}\s*[\(:]/)
       return if class_codeblock.nil?
 
@@ -390,7 +419,7 @@ module Analyzer::Python
         end
 
         wire_name = default.matches?(NINJA_FIELD_CALL_RE) ? (Helper.declared_alias(default) || field_name) : field_name
-        params << Param.new(wire_name, return_literal_value(default), "json")
+        params << Param.new(wire_name, return_literal_value(default), location)
       end
 
       params.empty? ? nil : params

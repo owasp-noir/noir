@@ -10,6 +10,10 @@ module Analyzer::Python
     # Base path for the Django project
     @django_base_path : ::String = ""
     @visited_url_paths = Hash(String, Bool).new
+    # A urlconf can be mounted under several prefixes: `{file, prefix}` of
+    # the mounts already read, and the urlconfs being read (include cycles).
+    @visited_url_mounts = Set(Tuple(String, String)).new
+    @urlconfs_in_progress = Set(String).new
     # `{file, list, prefix}` of the imported url lists already followed,
     # and the `{file, list}` being read (a list including itself).
     @visited_url_lists = Set(Tuple(String, String, String)).new
@@ -24,7 +28,7 @@ module Analyzer::Python
     # `router = routers.DefaultRouter(trailing_slash=False)`
     DRF_SLASHLESS_ROUTER_RE = /\b([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=\n]+)?=\s*[A-Za-z_][\w.]*Router\s*\([^)]*\btrailing_slash\s*=\s*False\b/
     # `http_method_names = ["get", "post"]` on a view class.
-    DRF_TOKEN_VIEW_RE        = /\b(?:ObtainAuthToken|Token(?:ObtainPair|ObtainSliding|Refresh|RefreshSliding|Verify|Blacklist)View)\b/
+    DRF_TOKEN_VIEW_RE        = /\b(?:obtain_auth_token|ObtainAuthToken|Token(?:ObtainPair|ObtainSliding|Refresh|RefreshSliding|Verify|Blacklist)View)\b/
     DRF_HTTP_METHOD_NAMES_RE = /^\s+http_method_names\s*=\s*[\[(]([^\])]*)[\])]/m
 
     # An auth decorator applied in the urlconf itself:
@@ -478,7 +482,11 @@ module Analyzer::Python
       endpoints = [] of Endpoint
       url_base_path = File.dirname(django_urls.filepath)
       own_urlpatterns = django_urls.list_name == "urlpatterns"
-      @visited_url_paths[django_urls.filepath] = true if own_urlpatterns
+      if own_urlpatterns
+        @visited_url_paths[django_urls.filepath] = true
+        @visited_url_mounts << {django_urls.filepath, url_mount_key(django_urls.prefix)}
+        @urlconfs_in_progress << django_urls.filepath
+      end
 
       # Prefer the detector-cached content over a fresh disk read; falls
       # back to File.read (same encoding: utf-8, invalid: :skip) when the
@@ -540,7 +548,7 @@ module Analyzer::Python
           end
           if new_route_path = resolve_dotted_include_target(view)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
-            unless @visited_url_paths.has_key? new_django_urls.filepath
+            unless urlconf_include_seen?(new_django_urls)
               extract_endpoints(new_django_urls).each do |endpoint|
                 append_code_path(endpoint.details, PathInfo.new(new_route_path))
                 endpoints << endpoint
@@ -569,7 +577,7 @@ module Analyzer::Python
 
           if imported_urlconf_path = extract_imported_include_target(view, package_map, django_urls.filepath)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", imported_urlconf_path, django_urls.basepath)
-            unless @visited_url_paths.has_key? new_django_urls.filepath
+            unless urlconf_include_seen?(new_django_urls)
               extract_endpoints(new_django_urls).each do |endpoint|
                 append_code_path(endpoint.details, PathInfo.new(imported_urlconf_path))
                 endpoints << endpoint
@@ -614,10 +622,11 @@ module Analyzer::Python
             endpoints << Endpoint.new(url, "GET", Details.new(entry_path))
           else
             wrapper = urlconf_auth_wrapper(view)
+            view, action_map = drf_as_view_target(view, django_urls.filepath)
             view = extract_wrapped_view_reference(view)
             if view_target = resolve_django_view_target(view, package_map) || imported_view_target(django_urls.filepath, view)
               filepath, function_or_class_name = view_target
-              with_route_verb(extract_endpoints_from_file(url, filepath, function_or_class_name), verb).each do |endpoint|
+              with_route_verb(view_endpoints(url, filepath, function_or_class_name, action_map), verb).each do |endpoint|
                 append_code_path(endpoint.details, entry_path)
                 endpoints << tag_urlconf_auth(endpoint, wrapper)
               end
@@ -634,6 +643,17 @@ module Analyzer::Python
       endpoints.concat(direct_router_endpoints)
       endpoints.concat(imported_endpoints)
       endpoints
+    ensure
+      @urlconfs_in_progress.delete(django_urls.filepath) if own_urlpatterns
+    end
+
+    private def urlconf_include_seen?(django_urls : DjangoUrls) : Bool
+      @urlconfs_in_progress.includes?(django_urls.filepath) ||
+        @visited_url_mounts.includes?({django_urls.filepath, url_mount_key(django_urls.prefix)})
+    end
+
+    private def url_mount_key(prefix : ::String) : ::String
+      prefix.gsub(/\/+/, "/").strip('/')
     end
 
     # The routes of url list `name` when the urlconf behind `django_urls`
@@ -651,7 +671,7 @@ module Analyzer::Python
       # `from .presale.urls import urlpatterns as presale_patterns`: that
       # module, read once like any included urlconf.
       if list == "urlpatterns"
-        return [] of Endpoint if @visited_url_paths.has_key?(file)
+        return [] of Endpoint if urlconf_include_seen?(DjangoUrls.new(prefix, file, django_urls.basepath))
       else
         return [] of Endpoint if @url_lists_in_progress.includes?({file, list})
         return [] of Endpoint unless @visited_url_lists.add?({file, list, prefix})
@@ -1093,10 +1113,13 @@ module Analyzer::Python
     private def unresolved_view_endpoints(url : ::String, view : ::String, content : ::String,
                                           entry_path : PathInfo) : Array(Endpoint)
       root = view.partition('.')[0]
-      methods = DJANGO_BUILTIN_VIEW_METHODS[view.rpartition('.')[2]]?
+      name = view.rpartition('.')[2]
+      # DRF's and simplejwt's token views serve POST only.
+      token_view = name.matches?(DRF_TOKEN_VIEW_RE)
+      methods = token_view ? ["POST"] : DJANGO_BUILTIN_VIEW_METHODS[name]?
       django_import = methods && content.each_line.any? do |line|
         statement = line.strip
-        statement.starts_with?("from django") &&
+        statement.starts_with?(token_view ? "from rest_framework" : "from django") &&
           statement.partition(" import ")[2].split(',').any? { |spec| spec.split(/\s+as\s+/).last.strip == root }
       end
       return [Endpoint.new(url, "GET", Details.new(entry_path))] unless methods && django_import
@@ -1222,7 +1245,7 @@ module Analyzer::Python
 
         if imported_urlconf_path = extract_imported_include_target(view, package_map, current_app_config_path)
           new_django_urls = DjangoUrls.new(nested_prefix, imported_urlconf_path, @django_base_path)
-          unless @visited_url_paths.has_key? new_django_urls.filepath
+          unless urlconf_include_seen?(new_django_urls)
             extract_endpoints(new_django_urls).each do |endpoint|
               append_code_path(endpoint.details, entry_path)
               append_code_path(endpoint.details, parent_route_path)
@@ -1239,13 +1262,14 @@ module Analyzer::Python
           endpoints << endpoint
         else
           wrapper = urlconf_auth_wrapper(view)
+          view, action_map = drf_as_view_target(view, current_app_config_path)
           view = extract_wrapped_view_reference(view)
           view_target = resolve_django_view_target(view, package_map) ||
                         resolve_app_config_view_target(view, app_config_refs, current_app_config_path, package_map) ||
                         imported_view_target(current_app_config_path, view)
           if view_target
             filepath, function_or_class_name = view_target
-            with_route_verb(extract_endpoints_from_file(url, filepath, function_or_class_name), verb).each do |endpoint|
+            with_route_verb(view_endpoints(url, filepath, function_or_class_name, action_map), verb).each do |endpoint|
               append_code_path(endpoint.details, entry_path)
               append_code_path(endpoint.details, parent_route_path)
               endpoints << tag_urlconf_auth(endpoint, wrapper)
@@ -1786,7 +1810,7 @@ module Analyzer::Python
         # instead of the app's routes.
         if dotted_urlconf_path = resolve_dotted_include_target(view)
           new_django_urls = DjangoUrls.new(join_url_parts(django_urls.prefix, nested_mount).lchop("/"), dotted_urlconf_path, django_urls.basepath)
-          unless @visited_url_paths.has_key? new_django_urls.filepath
+          unless urlconf_include_seen?(new_django_urls)
             extract_endpoints(new_django_urls).each do |endpoint|
               append_code_path(endpoint.details, PathInfo.new(dotted_urlconf_path))
               endpoints << endpoint
@@ -1824,7 +1848,7 @@ module Analyzer::Python
 
         if imported_urlconf_path = extract_imported_include_target(view, package_map, django_urls.filepath)
           new_django_urls = DjangoUrls.new(join_url_parts(django_urls.prefix, nested_mount).lchop("/"), imported_urlconf_path, django_urls.basepath)
-          unless @visited_url_paths.has_key? new_django_urls.filepath
+          unless urlconf_include_seen?(new_django_urls)
             extract_endpoints(new_django_urls).each do |endpoint|
               append_code_path(endpoint.details, PathInfo.new(imported_urlconf_path))
               endpoints << endpoint
@@ -1856,12 +1880,13 @@ module Analyzer::Python
         end
 
         wrapper = urlconf_auth_wrapper(view)
+        view, action_map = drf_as_view_target(view, django_urls.filepath)
         view = extract_wrapped_view_reference(view)
         resolved = resolve_django_view_reference(view, package_map) || imported_view_target(django_urls.filepath, view)
         if resolved
           filepath, function_or_class_name = resolved
           if /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
-            with_route_verb(extract_endpoints_from_file(url, filepath, function_or_class_name), verb).each do |endpoint|
+            with_route_verb(view_endpoints(url, filepath, function_or_class_name, action_map), verb).each do |endpoint|
               append_code_path(endpoint.details, entry_path)
               endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
@@ -1999,6 +2024,55 @@ module Analyzer::Python
       end
 
       endpoints
+    end
+
+    # `SnippetViewSet.as_view({"get": "list", "post": "create"})`, and the
+    # module-level names bound to one.
+    AS_VIEW_ACTIONS_RE  = /([A-Za-z_][\w.]*)\.as_view\(\s*\{([^}]*)\}/
+    AS_VIEW_BINDING_RE  = /^([A-Za-z_]\w*)\s*=\s*([A-Za-z_][\w.]*\.as_view\(\s*\{[^}]*\})/m
+    AS_VIEW_ACTION_PAIR = /['"](\w+)['"]\s*:\s*['"](\w+)['"]/
+
+    @as_view_bindings = Hash(::String, Hash(::String, ::String)).new
+
+    private def as_view_bindings(file : ::String) : Hash(::String, ::String)
+      @as_view_bindings[file] ||= begin
+        bindings = Hash(::String, ::String).new
+        content = read_file_content(file) rescue ""
+        content.scan(AS_VIEW_BINDING_RE) { |m| bindings[m[1]] = m[2] } if content.includes?(".as_view(")
+        bindings
+      end
+    end
+
+    # The view reference and the `{verb, action}` map of a ViewSet bound
+    # with `as_view({...})`, inline or through a name `urlconf` binds.
+    private def drf_as_view_target(view : ::String, urlconf : ::String) : Tuple(::String, Array(Tuple(::String, ::String))?)
+      view = as_view_bindings(urlconf)[view.strip]? || view
+      {view, drf_as_view_actions(view)}
+    end
+
+    private def drf_as_view_actions(expression : ::String) : Array(Tuple(::String, ::String))?
+      match = expression.match(AS_VIEW_ACTIONS_RE) || return
+      pairs = match[2].scan(AS_VIEW_ACTION_PAIR).compact_map do |pair|
+        verb = pair[1].upcase
+        {verb, pair[2]} if verb.in?("GET", "POST", "PUT", "PATCH", "DELETE")
+      end
+      pairs unless pairs.empty?
+    end
+
+    # A ViewSet bound with an action map serves exactly those verbs, each
+    # by its action; a name the views module binds to one is followed too.
+    private def view_endpoints(url : ::String, filepath : ::String, name : ::String,
+                               action_map : Array(Tuple(::String, ::String))?) : Array(Endpoint)
+      if action_map.nil? && (bound = as_view_bindings(filepath)[name]?) && (map = drf_as_view_actions(bound)) &&
+         (target = resolve_python_class(filepath, extract_wrapped_view_reference(bound)))
+        filepath, name = target
+        action_map = map
+      end
+      if action_map
+        found = extract_drf_viewset_endpoints(url, filepath, name, action_map: action_map)
+        return found unless found.empty?
+      end
+      extract_endpoints_from_file(url, filepath, name)
     end
 
     private def extract_wrapped_view_reference(view : ::String) : ::String
@@ -2322,6 +2396,14 @@ module Analyzer::Python
             end
           end
 
+          # A stock `CreateAPIView.post` / `UpdateAPIView.put` validates the body.
+          if drf_generic_class
+            {"POST" => "create", "PUT" => "update", "PATCH" => "partial_update"}.each do |verb, action|
+              next if method_lines.has_key?(verb) || !suspicious_http_methods.includes?(verb)
+              method_params[verb].concat drf_serializer_params(STOCK_SERIALIZER_CALL, filepath, chain, action)
+            end
+          end
+
           if declared = declared_http_method_names(view_file, class_codeblock, class_define_line)
             suspicious_http_methods = declared
           end
@@ -2487,15 +2569,17 @@ module Analyzer::Python
     end
 
     # `XSerializer(data=request.data)` / `self.get_serializer(data=...)`.
-    SERIALIZER_DATA_RE = /\b([A-Za-z_][A-Za-z0-9_.]*)\s*\(\s*(?:[^()]*?,\s*)?data\s*=\s*[^,()]*\brequest\.data\b/
+    # DRF's mixins make the second call for a stock create/update.
+    STOCK_SERIALIZER_CALL = "self.get_serializer(data=request.data)"
+    SERIALIZER_DATA_RE    = /\b([A-Za-z_][A-Za-z0-9_.]*)\s*\(\s*(?:[^()]*?,\s*)?data\s*=\s*[^,()]*\brequest\.data\b/
     # A declared serializer field: `name = serializers.CharField(`.
     SERIALIZER_FIELD_RE = /^(\s+)([a-z_][a-z0-9_]*)\s*=\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)*([A-Z][A-Za-z0-9_]*(?:Field|Serializer))\s*\(/
 
     # Body fields a handler reads through the DRF serializer it hands
     # `request.data`: the fields that serializer class (or a project base)
     # declares. `get_serializer` means the view's `serializer_class`.
-    # ponytail: declared fields only; a ModelSerializer's `Meta.fields`
-    # model columns are not resolved.
+    # ponytail: declared fields plus a literal `Meta.fields` list; `"__all__"`
+    # and `Meta.exclude` need the model's columns and are not read.
     SERIALIZER_CLASS_RE         = /^\s+serializer_class\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$/m
     GET_SERIALIZER_CLASS_DEF_RE = /^\s+def\s+get_serializer_class\s*\(/
     ACTION_BRANCH_RE            = /\A(?:if|elif)\s+self\.action\s*(==|in)\s*(.+?):\s*(.*)\z/
@@ -2634,7 +2718,31 @@ module Analyzer::Python
           fields << field[2]
         end
       end
+      meta_fields(target).each { |name| fields << name if declared.add?(name) }
       fields
+    end
+
+    META_FIELDS_RE           = /^\s+fields\s*=\s*[\[(]([^\])]*)[\])]/m
+    META_READ_ONLY_FIELDS_RE = /^\s+read_only_fields\s*=\s*[\[(]([^\])]*)[\])]/m
+
+    # The names a literal `class Meta: fields = [...]` lists, from the
+    # nearest class declaring one, minus its `read_only_fields`, the model
+    # pk and a hyperlinked serializer's own `url`.
+    private def meta_fields(target : Tuple(::String, ::String)) : Array(::String)
+      chain = drf_class_chain(target[0], target[1])
+      chain.each do |klass|
+        lines = klass.codeblock.split("\n")
+        index = lines.index(&.matches?(/^\s+class\s+Meta\b/)) || next
+        meta = parse_code_block(lines[index..]) || next
+        # The nearest `Meta` decides; `"__all__"` or no list reads nothing.
+        listed = meta.match(META_FIELDS_RE) || return [] of ::String
+        names = listed[1].scan(/['"](\w+)['"]/).map(&.[1])
+        names -= meta.match(META_READ_ONLY_FIELDS_RE).try(&.[1].scan(/['"](\w+)['"]/).map(&.[1])) || [] of ::String
+        names -= %w[id pk]
+        names.delete("url") if chain.any? { |base| base.header.includes?("HyperlinkedModelSerializer") }
+        return names
+      end
+      [] of ::String
     end
 
     # `WebhookForm(request.POST)` / `SearchForm(data=request.GET)`: a form
@@ -3163,7 +3271,8 @@ module Analyzer::Python
 
     private def extract_drf_viewset_endpoints(route_base : ::String, filepath : ::String, class_name : ::String,
                                               trailing_slash : Bool = true,
-                                              extra_routes = [] of Tuple(Bool, ::String, ::String)) : Array(Endpoint)
+                                              extra_routes = [] of Tuple(Bool, ::String, ::String),
+                                              action_map : Array(Tuple(::String, ::String))? = nil) : Array(Endpoint)
       endpoints = [] of Endpoint
       chain = drf_class_chain(filepath, class_name)
       return endpoints if chain.empty?
@@ -3247,6 +3356,19 @@ module Analyzer::Python
         end
       end
 
+      # `as_view({...})` binds exactly its verbs, each to the named method,
+      # on the one URL `route_base` then is.
+      if action_map
+        detail = route_base.includes?('<') || route_base.includes?('{')
+        actions = action_map.compact_map do |verb, name|
+          site = method_sites[name]?
+          next unless site || actions.any?(&.name.==(name))
+          drf_action = DjangoDrfAction.new(name, verb, detail, "")
+          site.try { |klass, body_lines, offset| fill_drf_action(drf_action, klass, body_lines, offset, chain) }
+          drf_action
+        end
+      end
+
       # View.dispatch refuses any verb missing from `http_method_names`.
       if allowed = chain.compact_map(&.codeblock.match(DRF_HTTP_METHOD_NAMES_RE)).first?
         verbs = allowed[1].scan(/['"]([A-Za-z]+)['"]/).map(&.[1].upcase)
@@ -3259,10 +3381,15 @@ module Analyzer::Python
       # `get_object()`, which calls it in turn.
       queryset_reads = {} of Bool => Array(Param)
       actions.each do |action|
-        next unless action.name.in?("list", "retrieve", "update", "partial_update", "destroy")
+        next unless action.name.in?("list", "create", "retrieve", "update", "partial_update", "destroy")
         if action.handler
           _, body_lines, offset = method_sites[action.name]? || next
           next unless parse_code_block(body_lines[offset..]).try(&.matches?(/\bsuper\(\s*\)\.#{action.name}\s*\(/))
+        end
+        # The mixin's `create` / `update` validate the request body.
+        if action.name.in?("create", "update", "partial_update")
+          action.body_params.concat drf_serializer_params(STOCK_SERIALIZER_CALL, own.filepath, chain, action.name)
+          next if action.name == "create"
         end
         calls = action.detail ? "self.get_object()\nself.get_queryset()" : "self.get_queryset()"
         reads = queryset_reads[action.detail] ||= cbv_body_params(calls, own.filepath, chain, "GET")
@@ -3270,9 +3397,9 @@ module Analyzer::Python
       end
 
       actions.each do |action|
-        endpoint_path = drf_action_path(route_base, lookup_param, action, trailing_slash)
+        endpoint_path = action_map ? route_base : drf_action_path(route_base, lookup_param, action, trailing_slash)
         params = filter_params(action.method, action.params) + action.body_params
-        params << Param.new(lookup_param, "", "path") if action.detail
+        params << Param.new(lookup_param, "", "path") if action.detail && !action_map
         params = dedupe_params(params)
         source_path = action.filepath || own.filepath
         details = Details.new(PathInfo.new(source_path, action.definition_line || class_definition_line))
