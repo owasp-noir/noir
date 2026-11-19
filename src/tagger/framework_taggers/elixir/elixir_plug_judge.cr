@@ -26,7 +26,7 @@ module Noir
     GUARDIAN_MINT  = /\bGuardian\.encode_and_sign!?\b/
     STRONG_REFUSAL = /(?<![\w.])40[13](?![\d.])|:unauthorized\b|:forbidden\b/
     WEAK_REFUSAL   = /(?<![\w.])404(?![\d.])|:not_found\b/
-    LOGIN_PATH     = /["'][^"'\n]*\/(?:[\w-]+\/)*(?:log[_-]?in|sign[_-]?in)\b|Routes\.\w*(?:session|login)\w*_path\b/i
+    LOGIN_PATH     = /["'][^"'\n]*\/(?:[\w-]+\/)*(?:log[_-]?in|sign[_-]?in)\b|(?:Routes|Helpers)\.\w*(?:session|log_?in|sign_?in)\w*_path\b/i
     HALT           = /\bhalt\b/
     # Plug's own `Plug.BasicAuth.basic_auth/2` answers 401 and halts.
     BASIC_AUTH = /\bPlug\.BasicAuth\.basic_auth\s*\(|(?<!def )(?<!defp )\bbasic_auth\s*\(\s*conn\b/
@@ -138,6 +138,7 @@ module Noir
               indent = line.size - stripped.size
               buf = String::Builder.new
               buf << line << '\n'
+              closed = false
               j = i + 1
               while j < mod.last
                 nxt = lines[j]
@@ -145,7 +146,8 @@ module Noir
                 unless nstripped.empty?
                   nindent = nxt.size - nstripped.size
                   if nindent <= indent
-                    buf << nxt << '\n' if nstripped.starts_with?("end")
+                    closed = nstripped.starts_with?("end")
+                    buf << nxt << '\n' if closed
                     break
                   end
                   buf << nxt << '\n' unless nstripped.starts_with?('#')
@@ -153,7 +155,9 @@ module Noir
                 j += 1
               end
               bodies << buf.to_s
-              i = j
+              # A `, do:` clause ends at the next statement, which may be the
+              # next clause's head: resume on it rather than past it.
+              i = closed ? j : j - 1
             end
             i += 1
           end

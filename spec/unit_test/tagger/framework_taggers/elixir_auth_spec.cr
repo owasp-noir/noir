@@ -180,6 +180,56 @@ describe "ElixirAuthTagger" do
     endpoint.tags.empty?.should be_true
   end
 
+  it "judges a multi-clause plug by every clause, including a Router.Helpers login redirect" do
+    dir = File.tempname("noir_elixir_clauses")
+    Dir.mkdir_p(dir)
+    plug = File.join(dir, "require_user.ex")
+    controller = File.join(dir, "post_controller.ex")
+    File.write(plug, <<-EX)
+      defmodule AppWeb.Plug.RequireUser do
+        import Plug.Conn
+        alias AppWeb.Router.Helpers
+
+        def init(opts), do: opts
+
+        def call(conn = %{assigns: %{current_user: user}}, _opts) when not is_nil(user), do: conn
+        def call(conn, _opts) do
+          conn
+          |> redirect(to: Helpers.sign_in_path(conn, :new))
+          |> halt()
+        end
+      end
+      EX
+    File.write(controller, <<-EX)
+      defmodule AppWeb.PostController do
+        use AppWeb, :controller
+        alias AppWeb.Plug.RequireUser
+
+        plug RequireUser when action in [:create]
+
+        def create(conn, params), do: render(conn, :show, post: params)
+
+        def show(conn, %{"id" => id}), do: render(conn, :show, id: id)
+      end
+      EX
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      CodeLocator.instance.register_path(plug)
+      CodeLocator.instance.register_path(controller)
+
+      create = Endpoint.new("/posts", "POST", [] of Param, Details.new(PathInfo.new(controller, 7)))
+      show = Endpoint.new("/posts/:id", "GET", [] of Param, Details.new(PathInfo.new(controller, 9)))
+      ElixirAuthTagger.new(noir_options).perform([create, show])
+
+      create.tags.map(&.description).should eq(["Protected by Phoenix RequireUser plug"])
+      show.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   it "judges plugs imported or aliased by `use AppWeb, :controller`" do
     dir = File.tempname("noir_elixir_use_imports")
     Dir.mkdir_p(dir)
