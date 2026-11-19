@@ -1501,20 +1501,23 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   # Grape: a mounted API inherits the `before` filters of the API that
-  # mounts it, wherever they sit around the `mount` (Grape README).
+  # mounts it, wherever they sit around the `mount` (Grape README). A class
+  # mounted from several APIs is guarded only when each of them guards it.
   # ponytail: filters above the `mount` line only, and a mount is matched to
   # the route's class by constant name, not by load path.
   private def mounted_guard(path : String, lines : Array(String), line_idx : Int32, url : String, depth : Int32) : String?
     return if depth > 3
     return unless name = grape_class_name(path, lines, line_idx)
-    grape_mounts.each do |mount_path, mount_idx, const|
-      next unless name == const || name.ends_with?("::#{const}") || const.ends_with?("::#{name}")
+    sites = grape_mounts.select { |_, _, const| name == const || name.ends_with?("::#{const}") || const.ends_with?("::#{name}") }
+    guards = sites.map do |mount_path, mount_idx, _|
       next unless mount_lines = read_file_lines(mount_path)
       scope = route_scope(mount_path, mount_lines, mount_idx, url)
-      found = match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS) ||
-              mounted_guard(mount_path, mount_lines, mount_idx, url, depth + 1)
-      return found.ends_with?(MOUNTED) ? found : "#{found}#{MOUNTED}" if found
+      match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS) ||
+        mounted_guard(mount_path, mount_lines, mount_idx, url, depth + 1)
     end
+    return if guards.empty? || guards.any?(Nil)
+    found = guards.first.not_nil!
+    found.ends_with?(MOUNTED) ? found : "#{found}#{MOUNTED}"
   end
 
   MOUNTED = " (inherited from the API that mounts it)"

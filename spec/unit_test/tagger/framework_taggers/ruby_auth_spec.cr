@@ -1384,6 +1384,48 @@ describe "RubyAuthTagger (Grape route scope)" do
     end
   end
 
+  it "credits a mounting API's filter only when every mount site of the class, resolved by its lexical scope, guards it" do
+    CodeLocator.instance.clear_all
+    dir = File.tempname("noir_grape_mount_sites")
+    files = {
+      "private_api.rb" => "class PrivateApi < Grape::API\n  before { authenticate! }\n  mount Shared::Items\nend\n",
+      "public_api.rb"  => "class PublicApi < Grape::API\n  mount Shared::Items\nend\n",
+      "items.rb"       => "module Shared\n  class Items < Grape::API\n    get :items do\n      Item.all\n    end\n  end\nend\n",
+      "admin_root.rb"  => "module Admin\n  class Root < Grape::API\n    before { authenticate_admin! }\n    mount Users\n  end\nend\n",
+      "admin_users.rb" => "module Admin\n  class Users < Grape::API\n    get :admin_users do\n      User.all\n    end\n  end\nend\n",
+      "open_root.rb"   => "module Open\n  class Root < Grape::API\n    mount Users\n  end\nend\n",
+      "open_users.rb"  => "module Open\n  class Users < Grape::API\n    get :open_users do\n      User.visible\n    end\n  end\nend\n",
+      "base_api.rb"    => "class BaseApi < Grape::API\n  format :json\nend\n",
+      "orders.rb"      => "class Orders < BaseApi\n  get :orders do\n    Order.all\n  end\nend\n",
+      "root.rb"        => "class Root < Grape::API\n  before { authenticate! }\n  mount Orders\nend\n",
+    }
+    begin
+      Dir.mkdir_p(dir)
+      files.each do |name, body|
+        File.write(File.join(dir, name), body)
+        CodeLocator.instance.register_path(File.join(dir, name))
+      end
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(file : String, url : String, line : Int32) do
+        details = Details.new(PathInfo.new(File.join(dir, file), line))
+        details.technology = "ruby_grape"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      items = at.call("items.rb", "/items", 3)
+      admin_users = at.call("admin_users.rb", "/admin_users", 3)
+      open_users = at.call("open_users.rb", "/open_users", 3)
+      orders = at.call("orders.rb", "/orders", 2)
+      RubyAuthTagger.new(noir_options).perform([items, admin_users, open_users, orders])
+
+      # Mounted from a guarded and an open API: reachable without the guard.
+      items.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "does not read a Sinatra route body's helper call by its name" do
     dir = File.tempname("noir_sinatra_body")
     Dir.mkdir_p(dir)
