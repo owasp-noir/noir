@@ -274,7 +274,7 @@ class AspnetAuthTagger < FrameworkTagger
     body.each_char_with_index do |char, i|
       case char
       when '(', '{', '[' then depth += 1
-      when ')', ']' then depth -= 1
+      when ')', ']'      then depth -= 1
       when '}'
         depth -= 1
         # A block statement (`if (x) { ... }`) ends at its brace.

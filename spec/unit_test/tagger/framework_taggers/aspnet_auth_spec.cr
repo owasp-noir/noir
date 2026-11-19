@@ -107,24 +107,24 @@ describe "AspnetAuthTagger" do
     Dir.mkdir_p(tmpdir)
     controller = File.join(tmpdir, "BrandingController.cs")
     File.write(controller, [
-      "public class BrandingController : ControllerBase",                    # 1
-      "{",                                                                   # 2
-      "    [HttpGet(\"splash\")]",                                           # 3
-      "    public IActionResult Splash()",                                   # 4
-      "    {",                                                               # 5
-      "        var isAdmin = User.IsInRole(\"Administrator\");",             # 6
-      "        if (!_options.Enabled && !isAdmin) return NotFound();",       # 7
-      "        return Ok(\"splash\");",                                      # 8
-      "    }",                                                               # 9
-      "",                                                                    # 10
-      "    [HttpGet(\"greeting\")]",                                         # 11
-      "    public IActionResult Greeting()",                                 # 12
-      "    {",                                                               # 13
-      "        var name = HttpContext.User.Identity?.Name ?? \"guest\";",    # 14
-      "        ViewBag.SignedIn = User.Identity.IsAuthenticated;",           # 15
-      "        return Ok(name);",                                            # 16
-      "    }",                                                               # 17
-      "}",                                                                   # 18
+      "public class BrandingController : ControllerBase",                 # 1
+      "{",                                                                # 2
+      "    [HttpGet(\"splash\")]",                                        # 3
+      "    public IActionResult Splash()",                                # 4
+      "    {",                                                            # 5
+      "        var isAdmin = User.IsInRole(\"Administrator\");",          # 6
+      "        if (!_options.Enabled && !isAdmin) return NotFound();",    # 7
+      "        return Ok(\"splash\");",                                   # 8
+      "    }",                                                            # 9
+      "",                                                                 # 10
+      "    [HttpGet(\"greeting\")]",                                      # 11
+      "    public IActionResult Greeting()",                              # 12
+      "    {",                                                            # 13
+      "        var name = HttpContext.User.Identity?.Name ?? \"guest\";", # 14
+      "        ViewBag.SignedIn = User.Identity.IsAuthenticated;",        # 15
+      "        return Ok(name);",                                         # 16
+      "    }",                                                            # 17
+      "}",                                                                # 18
     ].join("\n"))
     noir_options["base"] = YAML::Any.new(tmpdir)
 
