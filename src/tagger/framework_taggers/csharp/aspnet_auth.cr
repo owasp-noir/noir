@@ -152,7 +152,8 @@ class AspnetAuthTagger < FrameworkTagger
     names = Set(String).new
     collect_files_by_extension(".cs").each do |path|
       content = read_file(path)
-      next unless content && content.includes?("Map")
+      # A convention helper can sit alone in a file that maps nothing.
+      next unless content && (content.includes?("Map") || content.includes?("RouteGroupBuilder"))
       next if base_relative_path(path).matches?(TEST_PATH)
       # Strings blanked: a route template's `{orgId}` must not split a statement.
       code = lexer_for(path).try(&.masked_source) || next

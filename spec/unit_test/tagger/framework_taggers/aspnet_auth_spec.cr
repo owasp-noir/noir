@@ -741,6 +741,32 @@ describe "AspnetAuthTagger" do
     end
   end
 
+  it "finds a route-group helper declared alone in a file that maps nothing" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("aspnet_helper_own_file")
+    Dir.mkdir_p(tmpdir)
+    helper = File.join(tmpdir, "Extensions.cs")
+    program = File.join(tmpdir, "Program.cs")
+    File.write(helper, "public static class RouteExtensions\n{\n    public static RouteGroupBuilder WithApiDefaults(this RouteGroupBuilder group)\n    {\n        group.RequireAuthorization();\n        return group;\n    }\n}\n")
+    File.write(program, "var api = app.MapGroup(\"/a\").WithApiDefaults();\napi.MapGet(\"/secret\", () => \"x\");\n")
+    {helper, program}.each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      details = Details.new(PathInfo.new(program, 2))
+      details.technology = "cs_aspnet_core_minimal_api"
+      endpoint = Endpoint.new("/a/secret", "GET", [] of Param, details)
+
+      AspnetAuthTagger.new(noir_options).perform([endpoint])
+
+      endpoint.tags.map(&.name).should eq(["auth"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   describe "filter attributes, inherited attributes and in-action refusals" do
     filters_base = File.expand_path("../../../functional_test/fixtures/csharp/aspnet_auth_filters", __DIR__)
     controllers = "#{filters_base}/Controllers/Controllers.cs"
