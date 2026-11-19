@@ -4,6 +4,7 @@ require "../../../miniparsers/js_handler_table"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_handler_resolver"
+require "../../../miniparsers/js_serverless_function_extractor"
 require "../../../utils/top_level_split"
 
 module Analyzer::Javascript
@@ -73,12 +74,13 @@ module Analyzer::Javascript
 
     # Config directory => its `basePath`, which prefixes every route below it.
     @next_base_paths = {} of String => String
+    @project_roots = [] of String
 
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
       include_callee = callees_needed?
-      project_roots = discover_js_project_roots(["\"next\""], CONFIG_BASENAMES)
+      project_roots = @project_roots = discover_js_project_roots(["\"next\""], CONFIG_BASENAMES)
       @next_base_paths = collect_base_paths
 
       parallel_file_scan(EXTENSIONS) do |path|
@@ -168,12 +170,23 @@ module Analyzer::Javascript
       base_relative_path(path).includes?("/pages/api/")
     end
 
-    private def analyze_pages_router_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
-      scoped = base_relative_path(path)
-      idx = scoped.index("/pages/api/")
-      return if idx.nil?
+    # `path` below `router_dir` (`app`, `pages/api`), which sits at the top
+    # of the closest Next.js project or in its `src/`: a project directory
+    # itself named `app` is not the router. Nil when no project root is that
+    # shape, and the caller falls back to the first marker in the path.
+    private def project_router_relative(path : String, router_dir : String) : String?
+      expanded = Noir::PathScope.expand(path)
+      root = @project_roots.select { |r| Noir::PathScope.under_normalized_root?(expanded, r) }.max_by?(&.size) || return
+      relative = Noir::PathScope.base_relative(expanded, root)
+      relative.lchop?("/#{router_dir}/") || relative.lchop?("/src/#{router_dir}/")
+    end
 
-      relative = scoped[(idx + "/pages/api/".size)..-1]
+    private def analyze_pages_router_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
+      relative = project_router_relative(path, "pages/api") || begin
+        scoped = base_relative_path(path)
+        idx = scoped.index("/pages/api/") || return
+        scoped[(idx + "/pages/api/".size)..-1]
+      end
       relative = strip_extension(relative, EXTENSIONS)
 
       # Skip private folders/files (leading underscore)
@@ -218,7 +231,7 @@ module Analyzer::Javascript
         endpoint.handler = handler
 
         extract_path_params(url, endpoint)
-        extract_pages_router_params(scoped[method], endpoint)
+        extract_pages_router_params(scoped[method], body_info.try(&.params) || "", endpoint)
         if include_callee
           attach_js_callees(endpoint, body_info.callees) if body_info
         end
@@ -228,11 +241,11 @@ module Analyzer::Javascript
     end
 
     private def analyze_app_router_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
-      scoped = base_relative_path(path)
-      idx = scoped.index("/app/")
-      return if idx.nil?
-
-      relative = scoped[(idx + "/app/".size)..-1]
+      relative = project_router_relative(path, "app") || begin
+        scoped = base_relative_path(path)
+        idx = scoped.index("/app/") || return
+        scoped[(idx + "/app/".size)..-1]
+      end
       # Drop /route.ext
       EXTENSIONS.each do |ext|
         if relative.ends_with?("/route#{ext}")
@@ -366,7 +379,11 @@ module Analyzer::Javascript
         return function_handler(local, content, path) || Handler.new(local, path, line)
       end
       if m = content.match(EXPORT_VERB_CONST_RES[method])
-        wrapped_handler(content, m.end(0), path, method, line_number_for_index(content, m.begin(0)))
+        return wrapped_handler(content, m.end(0), path, method, line_number_for_index(content, m.begin(0)))
+      end
+      # `export const { GET, POST } = handlers` (Auth.js v5)
+      if m = content.match(EXPORT_VERB_CONST_BRACE_RES[method])
+        Handler.new(method, path, line_number_for_index(content, m.begin(0)))
       end
     end
 
@@ -782,61 +799,19 @@ module Analyzer::Javascript
       end
     end
 
-    private def extract_pages_router_params(content : String, endpoint : Endpoint)
+    # The handler's reads through the request reader the serverless
+    # adapters share, which renames its first parameter to `req`. The Pages
+    # Router parses the body per its content type, so a field stays `body`.
+    private def extract_pages_router_params(content : String, params : String, endpoint : Endpoint)
+      handler = Noir::JSServerlessFunctionExtractor::Handler.new("default", params, content, 1, 1, [] of Noir::JSCalleeExtractor::Entry, [] of String)
+      Noir::JSServerlessFunctionExtractor.extract_request_params(handler, endpoint, :request)
       # A dynamic segment's value is what `req.query.id` reads under `[id]`:
       # it is the path parameter, not a query string key.
-      path_names = endpoint.params.select(&.param_type.==("path")).map(&.name).to_set
-
-      # req.query.X and req.query["X"]
-      content.scan(/req\.query\.(\w+)/) do |m|
-        add_param(endpoint, m[1], "query") unless path_names.includes?(m[1])
-      end
-      content.scan(/req\.query\[['"]([^'"]+)['"]\]/) do |m|
-        add_param(endpoint, m[1], "query") unless path_names.includes?(m[1])
-      end
-
-      # Destructured query: const { foo, bar } = req.query
-      content.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*req\.query/) do |m|
-        extract_simple_destructure_params(m[1]).each do |name|
-          add_param(endpoint, name, "query") unless path_names.includes?(name)
-        end
-      end
-
-      # req.body.X and req.body["X"]
-      content.scan(/req\.body\.(\w+)/) do |m|
-        add_param(endpoint, m[1], "body")
-      end
-      content.scan(/req\.body\[['"]([^'"]+)['"]\]/) do |m|
-        add_param(endpoint, m[1], "body")
-      end
-
-      # Destructured body: const { foo, bar } = req.body
-      content.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*req\.body/) do |m|
-        extract_simple_destructure_params(m[1]).each do |name|
-          add_param(endpoint, name, "body")
-        end
-      end
-
-      # Headers — Pages Router (req object)
-      content.scan(/req\.headers\[['"]([^'"]+)['"]\]/) do |m| # req.headers["x-token"]
-        add_param(endpoint, m[1], "header")
-      end
-      content.scan(/req\.headers\[([A-Za-z_$]\w*)\]/) do |m| # req.headers[CONST] — unresolved
-        add_unresolved_param(endpoint, m[1], "header")
-      end
-      content.scan(/req\.headers\.(\w+)/) do |m| # req.headers.authorization
-        add_param(endpoint, m[1], "header")
-      end
-
-      # Cookies — Pages Router (req object)
-      content.scan(/req\.cookies\[['"]([^'"]+)['"]\]/) do |m| # req.cookies["session"]
-        add_param(endpoint, m[1], "cookie")
-      end
-      content.scan(/req\.cookies\[([A-Za-z_$]\w*)\]/) do |m| # req.cookies[CONST] — unresolved
-        add_unresolved_param(endpoint, m[1], "cookie")
-      end
-      content.scan(/req\.cookies\.(\w+)/) do |m| # req.cookies.session
-        add_param(endpoint, m[1], "cookie")
+      path_names = endpoint.params.select(&.param_type.==("path")).map(&.name)
+      endpoint.params.reject! { |param| param.param_type == "query" && path_names.includes?(param.name) }
+      endpoint.params.map! do |param|
+        param.param_type = "body" if param.param_type == "json"
+        param
       end
     end
 
@@ -844,6 +819,12 @@ module Analyzer::Javascript
       # request.nextUrl.searchParams.get("X") or searchParams.get("X")
       content.scan(/(?:searchParams|nextUrl\.searchParams)\.(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
         add_param(endpoint, m[1], "query")
+      end
+      # `const sp = request.nextUrl.searchParams; sp.get("X")`
+      content.scan(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$.]+|new\s+URL\s*\([^()]*\))\.searchParams\s*(?:[;\n]|\z)/) do |m|
+        content.scan(cached_regex("nextjs:var_query:#{m[1]}") { /(?<![\w$.])#{Regex.escape(m[1])}\.(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |mm|
+          add_param(endpoint, mm[1], "query")
+        end
       end
 
       # await request.json() — body present; try to extract field access patterns
@@ -874,7 +855,7 @@ module Analyzer::Javascript
           form_vars << m[1] unless form_vars.includes?(m[1])
         end
         form_vars.each do |varname|
-          content.scan(cached_regex("nextjs:var_get:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |m|
+          content.scan(cached_regex("nextjs:var_form:#{varname}") { /\b#{Regex.escape(varname)}\.(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |m|
             add_param(endpoint, m[1], "form")
           end
         end
@@ -888,28 +869,29 @@ module Analyzer::Javascript
         add_unresolved_param(endpoint, m[1], "header")
       end
 
-      # Headers — Next.js server API: headers() from "next/headers"
-      content.scan(/headers\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m| # .get("literal")
-        add_param(endpoint, m[1], "header")
-      end
-      content.scan(/headers\(\)\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m| # .get(CONST) — unresolved
-        add_unresolved_param(endpoint, m[1], "header")
-      end
-
-      # Cookies — Next.js server API: cookies() from "next/headers"
-      content.scan(/cookies\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m| # .get("literal")
+      # Request cookies — NextRequest: request.cookies.get("session")
+      content.scan(/(?:request|req)\.cookies\.(?:get|has)\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
         add_param(endpoint, m[1], "cookie")
       end
-      content.scan(/cookies\(\)\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m| # .get(CONST) — unresolved
-        add_unresolved_param(endpoint, m[1], "cookie")
-      end
-      content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?cookies\s*\(\s*\)/) do |m|
-        varname = m[1]
-        content.scan(cached_regex("nextjs:var_get:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |mm| # store.get("literal")
-          add_param(endpoint, mm[1], "cookie")
+
+      # headers() / cookies() from "next/headers", read in place
+      # (`headers().get`, Next 15's `(await headers()).get`) or through a
+      # variable (`const store = await cookies(); store.get`).
+      {"headers" => "header", "cookies" => "cookie"}.each do |fn, type|
+        content.scan(cached_regex("nextjs:call_get:#{fn}") { /#{fn}\(\)\)?\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |m| # .get("literal")
+          add_param(endpoint, m[1], type)
         end
-        content.scan(cached_regex("nextjs:var_get_ident:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/ }) do |mm| # store.get(CONST) — unresolved
-          add_unresolved_param(endpoint, mm[1], "cookie")
+        content.scan(cached_regex("nextjs:call_get_ident:#{fn}") { /#{fn}\(\)\)?\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/ }) do |m| # .get(CONST) — unresolved
+          add_unresolved_param(endpoint, m[1], type)
+        end
+        content.scan(cached_regex("nextjs:call_var:#{fn}") { /(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?#{fn}\s*\(\s*\)/ }) do |m|
+          varname = m[1]
+          content.scan(cached_regex("nextjs:var_get:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |mm| # store.get("literal")
+            add_param(endpoint, mm[1], type)
+          end
+          content.scan(cached_regex("nextjs:var_get_ident:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/ }) do |mm| # store.get(CONST) — unresolved
+            add_unresolved_param(endpoint, mm[1], type)
+          end
         end
       end
     end
