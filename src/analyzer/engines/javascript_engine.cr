@@ -150,16 +150,23 @@ module Analyzer::Javascript
 
     # Compiled once per verb — interpolated regex literals would otherwise
     # be rebuilt (full PCRE2 compile) for every method on every file.
-    EXPORT_FUNCTION_RES = FILE_ROUTE_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
-    EXPORT_CONST_RES    = FILE_ROUTE_METHODS.map { |m| {m, /export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/} }.to_h
-    EXPORT_BRACE_RES    = FILE_ROUTE_METHODS.map { |m| {m, /export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/} }.to_h
+    # Exports that answer every method without its own export: Astro's
+    # `ALL`, SvelteKit's `fallback`.
+    CATCH_ALL_EXPORTS = ["ALL", "fallback"]
+
+    EXPORT_FUNCTION_RES = (FILE_ROUTE_METHODS + CATCH_ALL_EXPORTS).map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
+    EXPORT_CONST_RES    = (FILE_ROUTE_METHODS + CATCH_ALL_EXPORTS).map { |m| {m, /export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/} }.to_h
+    EXPORT_BRACE_RES    = (FILE_ROUTE_METHODS + CATCH_ALL_EXPORTS).map { |m| {m, /export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/} }.to_h
 
     # Look for explicit verb exports first
     # (`export const GET = ...` / `export async function POST() {}`),
-    # then fall back to the cross-method catch-all set.
-    protected def detect_api_methods(content : String) : Array(String)
+    # then fall back to the cross-method catch-all set. An exported
+    # `catch_all` adds the fallback verbs that have no export of their own.
+    protected def detect_api_methods(content : String, catch_all : String? = nil) : Array(String)
       explicit = explicit_api_methods(content)
-      explicit.empty? ? FALLBACK_API_METHODS : explicit
+      return FALLBACK_API_METHODS if explicit.empty?
+      return explicit unless catch_all && exports_handler?(content, catch_all)
+      explicit + (FALLBACK_API_METHODS - explicit)
     end
 
     # `export async function GET(...)`, `export function GET(...)`,
@@ -167,11 +174,13 @@ module Analyzer::Javascript
     # (the trailing TypeScript type annotation is optional), and
     # the `export { GET }` re-export form.
     protected def explicit_api_methods(content : String) : Array(String)
-      FILE_ROUTE_METHODS.select do |m|
-        content.matches?(EXPORT_FUNCTION_RES[m]) ||
-          content.matches?(EXPORT_CONST_RES[m]) ||
-          content.matches?(EXPORT_BRACE_RES[m])
-      end
+      FILE_ROUTE_METHODS.select { |m| exports_handler?(content, m) }
+    end
+
+    private def exports_handler?(content : String, name : String) : Bool
+      content.matches?(EXPORT_FUNCTION_RES[name]) ||
+        content.matches?(EXPORT_CONST_RES[name]) ||
+        content.matches?(EXPORT_BRACE_RES[name])
     end
 
     # A route module's page component (SolidStart, Qwik City). Line-anchored
