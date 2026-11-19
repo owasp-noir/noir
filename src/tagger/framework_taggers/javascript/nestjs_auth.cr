@@ -149,6 +149,9 @@ class NestjsAuthTagger < FrameworkTagger
   READS_REQUEST  = /getRequest|switchToHttp|\bheaders\b|\bcookies\b|\.user\b|\bsession\b/
   RETURN_STMT    = /\breturn\b\s*([^;\n]*)/
   THROWN_CLASS   = /\bthrow\s+new\s+([A-Za-z_$][\w$]*)/
+  # The caller's credential or identity: `req.headers.authorization`,
+  # `req.cookies.auth`, `req.session`, `req.user`, a bearer or API token.
+  IDENTITY_READ = /\b(?:authorization|cookies?|session)\b|\.\s*(?:user|auth)\b|\b\w*(?:[Tt]oken|[Aa]pi[_-]?[Kk]ey)\w*\b/
   # `class HttpForbiddenException extends HttpException { constructor() { super('Forbidden', 403) } }`
   FORBIDDEN_SUPER = /\bsuper\s*\([^;]*(?:\b403\b|\bFORBIDDEN\b)/
   # The start of the next top-level statement after a declaration: a line
@@ -671,9 +674,10 @@ class NestjsAuthTagger < FrameworkTagger
   private def middleware_refuses?(name : String) : Bool
     body = @class_bodies[name]? || return false
     return true if body.matches?(THROWS_401) || body.matches?(/\bstatus(?:Code)?\s*(?::|\()\s*401\b/) || body.matches?(/\bUNAUTHORIZED\b/)
-    # A 403 on what it read from the request, as `guard_verdict` reads a
-    # guard; a project exception by the status its class hands to `super`.
-    body.matches?(READS_REQUEST) && (body.matches?(THROWS_403) || body.scan(THROWN_CLASS).any? { |m| (@class_bodies[m[1]]? || "").matches?(FORBIDDEN_SUPER) })
+    # A 403 on the caller's credential or identity; a project exception by
+    # the status its class hands to `super`. A tenant, IP or bypass header
+    # read before a 403 is a feature switch, not a login check.
+    body.matches?(IDENTITY_READ) && (body.matches?(THROWS_403) || body.scan(THROWN_CLASS).any? { |m| (@class_bodies[m[1]]? || "").matches?(FORBIDDEN_SUPER) })
   end
 
   private def statement_slice(text : String, from : Int32) : String

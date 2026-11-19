@@ -397,6 +397,39 @@ describe "NestjsAuthTagger" do
     nest_tags.call(files, [{"src/items.controller.ts", 4, "/items", "ts_nestjs"}]).should eq([["Protected by NestJS TokenMiddleware middleware"]])
   end
 
+  it "does not count a 403 middleware that reads a tenant, an IP or a bypass header for a guard" do
+    middleware = ->(name : String, condition : String) do
+      "export class #{name} implements NestMiddleware {\n  use(req, res, next) {\n    if (#{condition}) {\n      throw new ForbiddenException();\n    }\n    next();\n  }\n}\n"
+    end
+    controller = ->(name : String, path : String) { "@Controller('#{path}')\nexport class #{name} {\n  @Get()\n  list() {}\n}\n" }
+    files = {
+      "package.json"           => "{}",
+      "src/app.module.ts"      => <<-TS,
+        @Module({})
+        export class AppModule implements NestModule {
+          configure(consumer: MiddlewareConsumer) {
+            consumer.apply(FlagMiddleware).forRoutes(FlagController);
+            consumer.apply(IpMiddleware).forRoutes(IpController);
+            consumer.apply(MaintMiddleware).forRoutes(MaintController);
+            consumer.apply(TokenMiddleware).forRoutes(TokenController);
+          }
+        }
+        TS
+      "src/middlewares.ts"     => [
+        middleware.call("FlagMiddleware", %(!flags.isEnabled(req.headers["x-tenant"]))),
+        middleware.call("IpMiddleware", %(!ALLOWED.includes(req.headers["x-forwarded-for"] || req.ip))),
+        middleware.call("MaintMiddleware", %(settings.maintenance && !req.headers["x-bypass"])),
+        middleware.call("TokenMiddleware", %(!req.headers.authorization)),
+      ].join('\n'),
+      "src/flag.controller.ts"  => controller.call("FlagController", "flag"),
+      "src/ip.controller.ts"    => controller.call("IpController", "ip"),
+      "src/maint.controller.ts" => controller.call("MaintController", "maint"),
+      "src/token.controller.ts" => controller.call("TokenController", "token"),
+    }
+    probes = %w[flag ip maint token].map { |name| {"src/#{name}.controller.ts", 4, "/#{name}", "ts_nestjs"} }
+    nest_tags.call(files, probes).should eq([[] of String, [] of String, [] of String, ["Protected by NestJS TokenMiddleware middleware"]])
+  end
+
   it "does not leak a decorator past a one-line handler body" do
     tmpdir = File.tempname("tsoa_one_line")
     Dir.mkdir_p(tmpdir)
