@@ -162,7 +162,7 @@ describe "JavaMiscAuthTagger" do
     FileUtils.rm_rf(tmpdir)
 
     endpoints[0].tags.should be_empty
-    endpoints[1].tags.map(&.description).should eq(["Protected by Vert.x BasicAuthHandler"])
+    endpoints[1].tags.map(&.description).should eq(["Protected by Vert.x AuthHandler"])
   end
 
   it "reads a Vert.x route's guards from the routes that cover it, not from nearby lines" do
