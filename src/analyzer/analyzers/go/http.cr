@@ -143,6 +143,7 @@ module Analyzer::Go
       package_method_bodies = lazy_package_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
+      router_fields = package_router_fields(file_contents, {IMPORT_MARKER => ["ServeMux"]}, named_scope.import_dirs, {} of String => Hash(String, String)).fields
       resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs)
       # `route_dirs` exists only to bound the two request-param pre-passes
       # below, and those maps are consulted exclusively from
@@ -170,7 +171,8 @@ module Analyzer::Go
           content,
           external_string_values: resolver.constants(dir),
           external_functions: ts_function_bodies_for_directory(package_function_bodies, dir),
-          external_methods: ts_controller_method_bodies_for_directory(package_method_bodies, dir)
+          external_methods: ts_controller_method_bodies_for_directory(package_method_bodies, dir),
+          router_fields: router_fields[dir]? || Set(String).new
         )
       end
       parallel_analyze(get_files_by_extension(".go")) do |path|
@@ -186,7 +188,8 @@ module Analyzer::Go
           content,
           external_string_values: resolver.constants(dir),
           external_functions: external_fns,
-          external_methods: external_methods
+          external_methods: external_methods,
+          router_fields: router_fields[dir]? || Set(String).new
         )
         # With no route in the file the line loop below is a
         # no-op by construction: it only ever appends to

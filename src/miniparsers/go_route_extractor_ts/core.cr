@@ -293,7 +293,7 @@ module Noir
     def extract_routes(source : String,
                        external_groups : Hash(String, String) = Hash(String, String).new,
                        group_method : String = "Group",
-                       handle_method : String? = nil,
+                       handle_method : (String | Array(String))? = nil,
                        handlefunc_methods : Bool = false,
                        group_aliases : Array(String) = [] of String,
                        extra_verbs : Array(String) = [] of String,
@@ -332,8 +332,10 @@ module Noir
         # group resolves correctly.
         closure_groups = closure_group_methods.empty? ? [] of ClosureGroup : collect_closure_groups(root, source, closure_group_methods, group_prefixes)
 
+        subrouters = [] of SubrouterDecl
         if handlefunc_methods
           Noir::TreeSitter.walk(root) do |node|
+            collect_subrouter_decl(node, source, subrouters)
             next unless Noir::TreeSitter.node_type(node) == "call_expression"
             next unless mux_route_chain_call?(node, source)
             function = Noir::TreeSitter.field(node, "function")
@@ -358,7 +360,7 @@ module Noir
             # Mux's `.Methods(...)` can list several verbs at once
             # (`.Methods("GET", "POST")`), so the decoder returns an
             # array and we fan out into one Route per verb.
-            decode_handlefunc_methods_call(node, source, group_prefixes, string_values).each do |r|
+            decode_handlefunc_methods_call(node, source, group_prefixes, string_values, subrouters).each do |r|
               routes << r
             end
           end
@@ -1018,8 +1020,10 @@ module Noir
             collect_group(node, source, group_prefixes, group_method, [] of String, string_values)
           end
           chained = Set(String).new
+          subrouters = [] of SubrouterDecl
           if handlefunc_methods
             Noir::TreeSitter.walk(body) do |node|
+              collect_subrouter_decl(node, source, subrouters)
               next unless Noir::TreeSitter.node_type(node) == "call_expression" && mux_route_chain_call?(node, source)
               operand = Noir::TreeSitter.field(node, "function").try { |fn| Noir::TreeSitter.field(fn, "operand") }
               chained << node_key(operand) if operand && Noir::TreeSitter.node_type(operand) == "call_expression"
@@ -1029,7 +1033,7 @@ module Noir
           Noir::TreeSitter.walk(body) do |node|
             next unless Noir::TreeSitter.node_type(node) == "call_expression"
             if handlefunc_methods
-              decode_handlefunc_methods_call(node, source, group_prefixes, string_values).each { |r| routes << r } unless chained.includes?(node_key(node))
+              decode_handlefunc_methods_call(node, source, group_prefixes, string_values, subrouters).each { |r| routes << r } unless chained.includes?(node_key(node))
             elsif route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values, literal_join: literal_join, declarers: declarers)
               routes << route
             elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
@@ -1958,7 +1962,7 @@ module Noir
     private def decode_handle_call(call : LibTreeSitter::TSNode,
                                    source : String,
                                    groups : Hash(String, String),
-                                   handle_method : String,
+                                   handle_method : String | Array(String),
                                    group_method : String = "Group",
                                    group_aliases : Array(String) = [] of String,
                                    string_values : Hash(String, String) = Hash(String, String).new,
@@ -1970,7 +1974,8 @@ module Noir
       operand = Noir::TreeSitter.field(function, "operand")
       field = Noir::TreeSitter.field(function, "field")
       return unless operand && field
-      return unless Noir::TreeSitter.node_text(field, source) == handle_method
+      name = Noir::TreeSitter.node_text(field, source)
+      return unless handle_method.is_a?(String) ? name == handle_method : handle_method.includes?(name)
 
       router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values, router_fields)
       return unless router_info
@@ -2220,7 +2225,8 @@ module Noir
     private def decode_handlefunc_methods_call(call : LibTreeSitter::TSNode,
                                                source : String,
                                                groups : Hash(String, String),
-                                               string_values : Hash(String, String)) : Array(Route)
+                                               string_values : Hash(String, String),
+                                               subrouters : Array(SubrouterDecl) = [] of SubrouterDecl) : Array(Route)
       empty = [] of Route
 
       current = call
@@ -2234,6 +2240,9 @@ module Noir
       registration_line = Noir::TreeSitter.node_start_row(call)
       router_name = nil
       unread = false
+      path_prefix = false
+      registration_args = nil
+      inline_prefix = nil
 
       loop do
         fn = Noir::TreeSitter.field(current, "function")
@@ -2246,21 +2255,7 @@ module Noir
         case field_name
         when "Methods"
           saw_methods = true
-          if methods_args = Noir::TreeSitter.field(current, "arguments")
-            Noir::TreeSitter.each_named_child(methods_args) do |arg|
-              case Noir::TreeSitter.node_type(arg)
-              when "interpreted_string_literal", "raw_string_literal"
-                verbs << decode_string_literal(arg, source).upcase
-              when "selector_expression"
-                # The idiomatic constant form `.Methods(http.MethodGet,
-                # http.MethodPut)` — `http.MethodPut` → "PUT". Without this
-                # every constant-verb route silently fell back to GET.
-                if verb = decode_method_token(arg, source)
-                  verbs << verb unless verb.empty?
-                end
-              end
-            end
-          end
+          mux_methods_verbs(current, source, verbs)
         when "Queries"
           if q_args = Noir::TreeSitter.field(current, "arguments")
             idx = 0
@@ -2296,6 +2291,7 @@ module Noir
           saw_registration = true
           registration_line = Noir::TreeSitter.node_start_row(current)
           if args = Noir::TreeSitter.field(current, "arguments")
+            registration_args = args
             Noir::TreeSitter.each_named_arg(args) do |arg|
               case Noir::TreeSitter.node_type(arg)
               when "interpreted_string_literal", "raw_string_literal"
@@ -2306,7 +2302,9 @@ module Noir
               end
             end
           end
-        when "Path"
+        when "Path", "PathPrefix"
+          # `r.PathPrefix("/proxy/").Handler(h)` serves everything under it.
+          path_prefix ||= raw_path.nil? && field_name == "PathPrefix"
           if args = Noir::TreeSitter.field(current, "arguments")
             Noir::TreeSitter.each_named_arg(args) do |arg|
               if raw_path.nil? && (path_text = route_path_text(arg, source, string_values))
@@ -2316,6 +2314,19 @@ module Noir
               break
             end
           end
+        when "Subrouter"
+          # `r.PathPrefix("/x").Subrouter().HandleFunc("/p", h)`: the
+          # subrouter used inline is the receiver.
+          return empty unless saw_registration && raw_path
+          chain = Noir::TreeSitter.field(fn, "operand") || return empty
+          inline_prefix = subrouter_chain_prefix(chain, source, groups, string_values) || return empty
+          verbs = chain_methods(chain, source) if verbs.empty?
+          root = chain
+          while Noir::TreeSitter.node_type(root) == "call_expression"
+            root = Noir::TreeSitter.field(root, "function").try { |f| Noir::TreeSitter.field(f, "operand") } || return empty
+          end
+          router_name = receiver_key(root, source) || return empty
+          break
         when "BuildOnly"
           # gorilla/mux guarantees a BuildOnly route never matches a real
           # request — it exists solely to reverse-build URLs elsewhere.
@@ -2341,10 +2352,20 @@ module Noir
       return empty if build_only
       return empty unless router_name && raw_path && saw_registration
       return empty if handler_text.empty?
+      # A file server under a prefix is a static mount (`extract_mux_statics`).
+      return empty if path_prefix && registration_args && find_http_dir_arg(registration_args, source)
+      if verbs.empty? && !saw_methods && inline_prefix.nil? && !subrouters.empty?
+        # The subrouter's latest declaration before the route in a block around it.
+        at = LibTreeSitter.ts_node_start_byte(call)
+        decl = subrouters.select { |d| d.name == router_name && d.start < at && d.scope.includes?(at) }.max_by?(&.start)
+        verbs = decl.verbs.dup if decl
+      end
       verbs << (saw_methods ? "GET" : "ANY") if verbs.empty?
 
       return [] of Route if NON_ROUTER_OPERANDS.includes?(router_name.rpartition('.').last)
-      resolved = if prefix = groups[router_name]?
+      resolved = if inline_prefix
+                   group_join(inline_prefix, raw_path)
+                 elsif prefix = groups[router_name]?
                    group_join(prefix, raw_path)
                  else
                    raw_path
@@ -2353,6 +2374,60 @@ module Noir
       verbs.uniq.map do |verb|
         Route.new(router_name, verb, resolved, raw_path, handler_text, registration_line, query_params.dup, prefix_unresolved: unread)
       end
+    end
+
+    # The verbs of the `.Methods(...)` calls in `call` (a mux chain step).
+    private def mux_methods_verbs(call : LibTreeSitter::TSNode, source : String, verbs : Array(String))
+      return unless methods_args = Noir::TreeSitter.field(call, "arguments")
+      Noir::TreeSitter.each_named_child(methods_args) do |arg|
+        case Noir::TreeSitter.node_type(arg)
+        when "interpreted_string_literal", "raw_string_literal"
+          verbs << decode_string_literal(arg, source).upcase
+        when "selector_expression"
+          # The idiomatic constant form `.Methods(http.MethodGet,
+          # http.MethodPut)` — `http.MethodPut` → "PUT". Without this
+          # every constant-verb route silently fell back to GET.
+          verb = decode_method_token(arg, source)
+          verbs << verb unless verb.empty?
+        end
+      end
+    end
+
+    # The verbs of every `.Methods(...)` matcher on a mux route-builder
+    # chain (`r.PathPrefix("/ro").Methods("GET", "HEAD")`).
+    private def chain_methods(chain : LibTreeSitter::TSNode, source : String) : Array(String)
+      verbs = [] of String
+      current = chain
+      while Noir::TreeSitter.node_type(current) == "call_expression"
+        function = Noir::TreeSitter.field(current, "function")
+        break unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
+        mux_methods_verbs(current, source, verbs) if Noir::TreeSitter.field(function, "field").try { |f| Noir::TreeSitter.node_text(f, source) } == "Methods"
+        current = Noir::TreeSitter.field(function, "operand") || break
+      end
+      verbs
+    end
+
+    # A mux subrouter declaration (`ro := r.PathPrefix("/ro").Methods("GET").Subrouter()`):
+    # its name, where it starts, the block it is visible in, and the verbs
+    # of the `.Methods(...)` matchers it is scoped to.
+    record SubrouterDecl, name : String, start : UInt32, scope : Range(UInt32, UInt32), verbs : Array(String)
+
+    # ponytail: assignment-only; a subrouter from a `var` declaration or
+    # another file keeps every verb.
+    private def collect_subrouter_decl(node : LibTreeSitter::TSNode, source : String, subrouters : Array(SubrouterDecl))
+      type = Noir::TreeSitter.node_type(node)
+      return unless type == "short_var_declaration" || type == "assignment_statement"
+      left = Noir::TreeSitter.field(node, "left")
+      right = Noir::TreeSitter.field(node, "right")
+      return unless left && right && (block = Noir::TreeSitter.parent(node))
+      right = Noir::TreeSitter.first_named_child(right) || right if Noir::TreeSitter.node_type(right) == "expression_list"
+      return unless Noir::TreeSitter.node_type(right) == "call_expression"
+      function = Noir::TreeSitter.field(right, "function")
+      return unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
+      return unless Noir::TreeSitter.field(function, "field").try { |f| Noir::TreeSitter.node_text(f, source) } == "Subrouter"
+      chain = Noir::TreeSitter.field(function, "operand") || return
+      subrouters << SubrouterDecl.new(Noir::TreeSitter.node_text(left, source), LibTreeSitter.ts_node_start_byte(node),
+        LibTreeSitter.ts_node_start_byte(block)...LibTreeSitter.ts_node_end_byte(block), chain_methods(chain, source))
     end
 
     private def dedupe_routes(routes : Array(Route)) : Array(Route)

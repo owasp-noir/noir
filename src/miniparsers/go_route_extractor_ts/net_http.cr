@@ -99,7 +99,8 @@ module Noir
     def extract_net_http_routes(source : String,
                                 external_string_values : Hash(String, String) = Hash(String, String).new,
                                 external_functions : Hash(String, Noir::GoCalleeExtractor::FunctionBody) = Hash(String, Noir::GoCalleeExtractor::FunctionBody).new,
-                                external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)) = Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new) : Array(Route)
+                                external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)) = Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new,
+                                router_fields : Set(String) = Set(String).new) : Array(Route)
       routes = [] of Route
       return routes unless net_http_route_source?(source)
 
@@ -109,6 +110,11 @@ module Noir
 
         string_values = collect_string_values(root, source)
         external_string_values.each { |k, v| string_values[k] ||= v }
+        # `mux.HandleFunc(http.MethodGet+" /users", h)`: the stdlib method
+        # constants are read like any other string constant.
+        http_aliases.each do |a|
+          ALLOWED_HTTP_METHODS.each { |verb| string_values["#{a}.Method#{verb.capitalize}"] ||= verb }
+        end
 
         serve_mux_vars = collect_serve_mux_vars(root, source, http_aliases)
         serve_mux_params = collect_serve_mux_params(root, source, http_aliases)
@@ -142,7 +148,7 @@ module Noir
           collect_serve_mux_mount(node, source, http_aliases, serve_mux_vars, string_values, mounts)
           decode_net_http_registration(
             node, source, http_aliases, serve_mux_vars, serve_mux_params, string_values,
-            local_functions, local_methods, external_functions, external_methods
+            local_functions, local_methods, external_functions, external_methods, router_fields
           ) do |route|
             routes << route
           end
@@ -334,6 +340,7 @@ module Noir
                                              local_methods : Hash(String, LibTreeSitter::TSNode),
                                              external_functions : Hash(String, Noir::GoCalleeExtractor::FunctionBody),
                                              external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)),
+                                             router_fields : Set(String),
                                              & : Route -> Nil)
       function = Noir::TreeSitter.field(call, "function")
       return unless function
@@ -358,6 +365,12 @@ module Noir
         else
           return
         end
+      when "selector_expression"
+        # `s.mux.HandleFunc(...)`: a field the package declares as a
+        # ServeMux (see `GoEngine#package_router_fields`).
+        field_name = Noir::TreeSitter.field(operand, "field").try { |f| Noir::TreeSitter.node_text(f, source) }
+        return unless field_name && router_fields.includes?(field_name)
+        router_name = Noir::TreeSitter.node_text(operand, source)
       when "call_expression"
         # http.NewServeMux().HandleFunc — the operand of the Handle* selector
         # is the NewServeMux() call itself. Accept only when the New call is on
