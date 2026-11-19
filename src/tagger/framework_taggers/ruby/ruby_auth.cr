@@ -314,6 +314,11 @@ class RubyAuthTagger < FrameworkTagger
         return
       end
 
+      if tech == "ruby_hanami" && (guard = hanami_app_guard(path))
+        endpoint.add_tag(Tag.new("auth", "Protected by #{guard} (the app's controller.prepare)", "ruby_auth"))
+        return
+      end
+
       # Roda/Rodauth patterns, only on Roda routes: a Rails controller's
       # `doorkeeper_authorize!` read as "Roda authorize!".
       next unless endpoint.details.technology == "ruby_roda"
@@ -1558,6 +1563,17 @@ class RubyAuthTagger < FrameworkTagger
         return m[1]
       end
     end
+  end
+
+  # Hanami 1 evaluates an app's `controller.prepare do ... end` (in
+  # `apps/<app>/application.rb`) in every action of that app, so a `before
+  # :authenticate!` there guards each route its `config/routes.rb` draws.
+  private def hanami_app_guard(path : String) : String?
+    return unless path.ends_with?("/config/routes.rb")
+    app = (Path[path].parent.parent / "application.rb").to_s
+    return unless lines = read_file_lines(app)
+    return unless start = lines.index(&.matches?(/\A\s*controller\.prepare\s+do\b/))
+    match_scope(ruby_block_lines(scope_lines(app, lines), start).reject(&.starts_with?('#')), HANAMI_AUTHN_PATTERNS)
   end
 
   private def match_scope(scope : Array(String), patterns) : String?

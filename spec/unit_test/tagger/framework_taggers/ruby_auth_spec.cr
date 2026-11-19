@@ -1385,6 +1385,43 @@ describe "RubyAuthTagger (Grape route scope)" do
   end
 end
 
+describe "RubyAuthTagger (Hanami controller.prepare)" do
+  it "tags an app's routes when its controller.prepare registers an authenticate callback, not a commented one" do
+    CodeLocator.instance.clear_all
+    dir = File.tempname("noir_hanami_prepare")
+    prepare = ->(callback : String) { "module App\n  class Application < Hanami::Application\n    configure do\n      controller.prepare do\n        include Authentication\n        #{callback}\n      end\n    end\n  end\nend\n" }
+    files = {
+      "apps/admin/application.rb"   => prepare.call("before :authenticate_admin!"),
+      "apps/admin/config/routes.rb" => "resources :users, only: [:index]\n",
+      "apps/web/application.rb"     => prepare.call("# before :authenticate!"),
+      "apps/web/config/routes.rb"   => "get '/about', to: 'static#about'\n",
+    }
+    begin
+      files.each do |rel, body|
+        Dir.mkdir_p(File.dirname(File.join(dir, rel)))
+        File.write(File.join(dir, rel), body)
+        CodeLocator.instance.register_path(File.join(dir, rel))
+      end
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(app : String, url : String) do
+        details = Details.new(PathInfo.new(File.join(dir, "apps", app, "config", "routes.rb"), 1))
+        details.technology = "ruby_hanami"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      users = at.call("admin", "/users")
+      about = at.call("web", "/about")
+      RubyAuthTagger.new(noir_options).perform([users, about])
+
+      users.tags.map(&.name).should eq(["auth"])
+      about.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+      CodeLocator.instance.clear_all
+    end
+  end
+end
+
 describe "RubyAuthTagger (Devise route blocks)" do
   it "tags a route inside authenticate / authenticated, not unauthenticated or devise_scope" do
     dir = File.tempname("noir_devise_routes")
