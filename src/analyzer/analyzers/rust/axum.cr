@@ -942,7 +942,7 @@ module Analyzer::Rust
       body = Noir::TreeSitter.field(function, "body")
       return unless body
 
-      collect_header_and_cookie_params(body, source, endpoint, header_vars, cookie_vars)
+      collect_header_and_cookie_params(body, source, endpoint, header_vars, cookie_vars, path)
     end
 
     # `Json<T>` / `Query<T>` / `Form<T>` read `T`'s wire field names, `T`
@@ -991,7 +991,8 @@ module Analyzer::Rust
                                                  source : String,
                                                  endpoint : Endpoint,
                                                  header_vars : Set(String),
-                                                 cookie_vars : Set(String))
+                                                 cookie_vars : Set(String),
+                                                 path : String)
       walk(body) do |call|
         next unless Noir::TreeSitter.node_type(call) == "call_expression"
 
@@ -999,8 +1000,11 @@ module Analyzer::Rust
         next unless fn_text
 
         if header_read_call?(fn_text, header_vars)
-          first_string_literal_text(Noir::TreeSitter.field(call, "arguments"), source).try do |name|
+          args = Noir::TreeSitter.field(call, "arguments")
+          if name = first_string_literal_text(args, source)
             endpoint.push_param(Param.new(name, "", "header")) if header_name?(name)
+          elsif name = args.try { |a| first_named_child(a) }.try { |arg| header_constant_name(arg, source, path) }
+            endpoint.push_param(Param.new(name, "", "header"))
           end
         elsif cookie_read_call?(fn_text, cookie_vars)
           first_string_literal_text(Noir::TreeSitter.field(call, "arguments"), source).try do |name|
@@ -1008,6 +1012,20 @@ module Analyzer::Rust
           end
         end
       end
+    end
+
+    # `AUTHORIZATION` / `header::USER_AGENT` / `http::header::IF_NONE_MATCH`:
+    # an `http::header` constant, whose value is its lowercased, dashed name.
+    private def header_constant_name(arg : LibTreeSitter::TSNode, source : String, path : String) : String?
+      return unless Noir::TreeSitter.node_type(arg).in?("identifier", "scoped_identifier")
+      parts = Noir::TreeSitter.node_text(arg, source).gsub(/\s+/, "").split("::")
+      leaf = parts.last
+      return unless leaf.matches?(/\A[A-Z][A-Z0-9_]*\z/)
+      imports = rust_imports(path)
+      full = (imports.names[parts[0]]?.try(&.split("::")) || [parts[0]]) + parts[1..]
+      from_header_module = full.size >= 2 && full[-2] == "header"
+      from_header_module ||= parts.size == 1 && imports.globs.any? { |g| g == "header" || g.ends_with?("::header") }
+      leaf.downcase.tr("_", "-") if from_header_module
     end
 
     private def header_read_call?(fn_text : String, header_vars : Set(String)) : Bool
