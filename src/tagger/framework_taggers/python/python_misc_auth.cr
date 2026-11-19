@@ -68,12 +68,20 @@ class PythonMiscAuthTagger < FrameworkTagger
     end
   end
 
+  # The decorators stacked above the handler's `def`, read upward past a
+  # comment line or a decorator's wrapped arguments.
   private def handler_decorator_guard(handler : Handler) : String?
     lines = read_file_lines(handler.path || return) || return
     idx = (handler.line || return) - 2
-    while idx >= 0 && (current = lines[idx].strip).starts_with?('@')
-      TORNADO_PATTERNS.each { |pattern, desc| return desc if current.matches?(pattern) }
+    open = 0
+    while idx >= 0
+      current = lines[idx].strip
       idx -= 1
+      next if current.starts_with?('#')
+      open -= bracket_balance(current)
+      next if open > 0
+      break unless current.starts_with?('@')
+      TORNADO_PATTERNS.each { |pattern, desc| return desc if current.matches?(pattern) }
     end
     nil
   end

@@ -192,6 +192,33 @@ describe "PythonMiscAuthTagger" do
     end
   end
 
+  it "reads a Tornado decorator past a wrapped decorator or a comment line" do
+    tmpdir = File.tempname("tornado_wrapped")
+    Dir.mkdir_p(tmpdir)
+    api = File.join(tmpdir, "api.py")
+    File.write(api, [
+      "import tornado.web",
+      "",
+      "class ItemHandler(tornado.web.RequestHandler):",
+      "    @tornado.web.authenticated",
+      "    # cached per user",
+      "    @cache(",
+      "        ttl=60,",
+      "    )",
+      "    def get(self):",
+      "        self.write('items')",
+    ].join("\n"))
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    details = Details.new(PathInfo.new(api, 1))
+    details.technology = "python_tornado"
+    endpoint = Endpoint.new("/items", "GET", [] of Param, details)
+    endpoint.handler = Handler.new("ItemHandler.get", api, 9)
+    PythonMiscAuthTagger.new(noir_options).perform([endpoint])
+    FileUtils.rm_rf(tmpdir)
+    endpoint.tags.map(&.name).should eq(["auth"])
+  end
+
   it "returns correct target_techs" do
     PythonMiscAuthTagger.target_techs.should contain("python_sanic")
     PythonMiscAuthTagger.target_techs.should contain("python_tornado")
