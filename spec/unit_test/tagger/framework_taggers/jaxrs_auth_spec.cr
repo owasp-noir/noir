@@ -401,9 +401,15 @@ describe "JaxrsAuthTagger" do
         "#{JAXRS_DIR}App.java"         => config,
         "#{JAXRS_DIR}ApiResource.java" => jaxrs_resource("    @GET\n    public Response x() { return null; }"),
       }
-      started = Time.instant
-      result = run_jaxrs_auth(files, {"GET /api" => {"#{JAXRS_DIR}ApiResource.java", "@GET"}})
-      elapsed = Time.instant - started
+      GC.collect
+      GC.disable
+      begin
+        started = Time.instant
+        result = run_jaxrs_auth(files, {"GET /api" => {"#{JAXRS_DIR}ApiResource.java", "@GET"}})
+        elapsed = Time.instant - started
+      ensure
+        GC.enable
+      end
       result["GET /api"].size.should eq(1)
       elapsed
     end
@@ -450,9 +456,17 @@ describe "JaxrsAuthTagger" do
       resource.lines.each_with_index do |line, index|
         line.match(/@Path\("\/(e\d+)"\)/).try { |found| table["GET /api/#{found[1]}"] = {"#{JAXRS_DIR}ApiResource.java", index + 1} }
       end
-      started = Time.instant
-      result = run_jaxrs_auth(files, table)
-      elapsed = Time.instant - started
+      # A collection lands in the large run only and, on the Windows runner,
+      # costs as much as the work itself; keep the collector out of the timing.
+      GC.collect
+      GC.disable
+      begin
+        started = Time.instant
+        result = run_jaxrs_auth(files, table)
+        elapsed = Time.instant - started
+      ensure
+        GC.enable
+      end
       result["GET /api/e#{routes - 1}"].size.should eq(1)
       elapsed
     end
