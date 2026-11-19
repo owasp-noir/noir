@@ -45,13 +45,19 @@ require "./axum_chain"
 class RustSecurityTagger < FrameworkTagger
   include RustAxumChain
 
+  # A `.route(..)` call: its file and the rows from its name to its `)`.
+  # An endpoint is the route whose call holds its code path, so a router's
+  # routes are told apart from same-named ones of a router nested elsewhere.
+  record RouteAt, file : String, first : Int32, last : Int32
+
   # Where a protection applies: under `prefix` bar the `except` routes, or,
-  # when `mounts` is set, only on those router-local `{"route"|"nest", path}`
-  # mounts (an axum `.layer(..)` whose routes were read).
+  # when `routes` is set, only on those routes and under the `nests`
+  # prefixes (an axum `.layer(..)` whose router chain was read).
   record Scope,
     prefix : String,
-    mounts : Array({String, String})? = nil,
-    except : Array(String) = [] of String
+    routes : Array(RouteAt)? = nil,
+    nests : Array(String) = [] of String,
+    except : Array(RouteAt) = [] of RouteAt
 
   # A single detected protection: the tag to emit, its human description,
   # where it applies, and whether it is a risk (risk variants win dedup so
@@ -171,7 +177,7 @@ class RustSecurityTagger < FrameworkTagger
       next if test_path?(file)
       content = read_file(file)
       next if content.nil?
-      scan_rust_source(content)
+      scan_rust_source(file, content)
     end
 
     # Loco (and similar) configure middleware in YAML, not code.
@@ -198,9 +204,9 @@ class RustSecurityTagger < FrameworkTagger
       relative.includes?("/examples/")
   end
 
-  private def scan_rust_source(content : String)
+  private def scan_rust_source(file : String, content : String)
     lines = content.split("\n")
-    imports, layers = syntax_spans(content)
+    imports, layers = syntax_spans(file, content)
 
     # `#[cfg(test)]` module skipping via brace depth.
     brace_depth = 0
@@ -237,7 +243,7 @@ class RustSecurityTagger < FrameworkTagger
 
   # Rows of `use` declarations (naming a layer type applies nothing) and
   # the axum `.layer(..)` calls of the file.
-  private def syntax_spans(content : String) : {Set(Int32), Array(LayerSpan)}
+  private def syntax_spans(file : String, content : String) : {Set(Int32), Array(LayerSpan)}
     rows = Set(Int32).new
     layers = [] of LayerSpan
     return {rows, layers} unless content.matches?(ANY_PATTERN)
@@ -249,7 +255,7 @@ class RustSecurityTagger < FrameworkTagger
         when "call_expression"
           next unless {"layer", "route_layer"}.includes?(field_call_name(node, content))
           args = Noir::TreeSitter.field(node, "arguments") || next
-          scope = layer_scope(node, content) || next
+          scope = layer_scope(node, content, file) || next
           layers << LayerSpan.new(Noir::TreeSitter.node_start_row(args), Noir::TreeSitter.node_end_row(args), scope)
         end
       end
@@ -263,40 +269,37 @@ class RustSecurityTagger < FrameworkTagger
   # every route but the ones chained after the layer. A tower
   # `ServiceBuilder` layer is not a router's; the router layer it is handed
   # to decides.
-  private def layer_scope(call : LibTreeSitter::TSNode, source : String) : Scope?
+  private def layer_scope(call : LibTreeSitter::TSNode, source : String, file : String) : Scope?
     if route = find_enclosing_route_call(call, source)
-      path = named_call_args(route)[0]?.try { |arg| string_literal_content(arg, source) }
-      return path ? Scope.new("/", [{"route", path}]) : nil
+      return Scope.new("/", [route_at(route, file)])
     end
     root = call
     while (recv = chain_receiver(root)) && Noir::TreeSitter.node_type(recv) == "call_expression"
       root = recv
     end
     return if call_func_full_text(root, source).ends_with?("ServiceBuilder::new")
-    if mounts = router_mounts(call, source)
-      return Scope.new("/", mounts)
-    end
-    Scope.new("/", nil, routes_chained_after(call, source))
+    router_scope(call, source, file) || Scope.new("/", except: routes_chained_after(call, source, file))
   end
 
   ROUTER_NEW = /\bRouter(?:::<[^<>]*>)?::new\z/
 
   # The routes and nests of the `Router::new()` chain read before `call`;
-  # nil when the chain holds anything else (a merge, a variable, a path
-  # that is not a literal).
-  private def router_mounts(call : LibTreeSitter::TSNode, source : String) : Array({String, String})?
-    mounts = [] of {String, String}
+  # nil when the chain holds anything else (a merge, a variable, a nest
+  # path that is not a literal).
+  private def router_scope(call : LibTreeSitter::TSNode, source : String, file : String) : Scope?
+    routes = [] of RouteAt
+    nests = [] of String
     cursor = chain_receiver(call)
     while cur = cursor
       return unless Noir::TreeSitter.node_type(cur) == "call_expression"
-      case name = field_call_name(cur, source)
+      case field_call_name(cur, source)
       when nil
         return unless call_func_full_text(cur, source).matches?(ROUTER_NEW)
-        return mounts.empty? ? nil : mounts
-      when "route", "nest", "nest_service"
-        path = named_call_args(cur)[0]?.try { |arg| string_literal_content(arg, source) }
-        return unless path
-        mounts << {name == "route" ? "route" : "nest", path}
+        return routes.empty? && nests.empty? ? nil : Scope.new("/", routes, nests)
+      when "route", "route_service"
+        routes << route_at(cur, file)
+      when "nest", "nest_service"
+        nests << (named_call_args(cur)[0]?.try { |arg| string_literal_content(arg, source) } || return)
       when "merge"
         return
       end
@@ -305,19 +308,22 @@ class RustSecurityTagger < FrameworkTagger
     nil
   end
 
-  # Literal paths of the `.route(..)` calls chained onto `call`.
-  private def routes_chained_after(call : LibTreeSitter::TSNode, source : String) : Array(String)
-    paths = [] of String
+  private def route_at(call : LibTreeSitter::TSNode, file : String) : RouteAt
+    name = Noir::TreeSitter.field(call, "function").try { |fn| Noir::TreeSitter.field(fn, "field") } || call
+    RouteAt.new(file, Noir::TreeSitter.node_start_row(name), Noir::TreeSitter.node_end_row(call))
+  end
+
+  # The `.route(..)` calls chained onto `call`.
+  private def routes_chained_after(call : LibTreeSitter::TSNode, source : String, file : String) : Array(RouteAt)
+    routes = [] of RouteAt
     node = call
     while (field = Noir::TreeSitter.parent(node)) && Noir::TreeSitter.node_type(field) == "field_expression"
       outer = Noir::TreeSitter.parent(field) || break
       break unless Noir::TreeSitter.node_type(outer) == "call_expression"
-      if field_call_name(outer, source) == "route"
-        named_call_args(outer)[0]?.try { |arg| string_literal_content(arg, source) }.try { |path| paths << path }
-      end
+      routes << route_at(outer, file) if {"route", "route_service"}.includes?(field_call_name(outer, source))
       node = outer
     end
-    paths
+    routes
   end
 
   private def detect_line_protections(lines : Array(String), idx : Int32, stripped : String, layers : Array(LayerSpan))
@@ -478,26 +484,25 @@ class RustSecurityTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
-    url = endpoint.url
     @protections.each do |protection|
-      next unless covers?(protection.scope, url)
+      next unless covers?(protection.scope, endpoint)
       endpoint.add_tag(Tag.new(protection.tag, protection.description, "rust_security"))
     end
   end
 
-  # A router-local path also covers itself under a `nest` prefix, so
-  # `/files` covers `/api/files`.
-  private def covers?(scope : Scope, url : String) : Bool
-    if mounts = scope.mounts
-      return mounts.any? do |(kind, path)|
-        if kind == "nest"
-          url_under_prefix?(url, path) || url.includes?("#{path.rstrip('/')}/")
-        else
-          url == path || (path.size > 1 && url.ends_with?(path))
-        end
-      end
+  private def covers?(scope : Scope, endpoint : Endpoint) : Bool
+    url = endpoint.url
+    if routes = scope.routes
+      return routes.any? { |route| registered_by?(endpoint, route) } || scope.nests.any? { |nest| url_under_prefix?(url, nest) }
     end
-    url_under_prefix?(url, scope.prefix) && scope.except.none? { |path| url == path || (path.size > 1 && url.ends_with?(path)) }
+    url_under_prefix?(url, scope.prefix) && scope.except.none? { |route| registered_by?(endpoint, route) }
+  end
+
+  private def registered_by?(endpoint : Endpoint, route : RouteAt) : Bool
+    endpoint.details.code_paths.any? do |path_info|
+      line = path_info.line
+      path_info.path == route.file && !line.nil? && route.first <= line - 1 && line - 1 <= route.last
+    end
   end
 
   # `/` (or empty) matches everything. Otherwise require a real path
