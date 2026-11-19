@@ -83,3 +83,42 @@ def create_app() -> FastAPI:
         return []
 
     return factory_app
+
+
+def check_feature_enabled():
+    if not settings.FEATURE_REPORTS:
+        raise HTTPException(status_code=403, detail="feature disabled")
+
+
+def get_item_or_403(item_id):
+    item = load(item_id)
+    if item.hidden:
+        raise HTTPException(status_code=403)
+    return item
+
+
+@app.get("/reports")
+def reports():
+    check_feature_enabled()
+    return {}
+
+
+@app.get("/items/{item_id}")
+def read_item(item_id: int):
+    item = get_item_or_403(item_id)
+    return item
+
+
+def public_handler():
+    return {}
+
+
+app.add_api_route("/public", public_handler, methods=["GET"])
+
+
+def private_handler(authorization: str | None = Header(default=None)):
+    check_token(EXPECTED, authorization)
+    return {}
+
+
+app.add_api_route("/private", private_handler, methods=["GET"])

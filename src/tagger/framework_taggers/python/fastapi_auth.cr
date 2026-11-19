@@ -245,14 +245,9 @@ class FastAPIAuthTagger < FrameworkTagger
       endpoint.add_tag(Tag.new("auth", guard, "fastapi_auth"))
       return
     end
-    endpoint.details.code_paths.each do |path_info|
-      lines = read_file_lines(path_info.path) || next
-      start = (path_info.line || next) - 1
-      next unless 0 <= start < lines.size
-      if call = leading_guard_call(lines[start, 400], path_info.path, 0)
-        endpoint.add_tag(Tag.new("auth", "Protected by FastAPI handler call to #{call}", "fastapi_auth"))
-        return
-      end
+    if call = handler_guard_call(endpoint)
+      endpoint.add_tag(Tag.new("auth", "Protected by FastAPI handler call to #{call}", "fastapi_auth"))
+      return
     end
     if soft = @soft_auth
       endpoint.add_tag(Tag.new("anonymous", "FastAPI Depends(#{soft}) admits anonymous callers: it returns None instead of refusing", "fastapi_auth"))
@@ -307,6 +302,26 @@ class FastAPIAuthTagger < FrameworkTagger
   private def body_refuses?(body : String, file : String, depth : Int32, env : Env = Env.new) : Bool
     refusing_raise?(body, file) || dependency_refuses_in?(body, file, depth, env) ||
       !leading_guard_call(body.lines, file, depth).nil?
+  end
+
+  # The leading guard call of the function the route dispatches to: the
+  # handler the analyzer resolved (`add_api_route(path, handler)` names it),
+  # else the `def` under the route decorator at the code path.
+  private def handler_guard_call(endpoint : Endpoint) : String?
+    if (handler = endpoint.handler) && (file = handler.path) && (line = handler.line)
+      lines = read_file_lines(file) || return
+      return unless 0 < line <= lines.size
+      return leading_guard_call(lines[line - 1, 400], file, 0)
+    end
+    endpoint.details.code_paths.each do |path_info|
+      lines = read_file_lines(path_info.path) || next
+      start = (path_info.line || next) - 1
+      next unless 0 <= start < lines.size && lines[start].lstrip.starts_with?('@')
+      if call = leading_guard_call(lines[start, 400], path_info.path, 0)
+        return call
+      end
+    end
+    nil
   end
 
   LEADING_CALL   = /\A(?:[A-Za-z_]\w*\s*(?::[^=]+)?=(?!=)\s*)?(?:await\s+)?([A-Za-z_][\w.]*)\s*\(/

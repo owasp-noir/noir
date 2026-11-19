@@ -575,6 +575,26 @@ describe "FastAPIAuthTagger" do
       found["/session"].should be_empty
       found["/internal/jobs"].should eq(["auth: Protected by FastAPI Depends(require_internal)"])
     end
+
+    it "reads the leading call of the handler add_api_route registers, not of the next def" do
+      app = "#{base}/app.py"
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(base)
+      endpoints = { {116, "/public", "public_handler", 112}, {124, "/private", "private_handler", 119} }.to_a.map do |line, url, name, def_line|
+        endpoint = Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(app, line)))
+        endpoint.handler = Handler.new(name, app, def_line)
+        endpoint
+      end
+      CodeLocator.instance.clear_all
+      CodeLocator.instance.register_path(app)
+      begin
+        FastAPIAuthTagger.new(noir_options).perform(endpoints)
+      ensure
+        CodeLocator.instance.clear_all
+      end
+      endpoints[0].tags.should be_empty
+      endpoints[1].tags.map(&.description).should eq(["Protected by FastAPI handler call to check_token"])
+    end
   end
 
   # fastapi_middleware_auth: an `@app.middleware("http")` function that
