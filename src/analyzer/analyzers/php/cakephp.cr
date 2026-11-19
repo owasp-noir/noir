@@ -46,7 +46,8 @@ module Analyzer::Php
                                        file_path : String,
                                        include_callee : Bool,
                                        base_line : Int32 = 1,
-                                       depth : Int32 = 0) : Array(Endpoint)
+                                       depth : Int32 = 0,
+                                       controller_ns : String? = "") : Array(Endpoint)
       endpoints = [] of Endpoint
       offsets = Noir::CharOffsets.new(content)
       # Line of a route matched at byte offset `byte`.
@@ -126,20 +127,41 @@ module Analyzer::Php
         pos = route_match.byte_end(0)
       end
 
-      # 4. Recurse into each scope/prefix/plugin body with its prefix applied.
+      # 4. `fallbacks()` on this builder.
+      pos = 0
+      while route_match = FALLBACKS_REGEX.match_at_byte_index(content, pos)
+        unless inside_scope_body?(route_match.byte_begin(0), scopes)
+          endpoints.concat(fallback_endpoints(prefix, file_path, controller_ns, include_callee)) if controller_ns
+          break
+        end
+        pos = route_match.byte_end(0)
+      end
+
+      # 5. Recurse into each scope/prefix/plugin body with its prefix applied.
       if depth >= ROUTE_GROUP_MAX_DEPTH
         record_route_group_depth_skip(file_path) unless scopes.empty?
       else
         scopes.each do |scope|
           new_prefix = build_full_path(prefix, scope.prefix)
-          endpoints.concat(analyze_routes_content(scope.body, new_prefix, file_path, include_callee, line_at.call(scope.body_start), depth + 1))
+          # A `prefix()` routes to the controllers of its sub-namespace; a
+          # plugin's live in the plugin, which `fallbacks()` does not resolve.
+          scope_ns = case scope.kind
+                     when "prefix"
+                       segment = normalize_controller_segment(scope.name)
+                       controller_ns.try { |ns| ns.empty? ? segment : "#{ns}/#{segment}" }
+                     when "plugin"
+                       nil
+                     else
+                       controller_ns
+                     end
+          endpoints.concat(analyze_routes_content(scope.body, new_prefix, file_path, include_callee, line_at.call(scope.body_start), depth + 1, scope_ns))
         end
       end
 
       endpoints
     end
 
-    private record Scope, prefix : String, body : String, body_start : Int32, body_end : Int32
+    private record Scope, kind : String, name : String, prefix : String, body : String, body_start : Int32, body_end : Int32
 
     # Route receivers in a CakePHP routes file: the injected builder under any
     # variable name (`$routes`, `$builder`, `$routeBuilder`, ...) or the static
@@ -169,10 +191,10 @@ module Analyzer::Php
         method = open_match[1].downcase
         info = parse_scope_call(content, open_match.end(0), method)
         if info
-          prefix, body, body_start, body_end = info
+          name, prefix, body, body_start, body_end = info
           # Stored as BYTE offsets: the per-route scans compare them with
           # `byte_begin`, which (unlike `begin`) is O(1) on non-ASCII files.
-          scopes << Scope.new(prefix, body, content.char_index_to_byte_index(body_start) || content.bytesize,
+          scopes << Scope.new(method, name, prefix, body, content.char_index_to_byte_index(body_start) || content.bytesize,
             content.char_index_to_byte_index(body_end) || content.bytesize)
           pos = body_end + 1
         else
@@ -183,7 +205,7 @@ module Analyzer::Php
       scopes
     end
 
-    private def parse_scope_call(content : String, pos : Int32, method : String) : Tuple(String, String, Int32, Int32)?
+    private def parse_scope_call(content : String, pos : Int32, method : String) : Tuple(String, String, String, Int32, Int32)?
       return unless pos < content.size
 
       context = content[pos..]
@@ -198,7 +220,8 @@ module Analyzer::Php
       body_end = find_matching_php_close_brace(content, brace_pos)
       return unless body_end
 
-      {scope_prefix_from_prelude(prelude, method), content[(brace_pos + 1)...body_end], brace_pos + 1, body_end}
+      name = prelude.match(/['"]([^'"]*)['"]/).try(&.[1]) || ""
+      {name, scope_prefix_from_prelude(prelude, method), content[(brace_pos + 1)...body_end], brace_pos + 1, body_end}
     end
 
     PATH_OPTION_RE = /['"]path['"]\s*=>\s*['"]([^'"]*)['"]/i
@@ -243,6 +266,46 @@ module Analyzer::Php
       name.tr(delimiter == '-' ? "_" : "-", delimiter.to_s)
         .gsub(/(?<=\w)([A-Z])/) { |upper| "#{delimiter}#{upper}" }
         .downcase
+    end
+
+    FALLBACKS_REGEX  = /(?:\$\w+|Router)(?:->|::)fallbacks\s*\(/
+    PUBLIC_METHOD_RE = /(?:^|[\s;{}])((?:(?:public|protected|private|static|final|abstract)\s+)*)function\s+(\w+)\s*\(/
+    # `Controller` callbacks a subclass overrides; public, but never actions.
+    NON_ACTION_METHODS = Set{"initialize", "beforeFilter", "beforeRender", "afterFilter", "beforeRedirect", "implementedEvents", "viewClasses"}
+
+    # `fallbacks()` connects `/{controller}` and `/{controller}/{action}/*`
+    # (dasherized), so each public action of every controller directly in
+    # `src/Controller/<controller_ns>/` is served under `prefix`.
+    private def fallback_endpoints(prefix : String, file_path : String, controller_ns : String, include_callee : Bool) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      marker_index = file_path.index("/config/routes.php") || return endpoints
+      dir = File.join(file_path[0...marker_index], "src", "Controller")
+      dir = File.join(dir, controller_ns) unless controller_ns.empty?
+
+      php_source_files.each do |path|
+        next unless File.dirname(path) == dir && path.ends_with?("Controller.php") && scan_accepts?(path)
+        controller = File.basename(path, ".php").rchop("Controller")
+        next if controller.empty? || controller == "App" || controller == "Error"
+        content = php_code(read_file_content(path))
+        next if content.matches?(/\babstract\s+class\b/)
+        offsets = Noir::CharOffsets.new(content)
+        controller_url = build_full_path(prefix, cake_delimit(controller, '-'))
+        content.scan(PUBLIC_METHOD_RE) do |m|
+          next if m[1].matches?(/\b(?:protected|private|static|abstract)\b/)
+          action = m[2]
+          next if action.starts_with?('_') || NON_ACTION_METHODS.includes?(action)
+          name_pos = offsets.begin(m, 2)
+          url = action == "index" ? controller_url : build_full_path(controller_url, cake_delimit(action, '-'))
+          endpoint = Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(path, offsets.line(name_pos))))
+          # The body helper reads from a visibility keyword onward.
+          if include_callee && m[1].includes?("public") && (method_body = extract_php_method_body_after(content, offsets.begin(m, 1)))
+            body, start_line = method_body
+            attach_php_callees(endpoint, Noir::PhpCalleeExtractor.callees_for_body(body, path, start_line))
+          end
+          endpoints << endpoint
+        end
+      end
+      endpoints
     end
 
     private def inside_scope_body?(pos : Int32, scopes : Array(Scope)) : Bool
