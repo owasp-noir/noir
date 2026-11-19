@@ -44,6 +44,17 @@ class AspnetAuthTagger < FrameworkTagger
   # `var v1 = api.MapGroup("/v1")`: a nested group, which inherits `api`'s.
   GROUP_DECLARATION_RECEIVER = /=\s*(\w+)\s*\.\s*MapGroup\b/
 
+  # ASP.NET Core middleware auth in action body
+  ACTION_AUTH_PATTERNS = [
+    {/User\.Identity\.IsAuthenticated/, "ASP.NET User.Identity.IsAuthenticated"},
+    {/User\.IsInRole\s*\(/, "ASP.NET User.IsInRole check"},
+    {/HttpContext\.User/, "ASP.NET HttpContext.User check"},
+  ]
+  # A body that reads the caller is a guard only if it can turn the caller
+  # away: a 401/403 result, a redirect (to the login page), or an auth
+  # exception. `var isAdmin = User.IsInRole(...)` alone refuses nobody.
+  BODY_REFUSAL = /\b(?:Unauthorized|Forbid|Challenge|Redirect|RedirectToAction|RedirectToPage|LocalRedirect)\s*\(|\bStatus40[13]|\bthrow\s+new\s+\w*(?:Unauthori[sz]ed|Forbidden|Authentication|Security)\w*/
+
   # A route-builder extension method, `static RouteGroupBuilder
   # MapOrdersApi(this IEndpointRouteBuilder app)`: its name and the name of
   # its `this` builder.
@@ -395,9 +406,9 @@ class AspnetAuthTagger < FrameworkTagger
         return
       end
 
-      # A body that only reads the caller (`var isAdmin = User.IsInRole(...)`)
-      # refuses nobody; only a refusal conditioned on the caller is a guard.
-      if description = action_refusal(path_info.path, line_idx)
+      # Check action body for auth checks
+      description = check_action_body(lines, line_idx) || action_refusal(path_info.path, line_idx)
+      if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
         return
       end
@@ -1199,5 +1210,30 @@ class AspnetAuthTagger < FrameworkTagger
         sb << ' '
       end
     end
+  end
+
+  # Scans the action from its declaration to its end: the brace that closes
+  # its body, or the `;` of an expression body (`Public() => Ok("x");`) or
+  # one-statement route, so the next action's checks are never read.
+  private def check_action_body(lines : Array(String), method_line : Int32) : String?
+    idx = method_line
+    end_idx = [method_line + 200, lines.size - 1].min
+    depth = 0
+    opened = false
+    found = nil
+    refuses = false
+
+    while idx <= end_idx
+      current = lines[idx].strip
+      found ||= ACTION_AUTH_PATTERNS.find { |pattern, _| current.matches?(pattern) }.try(&.[1])
+      refuses ||= current.matches?(BODY_REFUSAL)
+
+      depth += current.count('{') - current.count('}')
+      opened ||= current.includes?('{')
+      break if opened ? depth <= 0 : current.ends_with?(';')
+      idx += 1
+    end
+
+    found if refuses
   end
 end

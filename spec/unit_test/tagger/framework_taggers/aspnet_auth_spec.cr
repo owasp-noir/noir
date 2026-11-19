@@ -96,46 +96,83 @@ describe "AspnetAuthTagger" do
     AspnetAuthTagger.new(noir_options).perform(endpoints)
 
     endpoints[0].tags.empty?.should be_true
-    endpoints[1].tags.map(&.description).should eq(["Protected by an in-action Unauthorized when `!User.Identity.IsAuthenticated`"])
+    endpoints[1].tags.map(&.description).should eq(["Protected by ASP.NET User.Identity.IsAuthenticated"])
 
     FileUtils.rm_rf(tmpdir)
   end
 
-  it "does not take an action that only reads the caller as guarded" do
+  it "takes a caller check as a guard only when the action refuses somewhere" do
     noir_options = create_test_options
     tmpdir = File.tempname("aspnet_reads_caller")
     Dir.mkdir_p(tmpdir)
-    controller = File.join(tmpdir, "BrandingController.cs")
-    File.write(controller, [
-      "public class BrandingController : ControllerBase",                 # 1
-      "{",                                                                # 2
-      "    [HttpGet(\"splash\")]",                                        # 3
-      "    public IActionResult Splash()",                                # 4
-      "    {",                                                            # 5
-      "        var isAdmin = User.IsInRole(\"Administrator\");",          # 6
-      "        if (!_options.Enabled && !isAdmin) return NotFound();",    # 7
-      "        return Ok(\"splash\");",                                   # 8
-      "    }",                                                            # 9
-      "",                                                                 # 10
-      "    [HttpGet(\"greeting\")]",                                      # 11
-      "    public IActionResult Greeting()",                              # 12
-      "    {",                                                            # 13
-      "        var name = HttpContext.User.Identity?.Name ?? \"guest\";", # 14
-      "        ViewBag.SignedIn = User.Identity.IsAuthenticated;",        # 15
-      "        return Ok(name);",                                         # 16
-      "    }",                                                            # 17
-      "}",                                                                # 18
-    ].join("\n"))
+    controller = File.join(tmpdir, "AccountController.cs")
+    program = File.join(tmpdir, "Program.cs")
+    File.write(controller, <<-CS)
+      public class AccountController : Controller
+      {
+          public IActionResult Splash()
+          {
+              var isAdmin = User.IsInRole("Administrator");
+              if (!_options.Enabled && !isAdmin) return NotFound();
+              return Ok("splash");
+          }
+
+          public IActionResult Greeting()
+          {
+              var name = HttpContext.User.Identity?.Name ?? "guest";
+              ViewBag.SignedIn = User.Identity.IsAuthenticated;
+              return Ok(name);
+          }
+
+          public IActionResult Profile()
+          {
+              if (!User.Identity.IsAuthenticated) return RedirectToAction("Login");
+              return View();
+          }
+
+          public IActionResult Settings()
+          {
+              if (!User.Identity.IsAuthenticated) throw new UnauthorizedAccessException();
+              return View();
+          }
+
+          public IActionResult Either()
+          {
+              if (User.Identity.IsAuthenticated) { return Ok(); } else { return Unauthorized(); }
+          }
+
+          public IActionResult Ternary()
+          {
+              return User.Identity.IsAuthenticated ? Ok() : Unauthorized();
+          }
+
+          public IActionResult After()
+          {
+              if (User.Identity.IsAuthenticated) return Ok();
+              return Unauthorized();
+          }
+      }
+      CS
+    File.write(program, <<-CS)
+      app.MapGet("/m1", (HttpContext ctx) =>
+      {
+          if (!ctx.User.Identity.IsAuthenticated) return Results.Unauthorized();
+          return Results.Ok();
+      });
+      CS
     noir_options["base"] = YAML::Any.new(tmpdir)
 
-    endpoints = {4 => "/splash", 12 => "/greeting"}.map do |line, url|
+    endpoints = {splash: 3, greeting: 10, profile: 17, settings: 23, either: 29, ternary: 34, after: 39}.to_h.transform_values do |line|
       details = Details.new(PathInfo.new(controller, line))
       details.technology = "cs_aspnet_core_mvc"
-      Endpoint.new(url, "GET", [] of Param, details)
+      Endpoint.new("/#{line}", "GET", [] of Param, details)
     end
-    AspnetAuthTagger.new(noir_options).perform(endpoints)
+    minimal = Details.new(PathInfo.new(program, 1))
+    minimal.technology = "cs_aspnet_core_minimal_api"
+    endpoints[:minimal] = Endpoint.new("/m1", "GET", [] of Param, minimal)
+    AspnetAuthTagger.new(noir_options).perform(endpoints.values)
 
-    endpoints.map(&.tags.size).should eq([0, 0])
+    endpoints.reject { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys.should eq([:splash, :greeting])
 
     FileUtils.rm_rf(tmpdir)
   end
