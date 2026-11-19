@@ -577,6 +577,14 @@ describe "FlaskAuthTagger" do
       "@authenticate(token_auth, optional=True)",
       "def feed():",
       "    return {}",
+      "",
+      "@bp.route('/maybe')",
+      "@authenticate(",
+      "    token_auth,",
+      "    optional=True,",
+      ")",
+      "def maybe():",
+      "    return {}",
     ].join("\n"))
     File.write(own, [
       "from api.audit import authenticate",
@@ -588,7 +596,7 @@ describe "FlaskAuthTagger" do
     ].join("\n"))
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(tmpdir)
-    endpoints = { {with_apifairy, 4, "/posts"}, {with_apifairy, 10, "/feed"}, {own, 3, "/audit"} }.map do |file, line, url|
+    endpoints = { {with_apifairy, 4, "/posts"}, {with_apifairy, 10, "/feed"}, {with_apifairy, 15, "/maybe"}, {own, 3, "/audit"} }.map do |file, line, url|
       details = Details.new(PathInfo.new(file, line))
       details.technology = "python_flask"
       Endpoint.new(url, "GET", [] of Param, details)
@@ -599,6 +607,7 @@ describe "FlaskAuthTagger" do
     verdicts["/posts"].should eq(["Protected by apifairy authenticate"])
     # optional=True passes a request without credentials through to the view.
     verdicts["/feed"].should be_empty
+    verdicts["/maybe"].should be_empty
     # A project's own `authenticate` is not APIFairy's.
     verdicts["/audit"].should be_empty
   end

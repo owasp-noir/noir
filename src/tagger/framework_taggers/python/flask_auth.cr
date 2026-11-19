@@ -204,7 +204,16 @@ class FlaskAuthTagger < FrameworkTagger
       # decorator must be outermost). Read the stack below and nothing above.
       route_idx = line_num - 1
       if lines[route_idx].strip.starts_with?('@')
+        # A decorator's wrapped arguments (`optional=True` on its own line) belong to it.
+        decorators = [] of String
         annotation_lines_below(lines, route_idx, "@").each do |current|
+          if current.starts_with?('@') || decorators.empty?
+            decorators << current
+          else
+            decorators[-1] += " #{current}"
+          end
+        end
+        decorators.each do |current|
           if desc = decorator_guard(current, path_info.path)
             return desc
           end
