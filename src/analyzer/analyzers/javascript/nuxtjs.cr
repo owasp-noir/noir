@@ -157,7 +157,7 @@ module Analyzer::Javascript
       end
 
       # Remove file extension
-      relative_path = strip_extension(relative_path, EXTENSIONS)
+      relative_path = strip_extension(relative_path, EXTENSIONS).sub(NITRO_ENV_SUFFIX_RE, "")
 
       # Check for HTTP method-specific files (e.g., users.get.ts)
       http_methods = ["get", "post", "put", "delete", "patch", "head", "options"]

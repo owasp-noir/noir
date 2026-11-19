@@ -178,6 +178,10 @@ module Analyzer::Javascript
     # without consuming earlier lines, so `line_for_match` lands on it.
     DEFAULT_EXPORT_RE = /^[ \t]*export\s+default\b/m
 
+    # Nitro's environment suffix on a route file (`debug.get.dev.ts`): the
+    # route is only registered in that environment and the suffix is no URL.
+    NITRO_ENV_SUFFIX_RE = /\.(?:dev|prod|prerender)\z/
+
     # Line of the module's `export default`, or 1 without one.
     protected def default_export_line(content : String) : Int32
       content.match(DEFAULT_EXPORT_RE).try { |m| line_for_match(content, m) } || 1

@@ -99,7 +99,7 @@ module Analyzer::Javascript
       end
 
       # Remove file extension
-      relative_path = relative_path.gsub(/\.(js|ts|mjs|mts)$/, "")
+      relative_path = relative_path.gsub(/\.(js|ts|mjs|mts)$/, "").sub(NITRO_ENV_SUFFIX_RE, "")
 
       # Check for HTTP method-specific files (e.g., users.get.ts)
       http_methods = ["get", "post", "put", "delete", "patch", "head", "options"]
