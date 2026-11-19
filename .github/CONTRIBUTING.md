@@ -32,6 +32,9 @@ graph TD
 ```
 
 ## 🛠️ Building and Testing
+
+No local toolchain? Open the repository in [GitHub Codespaces](https://codespaces.new/owasp-noir/noir). The dev container comes with Crystal, the build dependencies and `just`; pick a 4-core machine, then run `just build` and `just test`.
+
 ### Clone and Install Dependencies
 
 ```bash

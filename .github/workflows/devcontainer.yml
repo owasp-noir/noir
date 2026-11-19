@@ -1,0 +1,40 @@
+---
+name: Dev container
+# Builds the dev container the way Codespaces does and proves the first build
+# inside it still works. Only when the container definition changes: the image
+# build alone takes a few minutes, and nothing else in the repository can break
+# it. (The first version of the image failed on an unreachable apt mirror,
+# which is the kind of thing only a real build shows.)
+on:
+  pull_request:
+    paths:
+      - .devcontainer/**
+      - .github/workflows/devcontainer.yml
+  push:
+    branches: [main]
+    paths:
+      - .devcontainer/**
+      - .github/workflows/devcontainer.yml
+  workflow_dispatch:
+
+concurrency:
+  group: devcontainer-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and run noir inside the dev container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: devcontainers/ci@v0.3
+        with:
+          push: never
+          runCmd: |
+            set -eu
+            echo "user: $(id -un), cores: $(nproc)"
+            just build
+            ./bin/noir version

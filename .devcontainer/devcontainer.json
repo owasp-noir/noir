@@ -1,0 +1,26 @@
+{
+  "name": "OWASP Noir",
+  "build": { "dockerfile": "Dockerfile" },
+  // Measured: the first build peaks at about 10 GB and the spec build at about
+  // 13 GB on Linux, and Codespaces machines have no swap. The default 2-core,
+  // 8 GB machine runs out of memory and fails; this makes Codespaces offer
+  // 4 cores and 16 GB or more.
+  "hostRequirements": { "cpus": 4, "memory": "16gb" },
+  "features": {
+    // A non-root user with sudo. One spec expects a file it cannot read, which
+    // root always can.
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "username": "vscode",
+      "installZsh": false,
+      "upgradePackages": false
+    },
+    "ghcr.io/devcontainers/features/sshd:1": {}
+  },
+  "remoteUser": "vscode",
+  "postCreateCommand": "shards install",
+  "customizations": {
+    "vscode": {
+      "extensions": ["crystal-lang-tools.crystal-lang"]
+    }
+  }
+}
