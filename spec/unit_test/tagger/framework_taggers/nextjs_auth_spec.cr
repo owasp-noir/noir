@@ -72,6 +72,11 @@ describe "NextjsAuthTagger" do
     tag.call("app/actions/items.ts", 38).map(&.name).should eq(["auth"])
   end
 
+  it "tags a handler that returns an unauthorized error without a session" do
+    tag.call("app/actions/items.ts", 22).map(&.name).should eq(["auth"])
+    tag.call("app/actions/items.ts", 30).should be_empty
+  end
+
   it "tags a handler that compares the caller's key with a process.env secret" do
     tag.call("app/api/cron/route.ts", 3).map(&.name).should eq(["auth"])
   end

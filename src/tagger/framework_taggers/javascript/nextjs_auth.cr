@@ -67,6 +67,9 @@ class NextjsAuthTagger < FrameworkTagger
   # string, so this is matched on text that still has strings. The `{` sits
   # between `throw` and the word, and the object may wrap a line or two.
   THROWN_UNAUTHORIZED = /\bthrow\b[\s\S]{0,240}unauthori[sz]ed/i
+  # `return new AppError("unauthorized:chat").toResponse()`: an error type
+  # that maps its code to the status. Within the one statement.
+  RETURNED_UNAUTHORIZED = /\breturn\b[^;]{0,240}unauthori[sz]ed/i
 
   # A refusal found in a body: the `if` it sits under, the status, whether
   # it throws (stopping its caller too) or returns a response (which its
@@ -139,6 +142,10 @@ class NextjsAuthTagger < FrameworkTagger
     # A server action has no response to put a status on: it throws.
     if condition = unauthorized_denial(raw, code)
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{condition}` (throws unauthorized)", "nextjs_auth"))
+      return
+    end
+    if condition = unauthorized_denial(raw, code, RETURNED_UNAUTHORIZED)
+      endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{condition}` (returns unauthorized)", "nextjs_auth"))
       return
     end
     if found = helper_refusal(code, raw, path, 0)
@@ -517,9 +524,12 @@ class NextjsAuthTagger < FrameworkTagger
 
   # The session denial (in `code`) a throw that says unauthorized (in `raw`,
   # strings kept) sits under.
-  private def unauthorized_denial(raw : Array(String), code : Array(String)) : String?
+  private def unauthorized_denial(raw : Array(String), code : Array(String), mark : Regex = THROWN_UNAUTHORIZED) : String?
+    verb = verb_matcher(code)
     raw.each_with_index do |_, i|
-      next unless raw[i, 4].join('\n').matches?(THROWN_UNAUTHORIZED)
+      # As in `session_refusal`: past a verb branch the check guards only some verbs.
+      break if method_branch?(code, i, verb)
+      next unless raw[i, 4].join('\n').matches?(mark)
       i.downto({i - CONDITION_LOOKBACK, 0}.max) do |j|
         stripped = code[j].strip
         break if j < i && stripped == "}"
