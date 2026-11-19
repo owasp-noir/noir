@@ -402,14 +402,22 @@ module Analyzer::CSharp::Common
     if short == type_name && (decl = member_defs_in(type_name, lines, masked_lines))
       return with_inherited_members(decl, file)
     end
+    # Memoised: a project's DTOs often share one file, which every action
+    # naming one of them would otherwise re-read.
+    @type_member_defs_cache[{type_name, file}] ||= declared_member_defs(type_name, short, file)
+  end
+
+  @type_member_defs_cache = Hash(Tuple(String, String), Array(String)).new
+
+  private def declared_member_defs(type_name : String, short : String, file : String) : Array(String)
     candidates = csharp_type_files[short]? || return [] of String
     # The declaration the name reaches through namespaces and `using`s; else
     # (an import the scan cannot see, e.g. a project-file `<Using>`) the one
     # sharing the most of the handler's path.
     path, namespace = resolve_type_file(type_name, file) ||
                       {candidates.max_by? { |candidate| common_prefix_size(candidate, file) } || return([] of String), nil}
-    lexer = Noir::CSharpLexer.new(read_file_content(path))
-    decl = member_defs_in(short, lexer.code_lines, lexer.masked_lines, namespace) || return [] of String
+    lexer = csharp_code(path)
+    decl = member_defs_in(short, lexer.code_lines, lexer.masked_lines, namespace, type_decl_lines(path)[short]?) || return [] of String
     with_inherited_members(decl, path)
   end
 
@@ -430,8 +438,8 @@ module Analyzer::CSharp::Common
       name = base.split('.').last
       path, namespace = resolve_type_file(base, file) || break
       break unless seen.add?("#{path}\0#{base}")
-      lexer = Noir::CSharpLexer.new(read_file_content(path))
-      inherited = member_defs_in(name, lexer.code_lines, lexer.masked_lines, namespace) || break
+      lexer = csharp_code(path)
+      inherited = member_defs_in(name, lexer.code_lines, lexer.masked_lines, namespace, type_decl_lines(path)[name]?) || break
       inherited.defs.each { |member| defs << member unless names.includes?(Common.member_name(member)) }
       names.concat(inherited.names)
       base = inherited.base
@@ -472,7 +480,7 @@ module Analyzer::CSharp::Common
                enclosing + [""] + masked.scan(USING_DECL_RE).map(&.[1]) + (@csharp_global_usings[project]? || [] of String)
              end
     declared = candidates.to_h do |path|
-      namespaces = read_file_content(path).scan(NAMESPACE_DECL_RE).map(&.[1])
+      namespaces = @file_namespaces[path] ||= read_file_content(path).scan(NAMESPACE_DECL_RE).map(&.[1])
       {path, namespaces.empty? ? [""] : namespaces}
     end
     scopes.each do |scope|
@@ -487,6 +495,26 @@ module Analyzer::CSharp::Common
 
   # The namespace each line of a file sits in (`""` for the global one),
   # following file-scoped and nested block `namespace` declarations.
+  @file_namespaces = Hash(String, Array(String)).new
+
+  # Type name => the lines of `path` that declare it, as `member_defs_in`
+  # finds them, read once per file rather than once per lookup.
+  TYPE_DECL_NAME_RE = /\b(?:record|class|struct)\s+(?:class\s+|struct\s+)?(\w+)/
+  @type_decl_index = Hash(String, Hash(String, Array(Int32))).new
+
+  private def type_decl_lines(path : String) : Hash(String, Array(Int32))
+    @type_decl_index[path] ||= begin
+      index = Hash(String, Array(Int32)).new
+      csharp_code(path).code_lines.each_with_index do |line, i|
+        line.scan(TYPE_DECL_NAME_RE) do |m|
+          found = index[m[1]] ||= [] of Int32
+          found << i unless found.last? == i
+        end
+      end
+      index
+    end
+  end
+
   private def line_namespaces(masked_lines : Array(String)) : Array(String)
     file_scoped = [] of String
     stack = [] of Tuple(String, Int32)
@@ -773,11 +801,11 @@ module Analyzer::CSharp::Common
   # What `lines` declares for `type_name` (in `namespace` when given and the
   # file declares the name more than once), or nil when it does not.
   private def member_defs_in(type_name : String, lines : Array(String), masked_lines : Array(String),
-                             namespace : String? = nil) : TypeMembers?
+                             namespace : String? = nil, decl_lines : Array(Int32)? = nil) : TypeMembers?
     # Hoisted out of the loop: an interpolated regex literal recompiles
     # (PCRE2 JIT) on every evaluation, i.e. once per line.
     type_decl_regex = /\b(?:record|class|struct)\s+(?:class\s+|struct\s+)?#{Regex.escape(type_name)}\b/
-    decl_lines = (0...lines.size).select do |i|
+    decl_lines ||= (0...lines.size).select do |i|
       lines[i].includes?(type_name) && lines[i].matches?(type_decl_regex)
     end
     def_idx = decl_lines.first? || return
