@@ -228,9 +228,15 @@ class PhpAuthTagger < FrameworkTagger
   # options array (`['prefix' => 'Admin', 'controller' => 'Users', 'action'
   # => 'view']`) or a `'Admin/Users::view'` string.
   CAKE_AUTHN_COMPONENT = /->\s*loadComponent\s*\(\s*['"](?:Authentication\.)?Authentication['"]/
-  CAKE_UNAUTHENTICATED = /->\s*(?:allowUnauthenticated|addUnauthenticatedActions)\s*\(\s*\[([^\]]*)\]/
-  CAKE_TARGET_STRING   = /['"](?:\w+(?:\/\w+)*\.)?((?:\w+\/)*)(\w+)::(\w+)['"]/
-  CAKE_EXTENDS         = /\bclass\s+\w+\s+extends\s+\\?(?:\w+\\)*(\w+)/
+  # An exempt list that is not a literal array cannot be read: the
+  # controller is then left untagged.
+  CAKE_UNAUTHENTICATED = /->\s*(?:allowUnauthenticated|addUnauthenticatedActions)\s*\(\s*(\[[^\]]*\])?/
+  # `loadComponent(..., ['requireIdentity' => false])` or
+  # `setConfig('requireIdentity', false)`: no action requires an identity.
+  CAKE_NO_IDENTITY   = /['"]requireIdentity['"]\s*(?:=>|,)\s*false\b/
+  CAKE_TARGET_STRING = /['"](?:\w+(?:\/\w+)*\.)?((?:\w+\/)*)(\w+)::(\w+)['"]/
+  CAKE_EXTENDS       = /\bclass\s+\w+\s+extends\s+\\?(?:\w+\\)*(\w+)/
+  CAKE_PREFIX_SCOPE  = /->\s*prefix\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:\[[^\]]*\]\s*,\s*)?(?:static\s+)?\z/
 
   # ponytail: the unauthenticated lists of the whole class chain are unioned,
   # though `allowUnauthenticated` replaces the list; a base class can only
@@ -242,17 +248,24 @@ class PhpAuthTagger < FrameworkTagger
     else
       controller = statement.match(/['"]controller['"]\s*=>\s*['"]([\w\/]+)['"]/).try(&.[1]) || return
       action = statement.match(/['"]action['"]\s*=>\s*['"](\w+)['"]/).try(&.[1])
-      prefix = statement.match(/['"]prefix['"]\s*=>\s*['"]([\w\/]+)['"]/).try(&.[1]) || ""
+      prefix = statement.match(/['"]prefix['"]\s*=>\s*['"]([\w\/]+)['"]/).try(&.[1])
     end
+    prefix = cakephp_scope_prefix(path, lines, line_idx) if prefix.nil? || prefix.empty?
     # `config/routes.php` of the app or of a plugin: its `src/Controller`.
     root = File.dirname(File.dirname(path))
     file = File.join([root, "src", "Controller", prefix, "#{controller}Controller.php"].reject(&.empty?))
     exempt = Set(String).new
     loaded = false
     5.times do
-      content = read_file(file) || break
+      raw = read_file(file) || break
+      # Comments dropped: a commented-out `loadComponent` loads nothing.
+      content = Noir::PhpLexer.new(raw).without_comments(keep_docblocks: false)
+      return if content.matches?(CAKE_NO_IDENTITY)
       loaded ||= content.matches?(CAKE_AUTHN_COMPONENT)
-      content.scan(CAKE_UNAUTHENTICATED) { |list| list[1].scan(/['"](\w+)['"]/) { |name| exempt << name[1] } }
+      content.scan(CAKE_UNAUTHENTICATED) do |call|
+        list = call[1]? || return
+        list.scan(/['"](\w+)['"]/) { |name| exempt << name[1] }
+      end
       parent = content.match(CAKE_EXTENDS).try(&.[1]) || break
       file = cakephp_class_file(file, root, parent) || break
     end
@@ -261,12 +274,24 @@ class PhpAuthTagger < FrameworkTagger
     "CakePHP AuthenticationComponent (identity required)"
   end
 
+  # The controller namespace of the `$routes->prefix('Admin', function ...)`
+  # scopes enclosing the route, outermost first (`admin` reads as `Admin`).
+  private def cakephp_scope_prefix(path : String, lines : Array(String), line_idx : Int32) : String
+    content = read_file(path) || return ""
+    parser = @php_parsers[path] ||= Noir::PhpBlockParser.new(content)
+    offset = lines[0, line_idx].sum { |line| line.size + 1 }
+    names = parser.path(offset).select(&.kind.closure?).compact_map do |closure|
+      content[[closure.start - 200, 0].max...closure.start].match(CAKE_PREFIX_SCOPE).try(&.[1])
+    end
+    names.map { |name| name.lchop('/').split('/').map { |part| part.split(/[_-]/).map(&.capitalize).join }.join('/') }.join('/')
+  end
+
   # The base class's file: beside the controller, else the nearest
   # `src/Controller/<Name>.php` up from it (a plugin's controllers extend the
-  # app's `AppController`).
+  # app's `AppController`). Never the file it is asked from.
   private def cakephp_class_file(from : String, root : String, name : String) : String?
     sibling = File.join(File.dirname(from), "#{name}.php")
-    return sibling if read_file(sibling)
+    return sibling if sibling != from && read_file(sibling)
     dir = root
     4.times do
       candidate = File.join(dir, "src", "Controller", "#{name}.php")
