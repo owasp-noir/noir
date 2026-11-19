@@ -76,7 +76,7 @@ expected_endpoints = [
   Endpoint.new("/api/method-validate", "DELETE", [Param.new("id", "", "body")]),
   Endpoint.new("/api/method-validate", "PATCH", [Param.new("id", "", "body")]),
   # ---- Pages Router: METHOD_NOT_ALLOWED constant + nested destructuring ----
-  Endpoint.new("/api/method-status-const", "DELETE"),
+  Endpoint.new("/api/method-status-const", "DELETE", [Param.new("id", "", "query")]),
   # ---- Pages Router: unrelated HTTP-like switch cases should not suppress fallback methods ----
   Endpoint.new("/api/unrelated-switch", "GET", [
     Param.new("type", "", "query"),

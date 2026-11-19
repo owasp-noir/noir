@@ -4,6 +4,7 @@ require "../../../miniparsers/js_handler_table"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_handler_resolver"
+require "../../../miniparsers/js_serverless_function_extractor"
 require "../../../utils/top_level_split"
 
 module Analyzer::Javascript
@@ -230,7 +231,7 @@ module Analyzer::Javascript
         endpoint.handler = handler
 
         extract_path_params(url, endpoint)
-        extract_pages_router_params(scoped[method], endpoint)
+        extract_pages_router_params(scoped[method], body_info.try(&.params) || "", endpoint)
         if include_callee
           attach_js_callees(endpoint, body_info.callees) if body_info
         end
@@ -794,61 +795,19 @@ module Analyzer::Javascript
       end
     end
 
-    private def extract_pages_router_params(content : String, endpoint : Endpoint)
+    # The handler's reads through the request reader the serverless
+    # adapters share, which renames its first parameter to `req`. The Pages
+    # Router parses the body per its content type, so a field stays `body`.
+    private def extract_pages_router_params(content : String, params : String, endpoint : Endpoint)
+      handler = Noir::JSServerlessFunctionExtractor::Handler.new("default", params, content, 1, 1, [] of Noir::JSCalleeExtractor::Entry, [] of String)
+      Noir::JSServerlessFunctionExtractor.extract_request_params(handler, endpoint, :request)
       # A dynamic segment's value is what `req.query.id` reads under `[id]`:
       # it is the path parameter, not a query string key.
-      path_names = endpoint.params.select(&.param_type.==("path")).map(&.name).to_set
-
-      # req.query.X and req.query["X"]
-      content.scan(/req\.query\.(\w+)/) do |m|
-        add_param(endpoint, m[1], "query") unless path_names.includes?(m[1])
-      end
-      content.scan(/req\.query\[['"]([^'"]+)['"]\]/) do |m|
-        add_param(endpoint, m[1], "query") unless path_names.includes?(m[1])
-      end
-
-      # Destructured query: const { foo, bar } = req.query
-      content.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*req\.query/) do |m|
-        extract_simple_destructure_params(m[1]).each do |name|
-          add_param(endpoint, name, "query") unless path_names.includes?(name)
-        end
-      end
-
-      # req.body.X and req.body["X"]
-      content.scan(/req\.body\.(\w+)/) do |m|
-        add_param(endpoint, m[1], "body")
-      end
-      content.scan(/req\.body\[['"]([^'"]+)['"]\]/) do |m|
-        add_param(endpoint, m[1], "body")
-      end
-
-      # Destructured body: const { foo, bar } = req.body
-      content.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*req\.body/) do |m|
-        extract_simple_destructure_params(m[1]).each do |name|
-          add_param(endpoint, name, "body")
-        end
-      end
-
-      # Headers — Pages Router (req object)
-      content.scan(/req\.headers\[['"]([^'"]+)['"]\]/) do |m| # req.headers["x-token"]
-        add_param(endpoint, m[1], "header")
-      end
-      content.scan(/req\.headers\[([A-Za-z_$]\w*)\]/) do |m| # req.headers[CONST] — unresolved
-        add_unresolved_param(endpoint, m[1], "header")
-      end
-      content.scan(/req\.headers\.(\w+)/) do |m| # req.headers.authorization
-        add_param(endpoint, m[1], "header")
-      end
-
-      # Cookies — Pages Router (req object)
-      content.scan(/req\.cookies\[['"]([^'"]+)['"]\]/) do |m| # req.cookies["session"]
-        add_param(endpoint, m[1], "cookie")
-      end
-      content.scan(/req\.cookies\[([A-Za-z_$]\w*)\]/) do |m| # req.cookies[CONST] — unresolved
-        add_unresolved_param(endpoint, m[1], "cookie")
-      end
-      content.scan(/req\.cookies\.(\w+)/) do |m| # req.cookies.session
-        add_param(endpoint, m[1], "cookie")
+      path_names = endpoint.params.select(&.param_type.==("path")).map(&.name)
+      endpoint.params.reject! { |param| param.param_type == "query" && path_names.includes?(param.name) }
+      endpoint.params.map! do |param|
+        param.param_type = "body" if param.param_type == "json"
+        param
       end
     end
 
