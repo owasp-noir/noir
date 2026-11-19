@@ -55,6 +55,11 @@ module Noir
       end
     end
 
+    # What a composed annotation (`annotation class X` carrying a mapping
+    # annotation) maps: the verb its mapping fixes, else its `method =` list.
+    record MetaMapping, verb : String?, paths : Array(String), methods : Array(String)
+    alias MetaMappings = Hash(String, MetaMapping)
+
     struct ControllerInterfaceImplementation
       getter class_name : String
       getter interface_names : Array(String)
@@ -313,10 +318,11 @@ module Noir
                             source : String,
                             string_constants = Hash(String, String).new,
                             local_string_constants : Hash(String, String)? = nil,
-                            inert_annotations : Set(String)? = nil) : Array(Route)
+                            inert_annotations : Set(String)? = nil,
+                            meta_mappings : MetaMappings? = nil) : Array(Route)
       routes = [] of Route
       file_constants = local_string_constants || extract_string_constants(source)
-      walk_classes(root, source, [""], routes, string_constants, file_constants, inert_annotations: inert_annotations)
+      walk_classes(root, source, [""], routes, string_constants, file_constants, inert_annotations: inert_annotations, meta_mappings: meta_mappings)
       collect_gateway_routes(source, string_constants, routes)
       collect_webflux_functional_routes(source, routes)
       routes
@@ -325,11 +331,45 @@ module Noir
     def extract_interface_routes_from(root : LibTreeSitter::TSNode,
                                       source : String,
                                       string_constants = Hash(String, String).new,
-                                      local_string_constants : Hash(String, String)? = nil) : Hash(String, Array(Route))
+                                      local_string_constants : Hash(String, String)? = nil,
+                                      meta_mappings : MetaMappings? = nil) : Hash(String, Array(Route))
       routes = Hash(String, Array(Route)).new { |hash, key| hash[key] = [] of Route }
       file_constants = local_string_constants || extract_string_constants(source)
-      walk_interface_routes(root, source, routes, string_constants, file_constants)
+      walk_interface_routes(root, source, routes, string_constants, file_constants, meta_mappings: meta_mappings)
       routes
+    end
+
+    # Add the composed mapping annotations declared under `node` to `sink`.
+    def extract_meta_mappings_from(root : LibTreeSitter::TSNode,
+                                   source : String,
+                                   sink : MetaMappings,
+                                   string_constants = Hash(String, String).new,
+                                   local_string_constants = Hash(String, String).new,
+                                   depth : Int32 = 0) : Nil
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      if Noir::TreeSitter.node_type(root) == "class_declaration" && annotation_class?(root, source)
+        each_annotation(root, source) do |name, args|
+          next unless ANNOTATION_VERBS.has_key?(name)
+          sink[type_identifier_text(root, source)] = MetaMapping.new(
+            ANNOTATION_VERBS[name], annotation_paths(args, source, string_constants, local_string_constants),
+            annotation_methods(args, source)
+          )
+          break
+        end
+        return
+      end
+      Noir::TreeSitter.each_named_child(root) do |child|
+        extract_meta_mappings_from(child, source, sink, string_constants, local_string_constants, depth + 1)
+      end
+    end
+
+    private def annotation_class?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      if mods = find_modifiers(decl)
+        Noir::TreeSitter.each_named_child(mods) do |child|
+          return true if Noir::TreeSitter.node_text(child, source) == "annotation"
+        end
+      end
+      false
     end
 
     def extract_controller_interface_implementations_from(root : LibTreeSitter::TSNode,
@@ -349,11 +389,12 @@ module Noir
                              string_constants : Hash(String, String),
                              local_string_constants : Hash(String, String),
                              depth : Int32 = 0,
-                             inert_annotations : Set(String)? = nil)
+                             inert_annotations : Set(String)? = nil,
+                             meta_mappings : MetaMappings? = nil)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       ty = Noir::TreeSitter.node_type(node)
       if ty == "class_declaration" || ty == "object_declaration" || ty == "interface_declaration"
-        process_class(node, source, outer_prefixes, [] of LibTreeSitter::TSNode, routes, string_constants, local_string_constants, depth, inert_annotations: inert_annotations)
+        process_class(node, source, outer_prefixes, [] of LibTreeSitter::TSNode, routes, string_constants, local_string_constants, depth, inert_annotations: inert_annotations, meta_mappings: meta_mappings)
         return
       end
 
@@ -373,7 +414,7 @@ module Noir
       Noir::TreeSitter.each_named_child(node) do |child|
         case Noir::TreeSitter.node_type(child)
         when "class_declaration", "object_declaration", "interface_declaration"
-          process_class(child, source, outer_prefixes, pending, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations)
+          process_class(child, source, outer_prefixes, pending, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations, meta_mappings: meta_mappings)
           orphan_class = recoverable_orphan_class(child, source, outer_prefixes, pending, string_constants, local_string_constants)
           pending = [] of LibTreeSitter::TSNode
         when "prefix_expression"
@@ -389,7 +430,7 @@ module Noir
             class_name, class_prefixes = ctx
             collect_recovered_function_routes(child, source, class_name, class_prefixes, routes, string_constants, local_string_constants)
           else
-            walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations)
+            walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations, meta_mappings: meta_mappings)
           end
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
@@ -403,14 +444,14 @@ module Noir
             class_name, class_prefixes = ctx
             collect_recovered_function_routes(child, source, class_name, class_prefixes, routes, string_constants, local_string_constants)
           else
-            walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations)
+            walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations, meta_mappings: meta_mappings)
           end
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
         else
           pending = [] of LibTreeSitter::TSNode
           orphan_class = nil
-          walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations)
+          walk_classes(child, source, outer_prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations, meta_mappings: meta_mappings)
         end
       end
     end
@@ -515,7 +556,8 @@ module Noir
                               string_constants : Hash(String, String),
                               local_string_constants : Hash(String, String),
                               depth : Int32 = 0,
-                              inert_annotations : Set(String)? = nil)
+                              inert_annotations : Set(String)? = nil,
+                              meta_mappings : MetaMappings? = nil)
       class_name = type_identifier_text(node, source)
 
       # `@FeignClient` (Spring Cloud) interfaces declare OUTBOUND remote
@@ -524,19 +566,21 @@ module Noir
       # to avoid emitting phantom inbound endpoints.
       return if feign_client?(node, source)
 
-      prefixes = join_prefixes(outer_prefixes, class_mapping_prefixes(node, source, pending, string_constants, local_string_constants))
+      prefixes = join_prefixes(outer_prefixes, class_mapping_prefixes(node, source, pending, string_constants, local_string_constants, meta_mappings))
       # An interface function has no body; the implementing class supplies the handler.
       has_handler = !interface_decl?(node, source)
-      skip_functions = has_handler && spring6_non_controller?(node, source, pending, inert_annotations)
+      # An abstract base is mapped only through a concrete subclass, under
+      # that subclass's prefix (the inherited-route index).
+      skip_functions = has_handler && (abstract_type?(node, source) || spring6_non_controller?(node, source, pending, inert_annotations))
 
       if body = class_body(node)
         Noir::TreeSitter.each_named_child(body) do |member|
           case Noir::TreeSitter.node_type(member)
           when "function_declaration"
             next if skip_functions
-            collect_function_routes(member, source, class_name, prefixes, routes, string_constants, local_string_constants, has_handler)
+            collect_function_routes(member, source, class_name, prefixes, routes, string_constants, local_string_constants, has_handler, meta_mappings)
           when "class_declaration", "object_declaration", "interface_declaration"
-            walk_classes(member, source, prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations)
+            walk_classes(member, source, prefixes, routes, string_constants, local_string_constants, depth + 1, inert_annotations: inert_annotations, meta_mappings: meta_mappings)
           end
         end
       end
@@ -564,26 +608,31 @@ module Noir
                                       routes : Hash(String, Array(Route)),
                                       string_constants : Hash(String, String),
                                       local_string_constants : Hash(String, String),
-                                      depth : Int32 = 0)
+                                      depth : Int32 = 0,
+                                      meta_mappings : MetaMappings? = nil)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
-      if interface_decl?(node, source)
+      # Interfaces and abstract base classes both declare routes a concrete
+      # controller inherits; an abstract class may also nest a controller.
+      interface = interface_decl?(node, source)
+      if interface || (Noir::TreeSitter.node_type(node) == "class_declaration" && abstract_type?(node, source))
         return if feign_client?(node, source)
         interface_name = type_identifier_text(node, source)
         unless interface_name.empty?
-          class_prefixes = class_mapping_prefixes(node, source, [] of LibTreeSitter::TSNode, string_constants, local_string_constants)
+          class_prefixes = class_mapping_prefixes(node, source, [] of LibTreeSitter::TSNode, string_constants, local_string_constants, meta_mappings)
           if body = class_body(node)
             Noir::TreeSitter.each_named_child(body) do |member|
               next unless Noir::TreeSitter.node_type(member) == "function_declaration"
-              collect_function_routes(member, source, interface_name, class_prefixes, routes[interface_name], string_constants, local_string_constants)
+              collect_function_routes(member, source, interface_name, class_prefixes, routes[interface_name], string_constants, local_string_constants,
+                meta_mappings: meta_mappings)
             end
           end
         end
-        return
+        return if interface
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_interface_routes(child, source, routes, string_constants, local_string_constants, depth + 1)
+        walk_interface_routes(child, source, routes, string_constants, local_string_constants, depth + 1, meta_mappings)
       end
     end
 
@@ -632,11 +681,18 @@ module Noir
       Noir::TreeSitter.each_named_child(decl) do |child|
         next unless Noir::TreeSitter.node_type(child).includes?("delegation")
         # Kotlin represents implemented interfaces as a bare `user_type`
-        # delegation specifier. Superclasses are constructor invocations
-        # (`BaseController()`), which are intentionally skipped here.
+        # delegation specifier and a superclass as a constructor invocation
+        # (`BaseController()`); an abstract superclass's routes are inherited
+        # the same way.
         Noir::TreeSitter.each_named_child(child) do |sub|
-          next unless Noir::TreeSitter.node_type(sub) == "user_type"
-          name = leaf_type_name(sub, source)
+          case Noir::TreeSitter.node_type(sub)
+          when "user_type"
+            name = leaf_type_name(sub, source)
+          when "constructor_invocation"
+            name = Noir::TreeSitter.first_named_child(sub).try { |type| leaf_type_name(type, source) } || ""
+          else
+            next
+          end
           names << name unless name.empty? || names.includes?(name)
         end
       end
@@ -703,10 +759,16 @@ module Noir
                                        source : String,
                                        stray_annotation_nodes : Array(LibTreeSitter::TSNode) = [] of LibTreeSitter::TSNode,
                                        string_constants = Hash(String, String).new,
-                                       local_string_constants = Hash(String, String).new) : Array(String)
+                                       local_string_constants = Hash(String, String).new,
+                                       meta_mappings : MetaMappings? = nil) : Array(String)
       each_annotation(class_decl, source) do |name, args|
-        next unless ANNOTATION_VERBS.has_key?(name)
-        paths = annotation_paths(args, source, string_constants, local_string_constants)
+        if ANNOTATION_VERBS.has_key?(name)
+          paths = annotation_paths(args, source, string_constants, local_string_constants)
+        elsif meta = meta_mappings.try &.[name]?
+          paths = meta.paths
+        else
+          next
+        end
         return paths.uniq unless paths.empty?
       end
 
@@ -817,22 +879,24 @@ module Noir
                                         routes : Array(Route),
                                         string_constants : Hash(String, String),
                                         local_string_constants : Hash(String, String),
-                                        has_handler : Bool = true)
+                                        has_handler : Bool = true,
+                                        meta_mappings : MetaMappings? = nil)
       method_name = function_name(func, source)
       signature_line = has_handler ? function_name_row(func) : nil
 
       each_annotation(func, source) do |ann_name, args, ann_line|
-        next unless ANNOTATION_VERBS.has_key?(ann_name)
-        verb_default = ANNOTATION_VERBS[ann_name]?
+        meta = ANNOTATION_VERBS.has_key?(ann_name) ? nil : meta_mappings.try &.[ann_name]?
+        next unless meta || ANNOTATION_VERBS.has_key?(ann_name)
+        verb_default = meta ? meta.verb : ANNOTATION_VERBS[ann_name]?
 
-        paths = annotation_paths(args, source, string_constants, local_string_constants)
+        paths = meta ? meta.paths : annotation_paths(args, source, string_constants, local_string_constants)
         paths = [""] if paths.empty?
 
         verbs =
           if verb_default
             [verb_default]
           else
-            methods = annotation_methods(args, source)
+            methods = meta ? meta.methods : annotation_methods(args, source)
             # Spring maps a method-less `@RequestMapping` to every verb.
             methods.empty? ? ["ANY"] : methods
           end

@@ -1067,7 +1067,7 @@ module Noir
           pending_modifiers = child
         when "parameter"
           current_format = emit_param_for(
-            child, pending_modifiers, source, verb, current_format, parameter_format, class_fields, params,
+            child, method, pending_modifiers, source, verb, current_format, parameter_format, class_fields, params,
             string_constants, local_string_constants, injected_annotations, injected_types
           )
           pending_modifiers = nil
@@ -1095,6 +1095,7 @@ module Noir
     end
 
     private def emit_param_for(param : LibTreeSitter::TSNode,
+                               method : LibTreeSitter::TSNode,
                                modifiers : LibTreeSitter::TSNode?,
                                source : String,
                                verb : String,
@@ -1171,6 +1172,8 @@ module Noir
 
       # @PathVariable is carried by the URL, not emitted as a param.
       return parameter_format if ann_kind == :path
+      # `HttpEntity<T>` / `RequestEntity<T>` hand the handler the body as T.
+      ann_kind = :body if ann_kind.nil? && ENTITY_BODY_TYPES.includes?(type_name) && !class_fields.has_key?(type_name)
 
       # A Spring argument-resolver parameter (@AuthenticationPrincipal, a
       # custom @CurrentUser meta-annotation, …) with no request-binding
@@ -1181,6 +1184,19 @@ module Noir
       # A resolver keyed on the parameter's type supplies it too, unless
       # `@ModelAttribute`, whose resolver runs first, claims it.
       return parameter_format if ann_kind.nil? && !model_attribute && injected_types.includes?(type_name.rpartition('.').last)
+
+      # Inputs read through the request object, and a `Pageable`'s query
+      # values; neither passes a format on to the next argument.
+      if ann_kind.nil? && !class_fields.has_key?(type_name)
+        if type_name == "HttpServletRequest"
+          value_format = method_format == "form" || verb == "POST" ? "form" : "query"
+          scan_key_reads(method, source, arg_name, {"getParameter" => value_format, "getHeader" => "header"}, sink)
+          return parameter_format
+        elsif type_name == "Pageable"
+          PAGEABLE_PARAMS.each { |name| sink << Param.new(name, "", "query") }
+          return parameter_format
+        end
+      end
 
       effective_format = parameter_format
       # A carried-over "header"/"cookie" describes how the *previous*
@@ -1221,6 +1237,12 @@ module Noir
         effective_format = verb == "POST" ? "form" : "query"
       end
 
+      # A body wrapped in a collection or a reactive type binds its element.
+      if ann_kind == :body && BODY_WRAPPER_TYPES.includes?(type_name) && !class_fields.has_key?(type_name) &&
+         (element = type_text.match(SINGLE_TYPE_ARGUMENT).try(&.[1])) && class_fields.has_key?(element)
+        type_name = element
+      end
+
       # A multipart file is a body part even when `@RequestParam` names it;
       # the next parameter still inherits the format it would have.
       carry_format = effective_format
@@ -1253,12 +1275,20 @@ module Noir
 
       case ann_kind
       when :query
-        # A Map captures every request value, so it has no single parameter name.
-        sink << Param.new(parameter_name, default_value || "", effective_format) unless type_name == "Map"
+        # A Map captures every request value, so it has no single parameter
+        # name; the keys the handler reads from it are the inputs.
+        if type_name == "Map"
+          scan_key_reads(method, source, arg_name, MAP_ACCESSORS.to_h { |accessor| {accessor, effective_format} }, sink)
+        else
+          sink << Param.new(parameter_name, default_value || "", effective_format)
+        end
       when :header, :cookie
         # `@RequestHeader headers: HttpHeaders` (or a Map) receives every
-        # header; no header is named after the variable.
-        return parameter_format if ann_kind == :header && HEADER_MAP_TYPES.includes?(type_name)
+        # header; no header is named after the variable, only the ones read.
+        if ann_kind == :header && HEADER_MAP_TYPES.includes?(type_name)
+          scan_key_reads(method, source, arg_name, MAP_ACCESSORS.to_h { |accessor| {accessor, "header"} }, sink)
+          return parameter_format
+        end
         # An explicit scalar request input (possibly a collection of
         # scalars like `@RequestParam ids: List<Long>`) — emit by its
         # declared name; never DTO-expand.
@@ -1302,6 +1332,30 @@ module Noir
       # command object into json, so a body param leaves the carry
       # untouched (returns the incoming carry-over).
       ann_kind == :body ? parameter_format : carry_format
+    end
+
+    ENTITY_BODY_TYPES    = Set{"HttpEntity", "RequestEntity"}
+    BODY_WRAPPER_TYPES   = Set{"List", "MutableList", "Set", "MutableSet", "Collection", "Iterable", "Array", "Mono", "Flux", "Flow", "Optional"} | ENTITY_BODY_TYPES
+    SINGLE_TYPE_ARGUMENT = /<\s*(?:[\w.]+\.)?(\w+)\s*\??\s*>\s*\??\z/
+    # `get` also stands for the index form `map["key"]`.
+    MAP_ACCESSORS   = {"get", "getFirst", "getOrDefault", "containsKey", "getValue", "getValuesAsList"}
+    PAGEABLE_PARAMS = {"page", "size", "sort"}
+
+    @@key_read_regexes = Hash(String, Regex).new
+
+    # Literal keys read from `receiver` in `method`'s source:
+    # `receiver.accessor("key")` (also `?.` / `!!.`) and `receiver["key"]`,
+    # each emitted in the format `accessors` gives that accessor.
+    private def scan_key_reads(method : LibTreeSitter::TSNode, source : String, receiver : String,
+                               accessors : Hash(String, String), sink : Array(Param))
+      regex = @@key_read_regexes[receiver] ||=
+        /\b#{Regex.escape(receiver)}\s*(?:!!|\?)?\s*(?:\.\s*(\w+)\s*\(\s*"([^"$\\]+)"|\[\s*"([^"$\\]+)"\s*\])/
+      Noir::TreeSitter.node_text(method, source).scan(regex) do |match|
+        next unless format = accessors[match[1]? || "get"]?
+        name = match[2]? || match[3]
+        next if sink.any? { |param| param.name == name && param.param_type == format }
+        sink << Param.new(name, "", format)
+      end
     end
 
     # `Outer.Inner?` -> `["Outer", "Inner"]`: the dotted segments of a
@@ -1575,6 +1629,10 @@ module Noir
     # cross-file inheritance merge below (mirrors TreeSitterJavaDtoIndex).
     @@shared_super_cache = Hash(String, Hash(String, String)).new
     @@shared_cache_mutex = Mutex.new
+    # `{fields, supers, origin}` merged over a package's files, or over the
+    # files of one on-demand import.
+    alias Layer = {Index, Hash(String, String), Hash(String, String)}
+    @@package_layers = Hash(String, Layer).new
 
     # Path-keyed, so it must not survive into a second scan in the same
     # process. See the twin registration in `TreeSitterJavaDtoIndex` for the
@@ -1589,6 +1647,7 @@ module Noir
       @@shared_cache_mutex.synchronize do
         @@shared_cache.clear
         @@shared_super_cache.clear
+        @@package_layers.clear
       end
     end
 
@@ -1607,15 +1666,6 @@ module Noir
     # still parse independently — but go through the process-wide cache
     # so concurrent analyzers don't double-up.
     def build_for_with_root(path : String, content : String, root : LibTreeSitter::TSNode) : Index
-      result = Index.new
-      # `supers[class] = superclass simple name`; `origin[class] = the
-      # file that defined it` — the latter lets the inheritance pass
-      # resolve a superclass through the SUBCLASS's imports (Owner imports
-      # `model.Person` even though the controller that pulled Owner in
-      # never mentions the `model` package).
-      supers = Hash(String, String).new
-      origin = Hash(String, String).new
-
       package_name = TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
       imports = TreeSitterKotlinParameterExtractor.extract_imports_from(root, content)
 
@@ -1628,13 +1678,90 @@ module Noir
         @@shared_super_cache[path] ||= current_supers
       end
 
-      Noir::ImportGraph.related_files(path, package_name, imports, "kt") do |file|
-        fields, file_supers = load_file(file)
-        absorb!(result, supers, origin, fields, file_supers, file)
+      # `supers[class] = superclass simple name`; `origin[class] = the
+      # file that defined it` — the latter lets the inheritance pass
+      # resolve a superclass through the SUBCLASS's imports (Owner imports
+      # `model.Person` even though the controller that pulled Owner in
+      # never mentions the `model` package).
+      #
+      # The same first-wins merge over the same files as walking
+      # `related_files` (the file itself, its package, its imports), with the
+      # package and each on-demand import merged once instead of once per
+      # controller.
+      result, supers, origin = package_layer(File.dirname(path))
+      Noir::ImportGraph.visit_file(path, Set(String).new) do |own|
+        own_fields, own_supers = load_file(own)
+        own_fields.each do |name, fs|
+          result[name] = fs
+          origin[name] = own
+        end
+        own_supers.each do |name, sup|
+          supers[name] = sup
+          origin[name] = own
+        end
+      end
+      imports.each do |imp|
+        if imp.wildcard?
+          absorb_layer!(result, supers, origin, import_layer(path, package_name, imp))
+        else
+          Noir::ImportGraph.import_files(path, package_name, [imp], "kt") do |file|
+            fields, file_supers = load_file(file)
+            absorb!(result, supers, origin, fields, file_supers, file)
+          end
+        end
       end
 
-      resolve_inheritance!(result, supers, origin)
+      # ponytail: this still walks every visible class once per controller;
+      # memoise it per layer if a deep DTO hierarchy shows up.
+      resolve_inheritance!(result, supers, origin, File.dirname(path))
       result
+    end
+
+    # A copy of the package-wide merge, built on first use per directory.
+    private def package_layer(dir : String) : Layer
+      layer = merged_layer(dir) do |visit|
+        Noir::ImportGraph.package_files(dir, "kt") { |file| visit.call(file) }
+      end
+      {layer[0].dup, layer[1].dup, layer[2].dup}
+    end
+
+    # The merge of the files one on-demand import resolves to, shared by
+    # every file that resolves it from the same source root.
+    private def import_layer(path : String, package_name : String, import : Noir::ImportGraph::ImportRef) : Layer
+      key = "#{Noir::ImportGraph.source_root_for(path, package_name)}\0#{import.path}"
+      merged_layer(key) do |visit|
+        Noir::ImportGraph.import_files(path, package_name, [import], "kt") { |file| visit.call(file) }
+      end
+    end
+
+    private def merged_layer(key : String, & : (String -> Nil) -> Nil) : Layer
+      if layer = @@shared_cache_mutex.synchronize { @@package_layers[key]? }
+        return layer
+      end
+      fields = Index.new
+      supers = Hash(String, String).new
+      origin = Hash(String, String).new
+      yield ->(file : String) do
+        file_fields, file_supers = load_file(file)
+        absorb!(fields, supers, origin, file_fields, file_supers, file)
+        nil
+      end
+      @@shared_cache_mutex.synchronize { @@package_layers[key] ||= {fields, supers, origin} }
+    end
+
+    # `absorb!` of every file of `layer` in turn: a name already in `result`
+    # already has an `origin`, so the layer's first file for a name is the one
+    # that file-by-file merging would record.
+    private def absorb_layer!(result : Index, supers : Hash(String, String), origin : Hash(String, String), layer : Layer)
+      layer[0].each do |name, fs|
+        next if result.has_key?(name)
+        result[name] = fs
+        origin[name] ||= layer[2][name]
+      end
+      layer[1].each do |name, sup|
+        supers[name] ||= sup
+        origin[name] ||= layer[2][name]
+      end
     end
 
     # Pull a file's `{fields, supertypes}` from the shared cache, parsing
@@ -1691,10 +1818,11 @@ module Noir
     # flattened field list.
     private def resolve_inheritance!(result : Index,
                                      supers : Hash(String, String),
-                                     origin : Hash(String, String))
+                                     origin : Hash(String, String),
+                                     package_dir : String)
       return if supers.empty?
 
-      pull_superclass_files!(result, supers, origin)
+      pull_superclass_files!(result, supers, origin, package_dir)
 
       memo = Hash(String, Array(TreeSitterKotlinParameterExtractor::FieldInfo)).new
       (result.keys.to_set | supers.keys.to_set).each do |cls|
@@ -1705,7 +1833,8 @@ module Noir
 
     private def pull_superclass_files!(result : Index,
                                        supers : Hash(String, String),
-                                       origin : Hash(String, String))
+                                       origin : Hash(String, String),
+                                       package_dir : String)
       attempted = Set(String).new
       pending = supers.keys.to_a
       iterations = 0
@@ -1720,18 +1849,19 @@ module Noir
         file = origin[cls]?
         next unless file
 
-        pending.concat(load_superclass_files(result, supers, origin, file))
+        pending.concat(load_superclass_files(result, supers, origin, file, package_dir))
       end
     end
 
     private def load_superclass_files(result : Index,
                                       supers : Hash(String, String),
                                       origin : Hash(String, String),
-                                      subclass_file : String) : Array(String)
+                                      subclass_file : String,
+                                      package_dir : String) : Array(String)
       added = [] of String
       package_name, imports = file_package_imports(subclass_file)
 
-      Noir::ImportGraph.related_files(subclass_file, package_name, imports, "kt") do |file|
+      absorb_new = ->(file : String) do
         fields, file_supers = load_file(file)
         fields.each do |name, fs|
           unless result.has_key?(name)
@@ -1747,6 +1877,13 @@ module Noir
             added << name
           end
         end
+      end
+      # Every class of `package_dir` is already in `result` and `supers`
+      # (`package_layer`), so only the subclass file's imports can add one.
+      if File.dirname(subclass_file) == package_dir
+        Noir::ImportGraph.import_files(subclass_file, package_name, imports, "kt") { |file| absorb_new.call(file) }
+      else
+        Noir::ImportGraph.related_files(subclass_file, package_name, imports, "kt") { |file| absorb_new.call(file) }
       end
 
       added

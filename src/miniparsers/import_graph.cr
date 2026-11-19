@@ -99,32 +99,54 @@ module Noir
                            imports : Indexable(ImportRef),
                            extension : String,
                            &block : String ->) : Nil
-      locator = CodeLocator.instance
       seen = Set(String).new
-      visit = ->(file : String) do
-        if locator.scan_files_active?
-          if registered = locator.source_path?(file)
-            block.call(registered) if seen.add?(registered)
-          end
-        elsif seen.add?(file)
-          block.call(file)
-        end
-      end
+      visit_file(path, seen) { |file| block.call(file) }
 
-      visit.call(path)
-
-      package_dir = File.dirname(path)
-      package_siblings(package_dir, extension).each do |sibling|
+      package_siblings(File.dirname(path), extension).each do |sibling|
         next if sibling == path
-        visit.call(sibling)
+        visit_file(sibling, seen) { |file| block.call(file) }
       end
 
+      import_files(path, package_name, imports, extension, seen) { |file| block.call(file) }
+    end
+
+    # Step 2 of `related_files` for every file of `package_dir`, in the
+    # same order and without skipping any one of them.
+    def self.package_files(package_dir : String, extension : String, & : String ->) : Nil
+      seen = Set(String).new
+      package_siblings(package_dir, extension).each do |sibling|
+        visit_file(sibling, seen) { |file| yield file }
+      end
+    end
+
+    # Step 3 of `related_files` alone: the files `imports` resolve to.
+    def self.import_files(path : String,
+                          package_name : String,
+                          imports : Indexable(ImportRef),
+                          extension : String,
+                          seen : Set(String) = Set(String).new,
+                          & : String ->) : Nil
       return if package_name.empty?
       source_root = source_root_for(path, package_name)
       return unless source_root
 
       imports.each do |imp|
-        resolve_import(source_root, imp, extension).each { |file| visit.call(file) }
+        resolve_import(source_root, imp, extension).each do |candidate|
+          visit_file(candidate, seen) { |file| yield file }
+        end
+      end
+    end
+
+    # `file` as the scan registered it (nothing when the scan holds a file
+    # list and `file` is not on it), at most once per `seen`.
+    def self.visit_file(file : String, seen : Set(String), & : String ->) : Nil
+      locator = CodeLocator.instance
+      if locator.scan_files_active?
+        if registered = locator.source_path?(file)
+          yield registered if seen.add?(registered)
+        end
+      elsif seen.add?(file)
+        yield file
       end
     end
 

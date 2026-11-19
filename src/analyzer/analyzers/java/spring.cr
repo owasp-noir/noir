@@ -428,6 +428,7 @@ module Analyzer::Java
             unless wanted.empty? && lambda_handler_texts.empty?
               dto_index = dto_builder.build_for_with_root(path, content, root)
               handler_params = reactive_handler_params(root, content, wanted, dto_index)
+              other_class_handler_params(path, content, root, wanted, dto_builder).each { |name, params| handler_params[name] ||= params }
               lambda_handler_texts.each { |key, handler| lambda_handler_params[key] = server_request_params(handler, dto_index) }
             end
           end
@@ -1233,6 +1234,47 @@ module Analyzer::Java
         result[method_name] = server_request_params(Noir::TreeSitter.node_text(body, content), dto_index, receiver)
       end
       ambiguous.each { |name| result.delete(name) }
+      result
+    end
+
+    METHOD_REFERENCE_RE = /\b(\w+)\s*::\s*(\w+)/
+
+    # `{method name => params}` for wanted handlers referenced as
+    # `handler::get` on a bean of another class (`PersonHandler handler`) or
+    # as `PersonHandler::get`, read from that class's file. A name referenced
+    # on more than one class is left out, as same-file duplicates are.
+    private def other_class_handler_params(path : String,
+                                           content : String,
+                                           root : LibTreeSitter::TSNode,
+                                           wanted : Set(String),
+                                           dto_builder : Noir::TreeSitterJavaDtoIndex) : Hash(String, Array(Param))
+      result = {} of String => Array(Param)
+      types_by_method = Hash(String, Set(String)).new
+      content.scan(METHOD_REFERENCE_RE) do |match|
+        receiver, name = match[1], match[2]
+        next if receiver == "this" || !wanted.includes?(name)
+        type = receiver[0].uppercase? ? receiver : content.match(/\b([A-Z][\w.]*)(?:<[^<>;]*>)?\s+#{Regex.escape(receiver)}\s*[,);=]/).try(&.[1])
+        (types_by_method[name] ||= Set(String).new) << type.rpartition('.').last if type
+      end
+      return result if types_by_method.empty?
+
+      package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
+      imports = Noir::TreeSitterJavaParameterExtractor.extract_imports_from(root, content)
+      files = {} of String => String
+      Noir::ImportGraph.related_files(path, package_name, imports, "java") do |file|
+        files[File.basename(file, ".java")] ||= file unless file == path
+      end
+      names_by_file = Hash(String, Set(String)).new
+      types_by_method.each do |name, types|
+        next unless types.size == 1 && (file = files[types.first]?)
+        (names_by_file[file] ||= Set(String).new) << name
+      end
+      names_by_file.each do |file, names|
+        source = read_file_content(file)
+        Noir::TreeSitter.parse_java(source) do |handler_root|
+          result.merge!(reactive_handler_params(handler_root, source, names, dto_builder.build_for_with_root(file, source, handler_root)))
+        end
+      end
       result
     end
 
