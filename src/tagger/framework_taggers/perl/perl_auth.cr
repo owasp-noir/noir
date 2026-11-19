@@ -215,7 +215,7 @@ class PerlAuthTagger < FrameworkTagger
   # `Admin::User`; a name starting uppercase is used as is.
   private def mojo_camelize(name : String) : String
     return name if name[0]?.try(&.uppercase?)
-    name.split('-').map { |part| part.split('_').map(&.capitalize).join }.join("::")
+    name.split('-').map(&.split('_').map(&.capitalize).join).join("::")
   end
 
   private def perl_sub_body(lines : Array(String), name : String) : String?
