@@ -357,9 +357,42 @@ class FastAPIAuthTagger < FrameworkTagger
       break if statement.ends_with?(':') || statement.matches?(/\A(?:return|raise|yield)\b/)
       callee = statement.match(LEADING_CALL).try(&.[1]) || next
       next if callee.in?("Depends", "Security")
-      return callee if dependency_refuses?(callee, file, depth + 1) == true
+      return callee if caller_refusing_call?(callee, file, depth + 1)
     end
     nil
+  end
+
+  # Name components that say a value is who the caller is or what it sent
+  # to prove it.
+  CREDENTIAL_WORDS = %w[token tokens credential credentials authorization bearer jwt apikey password secret signature session cookie cookies header headers user principal subject identity]
+
+  # Whether `def callee` turns the caller away: a 401/403 it raises under a
+  # condition on a credential or identity (`if authorization != expected`,
+  # a local split from one), or a guard call it opens with in turn. A 403
+  # on a setting (`if not settings.FEATURE`) or on the resource it loaded
+  # (`if item.hidden`) refuses for another reason.
+  private def caller_refusing_call?(callee : String, file : String, depth : Int32) : Bool
+    site = callable_site(file, callee) || return false
+    block = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/) || return false
+    lines = block.lines
+    locals = Hash(String, String).new
+    lines.each do |line|
+      assign = line.match(/^\s+([A-Za-z_][\w\s,]*?)\s*=(?!=)\s*(.+)$/) || next
+      assign[1].split(',').each { |name| locals[name.strip] ||= assign[2] unless name.strip.empty? }
+    end
+    refused = refusal_sites(lines, site[0], REFUSAL_MARKER).any? do |idx, inline|
+      conditions = governing_conditions(lines, idx).map(&.[0]).reject("except")
+      conditions << inline if inline
+      conditions.any? { |cond| credential_condition?(cond, locals) }
+    end
+    refused || !leading_guard_call(lines, site[0], depth).nil?
+  end
+
+  private def credential_condition?(cond : String, locals : Hash(String, String), expand : Bool = true) : Bool
+    cond.gsub(PythonGuardDefinitions::STRING_LITERAL, "''").scan(/(?<![\w.])[A-Za-z_][\w.]*/).any? do |m|
+      m[0].split('.').any? { |part| part.matches?(/api_?key/i) || part.scan(NAME_COMPONENT).any? { |c| CREDENTIAL_WORDS.includes?(c[0].downcase) } } ||
+        (expand && locals[m[0]]?.try { |expr| credential_condition?(expr, locals, false) }) || false
+    end
   end
 
   # Whether a dependency `body` declares refuses: a `Depends(...)` of a

@@ -576,6 +576,12 @@ describe "FastAPIAuthTagger" do
       found["/internal/jobs"].should eq(["auth: Protected by FastAPI Depends(require_internal)"])
     end
 
+    it "does not take a helper's 403 on a setting or on the resource for a guard" do
+      found = verdicts.call({100 => "/reports", 106 => "/items/{item_id}"})
+      found["/reports"].should be_empty
+      found["/items/{item_id}"].should be_empty
+    end
+
     it "reads the leading call of the handler add_api_route registers, not of the next def" do
       app = "#{base}/app.py"
       noir_options = create_test_options
