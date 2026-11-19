@@ -91,6 +91,11 @@ describe "NextjsAuthTagger" do
     tag.call("app/api/runner/route.ts", 8).should be_empty
   end
 
+  it "does not count a parenthesis in a regex literal on the export line" do
+    tag.call("app/api/pattern/route.ts", 4).should be_empty
+    tag.call("app/api/pattern/route.ts", 6).map(&.name).should eq(["auth"])
+  end
+
   it "tags a handler that compares the caller's key with a process.env secret" do
     tag.call("app/api/cron/route.ts", 3).map(&.name).should eq(["auth"])
   end

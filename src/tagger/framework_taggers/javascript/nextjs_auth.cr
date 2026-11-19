@@ -587,8 +587,10 @@ class NextjsAuthTagger < FrameworkTagger
     opened = false
     previous = ' '
     lines[start..].each do |raw|
-      text = code_only(raw)
-      body << text
+      body << code_only(raw)
+      # Brackets are counted with regex literals blanked too: `/^\(/`
+      # opens no parenthesis.
+      text = Noir::JSLiteralScanner.blank_literals(raw)
       # Until the body opens, a brace inside the parameter list is a type
       # or a default (`options?: { skipAuth: boolean },` on its own line);
       # one after `=>` or `)` opens a body even inside a wrapper's call
