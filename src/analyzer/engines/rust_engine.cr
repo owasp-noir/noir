@@ -547,6 +547,29 @@ module Analyzer::Rust
       nil
     end
 
+    # The `let` declaration of `name` nearest before `node` in the fn that
+    # encloses it, or nil.
+    protected def let_declaration_before(node : LibTreeSitter::TSNode, name : String, source : String) : LibTreeSitter::TSNode?
+      fn_node = node
+      while fn_node = Noir::TreeSitter.parent(fn_node)
+        break if Noir::TreeSitter.node_type(fn_node) == "function_item"
+      end
+      body = fn_node.try { |f| Noir::TreeSitter.field(f, "body") } || return
+      limit = LibTreeSitter.ts_node_start_byte(node)
+      found = nil.as(LibTreeSitter::TSNode?)
+      walk(body) do |d|
+        next unless Noir::TreeSitter.node_type(d) == "let_declaration" && LibTreeSitter.ts_node_start_byte(d) < limit
+        pattern = Noir::TreeSitter.field(d, "pattern")
+        found = d if pattern && Noir::TreeSitter.node_text(pattern, source).lchop("mut ").strip == name
+      end
+      found
+    end
+
+    # The initializer of `let_declaration_before`.
+    protected def let_initializer(node : LibTreeSitter::TSNode, name : String, source : String) : LibTreeSitter::TSNode?
+      let_declaration_before(node, name, source).try { |d| Noir::TreeSitter.field(d, "value") }
+    end
+
     # The full text of a `string_literal`, concatenating every
     # `string_content` and `escape_sequence` child.
     #
