@@ -923,7 +923,9 @@ module Analyzer::CSharp
         bound ||= api_controller && explicit_name.nil? ? api_controller_binding(param, file, lines, masked_lines) : default_param_type
         # A model-bound complex type (`LoginInputModel model`) is the members
         # a client sends, not a field named after the argument.
-        members = body_type_params("#{param.type} #{param.name}", bound, file, lines, masked_lines) if bound.in?("json", "form") && explicit_name.nil?
+        # `[FromQuery] PagingQuery query` binds its members from the query string.
+        expand = bound.in?("json", "form") || (bound == "query" && param_type == "query")
+        members = body_type_params("#{param.type} #{param.name}", bound, file, lines, masked_lines) if expand && explicit_name.nil?
         members ? parameters.concat(members) : (parameters << Param.new(explicit_name || param.name, "", bound))
       end
 

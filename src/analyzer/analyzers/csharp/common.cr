@@ -991,7 +991,7 @@ module Analyzer::CSharp::Common
   end
 
   # The members of the body type of handler parameter `param_def` bound
-  # from `param_type` (`json`/`form`), or nil when its type is not a plain
+  # from `param_type` (`json`/`form`/`query`), or nil when its type is not a plain
   # type the scan declares (a primitive, a generic). A JSON collection body
   # (`IEnumerable<EventModel>`, `EventModel[]`) is an array of that element,
   # so its inputs are the element's members.
@@ -1016,7 +1016,11 @@ module Analyzer::CSharp::Common
     return if member_def.matches?(JSON_IGNORE_RE)
     cleaned = member_def.gsub(ATTRIBUTE_LIST_RE, "").sub(/=.*/m, "").strip
     name = cleaned.match(/([A-Za-z_]\w*)\s*\z/).try(&.[1]) || return
-    if explicit = member_def.match(JSON_PROPERTY_NAME_RE)
+    # A model-bound member's `[FromQuery(Name = "x")]`/`[FromForm(…)]` wins;
+    # a query string never reads a serializer name.
+    if param_type != "json" && (bound = Common.explicit_binding_name(member_def))
+      name = bound
+    elsif param_type != "query" && (explicit = member_def.match(JSON_PROPERTY_NAME_RE))
       name = explicit[1]
     elsif param_type == "json"
       name = Common.json_camel_case(name)
