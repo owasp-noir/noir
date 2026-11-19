@@ -567,6 +567,13 @@ describe "FastAPIAuthTagger" do
       found["/me"].should eq(["auth: Protected by FastAPI Depends(get_active_user)"])
       found["/signup"].none?(&.starts_with?("authz")).should be_true
     end
+
+    it "follows a refusing helper a handler or a dependency calls first" do
+      found = verdicts.call({53 => "/search", 60 => "/maybe", 67 => "/session"})
+      found["/search"].should eq(["auth: Protected by FastAPI handler call to check_token"])
+      found["/maybe"].should be_empty
+      found["/session"].should be_empty
+    end
   end
 
   # fastapi_middleware_auth: an `@app.middleware("http")` function that

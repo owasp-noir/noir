@@ -245,6 +245,15 @@ class FastAPIAuthTagger < FrameworkTagger
       endpoint.add_tag(Tag.new("auth", guard, "fastapi_auth"))
       return
     end
+    endpoint.details.code_paths.each do |path_info|
+      lines = read_file_lines(path_info.path) || next
+      start = (path_info.line || next) - 1
+      next unless 0 <= start < lines.size
+      if call = leading_guard_call(lines[start, 400], path_info.path, 0)
+        endpoint.add_tag(Tag.new("auth", "Protected by FastAPI handler call to #{call}", "fastapi_auth"))
+        return
+      end
+    end
     if soft = @soft_auth
       endpoint.add_tag(Tag.new("anonymous", "FastAPI Depends(#{soft}) admits anonymous callers: it returns None instead of refusing", "fastapi_auth"))
     end
@@ -296,7 +305,46 @@ class FastAPIAuthTagger < FrameworkTagger
   # Whether a `def` body refuses the caller: a 401/403 raise of its own,
   # or a dependency it declares that refuses (`dependency_refuses_in?`).
   private def body_refuses?(body : String, file : String, depth : Int32, env : Env = Env.new) : Bool
-    refusing_raise?(body, file) || dependency_refuses_in?(body, file, depth, env)
+    refusing_raise?(body, file) || dependency_refuses_in?(body, file, depth, env) ||
+      !leading_guard_call(body.lines, file, depth).nil?
+  end
+
+  LEADING_CALL   = /\A(?:[A-Za-z_]\w*\s*(?::[^=]+)?=(?!=)\s*)?(?:await\s+)?([A-Za-z_][\w.]*)\s*\(/
+  BODY_STATEMENT = /\A(?:async\s+)?def\s/
+
+  # The function the `def` opening `block` calls before anything else can
+  # answer, when its definition refuses the caller: a handler or dependency
+  # that opens with `require_token(authorization)` aborts the request as a
+  # `Depends(require_token)` would. Only the body's own top-level simple
+  # statements before its first `return`, `raise`, `yield` or block count.
+  private def leading_guard_call(block : Array(String), file : String, depth : Int32) : String?
+    return if depth > 4
+    def_idx = block.index(&.lstrip.matches?(BODY_STATEMENT)) || return
+    def_indent = block[def_idx].size - block[def_idx].lstrip.size
+    idx = def_idx
+    open = 0
+    while idx < block.size
+      code = Analyzer::Python::Helper.strip_python_comment(block[idx]).rstrip
+      open += bracket_delta(code)
+      idx += 1
+      break if open <= 0 && code.ends_with?(':')
+    end
+    body = block[idx..].join('\n').gsub(PythonGuardDefinitions::DOCSTRING, "\"\"").lines
+    level = nil
+    body.each do |raw|
+      code = Analyzer::Python::Helper.strip_python_comment(raw).rstrip
+      next if code.blank?
+      indent = code.size - code.lstrip.size
+      break if indent <= def_indent
+      level ||= indent
+      next if indent > level
+      statement = code.strip
+      break if statement.ends_with?(':') || statement.matches?(/\A(?:return|raise|yield)\b/)
+      callee = statement.match(LEADING_CALL).try(&.[1]) || next
+      next if callee.in?("Depends", "Security")
+      return callee if dependency_refuses?(callee, file, depth + 1) == true
+    end
+    nil
   end
 
   # Whether a dependency `body` declares refuses: a `Depends(...)` of a
