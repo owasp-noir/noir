@@ -1298,7 +1298,7 @@ describe "RubyAuthTagger (Grape route scope)" do
     end
   end
 
-  it "reads an authenticate*! statement of the route body or a before block" do
+  it "reads an authenticate*! statement of the route body or a before block, and a filter of the API that mounts it" do
     CodeLocator.instance.clear_all
     dir = File.tempname("noir_grape_body_mount")
     Dir.mkdir_p(dir)
@@ -1373,7 +1373,8 @@ describe "RubyAuthTagger (Grape route scope)" do
       timeline.tags.map(&.name).should eq(["auth"])
       feed.tags.should be_empty
       pages.tags.map(&.name).should eq(["auth"])
-      listed.tags.should be_empty
+      listed.tags.map(&.name).should eq(["auth"])
+      listed.tags.first.description.should contain("mounts")
       ping.tags.should be_empty
       # A Pundit call in the body does not hide the route's authentication.
       report.tags.map(&.name).sort.should eq(["auth", "authz"])

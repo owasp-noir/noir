@@ -308,6 +308,7 @@ class RubyAuthTagger < FrameworkTagger
       # etc.), both over the same route scope.
       scope = route_scope(path, lines, line_idx, endpoint.url, {"ruby_grape", "ruby_sinatra"}.includes?(tech))
       description = match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS)
+      description ||= mounted_guard(path, lines, line_idx, endpoint.url, 0) if tech == "ruby_grape"
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
         return
@@ -1492,6 +1493,53 @@ class RubyAuthTagger < FrameworkTagger
       calls << statement if statement.matches?(/\A\w+[!?]?\z/)
     end
     calls
+  end
+
+  # Grape: a mounted API inherits the `before` filters of the API that
+  # mounts it, wherever they sit around the `mount` (Grape README).
+  # ponytail: filters above the `mount` line only, and a mount is matched to
+  # the route's class by constant name, not by load path.
+  private def mounted_guard(path : String, lines : Array(String), line_idx : Int32, url : String, depth : Int32) : String?
+    return if depth > 3
+    return unless name = grape_class_name(path, lines, line_idx)
+    grape_mounts.each do |mount_path, mount_idx, const|
+      next unless name == const || name.ends_with?("::#{const}") || const.ends_with?("::#{name}")
+      next unless mount_lines = read_file_lines(mount_path)
+      scope = route_scope(mount_path, mount_lines, mount_idx, url)
+      found = match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS) ||
+              mounted_guard(mount_path, mount_lines, mount_idx, url, depth + 1)
+      return found.ends_with?(MOUNTED) ? found : "#{found}#{MOUNTED}" if found
+    end
+  end
+
+  MOUNTED = " (inherited from the API that mounts it)"
+
+  # The full name of the `Grape::API` class around `line_idx`, from the
+  # `module` / `class` headers enclosing it.
+  private def grape_class_name(path : String, lines : Array(String), line_idx : Int32) : String?
+    index = scope_lines(path, lines)
+    names = [] of String
+    idx = line_idx
+    while (idx = index.prev_shallower[idx]) >= 0
+      next unless m = index.stripped[idx].match(/\A(class|module)\s+((?:::)?[A-Z][\w:]*)(\s*<\s*(?:::)?Grape::API\b)?/)
+      return if names.empty? && !(m[1] == "class" && m[3]?)
+      names.unshift(m[2].lchop("::"))
+    end
+    names.join("::") unless names.empty?
+  end
+
+  @grape_mounts : Array({String, Int32, String})? = nil
+
+  # Every `mount Some::Api` in the scan: its file, row and constant.
+  private def grape_mounts : Array({String, Int32, String})
+    @grape_mounts ||= collect_files_by_extension(".rb").flat_map do |file|
+      found = [] of {String, Int32, String}
+      read_file_lines(file).try &.each_with_index do |line, row|
+        m = line.match(/\A\s*mount\s+\(?((?:::)?[A-Z][\w:]*)/)
+        found << {file, row, m[1].lchop("::")} if m
+      end
+      found
+    end
   end
 
   # Devise's routes helpers: `authenticate :user do` runs
