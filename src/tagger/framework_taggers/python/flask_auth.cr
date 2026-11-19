@@ -30,10 +30,14 @@ class FlaskAuthTagger < FrameworkTagger
     {/\@protect\s*\(/, "flask-appbuilder protect (a setting can make it public)"},
     {/\@has_access\b/, "flask-appbuilder has_access (a setting can make it public)"},
     {/\@has_access_api\b/, "flask-appbuilder has_access_api (a setting can make it public)"},
+    # APIFairy's `@authenticate(auth)` applies `auth.login_required`, which
+    # answers 401 without credentials unless it is `optional=True`.
+    {/\@authenticate\s*\((?![^)]*\boptional\s*=\s*True\b)/, "apifairy authenticate"},
     {/\@requires_auth/, "requires_auth"},
     {/\@authenticated/, "authenticated"},
   ]
 
+  APIFAIRY_IMPORT = /^\s*from\s+apifairy\s+import\s*(?:\([^)]*|[^\n]*)\bauthenticate\b/m
   ROUTE_DECORATOR = /^@([\w.]+)\.(?:route|get|post|put|patch|delete)\s*\(/
   CLASS_DEF       = /^class\s+(\w+)\s*(?:\((.*)\))?\s*:/
   # flask-restx `Resource.method_decorators`, Flask `View.decorators`.
@@ -600,6 +604,7 @@ class FlaskAuthTagger < FrameworkTagger
       # A FAB name means FAB's decorator only where the file imports it:
       # `from internal_lib.perm import has_access` is something else.
       next if desc.starts_with?("flask-appbuilder") && !read_file(file).try(&.includes?("flask_appbuilder"))
+      next if desc.starts_with?("apifairy") && !read_file(file).try(&.matches?(APIFAIRY_IMPORT))
       return desc
     end
     nil

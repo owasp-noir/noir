@@ -558,6 +558,51 @@ describe "FlaskAuthTagger" do
     endpoint.tags[0].description.should contain("jwt_required")
   end
 
+  it "reads APIFairy @authenticate(auth) as flask-httpauth login_required on that auth object" do
+    tmpdir = File.tempname("flask_apifairy")
+    Dir.mkdir_p(tmpdir)
+    with_apifairy = File.join(tmpdir, "posts.py")
+    own = File.join(tmpdir, "own.py")
+    File.write(with_apifairy, [
+      "from apifairy import authenticate, response",
+      "from api.auth import token_auth",
+      "",
+      "@bp.route('/posts', methods=['POST'])",
+      "@authenticate(token_auth)",
+      "@response(post_schema)",
+      "def new():",
+      "    return {}",
+      "",
+      "@bp.route('/feed')",
+      "@authenticate(token_auth, optional=True)",
+      "def feed():",
+      "    return {}",
+    ].join("\n"))
+    File.write(own, [
+      "from api.audit import authenticate",
+      "",
+      "@bp.route('/audit')",
+      "@authenticate(audit_log)",
+      "def audit():",
+      "    return {}",
+    ].join("\n"))
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    endpoints = { {with_apifairy, 4, "/posts"}, {with_apifairy, 10, "/feed"}, {own, 3, "/audit"} }.map do |file, line, url|
+      details = Details.new(PathInfo.new(file, line))
+      details.technology = "python_flask"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    verdicts = FlaskAuthTagger.new(noir_options).perform(endpoints.to_a).map { |ep| {ep.url, ep.tags.map(&.description)} }.to_h
+    FileUtils.rm_rf(tmpdir)
+
+    verdicts["/posts"].should eq(["Protected by apifairy authenticate"])
+    # optional=True passes a request without credentials through to the view.
+    verdicts["/feed"].should be_empty
+    # A project's own `authenticate` is not APIFairy's.
+    verdicts["/audit"].should be_empty
+  end
+
   it "detects @jwt_required() call form" do
     endpoint = flask_detect("@jwt_required()")
     endpoint.tags.empty?.should be_false
