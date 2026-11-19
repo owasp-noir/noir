@@ -805,16 +805,30 @@ class SpringAuthTagger < FrameworkTagger
       return match[1]
     end
 
-    if match = content.match(/fun\s+#{Regex.escape(ident)}\s*\(\s*\)\s*:\s*([A-Za-z0-9_$]+)/)
-      return match[1]
-    elsif match = content.match(/\b([A-Za-z0-9_$]+)\s+#{Regex.escape(ident)}\s*\(\s*\)/)
-      return match[1] unless match[1] == "fun"
+    # A `@Bean` factory: the type it constructs, else the type it declares,
+    # which may be just the `HandlerInterceptor` interface.
+    if factory = content.match(/(?:\bfun\s+#{Regex.escape(ident)}\s*\(\s*\)(?:\s*:\s*([A-Za-z0-9_$]+))?|\b([A-Za-z0-9_$]+)\s+#{Regex.escape(ident)}\s*\(\s*\))[^{=;]*?([{=])/)
+      if built = factory_constructed_type(content, factory.byte_end(0) - 1, factory[3] == "=")
+        return built
+      end
+      declared = factory[1]? || factory[2]?
+      return declared if declared && declared != "fun"
     end
 
     return ident if ident[0].ascii_uppercase?
 
     capitalized = ident[0].upcase + ident[1..]
     capitalized
+  end
+
+  # The class a factory body opening at byte `at` (`{` or Kotlin `=`)
+  # constructs: its expression, or what its `return` builds.
+  private def factory_constructed_type(content : String, at : Int32, expression : Bool) : String?
+    if expression
+      content.byte_slice(at + 1, Math.min(300, content.bytesize - at - 1)).scrub.match(/\A\s*(?:new\s+)?([A-Z][\w$]*)\s*[(<]/).try(&.[1])
+    elsif close = Noir::JSLiteralScanner.find_matching_brace_at_byte(content, at)
+      content.byte_slice(at, close - at + 1).match(/\breturn\s+(?:new\s+)?([A-Z][\w$]*)\s*[(<]/).try(&.[1])
+    end
   end
 
   # A servlet filter class header: Java `extends OncePerRequestFilter` /

@@ -5093,6 +5093,18 @@ describe "SpringAuthTagger (Kotlin HandlerInterceptor shapes)" do
     ])
   end
 
+  it "reads the type a factory declared as the HandlerInterceptor interface constructs" do
+    interceptor = "class ApiKeyInterceptor : HandlerInterceptor {\n" + KOTLIN_SEND_ERROR_PRE_HANDLE
+    {
+      "  @Bean\n  fun apiKeyInterceptor(): HandlerInterceptor = ApiKeyInterceptor()\n",
+      "  @Bean\n  fun apiKeyInterceptor(): HandlerInterceptor {\n      return ApiKeyInterceptor()\n  }\n",
+    }.each do |members|
+      kotlin_interceptor_guards(interceptor, "registry.addInterceptor(apiKeyInterceptor())", members).should eq([
+        ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
+      ])
+    end
+  end
+
   it "does not take a bodiless class for the interceptor an object below it declares" do
     interceptor = <<-KT
       data class ApiKeyInterceptor(val header: String)
