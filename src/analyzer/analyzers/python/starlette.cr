@@ -25,6 +25,8 @@ module Analyzer::Python
     # mounted app's name. A call (`app=StaticFiles(...)`) or a keyword in
     # the second slot (`routes=[...]`) is not an app name.
     MOUNT_APP_RE = /Mount\s*\(\s*[rf]?['"]([^'"]*)['"](?:[^)]*\bapp\s*=\s*|\s*,\s*)([a-zA-Z_][a-zA-Z0-9_]*)\b(?!\s*[(.=])/m
+    # `Mount('/p', routes=[` up to the bracket opening its inline list.
+    MOUNT_INLINE_HEAD_RE = /\bMount\s*\([^()\[\]]*?\broutes\s*=\s*\[/
     # `X = Starlette(` / `X = Router(` whose `routes=[...]` list is inline.
     INLINE_APP_RE        = /^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(?:Starlette|Router)\s*\(/
     INLINE_ROUTES_SUFFIX = ".routes"
@@ -36,7 +38,19 @@ module Analyzer::Python
     ADD_ROUTE_RE        = /(#{DOT_NATION})\.add_(websocket_)?route\s*\((.*)\)/m
     CLASS_METHOD_DEF_RE = /^\s*(?:async\s+)?def\s+(get|post|put|patch|delete|head|options)\s*\(([^)]*)\)/
 
+    # `Mount('/p', routes=users.routes)` / `routes=imported_list` and
+    # `Mount('/p', app=imported_app)`: the prefix and the reference.
+    CROSS_ROUTES_MOUNT_RE = /Mount\s*\(\s*[rf]?['"]([^'"]*)['"][^()\[\]]*?\broutes\s*=\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\b(?![\w.]|\s*[(\[])/m
+    CROSS_APP_MOUNT_RE    = /Mount\s*\(\s*[rf]?['"]([^'"]*)['"](?:[^()\[\]]*?\bapp\s*=\s*|\s*,\s*)([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\b(?![\w.]|\s*[(=])/m
+
+    # Prefixes another module mounts a file's route lists and apps under:
+    # {file => {list name => prefixes}} and {file => {app name => prefixes}}.
+    @cross_list_prefixes = Hash(::String, Hash(::String, Array(::String))).new
+    @cross_app_prefixes = Hash(::String, Hash(::String, Array(::String))).new
+
     def analyze
+      collect_cross_module_mounts
+
       parallel_python_sources do |path, current_base_path|
         source = read_file_content(path)
         next unless source.includes?("starlette")
@@ -57,9 +71,9 @@ module Analyzer::Python
       external_handler_cache = {} of ::String => Tuple(Array(Param), Array(Callee))
       class_handler_cache = {} of ::String => Hash(::String, Tuple(Array(Param), Array(Callee)))
       websocket_class_handler_cache = {} of ::String => Tuple(Array(Param), Array(Callee))
-      app_prefixes = build_app_prefixes(lines)
+      app_prefixes = build_app_prefixes(lines, @cross_app_prefixes[path]?)
       inline_route_lists = build_inline_route_list_ranges(lines)
-      mounted_route_list_prefixes = build_mounted_route_list_prefixes(lines, app_prefixes, inline_route_lists)
+      mounted_route_list_prefixes = build_mounted_route_list_prefixes(lines, app_prefixes, inline_route_lists, @cross_list_prefixes[path]?)
       mounted_route_list_ranges = build_mounted_route_list_ranges(lines, mounted_route_list_prefixes, inline_route_lists)
       # Stack of active Mount prefixes. Each entry stores the paren depth
       # at which the Mount was opened; when the running depth drops below
@@ -82,6 +96,12 @@ module Analyzer::Python
                          else
                            line
                          end
+        # A Mount opening an inline `routes=[` list keeps only its head: the
+        # nested Routes and Mounts are read on their own lines, under the
+        # mount stack, so they must not be emitted here as well.
+        if effective_line != line && (head = effective_line.match(MOUNT_INLINE_HEAD_RE)) && head.begin(0) == effective_line.index("Mount")
+          effective_line = line.matches?(MOUNT_INLINE_HEAD_RE) ? line : head[0]
+        end
         # Lift `path=` keyword to the first positional slot so the
         # existing ROUTE_REGEX (which expects a string right after
         # `Route(`) matches `Route(path="/x", endpoint=h)`.
@@ -317,10 +337,12 @@ module Analyzer::Python
 
     private def build_mounted_route_list_prefixes(lines : Array(::String),
                                                   app_prefixes : Hash(::String, Array(::String)),
-                                                  inline_route_lists : Hash(::String, Tuple(Int32, Int32))) : Hash(::String, Array(::String))
+                                                  inline_route_lists : Hash(::String, Tuple(Int32, Int32)),
+                                                  seeds : Hash(::String, Array(::String))? = nil) : Hash(::String, Array(::String))
       prefixes = Hash(::String, Array(::String)).new do |hash, key|
         hash[key] = [] of ::String
       end
+      seeds.try &.each { |list, list_prefixes| prefixes[list] = list_prefixes.dup }
       app_route_lists = build_app_route_lists(lines)
       inline_route_lists.each_key { |list| app_route_lists[list.rchop(INLINE_ROUTES_SUFFIX)] << list }
       route_list_ranges = build_route_list_ranges(lines).merge(inline_route_lists)
@@ -380,6 +402,112 @@ module Analyzer::Python
       prefixes
     end
 
+    # Resolve every `Mount(...)` whose `routes=` / `app=` names a list or an
+    # app imported from another module into `@cross_list_prefixes` and
+    # `@cross_app_prefixes`. Nodes are `"file\0list"` and `"file\0@app"`;
+    # an app node mounts its own route lists with no prefix of its own.
+    # ponytail: a mount nested in an inline `Mount('/a', routes=[...])`
+    # does not take `/a`, and a module list mounted only through another
+    # local list of a mounted module is seeded at the root.
+    private def collect_cross_module_mounts : Nil
+      edges = [] of Tuple(::String, ::String, ::String)
+      seeds = Hash(::String, Array(::String)).new { |hash, key| hash[key] = [] of ::String }
+      parents = Set(Tuple(::String, ::String)).new
+      children = Set(::String).new
+      app_lists = Hash(::String, Hash(::String, Array(::String))).new
+
+      each_python_source do |path, base_path|
+        source = read_file_content(path)
+        next unless source.includes?("Mount") && source.includes?("starlette")
+        lines = source.split("\n")
+        ranges = build_route_list_ranges(lines).merge(build_inline_route_list_ranges(lines))
+        local_apps = build_app_route_lists(lines)
+        symbols = nil
+
+        lines.each_with_index do |line, line_index|
+          next unless line.includes?("Mount")
+          call = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
+          parent = route_list_parent_for_line(line_index, ranges)
+          { {CROSS_ROUTES_MOUNT_RE, false}, {CROSS_APP_MOUNT_RE, true} }.each do |regex, app_mount|
+            call.scan(regex) do |match|
+              # A joined call also holds the Mounts nested in it; those are
+              # read on their own lines.
+              next if call != line && match.begin(0) != call.index("Mount")
+              prefix, reference = match[1], match[2]
+              next if !reference.includes?('.') && (ranges.has_key?(reference) || local_apps.has_key?(reference))
+              symbols ||= Noir::ImportGraph::Python.find_imported_symbols(base_path, path, source)
+              target = imported_symbol(symbols, reference) || next
+              child = if app_mount
+                        app_node = "#{target[0]}\0@#{target[1]}"
+                        lists = app_lists[target[0]] ||= starlette_app_route_lists(target[0])
+                        lists[target[1]]?.try &.each { |list| edges << {app_node, "", "#{target[0]}\0#{list}"} }
+                        app_node
+                      else
+                        "#{target[0]}\0#{target[1]}"
+                      end
+              children << child
+              if parent
+                edges << {"#{path}\0#{parent}", prefix, child}
+                parents << {path, parent}
+              else
+                add_route_list_prefix(seeds, child, prefix)
+              end
+            end
+          end
+        end
+      end
+      return if children.empty?
+
+      cross_apps = Hash(::String, Hash(::String, Array(::String))).new
+      children.each do |node|
+        file, _, name = node.partition('\0')
+        (cross_apps[file] ||= Hash(::String, Array(::String)).new)[name.lchop('@')] = [] of ::String if name.starts_with?('@')
+      end
+      parents.each do |file, list|
+        node = "#{file}\0#{list}"
+        lines = read_file_content(file).split("\n")
+        local = build_mounted_route_list_prefixes(lines, build_app_prefixes(lines, cross_apps[file]?), build_inline_route_list_ranges(lines))[list]?
+        if local && !local.empty?
+          local.each { |prefix| add_route_list_prefix(seeds, node, prefix) }
+        elsif !children.includes?(node)
+          add_route_list_prefix(seeds, node, "")
+        end
+      end
+
+      propagate_mount_prefixes(seeds, edges) { |parent_prefix, mount_prefix| normalize_route_prefix(parent_prefix, mount_prefix) }
+
+      children.each do |node|
+        node_prefixes = seeds[node]?
+        next if node_prefixes.nil? || node_prefixes.empty?
+        file, _, name = node.partition('\0')
+        target = name.starts_with?('@') ? @cross_app_prefixes : @cross_list_prefixes
+        (target[file] ||= Hash(::String, Array(::String)).new)[name.lchop('@')] = node_prefixes
+      end
+    end
+
+    # `{declaring file, declared name}` of `reference` (`name` imported by
+    # name, or `module.name` through an imported module).
+    private def imported_symbol(symbols : Hash(::String, Tuple(::String, ::String)), reference : ::String) : Tuple(::String, ::String)?
+      if dot = reference.rindex('.')
+        target = symbols[reference[0, dot]]? || return
+        target[1].empty? ? {target[0], reference[(dot + 1)..]} : nil
+      else
+        target = symbols[reference]? || return
+        target[1].empty? ? nil : target
+      end
+    end
+
+    # App name -> its route lists (named, or the inline `X.routes`) in `file`.
+    private def starlette_app_route_lists(file : ::String) : Hash(::String, Array(::String))
+      lines = read_file_content(file).split("\n")
+      lists = Hash(::String, Array(::String)).new
+      build_app_route_lists(lines).each { |app, app_route_lists| lists[app] = app_route_lists.dup }
+      build_inline_route_list_ranges(lines).each_key do |list|
+        (lists[list.rchop(INLINE_ROUTES_SUFFIX)] ||= [] of ::String) << list
+      end
+      lists
+    end
+
     private def add_route_list_prefix(prefixes : Hash(::String, Array(::String)), route_list : ::String, prefix : ::String)
       normalized = prefix.empty? ? "" : normalize_route_prefix("", prefix)
       prefixes[route_list] << normalized unless prefixes[route_list].includes?(normalized)
@@ -423,7 +551,7 @@ module Analyzer::Python
       ranges
     end
 
-    private def build_app_prefixes(lines : Array(::String)) : Hash(::String, Array(::String))
+    private def build_app_prefixes(lines : Array(::String), cross_prefixes : Hash(::String, Array(::String))? = nil) : Hash(::String, Array(::String))
       prefixes = Hash(::String, Array(::String)).new do |hash, key|
         hash[key] = [] of ::String
       end
@@ -453,12 +581,16 @@ module Analyzer::Python
 
       mounted_apps = Set(::String).new
       mounts.each { |_, app_name| mounted_apps << app_name }
+      cross_prefixes.try &.each_key { |app_name| mounted_apps << app_name }
       mounted_apps.each do |app_name|
         prefixes[app_name].try(&.delete(""))
       end
 
       mounts.each do |mount_prefix, app_name|
         prefixes[app_name] << mount_prefix unless prefixes[app_name].includes?(mount_prefix)
+      end
+      cross_prefixes.try &.each do |app_name, app_mount_prefixes|
+        app_mount_prefixes.each { |prefix| prefixes[app_name] << prefix unless prefixes[app_name].includes?(prefix) }
       end
 
       prefixes

@@ -32,8 +32,6 @@ module Analyzer::Python
     # The same, as the whole default: `x: str = Parameter(header="X")`.
     # Anchored, so a long default is not searched end to end.
     PARAMETER_DEFAULT_LOCATION_REGEX = /\A\s*#{PARAMETER_LOCATION_REGEX}/
-    # Router(path="/prefix", route_handlers=[...])
-    ROUTER_REGEX = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Router\s*\(([^)]*)\)/m
     # Path param: {name} or {name:type}. Litestar uses the :type suffix
     # as a converter (int, str, uuid, path, float); strip it when
     # exposing the param.
@@ -45,7 +43,6 @@ module Analyzer::Python
     # interpolate only constants or fixed sets. The `.to_s` expansion is
     # byte-identical to the previous inline form, so matching behaviour
     # is unchanged.
-    DOTTED_HANDLER_RE   = /(#{PYTHON_VAR_NAME_REGEX})\.(#{PYTHON_VAR_NAME_REGEX})/
     CONTROLLER_CLASS_RE = /^\s*class\s+(#{PYTHON_VAR_NAME_REGEX})\s*\(([^)]*)\)/
     CLASS_HEAD_RE       = /^\s*class\s+(#{PYTHON_VAR_NAME_REGEX})\s*\(/
 
@@ -83,29 +80,28 @@ module Analyzer::Python
     # Bases a body model's own fields are complete under; any other base
     # may contribute fields this pass does not follow.
     MODEL_ROOT_BASES = Set{"BaseModel", "Struct", "msgspec.Struct", "pydantic.BaseModel", "object", "TypedDict"}
+    # `"file\0name"` of a handler, controller or router -> its prefixes.
+    @handler_prefixes = Hash(::String, Array(::String)).new
     @dependency_keys = Hash(::String, Set(::String)).new
     @app_dependency_keys = Set(::String).new
     @model_fields = Hash(Tuple(::String, ::String), Array(::String)?).new
     @model_fields_mutex = Mutex.new
 
     def analyze
-      external_handler_prefixes = Hash(::String, Hash(::String, ::String)).new do |hash, key|
-        hash[key] = Hash(::String, ::String).new
-      end
+      edges = [] of Tuple(::String, ::String, ::String)
+      routers = Set(::String).new
 
-      # Pass 1 (sequential): build cross-file handler prefix map.
+      # Pass 1 (sequential): the project-wide router graph.
       each_python_source do |path, current_base_path|
         source = read_file_content(path)
         next unless source.includes?("litestar")
 
         collect_dependency_keys(path, source)
-        import_modules = find_imported_modules(current_base_path, path, source)
-        collect_external_handler_prefixes(source, collect_router_prefixes(source), import_modules).each do |handler_path, handler_map|
-          handler_map.each do |handler_name, prefix|
-            external_handler_prefixes[handler_path][handler_name] = prefix
-          end
-        end
+        collect_router_edges(path, current_base_path, source, routers, edges)
       end
+      children = edges.map(&.[2]).to_set
+      routers.each { |router| @handler_prefixes[router] = [""] unless children.includes?(router) }
+      propagate_mount_prefixes(@handler_prefixes, edges) { |parent_prefix, router_path| "#{parent_prefix}#{router_path}" }
 
       # Pass 2 (parallel): per-file route extraction is independent once
       # the prefix map is frozen.
@@ -113,7 +109,7 @@ module Analyzer::Python
         source = read_file_content(path)
         next unless source.includes?("litestar")
 
-        analyze_file(path, source, current_base_path, external_handler_prefixes[path]? || Hash(::String, ::String).new)
+        analyze_file(path, source, current_base_path)
       end
 
       Fiber.yield
@@ -122,11 +118,8 @@ module Analyzer::Python
 
     private def analyze_file(path : ::String,
                              source : ::String,
-                             definition_base_path : ::String,
-                             handler_prefix_overrides : Hash(::String, ::String))
+                             definition_base_path : ::String)
       lines = source.split("\n")
-      router_prefixes = collect_router_prefixes(source)
-      handler_routers = collect_handler_to_router(source, router_prefixes)
       controller_prefixes = collect_controller_prefixes(lines)
 
       lines.each_with_index do |line, line_index|
@@ -163,11 +156,11 @@ module Analyzer::Python
           end
 
           handler_name, handler_line = find_handler(lines, line_index)
-          prefix = handler_name ? handler_prefix_overrides[handler_name]? || handler_routers[handler_name]? || "" : ""
+          prefixes = handler_name ? litestar_prefixes(path, handler_name) : [""]
           if hl = handler_line
             if controller_info = controller_for_handler(lines, hl, controller_prefixes)
               controller_name, controller_prefix = controller_info
-              prefix = "#{handler_routers[controller_name]? || ""}#{controller_prefix}"
+              prefixes = litestar_prefixes(path, controller_name).map { |prefix| "#{prefix}#{controller_prefix}" }
             end
           end
 
@@ -194,8 +187,7 @@ module Analyzer::Python
                               [] of Callee
                             end
 
-          route_paths.each do |route_path|
-            full_path = "#{prefix}#{route_path}"
+          prefixes.flat_map { |prefix| route_paths.map { |route_path| "#{prefix}#{route_path}" } }.uniq!.each do |full_path|
             full_path = "/#{full_path}" unless full_path.starts_with?("/")
             full_path = full_path.gsub(/\/+/, "/")
             # `{p:path}` stays: it spans `/`, so it is not `{p}`.
@@ -259,110 +251,101 @@ module Analyzer::Python
       {nil, nil}
     end
 
-    # Collect Router(path="/prefix") assignments. The key is the router
-    # variable name; the value is the prefix.
-    private def collect_router_prefixes(source : ::String) : Hash(::String, ::String)
-      prefixes = Hash(::String, ::String).new
-      source.scan(ROUTER_REGEX) do |match|
-        next if match.size < 3
-        name = match[1]
-        body = match[2]
-        prefix_match = body.match(/path\s*=\s*[rf]?['"]([^'"]*)['"]/)
-        prefix_match ||= body.match(/^\s*[rf]?['"]([^'"]*)['"]/)
-        prefixes[name] = prefix_match ? prefix_match[1] : ""
+    # A `X = Router(` / `Litestar(` call (or a bare `Router(`), up to its `(`.
+    ROUTER_CALL_RE   = /(?:\b(#{PYTHON_VAR_NAME_REGEX})\s*(?::[^=\n]*)?=\s*)?\b(Router|Litestar)\s*\(/
+    HANDLER_REF_RE   = /\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\z/
+    INLINE_ROUTER_RE = /\ARouter\s*\(/
+
+    # Record every `Router(...)` / `Litestar(...)` call of `path` as a node
+    # `"file\0name"` (`"file\0@offset"` when unassigned), with an edge
+    # {router, router path, entry} per `route_handlers` entry. An entry is
+    # resolved to where it is declared: a local name, a name imported from
+    # another module, `module.name`, or an inline `Router(...)`.
+    private def collect_router_edges(path : ::String, base_path : ::String, source : ::String,
+                                     routers : Set(::String), edges : Array(Tuple(::String, ::String, ::String))) : Nil
+      return unless source.includes?("Router") || source.includes?("Litestar")
+      symbols = nil
+      call_end = -1
+      source.scan(ROUTER_CALL_RE) do |match|
+        next if match.byte_begin(0) < call_end
+        open = match.byte_end(0) - 1
+        body = python_call_body(source, open) || next
+        call_end = open + body.bytesize + 1
+        symbols ||= Noir::ImportGraph::Python.find_imported_symbols(base_path, path, source)
+        node = "#{path}\0#{match[1]? || "@#{match.byte_begin(0)}"}"
+        record_router_node(path, node, match[2] == "Litestar", body, symbols, routers, edges)
       end
-      prefixes
     end
 
-    # Walk each Router(...) block and map handler-function names in
-    # route_handlers to the router's prefix, so handler endpoints inherit
-    # the prefix when the route is registered on a Router.
-    private def collect_handler_to_router(source : ::String, router_prefixes : Hash(::String, ::String)) : Hash(::String, ::String)
-      mapping = Hash(::String, ::String).new
-      source.scan(ROUTER_REGEX) do |match|
-        next if match.size < 3
-        router_name = match[1]
-        body = match[2]
-        prefix = router_prefixes[router_name]? || ""
-        handlers_match = body.match(/route_handlers\s*=\s*\[([^\]]*)\]/m)
-        next unless handlers_match
-        handlers_match[1].scan(/([a-zA-Z_][a-zA-Z0-9_]*)/) do |m|
-          name = m[1]
-          next if name == "route_handlers"
-          mapping[name] = prefix unless mapping.has_key?(name)
+    private def record_router_node(path : ::String, node : ::String, app : Bool, body : ::String,
+                                   symbols : Hash(::String, Tuple(::String, ::String)),
+                                   routers : Set(::String), edges : Array(Tuple(::String, ::String, ::String))) : Nil
+      routers << node
+      args = split_python_arguments(body)
+      router_path = app ? "" : extract_python_keyword_string(args, "path") || args[0]?.try { |arg| Helper.extract_python_string(arg) } || ""
+      handlers = extract_python_keyword_expression(args, "route_handlers") || return
+      return unless handlers.starts_with?('[') && handlers.ends_with?(']')
+      split_python_arguments(handlers[1...-1]).each_with_index do |raw_entry, index|
+        entry = raw_entry.strip
+        if entry.matches?(INLINE_ROUTER_RE) && entry.ends_with?(')')
+          child = "#{node}/#{index}"
+          record_router_node(path, child, false, entry.sub(INLINE_ROUTER_RE, "")[0...-1], symbols, routers, edges)
+        else
+          child = litestar_handler_node(path, entry, symbols) || next
         end
+        edges << {node, router_path, child}
       end
+    end
 
-      source.scan(/Router\s*\(([^)]*)\)/m) do |match|
-        next if match.size < 2
-        body = match[1]
-        prefix_match = body.match(/path\s*=\s*[rf]?['"]([^'"]*)['"]/)
-        prefix_match ||= body.match(/^\s*[rf]?['"]([^'"]*)['"]/)
-        prefix = prefix_match ? prefix_match[1] : ""
+    private def litestar_handler_node(path : ::String, entry : ::String,
+                                      symbols : Hash(::String, Tuple(::String, ::String))) : ::String?
+      return unless entry.matches?(HANDLER_REF_RE)
+      if dot = entry.rindex('.')
+        target = symbols[entry[0, dot]]? || return
+        return target[1].empty? ? "#{target[0]}\0#{entry[(dot + 1)..]}" : nil
+      end
+      if (target = symbols[entry]?) && !target[1].empty?
+        "#{target[0]}\0#{target[1]}"
+      else
+        "#{path}\0#{entry}"
+      end
+    end
 
-        handlers_match = body.match(/route_handlers\s*=\s*\[([^\]]*)\]/m)
-        next unless handlers_match
-        handlers_match[1].scan(/([a-zA-Z_][a-zA-Z0-9_]*)/) do |m|
-          name = m[1]
-          next if name == "route_handlers"
-          mapping[name] = prefix unless mapping.has_key?(name)
+    # The text between the `(` at byte `open` and its matching `)`,
+    # skipping quoted runs and `#` comments.
+    private def python_call_body(source : ::String, open : Int32) : ::String?
+      bytes = source.to_slice
+      depth = 0
+      quote = 0_u8
+      i = open
+      while i < bytes.size
+        byte = bytes[i]
+        if quote != 0
+          if byte == '\\'.ord
+            i += 1
+          elsif byte == quote
+            quote = 0_u8
+          end
+        elsif byte == '"'.ord || byte == '\''.ord
+          quote = byte
+        elsif byte == '#'.ord
+          while i + 1 < bytes.size && bytes[i + 1] != '\n'.ord
+            i += 1
+          end
+        elsif byte == '('.ord
+          depth += 1
+        elsif byte == ')'.ord
+          depth -= 1
+          return source.byte_slice(open + 1, i - open - 1) if depth == 0
         end
+        i += 1
       end
-
-      mapping
     end
 
-    private def collect_external_handler_prefixes(source : ::String,
-                                                  router_prefixes : Hash(::String, ::String),
-                                                  import_modules : Hash(::String, Tuple(::String, Int32))) : Hash(::String, Hash(::String, ::String))
-      mapping = Hash(::String, Hash(::String, ::String)).new do |hash, key|
-        hash[key] = Hash(::String, ::String).new
-      end
-
-      source.scan(ROUTER_REGEX) do |match|
-        next if match.size < 3
-        router_name = match[1]
-        body = match[2]
-        prefix = router_prefixes[router_name]? || ""
-        map_external_route_handlers(body, prefix, import_modules, mapping)
-      end
-
-      source.scan(/Router\s*\(([^)]*)\)/m) do |match|
-        next if match.size < 2
-        body = match[1]
-        prefix_match = body.match(/path\s*=\s*[rf]?['"]([^'"]*)['"]/)
-        prefix_match ||= body.match(/^\s*[rf]?['"]([^'"]*)['"]/)
-        prefix = prefix_match ? prefix_match[1] : ""
-        map_external_route_handlers(body, prefix, import_modules, mapping)
-      end
-
-      source.scan(/Litestar\s*\(([^)]*)\)/m) do |match|
-        next if match.size < 2
-        map_external_route_handlers(match[1], "", import_modules, mapping)
-      end
-
-      mapping
-    end
-
-    private def map_external_route_handlers(body : ::String,
-                                            prefix : ::String,
-                                            import_modules : Hash(::String, Tuple(::String, Int32)),
-                                            mapping : Hash(::String, Hash(::String, ::String)))
-      handlers_match = body.match(/route_handlers\s*=\s*\[([^\]]*)\]/m)
-      return unless handlers_match
-
-      handlers_match[1].scan(DOTTED_HANDLER_RE) do |handler_match|
-        next if handler_match.size < 3
-        module_name = handler_match[1]
-        handler_name = handler_match[2]
-        import_info = import_modules[module_name]?
-        next unless import_info
-
-        handler_path = import_info.first
-        next if handler_path.empty?
-
-        mapping[handler_path][handler_name] = prefix
-      end
+    # Full prefixes a handler or controller named `name` in `path` is
+    # served under, through every router that lists it.
+    private def litestar_prefixes(path : ::String, name : ::String) : Array(::String)
+      @handler_prefixes["#{path}\0#{name}"]? || [""]
     end
 
     private def collect_controller_prefixes(lines : Array(::String)) : Hash(::String, ::String)

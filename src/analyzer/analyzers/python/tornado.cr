@@ -58,7 +58,11 @@ module Analyzer::Python
           # below), which delegates to the base `read_file_content` and so
           # prefers the detector-cached content over a fresh disk read.
           lines = memoized_file_content(path).lines
-          next unless lines.any?(&.includes?("tornado"))
+          # A `urls.py` holding only the route table imports handler
+          # classes, never `tornado`: read its handler lists alone and keep
+          # the tuples whose handler is defined in a Tornado module.
+          tornado_free = !lines.any?(&.includes?("tornado"))
+          next if tornado_free && !lines.any? { |l| tornado_handler_list_line?(l) }
           api_instances = Hash(::String, ::String).new
           path_api_instances[path] = api_instances
 
@@ -74,6 +78,11 @@ module Analyzer::Python
           lines.each_with_index do |line, line_index|
             next if docstring_line[line_index]
             line = line.gsub(" ", "") # remove spaces for easier regex matching
+
+            if tornado_free
+              extract_routes_from_lines(lines, line_index, path) if tornado_handler_list_line?(line)
+              next
+            end
 
             # Identify Tornado Application instance assignments
             app_match = line.includes?("Application(") ? line.match(APP_INSTANCE_RE) : nil
@@ -111,6 +120,9 @@ module Analyzer::Python
             if list_match && tornado_handler_list_name?(list_match[1])
               extract_routes_from_lines(lines, line_index, path)
             end
+          end
+          if tornado_free
+            @routes[path]?.try &.select! { |route| tornado_module_handler?(path, route[3]) }
           end
         end
       end
@@ -456,6 +468,23 @@ module Analyzer::Python
       n.ends_with?("handlers") || n.ends_with?("routes") ||
         n.ends_with?("urls") || n.ends_with?("url_patterns") ||
         n.ends_with?("urlpatterns") || n == "patterns"
+    end
+
+    private def tornado_handler_list_line?(line : ::String) : Bool
+      return false unless line.includes?("[")
+      list_match = line.gsub(" ", "").match(HANDLER_LIST_RE)
+      !list_match.nil? && tornado_handler_list_name?(list_match[1])
+    end
+
+    # Whether `handler_class`, as referenced in `file_path`, is imported
+    # from a module that mentions `tornado`.
+    private def tornado_module_handler?(file_path : ::String, handler_class : ::String) : Bool
+      import_map = resolve_imports(file_path)
+      parts = handler_class.split(".")
+      candidates = [handler_class, parts[0...-1].join("."), parts.first]
+      candidates.any? do |name|
+        (info = import_map[name]?) && !info[0].empty? && memoized_file_content(info[0]).includes?("tornado")
+      end
     end
 
     private def extract_endpoints_from_handler(file_path : ::String, route_path : ::String, handler_class : ::String) : Array(Endpoint)
