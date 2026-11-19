@@ -200,6 +200,38 @@ describe "JavaMiscAuthTagger" do
     endpoints[2].tags.should be_empty
   end
 
+  it "reads a covering Vert.x registration whose handler sits on the next line" do
+    tmpdir = File.tempname("vertx_split")
+    Dir.mkdir_p(tmpdir)
+    verticle = File.join(tmpdir, "MainVerticle.java")
+    File.write(verticle, [
+      "public class MainVerticle extends AbstractVerticle {",                          # 1
+      "  public void start() {",                                                       # 2
+      "    router.route(\"/admin/*\")",                                                # 3
+      "        .handler(BasicAuthHandler.create(provider));",                          # 4
+      "    router.route(\"/api/*\")",                                                  # 5
+      "        .handler(JWTAuthHandler.create(jwt));",                                 # 6
+      "    router.get(\"/api/items\").handler(ctx -> ctx.response().end(\"items\"));", # 7
+      "    router.get(\"/status\").handler(ctx -> ctx.response().end(\"ok\"));",       # 8
+      "  }",                                                                           # 9
+      "}",                                                                             # 10
+    ].join("\n"))
+    CodeLocator.instance.register_path(verticle)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    endpoints = {7 => "/api/items", 8 => "/status"}.map do |line, url|
+      details = Details.new(PathInfo.new(verticle, line))
+      details.technology = "java_vertx"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    JavaMiscAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+
+    endpoints[0].tags.map(&.description).should eq(["Protected by Vert.x AuthHandler"])
+    endpoints[1].tags.should be_empty
+  end
+
   it "reads a Vert.x AuthenticationHandler as authentication" do
     tmpdir = File.tempname("vertx_authn")
     Dir.mkdir_p(tmpdir)

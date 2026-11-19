@@ -98,7 +98,10 @@ class JavaMiscAuthTagger < FrameworkTagger
       current = lines[idx]
       next if import_line?(current)
       if vertx
-        next if idx < line_idx && !((route = current.match(VERTX_ROUTE)) && vertx_route_covers?(route[1]?, url))
+        if idx < line_idx
+          next unless (route = current.match(VERTX_ROUTE)) && vertx_route_covers?(route[1]?, url)
+          current = route_statement(lines, idx, line_idx)
+        end
         current = with_handler_declarations(lines, current)
       elsif idx < start_idx
         next
@@ -127,7 +130,7 @@ class JavaMiscAuthTagger < FrameworkTagger
       ALL_PATTERNS.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end
-      depth += bracket_depth(current)
+      depth += bracket_depth(lines[idx])
       idx += 1
     end
 
@@ -142,6 +145,19 @@ class JavaMiscAuthTagger < FrameworkTagger
       declared = /(?:\b(?:val|var)|[\w$.<>]+)\s+#{Regex.escape(found[1])}\s*(?::\s*[\w$.<>?]+\s*)?=(?!=)/
       (declaration = lines.find(&.matches?(declared))) ? "#{text} #{declaration}" : text
     end
+  end
+
+  # The registration at `idx` with the chain lines that continue it
+  # (`router.route("/api/*")` then `.handler(authHandler);`), up to `stop`.
+  private def route_statement(lines : Array(String), idx : Int32, stop : Int32) : String
+    text = lines[idx]
+    depth = bracket_depth(text)
+    ((idx + 1)...stop).each do |next_idx|
+      break unless depth > 0 || lines[next_idx].lstrip.starts_with?('.')
+      text += " #{lines[next_idx]}"
+      depth += bracket_depth(lines[next_idx])
+    end
+    text
   end
 
   # ponytail: brackets inside string literals count too.
