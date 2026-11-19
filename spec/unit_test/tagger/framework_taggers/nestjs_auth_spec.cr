@@ -430,6 +430,30 @@ describe "NestjsAuthTagger" do
     nest_tags.call(files, probes).should eq([[] of String, [] of String, [] of String, ["Protected by NestJS TokenMiddleware middleware"]])
   end
 
+  it "reads @Middlewares only on tsoa routes" do
+    files = {
+      "package.json"            => "{}",
+      "src/items.controller.ts" => "@Controller('items')\nexport class ItemsController {\n  @Middlewares(isAuthenticated)\n  @Get('a')\n  a() {}\n}\n",
+    }
+    nest_tags.call(files, [{"src/items.controller.ts", 4, "/items/a", "ts_nestjs"}]).should eq([[] of String])
+  end
+
+  it "reads tsoa @Middlewares under @NoSecurity, which lifts only @Security" do
+    files = {
+      "package.json"           => "{}",
+      "src/nosecController.ts" => "@Route('nosec')\n@NoSecurity()\nexport class NosecController extends Controller {\n  @Middlewares(isAuthenticated)\n  @Get('m')\n  public async m() {}\n}\n",
+    }
+    nest_tags.call(files, [{"src/nosecController.ts", 5, "/nosec/m", "ts_tsoa"}]).should eq([["Protected by tsoa @Middlewares(isAuthenticated)"]])
+  end
+
+  it "reads a tsoa authentication middleware factory called with no options" do
+    files = {
+      "package.json"          => "{}",
+      "src/itemController.ts" => "@Route('items')\nexport class ItemController extends Controller {\n  @Middlewares([requireAuth(), authLimiter])\n  @Get('f')\n  public async f() {}\n}\n",
+    }
+    nest_tags.call(files, [{"src/itemController.ts", 4, "/items/f", "ts_tsoa"}]).should eq([["Protected by tsoa @Middlewares(requireAuth)"]])
+  end
+
   it "does not leak a decorator past a one-line handler body" do
     tmpdir = File.tempname("tsoa_one_line")
     Dir.mkdir_p(tmpdir)

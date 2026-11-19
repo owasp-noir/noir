@@ -496,6 +496,10 @@ class NestjsAuthTagger < FrameworkTagger
       if mw = for_routes_guard(endpoint)
         endpoint.add_tag(Tag.new("auth", "Protected by NestJS #{mw} middleware", "nestjs_auth"))
       end
+      # tsoa runs `@Middlewares` whatever `@NoSecurity` says: that lifts only `@Security`.
+      if endpoint.details.technology == "ts_tsoa" && (mw = tsoa_middlewares(method_decorators, class_decorators))
+        endpoint.add_tag(Tag.new("auth", "Protected by #{mw}", "nestjs_auth"))
+      end
 
       # Check if endpoint (or its whole controller) is explicitly public
       if (method_decorators + class_decorators).any? { |decorator| PUBLIC_PATTERNS.any? { |pattern| decorator.text.matches?(pattern) } }
@@ -570,9 +574,17 @@ class NestjsAuthTagger < FrameworkTagger
     AUTH_DECORATORS.each do |pattern, desc|
       authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
     end
-    if desc = guard_decorator_desc(decorator, file) || middlewares_desc(current)
+    if desc = guard_decorator_desc(decorator, file)
       authn_descs << desc unless authn_descs.includes?(desc)
     end
+  end
+
+  # The authentication middlewares a tsoa route's `@Middlewares` run, method
+  # level first, as a description.
+  private def tsoa_middlewares(method_decorators : Array(Noir::TsDecoratorExtractor::Decorator), class_decorators : Array(Noir::TsDecoratorExtractor::Decorator)) : String?
+    method_decorators.each { |decorator| middlewares_desc(decorator.text).try { |desc| return desc } }
+    class_decorators.each { |decorator| middlewares_desc(decorator.text).try { |desc| return "#{desc} (class-level)" } }
+    nil
   end
 
   # For a tsoa `@Middlewares(...)`, its authentication middlewares as a
@@ -580,7 +592,8 @@ class NestjsAuthTagger < FrameworkTagger
   private def middlewares_desc(line : String) : String?
     args = guard_arg_lists(line, MIDDLEWARES_CALL).first?.try(&.strip) || return
     args = args[1...-1] if args.starts_with?('[') && args.ends_with?(']')
-    names = Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).select(&.matches?(AUTH_MIDDLEWARE_NAME))
+    # `requireAuth()`: a factory called with no options builds the same middleware.
+    names = Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip.sub(/\(\s*\)\z/, "")).select(&.matches?(AUTH_MIDDLEWARE_NAME))
     "tsoa @Middlewares(#{names.join(", ")})" unless names.empty?
   end
 
@@ -608,7 +621,7 @@ class NestjsAuthTagger < FrameworkTagger
         labeled = "#{desc} (class-level)"
         authn_descs << labeled unless authn_descs.includes?(labeled) || authn_descs.includes?(desc)
       end
-      if desc = guard_decorator_desc(class_decorator, file) || middlewares_desc(decorator)
+      if desc = guard_decorator_desc(class_decorator, file)
         labeled = "#{desc} (class-level)"
         authn_descs << labeled unless authn_descs.includes?(labeled)
       end
