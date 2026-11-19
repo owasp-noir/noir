@@ -245,16 +245,19 @@ describe "SwiftAuthTagger" do
           sessions.get("login", use: WebController.login)
           let members = sessions.grouped(User.redirectMiddleware(path: "/login"))
           members.get("account", use: WebController.account)
+          let www = app.grouped(WWWRedirect.redirectMiddleware(host: "www.example.com"))
+          www.get("landing", use: WebController.landing)
       }
       SWIFT
 
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(tmpdir)
     at = ->(line : Int32) { Endpoint.new("/x", "GET", [] of Param, Details.new(PathInfo.new(routes, line))) }
-    login, account = at.call(3), at.call(5)
-    SwiftAuthTagger.new(noir_options).perform([login, account])
+    login, account, landing = at.call(3), at.call(5), at.call(7)
+    SwiftAuthTagger.new(noir_options).perform([login, account, landing])
 
     login.tags.should be_empty
+    landing.tags.should be_empty
     account.tags.map(&.description).should eq(["Protected by Vapor redirectMiddleware"])
   ensure
     FileUtils.rm_rf(tmpdir) if tmpdir
