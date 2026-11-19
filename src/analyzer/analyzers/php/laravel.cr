@@ -120,6 +120,7 @@ module Analyzer::Php
       # `Routes/` is the nwidart-module (<= v10) and Bagisto package layout.
       path.includes?("/routes/") || path.includes?("\\routes\\") || path.includes?("/Routes/") ||
         File.basename(File.dirname(path)).in?("routes", "Routes")
+        File.basename(File.dirname(path)).in?("routes", "Routes")
     end
 
     private def analyze_routes_file(path : String) : Array(Endpoint)
@@ -163,32 +164,70 @@ module Analyzer::Php
     # `Route::group(['prefix' => 'api'], function () { require ... })`), or
     # `->withRouting(api: __DIR__.'/../routes/api.php', apiPrefix: 'v2')` in
     # `bootstrap/app.php` (Laravel 11+, `apiPrefix` defaulting to `api`),
-    # whose `then:` closure registers further groups the same way.
+    ROUTE_FILE_REF_RE   = /(['"])([^'"\n]*[Rr]outes\/[^'"\n]*\.php)\1/
     ROUTE_FILE_REF_RE   = /(['"])([^'"\n]*[Rr]outes\/[^'"\n]*\.php)\1/
     WITH_ROUTING_API_RE = /\bapi\s*:\s*(?:\[[^\]]*\]|[^,)]*)/
     WITH_ROUTING_WEB_RE = /\bweb\s*:\s*(?:\[[^\]]*\]|[^,)]*)/
     API_PREFIX_RE       = /\bapiPrefix\s*:\s*['"]([^'"]*)['"]/
 
     private def route_file_prefixes : Hash(String, String)
+      # Route files another route file loads (`Route::prefix('v1')->group(base_path('routes/api/v1.php'))`,
+      # `require __DIR__.'/admin.php'` inside a group): loaded file => {includer,
+      # prefix, middleware} relative to the includer, resolved once every
+      # provider has been read.
+      included = {} of String => Tuple(String, String, Array(String))
       prefixes = {} of String => String
       php_source_files.each do |path|
+        route_file = !bootstrap && laravel_route_file?(path)
         bootstrap = path.ends_with?("/bootstrap/app.php")
         # A provider need not be named `*Provider.php` (akaunting's is
-        # `app/Providers/Route.php`).
+        next unless bootstrap || route_file || path.ends_with?("Provider.php") || path.includes?("/Providers/")
         next unless bootstrap || path.ends_with?("Provider.php") || path.includes?("/Providers/")
         next if PhpEngine.test_path?(base_relative_path(path))
         begin
-          content = read_file_content(path)
+          if route_file
+            next unless content.includes?(".php")
+            base = composer_project_root(path).presence || laravel_project_root(path) || ""
+            local, names = {} of String => String, {} of String => Array(String)
+            collect_route_wiring(php_code(content), path, base, local, names, sibling_refs: true)
+            includer = Noir::PathScope.expand(path)
+            local.each { |file, prefix| included[file] ||= {includer, prefix, names[file]} unless file == includer }
+            next
+          end
+          next unless content.includes?("routes/") || content.includes?("Routes/")
           next unless content.includes?("routes/") || content.includes?("Routes/")
           base = bootstrap ? File.dirname(File.dirname(path)) : composer_project_root(path)
           collect_route_wiring(php_code(content), path, base, prefixes, @route_file_middleware) unless base.empty?
         rescue e
           logger.debug "Error reading Laravel route wiring #{path}: #{e}"
         end
+      included.each_key do |file|
+        next if prefixes.has_key?(file)
+        prefixes[file], @route_file_middleware[file] = included_route_wiring(file, included, prefixes)
+      end
       end
       prefixes
     end
+    # {prefix, middleware} a route file is loaded under: its provider wiring,
+    # else its includer's plus the groups around the include, else the default.
+    private def included_route_wiring(file : String, included : Hash(String, Tuple(String, String, Array(String))),
+                                      prefixes : Hash(String, String), depth : Int32 = 0) : Tuple(String, Array(String))
+      if prefix = prefixes[file]?
+        return {prefix, @route_file_middleware[file]? || default_route_file_middleware(file)}
+      end
+      if depth < 8 && (edge = included[file]?)
+        includer, prefix, names = edge
+        outer_prefix, outer_names = included_route_wiring(includer, included, prefixes, depth + 1)
+        return {build_full_path(outer_prefix, prefix), outer_names + names}
+      end
+      {default_route_file_prefix(file), default_route_file_middleware(file)}
+    end
 
+    # A route file may also load a sibling by a `__DIR__`-relative path
+    # without `routes/` in it (`require __DIR__.'/admin.php'`): `sibling_refs`.
+    PHP_FILE_REF_RE = /(['"])([^'"\n]*\.php)\1/
+
+    private def collect_route_wiring(content : String, source_path : String, base : String, prefixes : Hash(String, String), middleware : Hash(String, Array(String)), sibling_refs : Bool = false) : Nil
     private def collect_route_wiring(content : String, source_path : String, base : String, prefixes : Hash(String, String), middleware : Hash(String, Array(String))) : Nil
       # `use Illuminate\Support\Facades\Route as Facade;` -> read `Facade::` as `Route::`.
       if aliased = content.match(/\buse\s+\\?Illuminate\\Support\\Facades\\Route\s+as\s+(\w+)\s*;/)
@@ -214,9 +253,11 @@ module Analyzer::Php
       api_spans = content.scan(WITH_ROUTING_API_RE).map { |m| m.begin(0)...m.end(0) }
       web_spans = content.scan(WITH_ROUTING_WEB_RE).map { |m| m.begin(0)...m.end(0) }
       api_prefix = content.match(API_PREFIX_RE).try(&.[1]) || "api"
-
+      content.scan(sibling_refs ? PHP_FILE_REF_RE : ROUTE_FILE_REF_RE) do |ref|
       content.scan(ROUTE_FILE_REF_RE) do |ref|
-        at = ref.begin(0)
+        dir_relative = content[Math.max(0, at - 16)...at].matches?(/__DIR__\s*\.\s*\z/)
+        next if sibling_refs && !dir_relative && !ref[2].matches?(/[Rr]outes\//)
+        relative_to = dir_relative ? File.dirname(source_path) : base
         relative_to = content[Math.max(0, at - 16)...at].matches?(/__DIR__\s*\.\s*\z/) ? File.dirname(source_path) : base
         enclosing = groups.select { |(open, close, _, _)| open < at && at < close }
         prefix = enclosing.reduce("") { |acc, group| build_full_path(acc, group[2]) }
@@ -1166,7 +1207,6 @@ module Analyzer::Php
       candidates.find { |candidate| File.exists?(candidate) } || candidates.first?
     end
 
-    private def laravel_project_root(routes_file_path : String) : String?
       idx = [routes_file_path.rindex("/routes/"), routes_file_path.rindex("/Routes/")].compact.max?
       return unless idx
       routes_file_path[0...idx]
