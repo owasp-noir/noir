@@ -376,13 +376,22 @@ module Analyzer::Php
     # `Illuminate\Http\Request` reads (Laravel, Lumen): `$request->input('x')`,
     # `request()->query('x')`, `$request->header('X-Token')`, ... Capture 1 is
     # the accessor, capture 2 the input name.
-    ILLUMINATE_ACCESSORS       = "input|post|get|query|header|cookie|file|hasFile|has|filled|string|integer|boolean|float|date|enum|array"
+    ILLUMINATE_ACCESSORS       = "input|post|get|query|header|cookie|file|hasFile|has|filled|string|str|integer|boolean|float|date|enum|array|collect|json|missing|whenHas|whenFilled|hasHeader|hasCookie"
     ILLUMINATE_REQUEST_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(#{ILLUMINATE_ACCESSORS})\s*\(\s*['"]([^'"]+)['"]/
     # `$request->only('a', 'b')` / `->only(['a', 'b'])`: several literal
     # input names per call, as arguments or one array. Capture 1 the list.
     # (`except` names the inputs the code drops, often `_token`.)
-    ILLUMINATE_MULTI_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*only\s*\(\s*(\[?\s*['"][^'"]+['"](?:\s*,\s*['"][^'"]+['"])*\s*,?\s*\]?)\s*\)/
-    ILLUMINATE_READ_TYPES    = {"get" => "query", "query" => "query", "header" => "header", "cookie" => "cookie"}
+    ILLUMINATE_MULTI_READ_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*(?:only|hasAny)\s*\(\s*(\[?\s*['"][^'"]+['"](?:\s*,\s*['"][^'"]+['"])*\s*,?\s*\]?)\s*\)/
+    ILLUMINATE_READ_TYPES    = {"get" => "query", "query" => "query", "header" => "header", "cookie" => "cookie", "hasHeader" => "header", "hasCookie" => "cookie"}
+    # The `request()` helper given the input itself: `request('sort', 'asc')`
+    # (capture 1) or `request(['search', 'category'])` (capture 2), not a
+    # method or a static call of that name.
+    ILLUMINATE_HELPER_READ_RE = /(?<![>:\w$])request\(\s*(?:['"]([^'"]+)['"]|\[((?:\s*['"][^'"]+['"]\s*,?)+)\])/
+    # `bearerToken()` reads the `Authorization` header.
+    ILLUMINATE_BEARER_RE = /(?:\$request|\brequest\(\s*\))\s*->\s*bearerToken\s*\(/
+    # `use Illuminate\Support\Facades\Request [as X];`: `Request::input('x')`
+    # reads the current request like `request()->input('x')`.
+    ILLUMINATE_FACADE_USE_RE = /\buse\s+\\?Illuminate\\Support\\Facades\\Request(?:\s+as\s+(\w+))?\s*;/
     # Calls taking a validation rules array: `$request->validate([...])`,
     # `$this->validate($request, [...])`, `Validator::make($data, [...])`.
     ILLUMINATE_VALIDATE_RE = /(?:->\s*validate(?:WithBag)?|\bValidator::make)\s*\(/
@@ -392,7 +401,7 @@ module Analyzer::Php
     # A dynamic property read, `$request->email`: `Request::__get` returns
     # that input. Not a call, not a chain, not an assignment, and not one of
     # the request's own public properties (`$request->query->get(...)`).
-    ILLUMINATE_DYNAMIC_READ_RE    = /\$request\s*->\s*([a-z_]\w*)\b(?!\s*(?:\(|->|=(?![=>])))/
+    ILLUMINATE_DYNAMIC_READ_RE    = /(?:\$request|(?<![>:\w$])request\(\s*\))\s*->\s*([a-z_]\w*)\b(?!\s*(?:\(|->|=(?![=>])))/
     ILLUMINATE_REQUEST_PROPERTIES = Set{"attributes", "request", "query", "server", "files", "cookies", "headers", "content", "json", "session"}
 
     # Where an accessor's input comes from; body inputs as "form".
@@ -407,6 +416,17 @@ module Analyzer::Php
     # be read.
     protected def illuminate_request_params(body : String, klass : String? = nil) : Array(Param)
       params = [] of Param
+      if klass && body.includes?("::") && (facade = klass.match(ILLUMINATE_FACADE_USE_RE))
+        body = body.gsub(/(?<![\w\\$])#{facade[1]? || "Request"}::(?=\w+\s*\()/, "request()->")
+      end
+      body.scan(ILLUMINATE_HELPER_READ_RE) do |m|
+        if name = m[1]?
+          params << Param.new(name, "", "form")
+        else
+          m[2].scan(/['"]([^'"]+)['"]/) { |entry| params << Param.new(entry[1], "", "form") }
+        end
+      end
+      params << Param.new("Authorization", "", "header") if body.matches?(ILLUMINATE_BEARER_RE)
       body.scan(ILLUMINATE_REQUEST_READ_RE) do |m|
         params << Param.new(m[2], "", illuminate_read_type(m[1]))
       end
