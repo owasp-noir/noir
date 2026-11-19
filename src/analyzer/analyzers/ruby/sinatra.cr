@@ -111,6 +111,8 @@ module Analyzer::Ruby
     RACK_URLMAP_RE    = /Rack::URLMap\.new\s*\(([^)]*)\)/m
     RACK_URLMAP_PAIR  = /['"]([^'"]*)['"]\s*=>\s*(?:::)?([A-Z][\w:]*)/
     RACK_CLASS_DEF_RE = /^class\s+(?:::)?([A-Z][\w:]*)/
+    # The `run` of a one-line `map('/users') { run UsersController }`.
+    RACK_INLINE_RUN_RE = /\brun\s*\(?\s*(?:::)?([A-Z][\w:]*)/
 
     # `map "/api/v1" do run Api end` and `run Rack::URLMap.new("/x" => App)`
     # in every rackup file. Class names compare on their last `::` segment.
@@ -129,7 +131,11 @@ module Analyzer::Ruby
           stripped = Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: true).strip
           if mm = stripped.match(RACK_MAP_RE)
             maps << {depth: depth + 1, path: mm[1]}
-          elsif rm = stripped.match(RACK_RUN_RE)
+            rm = mm.post_match.match(RACK_INLINE_RUN_RE)
+          else
+            rm = stripped.match(RACK_RUN_RE)
+          end
+          if rm
             prefix = sinatra_prefixed_path(maps, "")
             mounts << RackMount.new(root, rm[1].split("::").last, prefix) unless prefix == "/"
           end
