@@ -379,7 +379,11 @@ module Analyzer::Javascript
         return function_handler(local, content, path) || Handler.new(local, path, line)
       end
       if m = content.match(EXPORT_VERB_CONST_RES[method])
-        wrapped_handler(content, m.end(0), path, method, line_number_for_index(content, m.begin(0)))
+        return wrapped_handler(content, m.end(0), path, method, line_number_for_index(content, m.begin(0)))
+      end
+      # `export const { GET, POST } = handlers` (Auth.js v5)
+      if m = content.match(EXPORT_VERB_CONST_BRACE_RES[method])
+        Handler.new(method, path, line_number_for_index(content, m.begin(0)))
       end
     end
 

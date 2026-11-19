@@ -15,6 +15,8 @@ expected_endpoints = [
     Param.new("dryRun", "", "query"),
     Param.new("tags", "", "form"),
   ]),
+  Endpoint.new("/api/auth/{*nextauth}", "GET", [Param.new("nextauth", "", "path")]),
+  Endpoint.new("/api/auth/{*nextauth}", "POST", [Param.new("nextauth", "", "path")]),
   Endpoint.new("/api/nested", "GET", [Param.new("page", "", "query"), Param.new("sort", "", "query")]),
   Endpoint.new("/api/request-named", "POST", [
     Param.new("q", "", "query"),
@@ -36,3 +38,19 @@ FunctionalTester.new("fixtures/javascript/nextjs_request_readers/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
+
+describe "Next.js destructured verb export line", tags: "functional" do
+  it "points `export const { GET, POST } = handlers` at the export" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs_request_readers/")])
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    auth = app.endpoints.select(&.url.starts_with?("/api/auth/"))
+    auth.size.should eq(2)
+    auth.each { |ep| ep.details.code_paths.first.line.should eq(5) }
+  end
+end
