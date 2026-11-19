@@ -120,18 +120,27 @@ module DjangoMiddlewareGuard
     end
   end
 
-  # Each `MIDDLEWARE = [...]` / `+= [...]` statement's indent and list, or
-  # the list a bare name it copies holds (`MIDDLEWARE = BASE_MIDDLEWARE`).
+  # Each `MIDDLEWARE = ...` / `+= ...` statement's indent and the lists it
+  # assigns: every operand of a `+` concatenation that is a literal list, or
+  # a bare name holding one in the same file (`BASE_MIDDLEWARE + [...]`). A
+  # call result (`list(MIDDLEWARE)`) or another module's name is not read.
   private def middleware_values(code : String) : Array({String, String})
     values = [] of {String, String}
-    code.scan(/^([ \t]*)MIDDLEWARE[ \t]*\+?=[ \t]*([^\n]*)/m) do |assignment|
-      rhs = assignment[2].strip
-      value = if rhs.starts_with?('[') || rhs.starts_with?('(')
-                bracketed_after(code, /MIDDLEWARE[ \t]*\+?=/, assignment.begin)
-              elsif name = rhs.match(/\A([A-Za-z_]\w*)\z/).try(&.[1])
-                bracketed_after(code, /^[ \t]*#{name}[ \t]*=[ \t]*(?=[\[(])/m) unless name == "MIDDLEWARE"
-              end
-      values << {assignment[1], value} if value
+    code.scan(/^([ \t]*)MIDDLEWARE[ \t]*\+?=[ \t]*/m) do |assignment|
+      rhs = ""
+      code[assignment.end..].each_line(chomp: true) do |line|
+        rhs = rhs.empty? ? line : "#{rhs}\n#{line}"
+        break if mw_mask(rhs)[1] == 0
+      end
+      lists = Noir::TopLevelSplit.split(rhs, '+', Noir::TopLevelSplit::Rules::PYTHON).compact_map do |operand|
+        operand = operand.strip
+        if operand.starts_with?('[') || operand.starts_with?('(')
+          operand
+        elsif operand.matches?(/\A[A-Za-z_]\w*\z/) && operand != "MIDDLEWARE"
+          bracketed_after(code, /^[ \t]*#{operand}[ \t]*=[ \t]*(?=[\[(])/m)
+        end
+      end
+      values << {assignment[1], lists.join(" + ")} unless lists.empty?
     end
     values
   end
