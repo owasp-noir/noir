@@ -740,4 +740,26 @@ describe "Ruby route gaps" do
     open_ended.should contain("/g/latest")
     open_ended.should contain("/g/{f}")
   end
+
+  it "resolves permit lists named by a method or an unknown constant in time linear in the controller" do
+    app = ->(n : Int32) do
+      actions = (0...n).join { |i| "  def a#{i}\n    Thing.create(params.require(:thing).permit(#{i.even? ? "allowed" : "SHARED"}))\n  end\n" }
+      {
+        "Gemfile"                                   => RAILS_GEMFILE,
+        "config/routes.rb"                          => "Rails.application.routes.draw do\n" + (0...n).join { |i| "  post \"/a#{i}\", to: \"big#a#{i}\"\n" } + "end\n",
+        "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::Base\nend\n",
+        "app/controllers/big_controller.rb"         => "class BigController < ApplicationController\n#{actions}  private\n\n  def allowed\n    %i[title body]\n  end\nend\n",
+      }
+    end
+    small = app.call(300)
+    large = app.call(1200)
+    scan_ruby_tree(small)
+    small_time = Time.measure { scan_ruby_tree(small) }
+    endpoints = [] of Endpoint
+    large_time = Time.measure { endpoints = scan_ruby_tree(large) }
+    endpoints.size.should eq 1200
+    param_names(find_ep(endpoints, "POST", "/a1198"), "form").should eq(%w[body title])
+    param_names(find_ep(endpoints, "POST", "/a1199"), "form").should be_empty
+    (large_time / small_time).should be < 10
+  end
 end

@@ -167,7 +167,10 @@ module Analyzer::Ruby
       # Per method, the helpers it reads only by `[:key]`, with those keys.
       helper_keys_by_action : Hash(String, Hash(String, Set(String))) = Hash(String, Hash(String, Set(String))).new,
       # Methods whose body still runs Devise's param reads (see `DEVISE_READS`).
-      devise_reads : Set(String) = Set(String).new
+      devise_reads : Set(String) = Set(String).new,
+      # Per method, the bare identifiers it names that this file defines no
+      # method for: calls an ancestor or concern may answer.
+      external_calls_by_action : Hash(String, Set(String)) = Hash(String, Set(String)).new
 
     # A `concern :name do ... end` body: its routing lines, replayed wherever
     # `resources ..., concerns: :name` or `concerns :name` names it. Rails
@@ -231,6 +234,9 @@ module Analyzer::Ruby
     alias EngineMountKey = Tuple(String, String)
 
     @controller_data_cache = Hash(String, ControllerData).new
+    @chain_method_names = Hash(String, Set(String)).new
+    # `<app>/app/views/<controller>/<action>` -> its first template file.
+    @view_templates : Hash(String, String)? = nil
     # Per file, its helpers that return `params.require(key)`; see `params_wrappers`.
     @params_wrappers = Hash(String, Set(String)).new
     # Maps a mountable-engine constant (e.g. `DiscoursePoll::Engine`) to the
@@ -264,6 +270,8 @@ module Analyzer::Ruby
       files = all_files.reject { |file| ruby_non_production_path?(file) }
       @known_files = Set(String).new(files)
       @callback_chain = nil
+      @chain_method_names.clear
+      @view_templates = nil
       @gemfile_public_roots = nil
       @public_file_candidates = nil
       @constant_lists.clear
@@ -1110,25 +1118,36 @@ module Analyzer::Ruby
       replay_concerns(parse_symbol_list(args), scan, scan.stack)
     end
 
-    # resources :foo / resource :foo
+    # resources :foo / resource :foo / resources :photos, :books
     private def handle_resources(kind_kw : String, args : String, opens_block : Bool, scan : RouteFileState)
       stack = scan.stack
-      return unless name = parse_first_route_name(args)
+      return unless first = parse_first_route_name(args)
       options = with_options_for(stack).merge(parse_options(args))
-
-      existing_controller_path = emit_resource_routes(scan.framework_root, stack, kind_kw, name, options)
-
-      # A `module:` on the resources line also scopes nested
-      # resources/routes inside its block, so carry it on the frame's
-      # controller_subdir for children to inherit. Its concerns run in the
-      # same scope as the block, ahead of it.
-      frame = Frame.new(:resources, path: options["path"]?.try { |p| normalize_route_prefix(p) } || name, resource_name: options["as"]?.presence || name,
-        controller_path: existing_controller_path, controller_subdir: options["module"]? || "",
-        shallow: options["shallow"]? == "true", shallow_member: shallow_nested?(stack, options),
-        param_name: resource_param_name(options, kind_kw == "resource"))
       concern_names = parse_symbol_list(options["concerns"]?)
-      replay_concerns(concern_names, scan, stack + [frame]) unless concern_names.empty?
-      stack << frame if opens_block
+      names = [first]
+      rest = args.sub(/\A\s*(?::[A-Za-z_]\w*|['"][^'"]+['"])/, "")
+      while m = rest.match(/\A\s*,\s*(?::([A-Za-z_]\w*)|['"]([^'"]+)['"])(?![\w:]|\s*=>)/)
+        names << (m[1]? || m[2]).to_s
+        rest = m.post_match
+      end
+
+      # ponytail: a block opened by several names nests under the first
+      # one only; Rails runs it once per name.
+      frames = names.map do |name|
+        existing_controller_path = emit_resource_routes(scan.framework_root, stack, kind_kw, name, options)
+
+        # A `module:` on the resources line also scopes nested
+        # resources/routes inside its block, so carry it on the frame's
+        # controller_subdir for children to inherit. Its concerns run in the
+        # same scope as the block, ahead of it.
+        frame = Frame.new(:resources, path: options["path"]?.try { |p| normalize_route_prefix(p) } || name, resource_name: options["as"]?.presence || name,
+          controller_path: existing_controller_path, controller_subdir: options["module"]? || "",
+          shallow: options["shallow"]? == "true", shallow_member: shallow_nested?(stack, options),
+          param_name: resource_param_name(options, kind_kw == "resource"))
+        replay_concerns(concern_names, scan, stack + [frame]) unless concern_names.empty?
+        frame
+      end
+      stack << frames.first if opens_block
     end
 
     private def resource_param_name(options : Hash(String, String), singular : Bool) : String?
@@ -1371,9 +1390,10 @@ module Analyzer::Ruby
     # A `Const.list` receiver (`Discourse.filters.each do |filter|`) unrolls
     # too when the app defines it as a literal list (see `constant_list`).
     # The brace form `RECV.each { |x| get "#{x}" }` is the same block on one
-    # line.
-    LOOP_RECEIVER  = /(?:%[wi][\[\(\{][^\]\)\}]*[\]\)\}]|(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*)/
-    LOOP_OPENER    = /^(?:%[wi][\[\(\{]([^\]\)\}]*)[\]\)\}]|((?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*))\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
+    # line. A `[:about, "contact"]` literal unrolls when every element is a
+    # symbol or string literal.
+    LOOP_RECEIVER  = /(?:%[wi][\[\(\{][^\]\)\}]*[\]\)\}]|(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*|\[[^\]]*\])/
+    LOOP_OPENER    = /^(?:%[wi][\[\(\{]([^\]\)\}]*)[\]\)\}]|((?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*)|(\[[^\]]*\]))\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
     LOOP_ONE_LINER = /^(#{LOOP_RECEIVER})\s*\.each(?:_with_index)?\s*\{\s*\|\s*([a-z_]\w*)[^|]*\|\s*(.+?)\s*\}\s*$/
 
     # noir scans arbitrary untrusted repos, so loop unrolling must not be a DoS
@@ -1399,8 +1419,8 @@ module Analyzer::Ruby
       index = 0
       while index < lines.size
         line = lines[index]
-        if (m = line.text.match(LOOP_OPENER)) && (values = m[1]? ? m[1].split(/\s+/).reject(&.empty?) : constant_list(m[2]).try(&.values))
-          var = m[3]
+        if (m = line.text.match(LOOP_OPENER)) && (values = loop_values(m))
+          var = m[4]
           # Something extends the list with a value only runtime knows: the
           # unrolled copies are a floor, so the block also stays as written.
           open_ended = m[2]? && constant_list(m[2]).try { |list| !list.complete }
@@ -1448,6 +1468,19 @@ module Analyzer::Ruby
       end
 
       result
+    end
+
+    private def loop_values(m : Regex::MatchData) : Array(String)?
+      return m[1].split(/\s+/).reject(&.empty?) if m[1]?
+      return constant_list(m[2]).try(&.values) if m[2]?
+      values = [] of String
+      m[3][1...-1].split(',').each do |item|
+        item = item.strip
+        next if item.empty?
+        return unless lit = item.match(/\A(?::(\w+)|'([\w\/-]*)'|"([\w\/-]*)")\z/)
+        values << (lit[1]? || lit[2]? || lit[3]?).to_s
+      end
+      values.empty? ? nil : values
     end
 
     # `RECV.each { |x| stmt }` as the `do` / `end` block `expand_static_loops`
@@ -2040,10 +2073,15 @@ module Analyzer::Ruby
         next unless action_allowed?(route_action, only, except)
         next if @disabled_route_verbs.includes?(verb)
         action = to_action || route_action
-        next unless owner = action_owner(path, action)
+        # Rails renders `app/views/<controller>/<action>.*` for an action the
+        # controller does not define.
+        owner = action_owner(path, action)
+        template = owner ? nil : view_template(path, action)
+        next unless owner || template
+        owner ||= extract_controller_data(path)
         on_collection = route_action == "index" || route_action == "create" || route_action == "new"
         params = promote_path_params(action_params(owner, action, verb, path), on_collection ? path_params : member_params)
-        details = Details.new(PathInfo.new(owner.path, owner.action_lines[action]?))
+        details = Details.new(template ? PathInfo.new(template) : PathInfo.new(owner.path, owner.action_lines[action]?))
         url = on_collection ? index_url : member_url
         url = "#{url.rchop('/')}/#{route_action}" if route_action == "new" || route_action == "edit"
         endpoint = Endpoint.new(url, verb, params, details)
@@ -2053,6 +2091,21 @@ module Analyzer::Ruby
       end
 
       endpoints
+    end
+
+    private def view_template(controller_path : String, action : String) : String?
+      return unless controller_path.ends_with?("_controller.rb") && (idx = controller_path.rindex("/app/controllers/"))
+      templates = @view_templates ||= begin
+        found = Hash(String, String).new
+        @known_files.each do |file|
+          next unless file.includes?("/app/views/")
+          base = File.basename(file)
+          next if base.starts_with?('_')
+          found.put_if_absent("#{File.dirname(file)}/#{base.split('.', 2)[0]}") { file }
+        end
+        found
+      end
+      templates["#{controller_path[0, idx]}/app/views/#{controller_path[(idx + "/app/controllers/".size)..].rchop("_controller.rb")}/#{action}"]?
     end
 
     # Scans a controller file once, collecting per-method params (headers/cookies)
@@ -2097,6 +2150,7 @@ module Analyzer::Ruby
       permit_buf : String? = nil
       permit_mask = ""
       permit_lines = 0
+      class_heads : Hash(String, Array(Int32))? = nil
 
       controller_lines = controller_content.lines
       class_body = own_class_body(controller_lines)
@@ -2116,18 +2170,16 @@ module Analyzer::Ruby
       controller_lines.each_with_index do |raw_line, index|
         line = spell_out_params(strip_inline_comment(raw_line), wrappers, locals) { |key| local_roots << {this_method, key} }
 
-        if line.includes?("def ")
-          func_name = line.split("def ", 2)[1].split("(")[0].split(";")[0].strip
-          func_name = func_name.lchop("self.").strip
-          unless func_name.empty?
-            this_method = func_name
-            # An unclosed `permit(` must not swallow the next action's permits.
-            permit_buf = nil
-            locals.clear
-            defined_actions << func_name
-            action_lines[func_name] = index + 1
-            method_bodies[this_method] ||= [] of String
-          end
+        # A setter's `=` is glued to the name (`def name=(v)`); the endless
+        # `def index = render(...)` has a space before it.
+        if line.includes?("def ") && (def_match = line.match(METHOD_DEF))
+          this_method = func_name = def_match[1]
+          # An unclosed `permit(` must not swallow the next action's permits.
+          permit_buf = nil
+          locals.clear
+          defined_actions << func_name
+          action_lines[func_name] = index + 1
+          method_bodies[this_method] ||= [] of String
         end
 
         unless this_method.empty?
@@ -2152,9 +2204,10 @@ module Analyzer::Ruby
         if buf = permit_buf
           if args = permit_args(buf, permit_mask)
             permit_buf = nil
-            scope = PermitScope.new(method_bodies[this_method]? || [] of String, class_body)
-            names = permit_mask.match(PERMIT_OPEN).try(&.[0].includes?("expect")) ? expect_names(args, scope) : permit_names(args, scope)
-            if !names.empty? && (root = permit_mask.match(/params\.require\s*\(\s*:(\w+)/))
+            heads = class_heads ||= permit_heads(class_body)
+            scope = PermitScope.new(method_bodies[this_method]? || [] of String, class_body, heads)
+            names = permit_mask.match(PERMIT_OPEN).try(&.[0].matches?(/expect\s*\(\z/)) ? expect_names(args, scope) : permit_names(args, scope)
+            if !names.empty? && (root = permit_mask.match(/params(?:\.require\s*\(|\[)\s*:(\w+)/))
               permit_roots << root[1]
             end
             names.each do |name|
@@ -2207,7 +2260,7 @@ module Analyzer::Ruby
             tail = line[m.end..]
             if m[0].includes?("require")
               chained = tail.strip.empty? ? controller_lines[index + 1]?.to_s : tail
-              next if chained.matches?(/\A\s*\.\s*(?:permit|expect|fetch|dig)\b/)
+              next if chained.matches?(/\A\s*\.\s*(?:permit|expect|fetch|dig|require)\b/)
             end
             while nested = tail.match(/\A\s*\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/)
               name = (nested[1]? || nested[2]?).to_s
@@ -2275,23 +2328,32 @@ module Analyzer::Ruby
       end
 
       helper_keys_by_action = Hash(String, Hash(String, Set(String))).new
-      helper_calls_by_action = build_helper_call_map(method_bodies, defined_actions, helper_keys_by_action)
+      external_calls_by_action = Hash(String, Set(String)).new
+      helper_calls_by_action = build_helper_call_map(method_bodies, defined_actions, helper_keys_by_action, external_calls_by_action)
 
       devise_reads = Set(String).new
       method_bodies.each { |name, body| devise_reads << name if body.any?(&.matches?(DEVISE_READS)) }
 
       data = ControllerData.new(path, param_type, params_method, params_body_by_action, params_query_by_action,
-        defined_actions, helper_calls_by_action, callees_by_action, action_lines, helper_keys_by_action, devise_reads)
+        defined_actions, helper_calls_by_action, callees_by_action, action_lines, helper_keys_by_action, devise_reads,
+        external_calls_by_action)
       @controller_data_cache[path] = data
       data
     end
 
     # The line a permit list opens on, with the `params.require(:post)` a
-    # chained `.permit(` on its own line continues.
+    # chained `.permit(` on its own line continues, over any `.require(...)`
+    # lines between them (`params` / `.require(:post)` / `.permit(...)`).
     private def permit_opener(line : String, lines : Array(String), index : Int32) : String
       return line unless index > 0 && line.matches?(/\A\s*\.\s*(?:permit|expect)\s*\(/)
-      previous = strip_inline_comment(lines[index - 1]).strip
-      previous.matches?(/(?<![\w.])params(?:\.(?:require|fetch)\s*\([^)]*\))?\z/) ? "#{previous}#{line.lstrip}" : line
+      joined = line.lstrip
+      (index - 1).downto(Math.max(0, index - 4)) do |i|
+        previous = strip_inline_comment(lines[i]).strip
+        joined = "#{previous}#{joined}"
+        return joined if previous.matches?(PERMIT_RECEIVER_END)
+        break unless previous.starts_with?('.')
+      end
+      line
     end
 
     # A helper call `params_for(:post)` or a local `post` read as params
@@ -2354,9 +2416,12 @@ module Analyzer::Ruby
 
     PERMIT_MAX_LINES = 200
     PERMIT_SPLIT     = Noir::TopLevelSplit::Rules.new
-    # `params.permit(`, `params.require(...).permit(`, `params.fetch(...).permit(`,
-    # or Rails 8's `params.expect(` (anchored to bare `params`).
-    PERMIT_OPEN = /(?<![\w.])params\.(?:expect\s*\(|(?:(?:require|fetch)\s*\([^)]*\)\s*\.)?permit\s*\()|(?<![\w.])permit\s*\(/
+    # `params.permit(`, `.permit(` after any chain of `.require(...)`,
+    # `.fetch(...)`, `.slice(...)`, `.except(...)` and `[:key]` on bare
+    # `params`, or Rails 8's `params.expect(`.
+    PERMIT_CHAIN        = %q{(?:\s*\.\s*(?:require|fetch|slice|except)\s*\([^)]*\)|\s*\[[^\]]*\])}
+    PERMIT_OPEN         = /(?<![\w.])params(?:\s*\.\s*expect\s*\(|#{PERMIT_CHAIN}*\s*\.\s*permit\s*\()|(?<![\w.])permit\s*\(/
+    PERMIT_RECEIVER_END = /(?<![\w.])params#{PERMIT_CHAIN}*\z/
 
     # Text between the parens of the first `permit(` / `params.expect(`, or nil
     # while unbalanced. `mask` is `text` with string literals blanked (see
@@ -2403,7 +2468,7 @@ module Analyzer::Ruby
 
     # A read that treats the value as a hash rather than a field.
     # `is_a?(String)` asks whether the value is a scalar, which is a field.
-    CONTAINER_USE = /\A\s*&?\.\s*(?:(?:is_a\?|kind_of\?|instance_of\?)\s*\(?\s*(?:Hash|ActionController::Parameters|Array)\b|key\?|has_key\?|keys\b|each\b|to_unsafe_h\b|to_h\b|slice\b|except\b)/
+    CONTAINER_USE = /\A\s*&?\.\s*(?:(?:is_a\?|kind_of\?|instance_of\?)\s*\(?\s*(?:Hash|ActionController::Parameters|Array)\b|key\?|has_key\?|keys\b|each\b|to_unsafe_h\b|to_h\b|slice\b|except\b|permit\b|require\b)/
 
     # `lines` with the bodies of classes and modules nested in the file's
     # first class blanked: a `class Serializer` inside a controller holds
@@ -2439,15 +2504,29 @@ module Analyzer::Ruby
       return [] of String unless idx = controller_path.rindex("/app/controllers/")
       policy = "#{controller_path[0, idx]}/app/policies/#{record.lchop('@').camelcase.underscore.gsub("::", "/")}_policy.rb"
       return [] of String unless known_file?(policy)
-      scope = PermitScope.new([] of String, ruby_source(policy).lines)
+      lines = ruby_source(policy).lines
+      scope = PermitScope.new([] of String, lines, permit_heads(lines))
       names = permit_list_names("permitted_attributes_for_#{action}", scope, 0)
       names.empty? ? permit_list_names("permitted_attributes", scope, 0) : names
     end
 
     # Where a permit list's bare names are looked up: the lines of its method
     # so far (a local list) and the whole controller file (a constant or a
-    # method that returns one).
-    private record PermitScope, body : Array(String), file : Array(String)
+    # method that returns one). `heads` indexes `file` by the name a line
+    # defines (`def name` / `NAME =`), so a lookup does not rescan the file.
+    private record PermitScope, body : Array(String), file : Array(String), heads : Hash(String, Array(Int32))
+
+    METHOD_DEF  = /(?<![\w.:])def\s+(?:self\.)?([A-Za-z_]\w*[?!=]?)/
+    PERMIT_HEAD = /\A\s*(?:def\s+(?:self\.)?)?([A-Za-z_]\w*)/
+
+    private def permit_heads(lines : Array(String)) : Hash(String, Array(Int32))
+      heads = Hash(String, Array(Int32)).new
+      lines.each_with_index do |line, idx|
+        next unless m = line.match(PERMIT_HEAD)
+        (heads[m[1]] ||= [] of Int32) << idx
+      end
+      heads
+    end
 
     # Param names from a permit argument list: the leading key of each
     # top-level entry (`:title`, `"title"`, `tags: []`, `a: {b: 1}`, `:a => []`,
@@ -2509,9 +2588,14 @@ module Analyzer::Ruby
           item = item.rchop(')') if item.count('(') < item.count(')')
           names.concat(list_literal_names(item.starts_with?('[') || item.starts_with?('%') ? item : "[#{item}]", scope, depth + 1))
         end
-      elsif name[0].ascii_uppercase? && (idx = scope.file.index(&.matches?(assign)))
+      elsif name[0].ascii_uppercase? && (idx = scope.heads[name]?.try(&.find { |i| scope.file[i].matches?(assign) }))
         names.concat(list_literal_names(statement_from(scope.file, idx, assign), scope, depth + 1))
-      elsif idx = scope.file.index(&.matches?(/\A\s*def\s+(?:self\.)?#{Regex.escape(name)}\s*(?:\(\s*\))?\s*\z/))
+      elsif (definition = /\A\s*def\s+(?:self\.)?#{Regex.escape(name)}\s*(?:\(\s*\))?\s*(?:=(?![=~>])\s*(.*))?\z/) &&
+            (idx = scope.heads[name]?.try(&.find { |i| scope.file[i].matches?(definition) }))
+        # An endless `def allowed = %i[title body]` is its own value.
+        if scope.file[idx].match(definition).try(&.[1]?)
+          return list_literal_names(statement_from(scope.file, idx, definition), scope, depth + 1)
+        end
         # A method's value is its last statement: from the last body line at
         # the body's own indent to its end.
         indent = scope.file[idx].size - scope.file[idx].lstrip.size
@@ -2523,10 +2607,10 @@ module Analyzer::Ruby
           if body[start].strip == "end"
             # An `if`/`case` ends it: each branch's list is a value it returns.
             body.each do |l|
-              names.concat(list_literal_names(l, PermitScope.new(body, scope.file), depth + 1)) if l.lstrip.matches?(/\A(?:\[|%[iwIW][\[(])/)
+              names.concat(list_literal_names(l, PermitScope.new(body, scope.file, scope.heads), depth + 1)) if l.lstrip.matches?(/\A(?:\[|%[iwIW][\[(])/)
             end
           else
-            names.concat(list_literal_names(body[start..].join(" "), PermitScope.new(body, scope.file), depth + 1))
+            names.concat(list_literal_names(body[start..].join(" "), PermitScope.new(body, scope.file, scope.heads), depth + 1))
           end
         end
       end
@@ -2586,10 +2670,46 @@ module Analyzer::Ruby
     private def action_params(data : ControllerData, action : String, verb : String,
                               controller_path : String = data.path) : Array(Param)
       result = [] of Param
-      each_helper(data, action) { |name, keys| merge_action_params(result, data, name, verb, keys) }
+      each_reachable_helper(data, action, controller_path) { |owner, name, keys| merge_action_params(result, owner, name, verb, keys) }
       merge_callback_params(result, controller_path, action, verb)
 
       result
+    end
+
+    # `each_helper`, then on into the methods those helpers call that their
+    # own file does not define, each from the nearest file along
+    # `controller_path`'s ancestors and concerns that does
+    # (`Api::BaseController#limit_param`), with that file's own helpers.
+    private def each_reachable_helper(data : ControllerData, name : String, controller_path : String,
+                                      & : ControllerData, String, Set(String)? ->)
+      queue = [{data, name}]
+      seen = Set{ {data.path, name} }
+      chain_names : Set(String)? = nil
+      while entry = queue.shift?
+        owner, start = entry
+        each_helper(owner, start) do |helper, keys|
+          yield owner, helper, keys
+          owner.external_calls_by_action[helper]?.try &.each do |token|
+            next unless (chain_names ||= chain_method_names(controller_path)).includes?(token)
+            next unless (found = action_owner(controller_path, token)) && seen.add?({found.path, token})
+            queue << {found, token}
+          end
+        end
+      end
+    end
+
+    # Every method defined along `controller_path`'s ancestors and concerns,
+    # so a call naming none of them costs no chain walk.
+    private def chain_method_names(controller_path : String) : Set(String)
+      @chain_method_names[controller_path] ||= begin
+        names = Set(String).new
+        callback_chain.controller_in(controller_path).try do |leaf|
+          callback_chain.resolve(leaf, nil).paths.each do |path|
+            names.concat(extract_controller_data(path).defined_actions) unless path == controller_path
+          end
+        end
+        names
+      end
     end
 
     # `name`, then the methods of its file it calls, transitively and each
@@ -2740,7 +2860,8 @@ module Analyzer::Ruby
     end
 
     private def build_helper_call_map(method_bodies : Hash(String, Array(String)), defined_actions : Set(String),
-                                      helper_keys : Hash(String, Hash(String, Set(String)))) : Hash(String, Array(String))
+                                      helper_keys : Hash(String, Hash(String, Set(String))),
+                                      external_calls : Hash(String, Set(String))) : Hash(String, Array(String))
       helper_calls = Hash(String, Array(String)).new
 
       # Tokenize each method body once into the set of identifiers it
@@ -2759,12 +2880,17 @@ module Analyzer::Ruby
         matches = Set(String).new
         keys = Hash(String, Set(String)).new
         whole = Set(String).new
+        external = Set(String).new
         body_lines.each do |line|
           # `render :show` / `render "posts/show"` name a view, not a call,
           # so symbol and string tokens must not pull `show`'s params in.
           blank_quoted(line).scan(HELPER_TOKEN) do |m|
             token = m[1]
-            next unless token != method_name && action_order.has_key?(token)
+            next if token == method_name
+            unless action_order.has_key?(token)
+              external << token
+              next
+            end
             matches << token
             if key = m[2]?
               (keys[token] ||= Set(String).new) << key
@@ -2774,6 +2900,7 @@ module Analyzer::Ruby
           end
         end
         whole.each { |token| keys.delete(token) }
+        external_calls[method_name] = external unless external.empty?
         helper_keys[method_name] = keys unless keys.empty?
         helper_calls[method_name] = matches.to_a.sort_by! { |action| action_order[action] } unless matches.empty?
       end
