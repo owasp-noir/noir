@@ -49,3 +49,21 @@ export function withAuth(scopeOrHandler: any, handler?: any): any {
 export function withAccount(scope: string, handler: any): any {
   return withMiddleware(handler, accountMiddleware, scope);
 }
+
+export function withOptional(handler: any, options: any = {}) {
+  if (options.public) {
+    return withMiddleware(handler);
+  }
+  return withMiddleware(handler, authMiddleware);
+}
+
+function withRunner(handler: any, middleware?: any) {
+  return async (req: Request) => {
+    await middleware(req);
+    return handler(req);
+  };
+}
+
+export function withDropped(handler: any) {
+  return withRunner(handler, authMiddleware);
+}

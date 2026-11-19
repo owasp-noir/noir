@@ -63,8 +63,8 @@ class NextjsAuthTagger < FrameworkTagger
   # withAuth(handler)` wraps the handler declared above it.
   DEFAULT_EXPORT_WRAPPER = /\A\s*export\s+default\s+([A-Za-z_$][\w$]*)\s*\(/
   PAGES_API_PATH         = %r{(?:\A|/)pages/api/}
-  # A bare name handed to a call: `withMiddleware(handler, authMiddleware)`.
-  PASSED_FUNCTION = /[(,]\s*([A-Za-z_$][\w$]*)\s*(?=[,)])/
+  # `return withMiddleware(`: group 1 the callee a wrapper returns.
+  RETURNED_CALL = /^\s*return\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/
   # `throw new DubApiError({ code: "unauthorized" })`: the word lives in a
   # string, so this is matched on text that still has strings. The `{` sits
   # between `throw` and the word, and the object may wrap a line or two.
@@ -541,18 +541,65 @@ class NextjsAuthTagger < FrameworkTagger
     def_line = handler.line || return
     source = read_file(def_path) || return
     stripped = Noir::JSRouteExtractor.strip_js_comments(source)
-    # TypeScript overloads: the body is the last declaration's.
-    decls = stripped.scan(/^[ \t]*(?:export\s+)?(?:async\s+)?function\s*\*?\s*#{Regex.escape(name)}\s*[(<]/m)
-    def_line = stripped[0, decls.last.begin(0)].count('\n') + 1 if decls.size > 1
+    # TypeScript overloads: the body is the last declaration's. Named as
+    # declared, not as imported (`import { withLogging as withAuth }`).
+    if declared = stripped.lines[def_line - 1]?.try(&.match(/\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)/).try(&.[1]))
+      decls = stripped.scan(/^[ \t]*(?:export\s+)?(?:async\s+)?function\s*\*?\s*#{Regex.escape(declared)}\s*[(<]/m)
+      def_line = stripped[0, decls.last.begin(0)].count('\n') + 1 if decls.size > 1
+    end
     raw = Noir::JSRouteExtractor.definition_body(stripped, def_line).lines
     code = raw.map { |line| code_only(line) }
     return "replies 401" if session_refusal(code, raw, UNAUTHORIZED, def_path)
     return "throws unauthorized" if thrown_unauthorized?(raw, code)
-    code.join('\n').scan(PASSED_FUNCTION).map(&.[1]).uniq!.each do |arg|
-      next if {"undefined", "null", "true", "false"}.includes?(arg)
-      found = helper_definition_refusal(arg, source, def_path, 0) || next
-      return "runs `#{arg}()`, #{found.how}"
+    runner_refusal(code, source, def_path)
+  end
+
+  # `return withMiddleware(handler, authMiddleware)`: every call the wrapper
+  # returns hands a refusing function to a runner that hands the refusal
+  # on. An early `return withMiddleware(handler)` (under `if
+  # (options.public)`) opens the route, so then none counts.
+  private def runner_refusal(code : Array(String), source : String, def_path : String) : String?
+    found_desc = nil
+    code.each_with_index do |text, i|
+      m = text.match(RETURNED_CALL) || next
+      args, _ = call_args(code, i, m.end(0) - 1)
+      hit = args.each_with_index.compact_map do |arg, k|
+        name = arg.strip
+        next unless name.matches?(/\A[A-Za-z_$][\w$]*\z/)
+        found = helper_definition_refusal(name, source, def_path, 0) || next
+        "runs `#{name}()`, #{found.how}" if runner_propagates?(m[1], k, source, def_path, found)
+      end.first?
+      return unless hit
+      found_desc ||= hit
     end
+    found_desc
+  end
+
+  # Whether `runner`, as named in `path`, hands on what the function in its
+  # parameter `index` returns (`if (result instanceof Response) return
+  # result`), or that function throws, which stops the runner too.
+  private def runner_propagates?(runner : String, index : Int32, source : String, path : String, found : HelperDef) : Bool
+    return true if found.throws
+    handler = Noir::JSHandlerResolver.resolve(runner, source, path) || return false
+    def_path = handler.path || return false
+    def_line = handler.line || return false
+    lines = read_file_lines(def_path) || return false
+    return false unless def_line <= lines.size
+    body = function_body(lines, def_line - 1)
+    params = Noir::TopLevelSplit.split(parameter_list(body), ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+    param = params[index]?.try(&.strip.match(/\A(?:\.\.\.)?([A-Za-z_$][\w$]*)/).try(&.[1])) || return false
+    body.each_with_index do |text, i|
+      m = text.match(HELPER_STATEMENT) || next
+      next unless m[1] == param
+      return true if text.matches?(/^\s*return\b/)
+      result = text.match(RESULT_NAME).try(&.[1]) || next
+      rest = body[(i + 1)..].reject(&.strip.empty?)
+      check = rest.first? || next
+      next unless check.matches?(/^\s*if\s*\(.*\b#{Regex.escape(result)}\b/)
+      block = check.rstrip.ends_with?('{') ? [check] + rest[1..].take_while { |line| !line.strip.starts_with?('}') } : [check]
+      return true if block.join(' ').matches?(/\breturn\s+(?:await\s+)?#{Regex.escape(result)}\b/)
+    end
+    false
   end
 
   # A throw that says unauthorized (in `raw`, strings kept) under a session

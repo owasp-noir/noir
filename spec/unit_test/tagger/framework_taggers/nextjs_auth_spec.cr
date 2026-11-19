@@ -98,6 +98,11 @@ describe "NextjsAuthTagger" do
     tag.call("app/api/feed/route.ts", 30).map(&.name).should eq(["auth"])
   end
 
+  it "does not credit a wrapper whose call opts out of the runner's middleware, or whose runner drops its reply" do
+    tag.call("app/api/runner/route.ts", 16).should be_empty
+    tag.call("app/api/runner/route.ts", 18).should be_empty
+  end
+
   it "does not count a parenthesis in a regex literal on the export line" do
     tag.call("app/api/pattern/route.ts", 4).should be_empty
     tag.call("app/api/pattern/route.ts", 6).map(&.name).should eq(["auth"])
