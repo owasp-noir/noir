@@ -8,6 +8,7 @@ require "../../../utils/utils.cr"
 require "../../../utils/path_scope"
 require "../../../utils/url_path"
 require "../../../utils/jvm_literal"
+require "../../../utils/spring_property_path"
 
 module Analyzer::Kotlin
   class Spring < Analyzer
@@ -218,8 +219,9 @@ module Analyzer::Kotlin
       stomp_prefixes = stomp_application_prefixes_for(file_list, string_constants, local_string_constants)
       graphql_paths = graphql_paths_for(file_list, path_configs)
 
+      spring_properties = path_configs.keys.to_h { |root| {root, spring_config_values_for(root)} }
       path_configs.each do |root, config|
-        @result.concat(spring_provided_endpoints(root, spring_config_values_for(root), config.web_base_path))
+        @result.concat(spring_provided_endpoints(root, spring_properties[root], config.web_base_path))
       end
 
       file_list.each do |path|
@@ -228,7 +230,8 @@ module Analyzer::Kotlin
         @result.concat(spring_security_endpoints(path, (path_configs[project_root]? || SpringPathConfig.new).filter_base_path))
         process_kotlin_file(
           path, dto_builder, path_configs, base_constants, local_string_constants[path]?,
-          interface_route_index, method_index, stomp_prefixes[project_root]? || [""], graphql_paths[project_root]? || "/graphql"
+          interface_route_index, method_index, stomp_prefixes[project_root]? || [""], graphql_paths[project_root]? || "/graphql",
+          spring_properties[project_root]? || {} of String => String
         )
       end
 
@@ -754,7 +757,8 @@ module Analyzer::Kotlin
                                     interface_route_index : SpringInterfaceRouteIndex,
                                     method_index : SpringMethodIndex,
                                     stomp_application_prefixes : Array(String),
-                                    graphql_path : String)
+                                    graphql_path : String,
+                                    spring_properties : Hash(String, String))
       include_callee = callees_needed?
       content = read_file_content(path)
       return unless kotlin_spring_route_candidate_file?(content)
@@ -805,7 +809,7 @@ module Analyzer::Kotlin
         file_callees = Noir::KotlinCalleeExtractor::FileCallees.new(root, content, path)
 
         stomp_routes.each do |route|
-          route_path = route.verb == "GET" ? Noir::URLPath.join_rooted(webflux_base_path, route.path) : route.path
+          route_path = SpringPropertyPath.resolve(route.verb == "GET" ? Noir::URLPath.join_rooted(webflux_base_path, route.path) : route.path, spring_properties)
           line = route.line + 1
           method = route_method_node(method_nodes, route.class_name, route.method_name, route.line)
           parameters =
@@ -921,7 +925,7 @@ module Analyzer::Kotlin
 
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
-          endpoint = Endpoint.new(Noir::URLPath.join_rooted(base_path, route.path), route.verb, parameters, details)
+          endpoint = Endpoint.new(SpringPropertyPath.resolve(Noir::URLPath.join_rooted(base_path, route.path), spring_properties), route.verb, parameters, details)
           endpoint.handler = jvm_route_handler(route, path)
           if method
             endpoint.route_conditions = Noir::TreeSitterKotlinParameterExtractor.extract_route_conditions_from_method(
@@ -1021,7 +1025,7 @@ module Analyzer::Kotlin
 
               details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
               details.add_path(PathInfo.new(path, implementation.line + 1))
-              endpoint = Endpoint.new(Noir::URLPath.join_rooted(base_path, inherited_path), entry_route.verb, parameters, details)
+              endpoint = Endpoint.new(SpringPropertyPath.resolve(Noir::URLPath.join_rooted(base_path, inherited_path), spring_properties), entry_route.verb, parameters, details)
               impl_function = method_nodes["#{implementation.class_name}##{entry_route.method_name}"]?
               attach_method_security_tags(endpoint, impl_function, content)
               # The body lives on the `override fun`, not the interface function.
