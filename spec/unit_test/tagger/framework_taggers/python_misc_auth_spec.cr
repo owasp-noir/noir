@@ -379,5 +379,10 @@ describe "PythonMiscAuthTagger" do
     it "leaves a Controller's routes open when its opt excludes them" do
       tag.call(svc_a, 20, "/pub/info", "GET").should be_empty
     end
+
+    it "excludes only OPTIONS when exclude_http_methods is None" do
+      tag.call(svc_c, 6, "/c/cors", "OPTIONS").should be_empty
+      tag.call(svc_c, 6, "/c/cors", "HEAD").map(&.name).should eq(["auth"])
+    end
   end
 end

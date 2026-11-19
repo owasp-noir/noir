@@ -122,7 +122,7 @@ class PythonMiscAuthTagger < FrameworkTagger
   # (Litestar joins them into one regex and `findall`s the path), when the
   # route's opt (its own or its Controller's) carries `exclude_opt_key`
   # (`exclude_from_auth=True`), or for an `exclude_http_methods` verb
-  # (OPTIONS and HEAD by default).
+  # (OPTIONS and HEAD by default; `None` leaves the middleware's OPTIONS).
   LITESTAR_AUTH_BACKEND = /^([A-Za-z_]\w*)\s*(?::[^=\n]+)?=\s*(?:[\w.]+\.)?(JWTAuth|JWTCookieAuth|OAuth2PasswordBearerAuth|SessionAuth)\b/
   PY_STRING             = /[rbu]?(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/
 
@@ -191,8 +191,7 @@ class PythonMiscAuthTagger < FrameworkTagger
     opt_key = statement.match(/\bexclude_opt_key\s*=\s*["'](\w+)["']/).try(&.[1]) || "exclude_from_auth"
     methods = %w[OPTIONS HEAD]
     if m = statement.match(/\bexclude_http_methods\s*=\s*/)
-      value = m.post_match.match(/\A[\[(][^\])]*[\])]|\ANone\b/) || return
-      methods = value[0].scan(/["'](\w+)["']/).map(&.[1].upcase)
+      methods = m.post_match.starts_with?("None") ? %w[OPTIONS] : (string_literals(m.post_match) || return).map(&.upcase)
     end
     LitestarBackend.new(name, kind, exclude, opt_key, methods, scope)
   end
