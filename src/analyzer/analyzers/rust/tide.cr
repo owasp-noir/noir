@@ -38,7 +38,8 @@ module Analyzer::Rust
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
         var_paths = collect_route_variables(root, source, path)
-        nest_ranges = collect_nest_ranges(root, source)
+        var_nests = [] of Tuple(Int32, Int32, String, String)
+        nest_ranges = collect_nest_ranges(root, source, var_nests)
 
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
@@ -46,6 +47,7 @@ module Analyzer::Rust
           route = decode_route(node, source, var_paths)
           next unless route
           route_path, method, handler_arg = route
+          route_path = apply_var_nest_prefix(node, route_path, var_nests, source) unless var_nests.empty?
           full_path = apply_nest_prefix(node, route_path, nest_ranges)
 
           details = Details.new(PathInfo.new(path, call_line(node)))
@@ -145,8 +147,12 @@ module Analyzer::Rust
 
     # Collect `app.at("/pre").nest(arg)` mounts as `{arg_byte_range,
     # local_prefix}`. Routes whose byte falls inside `arg` inherit the
-    # prefix (composed across nested mounts in apply_nest_prefix).
-    private def collect_nest_ranges(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(Int32, Int32, String))
+    # prefix (composed across nested mounts in apply_nest_prefix). An `arg`
+    # naming a same-fn `let mut api = tide::new()` goes to `var_nests` as
+    # `{let start, nest start, var, prefix}`: the routes registered on `api`
+    # in between.
+    private def collect_nest_ranges(root : LibTreeSitter::TSNode, source : String,
+                                    var_nests : Array(Tuple(Int32, Int32, String, String))) : Array(Tuple(Int32, Int32, String))
       ranges = [] of Tuple(Int32, Int32, String)
       walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "call_expression"
@@ -163,9 +169,27 @@ module Analyzer::Rust
         arg = nil.as(LibTreeSitter::TSNode?)
         Noir::TreeSitter.each_named_arg(args) { |c| arg ||= c }
         next unless mount = arg
+        if Noir::TreeSitter.node_type(mount) == "identifier"
+          var = Noir::TreeSitter.node_text(mount, source)
+          if decl = let_declaration_before(node, var, source)
+            var_nests << {LibTreeSitter.ts_node_start_byte(decl).to_i, LibTreeSitter.ts_node_start_byte(node).to_i, var, prefix}
+            next
+          end
+        end
         ranges << {LibTreeSitter.ts_node_start_byte(mount).to_i, LibTreeSitter.ts_node_end_byte(mount).to_i, prefix}
       end
       ranges
+    end
+
+    private def apply_var_nest_prefix(node : LibTreeSitter::TSNode, route_path : String,
+                                      var_nests : Array(Tuple(Int32, Int32, String, String)),
+                                      source : String) : String
+      b = LibTreeSitter.ts_node_start_byte(node).to_i
+      var = base_identifier(node, source)
+      var_nests.each do |s, e, name, prefix|
+        return join_at(prefix, route_path) if b >= s && b < e && name == var
+      end
+      route_path
     end
 
     # Prepend every enclosing nest prefix (outermost first) to a route.
