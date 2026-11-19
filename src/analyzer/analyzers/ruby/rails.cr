@@ -2117,18 +2117,16 @@ module Analyzer::Ruby
       controller_lines.each_with_index do |raw_line, index|
         line = spell_out_params(strip_inline_comment(raw_line), wrappers, locals) { |key| local_roots << {this_method, key} }
 
-        if line.includes?("def ")
-          func_name = line.split("def ", 2)[1].split("(")[0].split(";")[0].strip
-          func_name = func_name.lchop("self.").strip
-          unless func_name.empty?
-            this_method = func_name
-            # An unclosed `permit(` must not swallow the next action's permits.
-            permit_buf = nil
-            locals.clear
-            defined_actions << func_name
-            action_lines[func_name] = index + 1
-            method_bodies[this_method] ||= [] of String
-          end
+        # A setter's `=` is glued to the name (`def name=(v)`); the endless
+        # `def index = render(...)` has a space before it.
+        if line.includes?("def ") && (def_match = line.match(METHOD_DEF))
+          this_method = func_name = def_match[1]
+          # An unclosed `permit(` must not swallow the next action's permits.
+          permit_buf = nil
+          locals.clear
+          defined_actions << func_name
+          action_lines[func_name] = index + 1
+          method_bodies[this_method] ||= [] of String
         end
 
         unless this_method.empty?
@@ -2453,6 +2451,7 @@ module Analyzer::Ruby
     # defines (`def name` / `NAME =`), so a lookup does not rescan the file.
     private record PermitScope, body : Array(String), file : Array(String), heads : Hash(String, Array(Int32))
 
+    METHOD_DEF  = /(?<![\w.:])def\s+(?:self\.)?([A-Za-z_]\w*[?!=]?)/
     PERMIT_HEAD = /\A\s*(?:def\s+(?:self\.)?)?([A-Za-z_]\w*)/
 
     private def permit_heads(lines : Array(String)) : Hash(String, Array(Int32))
@@ -2526,8 +2525,12 @@ module Analyzer::Ruby
         end
       elsif name[0].ascii_uppercase? && (idx = scope.heads[name]?.try(&.find { |i| scope.file[i].matches?(assign) }))
         names.concat(list_literal_names(statement_from(scope.file, idx, assign), scope, depth + 1))
-      elsif (definition = /\A\s*def\s+(?:self\.)?#{Regex.escape(name)}\s*(?:\(\s*\))?\s*\z/) &&
+      elsif (definition = /\A\s*def\s+(?:self\.)?#{Regex.escape(name)}\s*(?:\(\s*\))?\s*(?:=(?![=~>])\s*(.*))?\z/) &&
             (idx = scope.heads[name]?.try(&.find { |i| scope.file[i].matches?(definition) }))
+        # An endless `def allowed = %i[title body]` is its own value.
+        if scope.file[idx].match(definition).try(&.[1]?)
+          return list_literal_names(statement_from(scope.file, idx, definition), scope, depth + 1)
+        end
         # A method's value is its last statement: from the last body line at
         # the body's own indent to its end.
         indent = scope.file[idx].size - scope.file[idx].lstrip.size
