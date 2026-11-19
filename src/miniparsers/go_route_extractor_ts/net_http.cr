@@ -143,15 +143,25 @@ module Noir
         end
 
         mounts = Hash(String, Tuple(String, String, Int32)).new
+        tables = collect_table_loops(root, source, string_values)
+        decode = ->(node : LibTreeSitter::TSNode, values : Hash(String, String)) do
+          found = [] of Route
+          decode_net_http_registration(
+            node, source, http_aliases, serve_mux_vars, serve_mux_params, values,
+            local_functions, local_methods, external_functions, external_methods, router_fields
+          ) do |route|
+            found << route
+          end
+          found
+        end
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           collect_serve_mux_mount(node, source, http_aliases, serve_mux_vars, string_values, mounts)
-          decode_net_http_registration(
-            node, source, http_aliases, serve_mux_vars, serve_mux_params, string_values,
-            local_functions, local_methods, external_functions, external_methods, router_fields
-          ) do |route|
-            routes << route
+          found = decode.call(node, string_values)
+          if found.empty? && !tables.empty?
+            found = table_routes(node, source, tables, string_values) { |values| decode.call(node, values) }
           end
+          routes.concat(found)
         end
         routes = apply_serve_mux_mounts(routes, mounts) unless mounts.empty?
         routes.reject! { |r| mock_rows.any?(&.includes?(r.line)) } unless mock_rows.empty?

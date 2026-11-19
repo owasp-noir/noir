@@ -7,6 +7,9 @@ module Analyzer::Go
 
     IMPORT_MARKER = "github.com/gin-gonic/gin"
     BUILDER_TYPE  = "*gin.RouterGroup"
+    # Helper parameter types a group is handed as; the interfaces also take
+    # the engine, and a helper handed it anywhere is not expanded.
+    BUILDER_TYPES = [BUILDER_TYPE, "gin.IRouter", "gin.IRoutes"]
     # Struct field types that hold a router (`s.router.GET(...)`).
     ROUTER_TYPES = {IMPORT_MARKER => %w[Engine RouterGroup IRouter IRoutes]}
 
@@ -31,7 +34,7 @@ module Analyzer::Go
       # from a central function with a versioned group (`addUserRoutes(
       # router.Group("/v1"))`). The prefix lives at the call site, so it
       # must be grafted onto the helper's routes.
-      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPE)
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPES)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
       struct_index = Noir::GoStructFields::Index.new(file_contents, named_scope.import_dirs)
@@ -63,7 +66,7 @@ module Analyzer::Go
         # keep their params/callees.) Expanded helpers' bodies are
         # suppressed in the whole-file pass to avoid emitting the
         # prefix-less variant alongside the corrected one.
-        expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
+        expand_builders = router_builder_expansions(content, BUILDER_TYPES, builder_prefixes_by_dir[dir]?, cross_file_groups)
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         # Gin also accepts `r.Handle(method, path, handler)` and

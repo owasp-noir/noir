@@ -35,6 +35,11 @@ module Analyzer::Go
     # `{file, line}` of every route a Mount expansion read from such a helper,
     # or reached by following a mounted function's delegation.
     @external_route_sites = Set(Tuple(String, Int32?)).new
+    # The package files and contents `analyze` read, for struct field types.
+    @package_files = Hash(String, Array(String)).new
+    @file_contents = Hash(String, String).new
+    @package_field_types = Hash(String, Hash(String, String?)).new
+    @mutex = Mutex.new
 
     # Go enforces per-file imports, so any file using chi's router
     # types must mention the package path. Filter on this marker
@@ -99,6 +104,8 @@ module Analyzer::Go
       rescue IO::Error
         # skip
       end
+      @package_files = package_files
+      @file_contents = file_contents_cache
 
       # Pre-pass for cross-file identifier-handler resolution (see Gin).
       # Mount-expanded routes don't pick up callees in this first cut —
@@ -184,7 +191,7 @@ module Analyzer::Go
         scan_lines = file_lines_cache[scan_path]? || next
         scan_lines.each_with_index do |scan_line, scan_index|
           next unless scan_line.includes?(".Mount(")
-          target = parse_mount_target(mount_call(scan_lines, scan_index), string_values_for(dir))
+          target = parse_mount_target(mount_call(scan_lines, scan_index, dir), string_values_for(dir))
           next unless target
           target_dir = resolve_mount_dir(scan_path, dir, target, file_contents_cache)
           next unless target_dir
@@ -198,6 +205,9 @@ module Analyzer::Go
       @named_scope = named_scope
       resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents_cache, @import_dirs)
       @resolver = resolver
+      external_helper = ->(from_file : String, qualifier : String, name : String) do
+        external_route_helper(from_file, qualifier, name, package_files, file_contents_cache)
+      end
 
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
@@ -230,13 +240,25 @@ module Analyzer::Go
         ts_routes = if route_file
                       Noir::TreeSitterGoRouteExtractor
                         .extract_chi_routes(content, mounted_functions,
-                          string_values_for(dir))
+                          string_values_for(dir), path, external_helper)
                     else
                       [] of Noir::TreeSitterGoRouteExtractor::Route
                     end
         # ponytail: names, not scopes — a wrapper-bound `r` admits every
         # `r.Get` in the file; track bindings per scope if that ever bites.
         ts_routes.select! { |r| wrapper_names.includes?(r.router_name.split('.').last) } unless chi_file
+        # Routes a route helper declared in another file registered at a call
+        # site here, with this call site's prefix: emitted in their own file.
+        helper_routes = ts_routes.select(&.file)
+        unless helper_routes.empty?
+          ts_routes.reject!(&.file)
+          helper_routes.group_by(&.file).each do |owner, routes|
+            next unless helper_file = owner
+            file_content = file_contents_cache[helper_file]? || next
+            @mutex.synchronize { routes.each { |route| @external_route_sites << {helper_file, route.line + 1} } }
+            result.concat(routes_endpoints(helper_file, file_content, routes, file_lines_cache, named_params: true))
+          end
+        end
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
@@ -311,7 +333,7 @@ module Analyzer::Go
           details = Details.new(PathInfo.new(path, index + 1))
 
           if line.includes?(".Mount(")
-            if (target = parse_mount_target(mount_call(lines, index), string_values_for(dir))) &&
+            if (target = parse_mount_target(mount_call(lines, index, dir), string_values_for(dir))) &&
                (target_dir = resolve_mount_dir(path, dir, target, file_contents_cache))
               endpoints = expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
                 package_files, file_contents_cache, file_lines_cache, [] of String, target[:then_method])
@@ -435,13 +457,13 @@ module Analyzer::Go
       rest = m[3]
       # Value-receiver method: `Type{}.Routes()` / `pkg.Type{...}.Routes()`.
       if t = rest.match(/^([\w.]+)\s*\{[^{}]*\}\s*\.\s*(\w+)\s*\(/)
-        return {prefix: prefix, func_name: t[2], recv_type: t[1].split('.').last, pkg_alias: nil, then_method: nil}
+        return literal_mount_target(prefix, t[1], t[2])
       end
       # Pointer-receiver method: `(&Type{}).Routes()` — the only valid Go
       # syntax for a pointer-receiver resource (`.` binds tighter than
       # `&`, so the parens are required).
       if t = rest.match(/^\(\s*&\s*([\w.]+)\s*\{[^{}]*\}\s*\)\s*\.\s*(\w+)\s*\(/)
-        return {prefix: prefix, func_name: t[2], recv_type: t[1].split('.').last, pkg_alias: nil, then_method: nil}
+        return literal_mount_target(prefix, t[1], t[2])
       end
       # Plain or package-qualified function: `adminRouter()`,
       # `apiv1.Routes()`, `actions.Routes(prefix)`, optionally with one
@@ -452,13 +474,19 @@ module Analyzer::Go
       nil
     end
 
+    # A method on a struct literal, `todos.Resource{}` keeping its package.
+    private def literal_mount_target(prefix : String, type_text : String, func_name : String) : MountTarget
+      qualifier, _, type_name = type_text.rpartition('.')
+      {prefix: prefix, func_name: func_name, recv_type: type_name, pkg_alias: qualifier.presence, then_method: nil}
+    end
+
     # The `.Mount(` call on `lines[index]` with its wrapped arguments joined
     # on (`r.Mount("/users",` + `usersResource{}.Routes())`), so the target
     # on a continuation line still resolves.
     # A method called on a variable bound above in the function (`h :=
     # tags.NewHandler(db)` then `r.Mount("/tags", h.Routes())`) is read on
     # that binding.
-    private def mount_call(lines : Array(String), index : Int32) : String
+    private def mount_call(lines : Array(String), index : Int32, dir : String? = nil) : String
       line = lines[index]
       depth = line.count('(') - line.count(')')
       call = if depth <= 0
@@ -473,18 +501,55 @@ module Analyzer::Go
                  end
                end
              end
+      # A method on a struct field (`a.users.Routes()`) is read on the
+      # field's declared type.
+      if dir && (target = call.match(MOUNT_FIELD_TARGET_RE)) && (type = package_field_type(dir, target[2]))
+        return "#{target[1]}#{type_literal(type)}#{target[3]}#{target.post_match}"
+      end
       target = call.match(MOUNT_VARIABLE_TARGET_RE) || return call
-      binding = /^\s*#{target[2]}\s*:=\s*(.+?)\s*$/
+      binding = /^\s*(?:#{target[2]}\s*:=\s*(.+?)|var\s+#{target[2]}\s+(\*?[\w.]+))\s*$/
       (index - 1).downto(0) do |row|
         break if lines[row].starts_with?("func ")
         bound = lines[row].match(binding) || next
-        value = bound[1].starts_with?('&') ? "(#{bound[1]})" : bound[1]
+        value = if declared = bound[2]?
+                  type_literal(declared)
+                else
+                  bound[1].starts_with?('&') ? "(#{bound[1]})" : bound[1]
+                end
         return "#{target[1]}#{value}#{target[3]}#{target.post_match}"
       end
       call
     end
 
     MOUNT_VARIABLE_TARGET_RE = /^(.*\.Mount\(\s*[^,]+,\s*)(\w+)(\s*\.\s*\w+\s*\()/
+    MOUNT_FIELD_TARGET_RE    = /^(.*\.Mount\(\s*[^,]+,\s*)\w+\.(\w+)(\s*\.\s*\w+\s*\()/
+
+    # `*pkg.T` / `pkg.T` as the literal `parse_mount_target` reads a method on.
+    private def type_literal(type : String) : String
+      type.starts_with?('*') ? "(&#{type.lchop('*')}{})" : "#{type}{}"
+    end
+
+    # The declared type of the struct field `field` in the package at `dir`,
+    # when every struct there that declares one agrees on it.
+    private def package_field_type(dir : String, field : String) : String?
+      types = @mutex.synchronize do
+        @package_field_types[dir] ||= begin
+          found = Hash(String, String?).new
+          @package_files[dir]?.try &.each do |path|
+            content = @file_contents[path]? || next
+            next unless content.includes?("struct")
+            Noir::GoStructFields.collect(content).each_value do |fields|
+              fields.each do |f|
+                next if f.embedded
+                found[f.name] = found.has_key?(f.name) && found[f.name] != f.type ? nil : f.type
+              end
+            end
+          end
+          found
+        end
+      end
+      types[field]?.try { |t| t if t.matches?(/\A\*?(?:\w+\.)?\w+\z/) }
+    end
 
     alias MountTarget = NamedTuple(prefix: String, func_name: String, recv_type: String?, pkg_alias: String?, then_method: String?)
 
@@ -679,7 +744,7 @@ module Analyzer::Go
               line = lines[row]
               row += 1
               next unless line.includes?(".Mount(")
-              target = parse_mount_target(mount_call(lines, row - 1), string_values)
+              target = parse_mount_target(mount_call(lines, row - 1, dir), string_values)
               next unless target
               target_dir = resolve_mount_dir(search_path, dir, target, file_contents_cache)
               next unless target_dir
@@ -702,25 +767,8 @@ module Analyzer::Go
         # file: its line, handler lookup and params are read there.
         collected.group_by { |route| route.file || search_path }.each do |route_file, routes|
           file_content = route_file == search_path ? content : (file_contents_cache[route_file]? || next)
-          routes.each { |route| @external_route_sites << {route_file, route.line + 1} } unless route_file == search_path
-          named = Noir::GoNamedHandler.new(file_content, route_file, routes, @named_scope)
-          file_endpoints = [] of Endpoint
-          routes.each do |route|
-            details = Details.new(PathInfo.new(route_file, route.line + 1))
-            handler = named.handler_for(route)
-            Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-              endpoint = Endpoint.new(route.path, verb, details)
-              endpoint.handler = handler
-              # The mount prefix joined on by the caller does not read the
-              # path's own leading operand, so the mark stays.
-              endpoint.resolution = named.resolution_for(route)
-              add_handler_body_params(named, route, endpoint)
-              file_endpoints << endpoint
-            end
-          end
-          lines = file_lines_cache[route_file]? || GoEngine.strip_comments(file_content).lines
-          attach_router_function_params(file_endpoints, lines)
-          endpoints.concat(file_endpoints)
+          @mutex.synchronize { routes.each { |route| @external_route_sites << {route_file, route.line + 1} } } unless route_file == search_path
+          endpoints.concat(routes_endpoints(route_file, file_content, routes, file_lines_cache))
         end
         endpoints.concat(nested)
 
@@ -750,6 +798,46 @@ module Analyzer::Go
       end
 
       endpoints
+    end
+
+    # Endpoints for `routes`, all registered in `route_file`, with the params
+    # of their handlers. `named_params` also reads them the way the free pass
+    # does for its own routes (inline closures and named-handler lines).
+    private def routes_endpoints(route_file : String, file_content : String,
+                                 routes : Array(Noir::TreeSitterGoRouteExtractor::Route),
+                                 file_lines_cache : Hash(String, Array(String)),
+                                 named_params : Bool = false) : Array(Endpoint)
+      named = Noir::GoNamedHandler.new(file_content, route_file, routes, @named_scope)
+      inline_params = nil
+      if named_params && (scope = @named_scope)
+        dir = File.dirname(route_file)
+        inline_params = Noir::GoRequestParamExtractor.params_for_routes(file_content, routes.map(&.line).to_set,
+          routes.to_h { |r| {r.line, r.verb} }, scope.bodies.functions_for(dir), scope.bodies.methods_for(dir),
+          resolver: @resolver, path: route_file)
+      end
+      file_endpoints = [] of Endpoint
+      routes.each do |route|
+        details = Details.new(PathInfo.new(route_file, route.line + 1))
+        handler = named.handler_for(route)
+        Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+          endpoint = Endpoint.new(route.path, verb, details)
+          endpoint.handler = handler
+          # The mount prefix joined on by the caller does not read the
+          # path's own leading operand, so the mark stays.
+          endpoint.resolution = named.resolution_for(route)
+          inline_params[route.line]?.try &.each { |param| add_param_to_endpoint(param, endpoint) } if inline_params
+          add_handler_body_params(named, route, endpoint)
+          named.bind(route, endpoint) if named_params
+          file_endpoints << endpoint
+        end
+      end
+      lines = file_lines_cache[route_file]? || GoEngine.strip_comments(file_content).lines
+      attach_router_function_params(file_endpoints, lines)
+      if named_params
+        lines.each_with_index { |line, index| named.claim?(index, line) }
+        named.each_attribution { |line, ep| extract_handler_params(line, ep) }
+      end
+      file_endpoints
     end
 
     # Keep Chi's module-backed lookup: GoEngine's modless fallback could
