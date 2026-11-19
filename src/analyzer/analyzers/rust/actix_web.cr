@@ -40,6 +40,12 @@ module Analyzer::Rust
     # refs stay file-local so identically named handlers across the standalone
     # sub-apps of an example monorepo don't cross-contaminate.
     @cross_file_scope_regs : Array(NamedTuple(base: String, ref: String, prefix: String))? = nil
+    # Registrations whose ref resolved (`RustEngine#resolve_rust_fn`) to a fn:
+    # `target_key(file, fn)` => prefixes. Matched exactly, so a bare name
+    # brought in by `use` keeps its scope and no other file borrows it.
+    @cross_file_scope_targets = {} of String => Array(String)
+
+    alias ConfigureEntry = NamedTuple(base: String, ref: String, target: String?, prefix: String, source_path: String, encl: String?)
 
     # Cross-file `.configure()` prefixes. A scope delegates its body to a
     # function in another file: `web::scope("/auth").configure(|cfg|
@@ -49,7 +55,9 @@ module Analyzer::Rust
     # that function's file, with no visible scope, so they lose the `/auth` /
     # `/api` prefix. `analyze` records each configured fn's scope prefix(es)
     # up front; the builder pass prepends them to routes emitted inside the fn.
-    @configure_fn_prefix : Array(NamedTuple(base: String, ref: String, prefix: String, source_path: String))? = nil
+    # Unresolved refs live in the array, resolved ones in the target index.
+    @configure_fn_prefix : Array(ConfigureEntry)? = nil
+    @configure_targets = {} of String => Array(ConfigureEntry)
     @global_function_index : Array(GlobalFunctionEntry)? = nil
     @project_import_aliases : Hash(String, String)? = nil
 
@@ -59,8 +67,9 @@ module Analyzer::Rust
 
     def analyze
       @routes_macro_prefixes = build_routes_macro_prefixes
-      @cross_file_scope_regs = build_cross_file_scope_registrations
+      # Configure prefixes first: the scope-registration pass threads them.
       @configure_fn_prefix = build_configure_fn_prefix
+      @cross_file_scope_regs = build_cross_file_scope_registrations
       @global_function_index = nil
       @project_import_aliases = nil
       super
@@ -395,17 +404,18 @@ module Analyzer::Rust
     # (router-setup files) so handler-only files cost nothing here.
     private def build_cross_file_scope_registrations : Array(NamedTuple(base: String, ref: String, prefix: String))
       regs = [] of NamedTuple(base: String, ref: String, prefix: String)
+      @cross_file_scope_targets = {} of String => Array(String)
       all_files.each do |path|
         next unless File.exists?(path) && File.extname(path) == ".rs"
         next if RustEngine.test_path?(base_relative_path(path))
         base = crate_scope_for(path)
         src = read_file_content(path)
-        next unless src.includes?("scope(") && src.includes?(".service(")
+        next unless src.includes?(".service(") && (src.includes?("scope(") || configure_active?)
         begin
           glob_contexts = import_glob_contexts(src)
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
-            collect_qualified_registrations(root, src, test_regions, "", base, glob_contexts, regs)
+            collect_qualified_registrations(root, src, test_regions, "", base, glob_contexts, regs, path)
           end
         rescue e
           logger.debug "actix cross-file scope scan error #{path}: #{e}"
@@ -414,9 +424,10 @@ module Analyzer::Rust
       regs
     end
 
-    # Mirror of `collect_service_registrations`' prefix threading, but records
-    # only **scoped** (`mod::handler`) `.service(...)` args — the cross-file
-    # case. Bare-identifier args are left to the per-file pass.
+    # Mirror of `collect_service_registrations`' prefix threading (scopes and
+    # the prefixes of an enclosing `.configure`d fn), recording the args a
+    # handler in another file can be reached by: a `mod::handler` path, or a
+    # bare name that resolves through this file's imports.
     private def collect_qualified_registrations(node : LibTreeSitter::TSNode,
                                                 source : String,
                                                 test_regions : Array(Tuple(Int32, Int32)),
@@ -424,8 +435,20 @@ module Analyzer::Rust
                                                 base : String,
                                                 glob_contexts : Array(String),
                                                 regs : Array(NamedTuple(base: String, ref: String, prefix: String)),
+                                                path : String,
                                                 depth : Int32 = 0)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+      if Noir::TreeSitter.node_type(node) == "function_item" && (name = function_name(node, source))
+        if prefixes = lookup_configure_prefixes(name, path)
+          Noir::TreeSitter.each_named_child(node) do |child|
+            prefixes.each do |prefix|
+              collect_qualified_registrations(child, source, test_regions, scoped_route_path(active_prefix, prefix), base, glob_contexts, regs, path, depth + 1)
+            end
+          end
+          return
+        end
+      end
 
       if Noir::TreeSitter.node_type(node) == "call_expression"
         return if RustEngine.inside_test_region?(node, test_regions)
@@ -444,28 +467,40 @@ module Analyzer::Rust
 
           service_items(named[0]).each do |arg|
             case Noir::TreeSitter.node_type(arg)
-            when "scoped_identifier"
-              regs << {base: base, ref: Noir::TreeSitter.node_text(arg, source), prefix: service_prefix}
-            when "identifier"
-              unless service_prefix.empty? || glob_contexts.empty?
-                name = Noir::TreeSitter.node_text(arg, source)
+            when "scoped_identifier", "identifier"
+              ref = Noir::TreeSitter.node_text(arg, source)
+              if target = resolved_fn_target(ref, path)
+                prefixes = @cross_file_scope_targets[target] ||= [] of String
+                prefixes << service_prefix unless prefixes.includes?(service_prefix)
+              elsif ref.includes?("::")
+                regs << {base: base, ref: ref, prefix: service_prefix}
+              elsif !service_prefix.empty?
                 glob_contexts.each do |context|
-                  regs << {base: base, ref: "#{context}::#{name}", prefix: service_prefix}
+                  regs << {base: base, ref: "#{context}::#{ref}", prefix: service_prefix}
                 end
               end
             else
-              collect_qualified_registrations(arg, source, test_regions, service_prefix, base, glob_contexts, regs, depth + 1)
+              collect_qualified_registrations(arg, source, test_regions, service_prefix, base, glob_contexts, regs, path, depth + 1)
             end
           end
 
-          collect_qualified_registrations(receiver, source, test_regions, active_prefix, base, glob_contexts, regs, depth + 1) if receiver
+          collect_qualified_registrations(receiver, source, test_regions, active_prefix, base, glob_contexts, regs, path, depth + 1) if receiver
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        collect_qualified_registrations(child, source, test_regions, active_prefix, base, glob_contexts, regs, depth + 1)
+        collect_qualified_registrations(child, source, test_regions, active_prefix, base, glob_contexts, regs, path, depth + 1)
       end
+    end
+
+    # `"<expanded file>\0<fn>"` of the fn `ref` names from `from_path`.
+    private def resolved_fn_target(ref : String, from_path : String) : String?
+      resolve_rust_fn(ref, from_path).try { |(file, name, _)| target_key(file, name) }
+    end
+
+    private def target_key(file : String, name : String) : String
+      "#{Noir::PathScope.expand(file)}\0#{name}"
     end
 
     # Resolve a handler function's cross-file scope prefix(es). Matches the
@@ -479,7 +514,7 @@ module Analyzer::Rust
       regs = @cross_file_scope_regs
       return unless regs
       base = crate_scope_for(file_path)
-      matched = [] of String
+      matched = @cross_file_scope_targets[target_key(file_path, name)]?.try(&.dup) || [] of String
       regs.each do |r|
         next unless r[:base] == base
         next unless ref_leaf(r[:ref]) == name
@@ -515,25 +550,29 @@ module Analyzer::Rust
 
     private def configure_active? : Bool
       m = @configure_fn_prefix
-      !!(m && !m.empty?)
+      !!(m && !m.empty?) || !@configure_targets.empty?
     end
 
     # Scan the project for `web::scope("/p").configure(fn)` /
     # `.configure(|cfg| mod::fn(cfg, ...))` and record each configured fn's
-    # composed scope prefix(es).
-    private def build_configure_fn_prefix : Array(NamedTuple(base: String, ref: String, prefix: String, source_path: String))
-      result = [] of NamedTuple(base: String, ref: String, prefix: String, source_path: String)
+    # composed scope prefix(es). A `.configure` inside a fn that is itself
+    # configured (`main` mounts `routes::config` under `/api`, which mounts
+    # `users::config` under `/users`) is composed under that fn's prefixes.
+    private def build_configure_fn_prefix : Array(ConfigureEntry)
+      raw = [] of ConfigureEntry
+      seen = Set(ConfigureEntry).new
       all_files.each do |fpath|
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
         base = crate_scope_for(fpath)
         src = read_file_content(fpath)
-        next unless src.includes?(".configure(") && src.includes?("scope(")
+        next unless src.includes?(".configure(")
         begin
           aliases = project_import_aliases.merge(import_aliases(src))
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
             scope_prefixes = collect_scope_prefixes(root, src, test_regions)
+            fn_ranges = build_fn_ranges(root, src)
             walk_calls(root) do |call|
               next if RustEngine.inside_test_region?(call, test_regions)
               fn = Noir::TreeSitter.field(call, "function")
@@ -542,10 +581,9 @@ module Analyzer::Rust
               next unless fld && Noir::TreeSitter.node_text(fld, src) == "configure"
               receiver = Noir::TreeSitter.field(fn, "value")
               next unless receiver
-              enc = enclosing_route_prefix(receiver, src, scope_prefixes)
-              next unless enc
-              prefix = enc[1]
-              next if prefix.empty? || prefix == "/"
+              # No enclosing scope (`cfg.configure(..)`) still passes on the
+              # prefixes of the fn this call sits in.
+              prefix = enclosing_route_prefix(receiver, src, scope_prefixes).try(&.[1]) || ""
               args = Noir::TreeSitter.field(call, "arguments")
               next unless args
               first = nil.as(LibTreeSitter::TSNode?)
@@ -553,15 +591,69 @@ module Analyzer::Rust
               next unless first
               ref = configure_target_ref(first, src, aliases)
               next unless ref
-              entry = {base: base, ref: ref, prefix: prefix, source_path: fpath}
-              result << entry unless result.includes?(entry)
+              raw_ref = configure_target_ref(first, src, {} of String => String) || ref
+              target = resolved_fn_target(raw_ref, fpath) || resolved_fn_target(ref, fpath)
+              entry = {base: base, ref: ref, target: target, prefix: prefix, source_path: fpath, encl: enclosing_fn_name(call, fn_ranges)}
+              raw << entry if seen.add?(entry)
             end
           end
         rescue e
           logger.debug "actix configure scan error #{fpath}: #{e}"
         end
       end
+
+      by_target = {} of String => Array(ConfigureEntry)
+      unresolved = [] of ConfigureEntry
+      raw.each do |e|
+        if t = e[:target]
+          (by_target[t] ||= [] of ConfigureEntry) << e
+        else
+          unresolved << e
+        end
+      end
+
+      result = [] of ConfigureEntry
+      targets = {} of String => Array(ConfigureEntry)
+      raw.each do |e|
+        configure_full_prefixes(e, by_target, unresolved, 0).each do |prefix|
+          next if prefix.empty? || prefix == "/"
+          entry = e.merge(prefix: prefix)
+          list = (t = e[:target]) ? (targets[t] ||= [] of ConfigureEntry) : result
+          list << entry unless list.includes?(entry)
+        end
+      end
+      @configure_targets = targets
       result
+    end
+
+    # `entry`'s prefix under every prefix its enclosing fn is configured at.
+    # ponytail: depth cap instead of cycle detection; a configure cycle stops.
+    private def configure_full_prefixes(entry : ConfigureEntry,
+                                        by_target : Hash(String, Array(ConfigureEntry)),
+                                        unresolved : Array(ConfigureEntry),
+                                        depth : Int32) : Array(String)
+      encl = entry[:encl]
+      return [entry[:prefix]] if encl.nil? || depth >= 8
+      parents = configure_matches(encl, entry[:source_path], by_target, unresolved)
+      return [entry[:prefix]] if parents.empty?
+      parents.flat_map do |parent|
+        configure_full_prefixes(parent, by_target, unresolved, depth + 1).map { |p| scoped_route_path(p, entry[:prefix]) }
+      end.uniq!
+    end
+
+    # Entries that configure fn `name` of `file_path`: exactly by resolved
+    # target, else (unresolved ref) by module hints.
+    private def configure_matches(name : String, file_path : String,
+                                  by_target : Hash(String, Array(ConfigureEntry)),
+                                  unresolved : Array(ConfigureEntry)) : Array(ConfigureEntry)
+      found = by_target[target_key(file_path, name)]?.try(&.dup) || [] of ConfigureEntry
+      return found if unresolved.empty?
+      base = crate_scope_for(file_path)
+      unresolved.each do |r|
+        next unless r[:base] == base && ref_leaf(r[:ref]) == name
+        found << r if ref_matches_file?(r[:ref], file_path, r[:source_path])
+      end
+      found
     end
 
     # The configured fn ref from a `.configure(arg)` argument: a
@@ -659,26 +751,24 @@ module Analyzer::Rust
                                        fn_ranges : Array(Tuple(Int32, Int32, String))?,
                                        file_path : String) : Array(String)?
       return unless fn_ranges
+      enclosing_fn_name(call, fn_ranges).try { |name| lookup_configure_prefixes(name, file_path) }
+    end
+
+    # Name of the innermost fn whose byte range holds `call`.
+    private def enclosing_fn_name(call : LibTreeSitter::TSNode, fn_ranges : Array(Tuple(Int32, Int32, String))) : String?
       start = LibTreeSitter.ts_node_start_byte(call).to_i
       best : Tuple(Int32, Int32, String)? = nil
       fn_ranges.each do |r|
         next unless start >= r[0] && start < r[1]
         best = r if best.nil? || (r[1] - r[0]) < (best[1] - best[0])
       end
-      best ? lookup_configure_prefixes(best[2], file_path) : nil
+      best.try(&.[2])
     end
 
     private def lookup_configure_prefixes(name : String, file_path : String) : Array(String)?
       regs = @configure_fn_prefix
       return unless regs
-      base = crate_scope_for(file_path)
-      matched = [] of String
-      regs.each do |r|
-        next unless r[:base] == base
-        next unless ref_leaf(r[:ref]) == name
-        next unless ref_matches_file?(r[:ref], file_path, r[:source_path])
-        matched << r[:prefix] unless matched.includes?(r[:prefix])
-      end
+      matched = configure_matches(name, file_path, @configure_targets, regs).map(&.[:prefix]).uniq!
       matched.empty? ? nil : matched
     end
 
