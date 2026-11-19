@@ -668,7 +668,23 @@ module Noir
       receiver = Noir::TreeSitter.field(call, "object")
       return true unless receiver
       return true if functional_handler_argument?(call, source, handler_vars)
+      return true if handler_expression_argument?(call, source)
       config.router_receivers.includes?(receiver_key(receiver, source))
+    end
+
+    # `app.get("/users", UserController.fetchAll)` / `users.create()`: a
+    # `Handler` field or factory call. Taken only after a `/` path literal,
+    # because `map.put("k", other.value)` has the same shape.
+    private def handler_expression_argument?(call : LibTreeSitter::TSNode, source : String) : Bool
+      args = argument_list_node(call)
+      return false unless args
+      first = Noir::TreeSitter.first_named_arg(args)
+      return false unless first && Noir::TreeSitter.node_type(first) == "string_literal"
+      return false unless Noir::TreeSitter.node_text(first, source).starts_with?("\"/")
+      Noir::TreeSitter.each_named_arg(args) do |arg|
+        return true if Noir::TreeSitter.node_type(arg).in?("field_access", "method_invocation")
+      end
+      false
     end
 
     # Last dotted segment of the receiver expression: `redirect` for
