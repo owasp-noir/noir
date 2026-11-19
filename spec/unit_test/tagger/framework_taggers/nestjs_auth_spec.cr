@@ -188,9 +188,14 @@ describe "NestjsAuthTagger" do
     begin
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(tmpdir)
-      endpoints = [4, 8, 12].map { |line| Endpoint.new("/items", "GET", [] of Param, Details.new(PathInfo.new(items, line))) }
-      order = Endpoint.new("/orders", "GET", [] of Param, Details.new(PathInfo.new(orders, 4)))
-      (endpoints + [order]).each(&.details.technology=("ts_tsoa"))
+      # `Details` is a struct: its technology is set before the endpoint copies it.
+      tsoa = ->(path : String, line : Int32) do
+        details = Details.new(PathInfo.new(path, line))
+        details.technology = "ts_tsoa"
+        details
+      end
+      endpoints = [4, 8, 12].map { |line| Endpoint.new("/items", "GET", [] of Param, tsoa.call(items, line)) }
+      order = Endpoint.new("/orders", "GET", [] of Param, tsoa.call(orders, 4))
 
       NestjsAuthTagger.new(noir_options).perform(endpoints + [order])
 
@@ -335,6 +340,61 @@ describe "NestjsAuthTagger" do
       FileUtils.rm_rf(tmpdir)
       CodeLocator.instance.clear_all
     end
+  end
+
+  # Writes `files` under a temp dir, runs the tagger over one GET endpoint
+  # per {file, line, url, technology} probe, and returns each one's tag
+  # descriptions.
+  nest_tags = ->(files : Hash(String, String), probes : Array({String, Int32, String, String})) do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_probe")
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = probes.map do |rel, line, url, tech|
+        details = Details.new(PathInfo.new(File.join(tmpdir, rel), line))
+        details.technology = tech
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      NestjsAuthTagger.new(noir_options).perform(endpoints)
+      endpoints.map(&.tags.map(&.description))
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "follows forRoutes spreads through top-level arrays and stops on a cycle" do
+    files = {
+      "package.json"            => "{}",
+      "src/app.module.ts"       => <<-TS,
+        function extraControllers() {
+          const base = [...controllers];
+          return base;
+        }
+
+        const base = [ItemsController];
+        const controllers = [...base];
+        const loopA = [...loopB];
+        const loopB = [...loopA];
+
+        @Module({ controllers })
+        export class AppModule implements NestModule {
+          configure(consumer: MiddlewareConsumer) {
+            consumer.apply(TokenMiddleware).forRoutes(...controllers, ...loopA);
+          }
+        }
+        TS
+      "src/token.middleware.ts" => "export class TokenMiddleware implements NestMiddleware {\n  use(req, res, next) {\n    if (!req.headers.authorization) throw new UnauthorizedException();\n    next();\n  }\n}\n",
+      "src/items.controller.ts" => "@Controller('items')\nexport class ItemsController {\n  @Get()\n  list() {}\n}\n",
+    }
+    nest_tags.call(files, [{"src/items.controller.ts", 4, "/items", "ts_nestjs"}]).should eq([["Protected by NestJS TokenMiddleware middleware"]])
   end
 
   it "does not leak a decorator past a one-line handler body" do

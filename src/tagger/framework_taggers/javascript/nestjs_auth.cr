@@ -701,14 +701,19 @@ class NestjsAuthTagger < FrameworkTagger
     bodies
   end
 
-  # The elements text of `const name = [...]` in `source`.
+  # The elements text of `const name = [...]` declared at the top level of
+  # `source` (column 0), not a function's local of the same name.
   private def array_const(source : String, name : String) : String?
-    m = source.match(/\b(?:const|let|var)\s+#{Regex.escape(name)}\s*(?::[^=]*)?=\s*\[/) || return
+    m = source.match(/^(?:export\s+)?(?:const|let|var)\s+#{Regex.escape(name)}\s*(?::[^=]*)?=\s*\[/m) || return
     close = Noir::JSLiteralScanner.find_matching_bracket(source, m.end(0) - 1) || return
     source[m.end(0)...close]
   end
 
-  private def parse_route_specs(body : String, source : String) : Array(NestSpec)
+  # How many spread arrays deep `forRoutes(...a)` is followed.
+  MAX_SPREAD_DEPTH = 4
+
+  # `seen`: the spread names followed so far, so `a = [...b]; b = [...a]` ends.
+  private def parse_route_specs(body : String, source : String, seen : Set(String) = Set(String).new) : Array(NestSpec)
     specs = [] of NestSpec
     Noir::TopLevelSplit.split(body, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |part|
       text = part.strip
@@ -722,9 +727,10 @@ class NestjsAuthTagger < FrameworkTagger
         specs << nest_spec(lit[1], nil, wildcard?(lit[1]))
       elsif text.matches?(/\A[A-Za-z_$][\w$]*\z/) && (path = @controller_paths[text]?)
         specs << NestSpec.new(path, nil, true)
-      elsif (spread = text.match(/\A\.\.\.\s*([A-Za-z_$][\w$]*)\z/)) && (list = array_const(source, spread[1]))
+      elsif (spread = text.match(/\A\.\.\.\s*([A-Za-z_$][\w$]*)\z/)) && seen.size < MAX_SPREAD_DEPTH &&
+            seen.add?(spread[1]) && (list = array_const(source, spread[1]))
         # `forRoutes(...authenticatedControllers)`: the elements of a const array.
-        specs.concat(parse_route_specs(list, source))
+        specs.concat(parse_route_specs(list, source, seen))
       end
     end
     specs
