@@ -72,6 +72,13 @@ describe "NextjsAuthTagger" do
     tag.call("app/actions/items.ts", 38).map(&.name).should eq(["auth"])
   end
 
+  it "reads a 401 past a multi-line log call up to the if its block opens on, not an else's" do
+    tags = tag.call("app/api/logged/route.ts", 4)
+    tags.map(&.name).should eq(["auth"])
+    tags[0].description.should contain("if (!session?.user)")
+    tag.call("app/api/logged/route.ts", 25).should be_empty
+  end
+
   it "tags a handler that returns an unauthorized error without a session" do
     tag.call("app/actions/items.ts", 22).map(&.name).should eq(["auth"])
     tag.call("app/actions/items.ts", 30).should be_empty

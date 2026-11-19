@@ -195,6 +195,7 @@ class NextjsAuthTagger < FrameworkTagger
   private def session_refusal(code : Array(String), raw : Array(String), mark : Regex, path : String? = nil) : Refusal?
     verb = verb_matcher(code)
     callers = caller_assignments(code, path)
+    heads = nil.as(Array(Int32?)?)
     code.each_with_index do |text, i|
       break if method_branch?(code, i, verb)
       hit = text.match(mark).try { |m| m[1]? || "401" }
@@ -208,16 +209,43 @@ class NextjsAuthTagger < FrameworkTagger
           break if j < i && (stripped.ends_with?(';') || (stripped.ends_with?('}') && stripped.count('{') <= stripped.count('}')))
           status = hit || reply_helper_status(text, path)
           break unless status
-          throws = code[j..i].any?(&.matches?(/\bthrow\b/))
-          carrier = code[(j + 1)..i].compact_map(&.match(CARRIER).try(&.[1])).first?
-          condition = code[j].includes?("typeof") ? typed_code(raw[j]? || code[j]) : code[j]
-          return Refusal.new(condition.strip.rchop('{').strip, status, throws, enclosing_conditions(code, j), carrier)
+          return refusal_at(code, raw, j, i, status)
         end
         # Nor is an `else` branch of one above it.
         break if j < i && stripped.matches?(ELSE_BRANCH)
       end
+      # Past the lookback, a multi-line log call ahead of the reply: the
+      # block the reply sits in must open on the condition.
+      head = (heads ||= block_heads(code))[i] || next
+      next unless head < i - CONDITION_LOOKBACK && refusal_condition?(code, raw, head, callers)
+      status = hit || reply_helper_status(text, path) || next
+      return refusal_at(code, raw, head, i, status)
     end
     nil
+  end
+
+  # The refusal at line `i` under the condition at line `j`.
+  private def refusal_at(code : Array(String), raw : Array(String), j : Int32, i : Int32, status : String) : Refusal
+    throws = code[j..i].any?(&.matches?(/\bthrow\b/))
+    carrier = code[(j + 1)..i].compact_map(&.match(CARRIER).try(&.[1])).first?
+    condition = code[j].includes?("typeof") ? typed_code(raw[j]? || code[j]) : code[j]
+    Refusal.new(condition.strip.rchop('{').strip, status, throws, enclosing_conditions(code, j), carrier)
+  end
+
+  # For each line, the line opening the innermost block still open where it starts.
+  private def block_heads(code : Array(String)) : Array(Int32?)
+    open = [] of Int32
+    code.map_with_index do |text, j|
+      head = open.last?
+      text.each_char do |char|
+        if char == '{'
+          open << j
+        elsif char == '}'
+          open.pop?
+        end
+      end
+      head
+    end
   end
 
   private def refusal_condition?(code : Array(String), raw : Array(String), j : Int32, callers : Hash(String, Int32)) : Bool
