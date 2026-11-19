@@ -4,13 +4,19 @@ require "../../../models/endpoint"
 @[Noir::TaggerFor(key: "quarkus_auth", name: "Quarkus Auth Tagger", desc: "Identifies Quarkus authentication annotations and HTTP permission policies", order: 255)]
 class QuarkusAuthTagger < FrameworkTagger
   record PermissionRule, root : String, paths : Array(String), policy : String, methods : Array(String)
+  # The Keycloak policy enforcer settings of one properties file: on, it
+  # refuses every path but the `enforcement-mode=DISABLED` ones. `primary`
+  # marks the module's own `src/main/resources` file.
+  record PolicyEnforcer, root : String, primary : Bool, enabled : Bool, disabled : Array(String)
 
   # Method annotations override the class. A restricting annotation wins over
   # `@PermitAll` on the same member. `@PermitAll` is public; the others guard.
   SECURITY_ANNOTATION = /@([\w.]*\.)?(Authenticated|DenyAll|PermitAll|RolesAllowed|PermissionsAllowed)\b/
   PERMISSION_KEY      = /\Aquarkus\.http\.auth\.permission\.([^.]+)\.(paths|policy|methods)\z/
+  ENFORCER_KEY        = /\Aquarkus\.keycloak\.policy-enforcer\.(?:(enable|enforcement-mode)|paths\.("[^"]*"|[^.]+)\.(paths?|enforcement-mode|methods\.[^.]+\.scopes-enforcement-mode))\z/
 
   @rules = [] of PermissionRule
+  @enforcers = [] of PolicyEnforcer
 
   def self.target_techs : Array(String)
     ["java_quarkus"]
@@ -42,8 +48,13 @@ class QuarkusAuthTagger < FrameworkTagger
       return
     end
 
-    if description = permission_description(endpoint)
-      endpoint.add_tag(Tag.new("auth", description, "quarkus_auth"))
+    # A `permit` HTTP permission also exempts its paths from the Keycloak
+    # policy enforcer (Quarkus Keycloak Authorization guide).
+    if permission = permission_policy(endpoint)
+      policy, pattern = permission
+      endpoint.add_tag(Tag.new("auth", "Protected by Quarkus permission policy #{policy} (#{pattern})", "quarkus_auth")) unless policy.downcase == "permit"
+    elsif enforced?(endpoint)
+      endpoint.add_tag(Tag.new("auth", "Protected by Quarkus Keycloak policy enforcer", "quarkus_auth"))
     end
     if public_annotation
       endpoint.add_tag(Tag.new("anonymous", "Quarkus @PermitAll admits anonymous callers", "quarkus_auth"))
@@ -138,12 +149,15 @@ class QuarkusAuthTagger < FrameworkTagger
 
   private def load_permissions : Array(PermissionRule)
     rules = [] of PermissionRule
+    @enforcers.clear
     get_files_by_basename("application.properties").each do |path|
       next unless @base_paths.any? { |base| Noir::PathScope.under_root?(path, base) }
       content = read_file(path)
       next if content.nil?
 
       grouped = Hash(String, Hash(String, String)).new { |hash, key| hash[key] = Hash(String, String).new }
+      enforcer = Hash(String, String).new
+      enforcer_paths = Hash(String, Hash(String, String)).new { |hash, key| hash[key] = Hash(String, String).new }
       content.each_line do |line|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#') || stripped.starts_with?('!')
@@ -151,11 +165,26 @@ class QuarkusAuthTagger < FrameworkTagger
         next unless separator
         key = stripped[...separator].strip
         value = stripped[(separator + 1)..].strip
-        next unless match = key.match(PERMISSION_KEY)
-        grouped[match[1]][match[2]] = value
+        if match = key.match(PERMISSION_KEY)
+          grouped[match[1]][match[2]] = value
+        elsif match = key.match(ENFORCER_KEY)
+          if setting = match[1]?
+            enforcer[setting] = value
+          else
+            enforcer_paths[match[2]][match[3]] = value
+          end
+        end
       end
 
       root = config_root(path)
+      unless enforcer.empty? && enforcer_paths.empty?
+        enabled = enforcer["enable"]?.try(&.downcase) == "true" && enforcer.fetch("enforcement-mode", "ENFORCING").upcase == "ENFORCING"
+        # ponytail: a path with any method DISABLED counts as disabled for
+        # every method; a missed guard is better than an invented one.
+        disabled = enforcer_paths.values.select { |fields| fields.any? { |key, value| key.ends_with?("enforcement-mode") && value.upcase == "DISABLED" } }
+        paths = disabled.flat_map { |fields| "#{fields["path"]?},#{fields["paths"]?}".split(',').map(&.strip).reject(&.empty?) }
+        @enforcers << PolicyEnforcer.new(root, root != File.dirname(Noir::PathScope.expand(path)), enabled, paths)
+      end
       grouped.each_value do |fields|
         paths = fields["paths"]?.to_s.split(',').map(&.strip).reject(&.empty?)
         next if paths.empty?
@@ -174,7 +203,8 @@ class QuarkusAuthTagger < FrameworkTagger
     dir
   end
 
-  private def permission_description(endpoint : Endpoint) : String?
+  # The policy and pattern of the most specific HTTP permission for the endpoint.
+  private def permission_policy(endpoint : Endpoint) : {String, String}?
     files = endpoint.details.code_paths.map(&.path)
     return if files.empty?
 
@@ -199,8 +229,23 @@ class QuarkusAuthTagger < FrameworkTagger
       end
     end
 
-    return if best_score < 0 || best_policy.empty? || best_policy.downcase == "permit"
-    "Protected by Quarkus permission policy #{best_policy} (#{best_pattern})"
+    return if best_score < 0 || best_policy.empty?
+    {best_policy, best_pattern}
+  end
+
+  # The nearest enforcer settings decide for a module: the deepest root,
+  # and the module's own `src/main/resources` file over a stray one beside
+  # it. A DISABLED `/x/*` is read as covering `/x` too: the Keycloak docs
+  # leave that open, and a missed guard is better than an invented one.
+  private def enforced?(endpoint : Endpoint) : Bool
+    files = endpoint.details.code_paths.map(&.path)
+    enforcer = @enforcers.select { |item| files.any? { |file| Noir::PathScope.under_root?(file, item.root) } }
+      .max_by? { |item| {item.root.size, item.primary ? 1 : 0} }
+    return false unless enforcer && enforcer.enabled
+    url = normalize_permission_path(endpoint.url)
+    enforcer.disabled.none? do |pattern|
+      permission_matches?(url, pattern) || (pattern.ends_with?("/*") && url == normalize_permission_path(pattern.rchop("/*")))
+    end
   end
 
   # A trailing `*` matches every sub-path (`/tokens/*` covers `/tokens/mine`).

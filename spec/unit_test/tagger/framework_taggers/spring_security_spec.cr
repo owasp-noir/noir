@@ -255,6 +255,87 @@ describe "SpringSecurityTagger" do
         File.delete(path) if File.exists?(path)
       end
     end
+
+    it "reads past a path variable or annotation array brace to a @Valid parameter" do
+      java = <<-JAVA
+        package com.example;
+
+        @RestController
+        public class ItemController {
+            @PutMapping("/items/{id}")
+            public String update(@PathVariable Long id, @Valid @RequestBody ItemDto body) {
+                return "u";
+            }
+
+            @PostMapping(value = "/items", consumes = {"application/json"})
+            @ApiResponses({@ApiResponse(code = 200, message = "ok")})
+            public String create(
+                    @Valid @RequestBody ItemDto body) {
+                return "c";
+            }
+
+            @PutMapping("/plain/{id}")
+            public String plain(@PathVariable Long id, @RequestBody ItemDto body) {
+                Object checked = new Object(); // @Valid
+                return "p";
+            }
+
+            @PostMapping("/next")
+            public String next(@Valid @RequestBody ItemDto body) {
+                return "n";
+            }
+        }
+        JAVA
+      kotlin = <<-KOTLIN
+        package com.example
+
+        @RestController
+        class OrderController {
+            @PutMapping("/orders/{id}")
+            fun update(@PathVariable id: Long, @Valid @RequestBody body: OrderDto): String = "u"
+
+            @GetMapping("/orders/{id}")
+            fun get(@PathVariable id: Long): String =
+                "g"
+
+            fun check(@Valid body: OrderDto) = body
+
+            @PostMapping("/orders/split")
+            fun split(@RequestParam sep: Char = '(', /* ( */ @RequestBody body: OrderDto): String {
+                return "s"
+            }
+
+            fun helper(@Valid body: OrderDto) = body
+        }
+        KOTLIN
+
+      root = File.tempname("spring_valid")
+      begin
+        Dir.mkdir_p(root)
+        java_path = File.join(root, "ItemController.java")
+        kotlin_path = File.join(root, "OrderController.kt")
+        File.write(java_path, java)
+        File.write(kotlin_path, kotlin)
+        CodeLocator.instance.register_path(java_path)
+        CodeLocator.instance.register_path(kotlin_path)
+        endpoints = {
+          build_endpoint(java_path, 5, "/items/{id}", "PUT")       => true,
+          build_endpoint(java_path, 10, "/items", "POST")          => true,
+          build_endpoint(java_path, 17, "/plain/{id}", "PUT")      => false,
+          build_endpoint(java_path, 23, "/next", "POST")           => true,
+          build_endpoint(kotlin_path, 5, "/orders/{id}", "PUT")    => true,
+          build_endpoint(kotlin_path, 8, "/orders/{id}", "GET")    => false,
+          build_endpoint(kotlin_path, 14, "/orders/split", "POST") => false,
+        }
+
+        SpringSecurityTagger.new(global_options).perform(endpoints.keys)
+
+        endpoints.map { |endpoint, _| tag_named(endpoint, "input-validation").nil? ? "#{endpoint.method} #{endpoint.url} -" : "#{endpoint.method} #{endpoint.url} +" }
+          .should eq(endpoints.map { |endpoint, valid| "#{endpoint.method} #{endpoint.url} #{valid ? "+" : "-"}" })
+      ensure
+        FileUtils.rm_rf(root)
+      end
+    end
   end
 
   it "applies multiple independent tags to one handler" do
@@ -343,6 +424,67 @@ describe "SpringSecurityTagger" do
       SpringSecurityTagger.new(extras_options).perform([endpoint])
 
       tag_named(endpoint, "cors").should be_nil
+    end
+
+    it "ends a mapping chain at the next addMapping statement" do
+      {"", "        // the partner API is open to every origin\n"}.each do |between|
+        config = "package com.example\n\n@Configuration\nclass WebConfig : WebMvcConfigurer {\n    override fun addCorsMappings(registry: CorsRegistry) {\n" \
+                 "        registry.addMapping(\"/public/**\").allowedOrigins(\"https://www.example.com\")\n#{between}" \
+                 "        registry.addMapping(\"/partner/**\").allowedOriginPatterns(\"*\").allowCredentials(true)\n    }\n}\n"
+        root = File.tempname("spring_cors_split")
+        begin
+          Dir.mkdir_p(root)
+          path = File.join(root, "WebConfig.kt")
+          File.write(path, config)
+          CodeLocator.instance.clear_all
+          CodeLocator.instance.register_path(path)
+          partner = build_endpoint(path, nil, "/partner/items", "GET")
+          open_route = build_endpoint(path, nil, "/public/ping", "GET")
+          options = create_test_options
+          options["base"] = YAML::Any.new(root)
+          SpringSecurityTagger.new(options).perform([partner, open_route])
+
+          tag_named(partner, "cors").should_not be_nil
+          tag_named(open_route, "cors").should be_nil
+        ensure
+          FileUtils.rm_rf(root)
+        end
+      end
+    end
+
+    it "reads a mapping chain with a comment line between its calls" do
+      config = <<-KOTLIN
+        package com.example
+
+        @Configuration
+        class WebConfig : WebMvcConfigurer {
+            override fun addCorsMappings(registry: CorsRegistry) {
+                registry.addMapping("/api/**")
+                    // TODO: narrow the origins
+                    .allowedOriginPatterns("*")
+                    .allowCredentials(true)
+            }
+        }
+        KOTLIN
+      root = File.tempname("spring_cors")
+      begin
+        Dir.mkdir_p(root)
+        path = File.join(root, "WebConfig.kt")
+        File.write(path, config)
+        CodeLocator.instance.register_path(path)
+        inside = build_endpoint(path, nil, "/api/items", "GET")
+        outside = build_endpoint(path, nil, "/web/items", "GET")
+
+        options = create_test_options
+        options["base"] = YAML::Any.new(root)
+        SpringSecurityTagger.new(options).perform([inside, outside])
+
+        tag_named(inside, "cors").try(&.description).should eq(
+          "Permissive CORS (global WebMvc config) — addMapping(\"/api/**\") allows all origins (*) with credentials, exposing authenticated responses cross-origin.")
+        tag_named(outside, "cors").should be_nil
+      ensure
+        FileUtils.rm_rf(root)
+      end
     end
   end
 

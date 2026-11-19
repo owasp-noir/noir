@@ -1681,6 +1681,58 @@ describe "SpringAuthTagger (HandlerInterceptor)" do
     endpoints["GET /api/b"].tags.select(&.name.==("auth")).should be_empty
   end
 
+  it "judges a static JSON or YAML file by the module serving it, not by every module" do
+    interceptor = <<-JAVA
+      package com.example.a;
+      public class InterceptorA implements HandlerInterceptor {
+          public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object h) throws Exception {
+              res.sendError(401);
+              return false;
+          }
+      }
+      JAVA
+    config = <<-JAVA
+      package com.example.a;
+      @Configuration
+      public class ConfigA implements WebMvcConfigurer {
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new InterceptorA());
+          }
+      }
+      JAVA
+    files = {
+      "pom.xml"                                                 => "<project><artifactId>root</artifactId></project>",
+      "service-a/pom.xml"                                       => spring_module_pom("service-a", [] of String),
+      "service-a/src/main/java/com/example/a/InterceptorA.java" => interceptor,
+      "service-a/src/main/java/com/example/a/ConfigA.java"      => config,
+      "service-a/src/main/resources/static/app.json"            => "{}",
+      "service-b/pom.xml"                                       => spring_module_pom("service-b", [] of String),
+      "service-b/src/main/resources/static/app.json"            => "{}",
+      "service-b/src/main/resources/static/conf.yml"            => "a: 1",
+    }
+    CodeLocator.instance.clear_all
+    root = File.tempname("spring_static_module")
+    files.each do |relative, source|
+      path = File.join(root, relative)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, source)
+      CodeLocator.instance.register_path(path)
+    end
+    options = create_test_options
+    options["base"] = YAML::Any.new(root)
+    endpoints = ["service-a/src/main/resources/static/app.json", "service-b/src/main/resources/static/app.json", "service-b/src/main/resources/static/conf.yml"].map do |file|
+      details = Details.new(PathInfo.new(File.join(root, file)))
+      details.technology = "java_spring"
+      Endpoint.new("/#{File.basename(file)}", "GET", [] of Param, details)
+    end
+    SpringAuthTagger.new(options).perform(endpoints)
+    FileUtils.rm_rf(root)
+
+    endpoints.map(&.tags.select(&.name.==("auth")).map(&.description)).should eq([
+      ["Protected by Spring HandlerInterceptor InterceptorA"], [] of String, [] of String,
+    ])
+  end
+
   it "reads a 401/403 status or auth exception as the refusal, not a bare return false" do
     interceptors = <<-JAVA
       package com.example.web;
@@ -4928,5 +4980,157 @@ describe "SpringAuthTagger (HandlerInterceptor path constants)" do
 
   it "does not widen an include pattern it cannot read to every route" do
     guarded_routes.call(".addPathPatterns(patterns())").should be_empty
+  end
+end
+
+# Auth tags of GET /api/items and GET /public/ping when `interceptor` is
+# registered by `registration` inside `addInterceptors` on `/api/**`.
+private def kotlin_interceptor_guards(interceptor : String, registration : String, members = "", extra = {} of String => String) : Array(Array(String))
+  config = <<-KT
+    package com.example
+
+    @Configuration
+    class WebConfig : WebMvcConfigurer {
+    #{members}
+        override fun addInterceptors(registry: InterceptorRegistry) {
+            #{registration}.addPathPatterns("/api/**")
+        }
+    }
+    KT
+  controller = <<-KT
+    package com.example
+
+    @RestController
+    class ItemController {
+        @GetMapping("/api/items")
+        fun list(): String = "a"
+
+        @GetMapping("/public/ping")
+        fun ping(): String = "p"
+    }
+    KT
+  endpoints = run_spring_endpoints_map({
+    "src/main/kotlin/com/example/ApiKeyInterceptor.kt" => "package com.example\n\n#{interceptor}",
+    "src/main/kotlin/com/example/WebConfig.kt"         => config,
+    "src/main/kotlin/com/example/ItemController.kt"    => controller,
+  }.merge(extra), {
+    "GET /api/items"   => "src/main/kotlin/com/example/ItemController.kt:5",
+    "GET /public/ping" => "src/main/kotlin/com/example/ItemController.kt:8",
+  })
+  endpoints.values.map { |endpoint| endpoint.tags.select(&.name.==("auth")).map(&.description) }
+end
+
+KOTLIN_SEND_ERROR_PRE_HANDLE = <<-KT
+      override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+          if (request.getHeader("X-Api-Key") != "k") {
+              response.sendError(HttpServletResponse.SC_UNAUTHORIZED)
+              return false
+          }
+          return true
+      }
+  }
+  KT
+
+describe "SpringAuthTagger (Kotlin HandlerInterceptor shapes)" do
+  it "reads a Kotlin throw of an auth exception, which has no `new`, as a refusal" do
+    interceptor = <<-KT
+      class ApiKeyInterceptor : HandlerInterceptor {
+          override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+              if (request.getHeader("X-Api-Key") != "k") {
+                  throw UnauthorizedException("missing key")
+              }
+              return true
+          }
+      }
+      KT
+    kotlin_interceptor_guards(interceptor, "registry.addInterceptor(ApiKeyInterceptor())").should eq([
+      ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
+    ])
+  end
+
+  it "does not read a Kotlin throw of a non-auth exception as a refusal" do
+    interceptor = <<-KT
+      class ApiKeyInterceptor : HandlerInterceptor {
+          override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+              if (request.getHeader("X-Trace") == null) {
+                  throw IllegalStateException("no trace")
+              }
+              return true
+          }
+      }
+      KT
+    kotlin_interceptor_guards(interceptor, "registry.addInterceptor(ApiKeyInterceptor())").should eq([[] of String, [] of String])
+  end
+
+  it "reads an AsyncHandlerInterceptor and a class header whose constructor spans many lines" do
+    async = "class ApiKeyInterceptor : AsyncHandlerInterceptor {\n" + KOTLIN_SEND_ERROR_PRE_HANDLE
+    long_header = <<-KT
+      @Component
+      class ApiKeyInterceptor(
+          private val first: String,
+          private val second: String,
+          private val third: String,
+      ) : HandlerInterceptor {
+
+      KT
+    [async, long_header + KOTLIN_SEND_ERROR_PRE_HANDLE].each do |interceptor|
+      kotlin_interceptor_guards(interceptor, "registry.addInterceptor(ApiKeyInterceptor())").should eq([
+        ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
+      ])
+    end
+  end
+
+  it "resolves an interceptor registered through a Kotlin @Bean factory function" do
+    members = <<-KT
+        @Bean
+        fun apiKeyInterceptor(): ApiKeyInterceptor {
+            return ApiKeyInterceptor()
+        }
+      KT
+    interceptor = "class ApiKeyInterceptor : HandlerInterceptor {\n" + KOTLIN_SEND_ERROR_PRE_HANDLE
+    kotlin_interceptor_guards(interceptor, "registry.addInterceptor(apiKeyInterceptor())", members).should eq([
+      ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
+    ])
+  end
+
+  it "reads the type a factory declared as the HandlerInterceptor interface constructs" do
+    interceptor = "class ApiKeyInterceptor : HandlerInterceptor {\n" + KOTLIN_SEND_ERROR_PRE_HANDLE
+    {
+      "  @Bean\n  fun apiKeyInterceptor(): HandlerInterceptor = ApiKeyInterceptor()\n",
+      "  @Bean\n  fun apiKeyInterceptor(): HandlerInterceptor {\n      return ApiKeyInterceptor()\n  }\n",
+    }.each do |members|
+      kotlin_interceptor_guards(interceptor, "registry.addInterceptor(apiKeyInterceptor())", members).should eq([
+        ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
+      ])
+    end
+  end
+
+  it "does not take a bodiless class for the interceptor an object below it declares" do
+    interceptor = <<-KT
+      data class ApiKeyInterceptor(val header: String)
+
+      val ENABLED = true
+
+      fun guard(): HandlerInterceptor {
+          return object : HandlerInterceptor {
+              override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+                  if (request.getHeader("X-Api-Key") != "k") {
+                      response.sendError(401)
+                      return false
+                  }
+                  return true
+              }
+          }
+      }
+      KT
+    kotlin_interceptor_guards(interceptor, "registry.addInterceptor(ApiKeyInterceptor())").should eq([[] of String, [] of String])
+  end
+
+  it "keeps reading interceptors past a class with no body before a long file" do
+    filler = "package com.example\n\nclass Holder\n" + (1..12_000).map { |i| "val v#{i} = #{i} + 1\n" }.join + "val type = \"HandlerInterceptor\"\n"
+    interceptor = "class ApiKeyInterceptor : HandlerInterceptor {\n" + KOTLIN_SEND_ERROR_PRE_HANDLE
+    kotlin_interceptor_guards(interceptor, "registry.addInterceptor(ApiKeyInterceptor())", extra: {"src/main/kotlin/com/example/Util.kt" => filler}).should eq([
+      ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
+    ])
   end
 end
