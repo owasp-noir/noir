@@ -180,7 +180,12 @@ module Analyzer::Python
         seed_unmounted_router_roots(include_router_map, fastapi_base_paths,
           (fastapi_app_instances + parameter_app_instances).to_set, prefix_visited)
 
+        emit_map = imported_instance_mounts(include_router_map, fastapi_base_paths)
         include_router_map.each do |path, router_map|
+          (emit_map[path] ||= [] of Tuple(::String, Router)).concat(router_map.flat_map { |name, registered| registered.mounts.map { |router| {name, router} } })
+        end
+
+        emit_map.each do |path, instance_mounts|
           source = read_file_content(path)
           import_base_path = fastapi_base_path_for(path, fastapi_base_paths)
           definition_base_path = python_base_path_for(path)
@@ -188,7 +193,7 @@ module Analyzer::Python
           codelines = source.split("\n")
           # A worked `@app.get(...)` example in a docstring is prose.
           in_docstring = Helper.docstring_line_flags(codelines)
-          router_map.flat_map { |name, registered| registered.mounts.map { |router| {name, router} } }.each do |instance_name, router_class|
+          instance_mounts.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
               next if in_docstring[index] || line.lstrip.starts_with?("#")
 
@@ -352,6 +357,31 @@ module Analyzer::Python
       Fiber.yield
 
       result
+    end
+
+    IMPORTED_DECORATOR_RE = /^[ \t]*@[ \t]*(#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})*)[ \t]*\.[ \t]*(?:get|post|put|patch|delete|head|options|trace|query|route|api_route|websocket)[ \t]*\(/m
+
+    # `{name, mounted router}` per file that decorates routes on an app or
+    # router declared in another module (`from srv.application import app`),
+    # served under the mounts of the instance it names.
+    private def imported_instance_mounts(include_router_map : Hash(::String, Hash(::String, Router)),
+                                         project_roots : Array(::String)) : Hash(::String, Array(Tuple(::String, Router)))
+      uses = Hash(::String, Array(Tuple(::String, Router))).new
+      python_source_files.each do |path|
+        source = read_file_content(path)
+        next unless source.includes?('@')
+        local = include_router_map[path]?
+        names = Set(::String).new
+        source.scan(IMPORTED_DECORATOR_RE) { |m| names << m[1] unless local.try(&.has_key?(m[1])) }
+        next if names.empty?
+        import_modules = find_fastapi_imported_modules(fastapi_base_path_for(path, project_roots), path, source)
+        names.each do |name|
+          next unless (target = resolve_router_reference(path, source, import_modules, include_router_map, name)) && target[0] != path
+          next unless router = include_router_map[target[0]]?.try(&.[target[1]]?)
+          (uses[path] ||= [] of Tuple(::String, Router)).concat(router.mounts.map { |mounted| {name, mounted} })
+        end
+      end
+      uses
     end
 
     # `APIRouter` and every project class deriving from it, directly or
@@ -791,7 +821,7 @@ module Analyzer::Python
       when 0
         # A router included from the SAME file (e.g. dispatch's
         # `api_router.include_router(authenticated_organization_api_router)`).
-        return {file, name} if include_router_map[file].has_key?(name)
+        return {file, name} if include_router_map[file]?.try(&.has_key?(name))
         return unless imported = import_modules[name]?
         import_module_path = imported.first
         return unless target_map = include_router_map[import_module_path]?
@@ -805,12 +835,27 @@ module Analyzer::Python
         # FastAPI accuracy bug on real apps (fastapi-realworld,
         # Netflix/dispatch) that lean on `import router as X`.
         {import_module_path, fastapi_original_import_name(file, source, name, import_module_path, target_map)}
-      when 1
-        module_name, attr = name.split(".")
+      else
+        # `module.router`, `pkg.router` re-exported by `pkg/__init__.py`, or
+        # a chain of modules (`api.v1.users.router`), read left to right.
+        module_name, _, rest = name.partition('.')
         return unless imported = import_modules[module_name]?
-        import_module_path = imported.first
-        return unless include_router_map.has_key?(import_module_path)
-        {import_module_path, attr}
+        current = imported.first
+        attrs = rest.split('.')
+        attrs.each_with_index do |attr, i|
+          last = i == attrs.size - 1
+          return {current, attr} if last && include_router_map.has_key?(current)
+          return if current.empty?
+          symbol = Noir::ImportGraph::Python.find_imported_symbols(fastapi_base_path_for(current, @fastapi_project_roots),
+            current, read_file_content(current))[attr]? || return
+          if symbol[1].empty?
+            current = symbol[0]
+          else
+            return unless last && include_router_map[symbol[0]]?.try(&.has_key?(symbol[1]))
+            return {symbol[0], symbol[1]}
+          end
+        end
+        nil
       end
     end
 
