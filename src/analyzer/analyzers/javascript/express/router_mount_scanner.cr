@@ -778,21 +778,40 @@ module Analyzer::Javascript
 
       return unless router_var || router_file_direct
 
-      if caller == "app"
-        # Top-level mount
-        store_top_level_mount(locator, router_var, router_file_direct, prefix, main_file,
-          require_map, function_map, var_to_function, var_prefix)
-      else
-        # Nested mount - try to resolve parent prefixes
-        processed = store_nested_mount(locator, router_var, router_file_direct, prefix, caller, main_file,
-          require_map, function_map, var_to_function, var_prefix)
+      # `app.use('/p', usersRouter, postsRouter)` / `app.use('/p', [a, b])`:
+      # every imported router of the call is mounted.
+      routers = [router_var]
+      routers.concat(other_imported_routers(args, router_var, require_map, function_map)) if router_var && !router_file_direct
+      routers.each do |mounted|
+        if caller == "app"
+          # Top-level mount
+          store_top_level_mount(locator, mounted, router_file_direct, prefix, main_file,
+            require_map, function_map, var_to_function, var_prefix)
+        else
+          # Nested mount - try to resolve parent prefixes
+          processed = store_nested_mount(locator, mounted, router_file_direct, prefix, caller, main_file,
+            require_map, function_map, var_to_function, var_prefix)
 
-        # Defer if parent prefix not yet known
-        unless processed
-          deferred_key = router_file_direct || router_var || ""
-          global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
+          # Defer if parent prefix not yet known
+          unless processed
+            deferred_key = router_file_direct || mounted || ""
+            global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
+          end
         end
       end
+    end
+
+    # The identifiers of a `.use(...)` call other than `chosen` that are
+    # imported from a file declaring routes.
+    private def other_imported_routers(args : String, chosen : String, require_map : Hash(String, String), function_map : Hash(String, String)) : Array(String)
+      routers = [] of String
+      args.gsub(/'[^']*'|"[^"]*"|`[^`]*`/, "").scan(/(?<![.\w$])([A-Za-z_$][\w$]*)(?![\w$]|\s*[(.\[])/) do |m|
+        name = m[1]
+        next if name == chosen || routers.includes?(name)
+        file = require_map[name]? || function_map[name]?
+        routers << name if file && file_has_routes?(file)
+      end
+      routers
     end
 
     # `const api = Router()\n  .use(items)` and `export default

@@ -634,6 +634,20 @@ describe Noir::JSParser do
     end
   end
 
+  describe "use() with several routers" do
+    it "mounts every known router of the call" do
+      code = <<-JS
+        const a = express.Router();
+        const b = express.Router();
+        a.get('/a', h);
+        b.get('/b', h);
+        app.use('/p', a, b);
+        app.use('/q', [a, b]);
+        JS
+      Noir::JSParser.new(code).parse_routes.map(&.path).sort!.should eq(["/p/a", "/p/b", "/q/a", "/q/b"])
+    end
+  end
+
   describe "JSRoutePattern" do
     it "stores method and path" do
       pattern = Noir::JSRoutePattern.new("GET", "/users")

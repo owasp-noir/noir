@@ -312,10 +312,12 @@ module Noir
             scan_idx += 1
           end
 
-          # Find the best router candidate using heuristics
-          router_identifier = find_router_candidate(candidates, router_variables)
+          # Every known router of `use('/p', a, b)` / `use('/p', [a, b])`
+          # is mounted; otherwise the best candidate by heuristics.
+          known = candidates.select { |candidate| router_variables.includes?(candidate) }.uniq!
+          routers = known.size > 1 ? known : [find_router_candidate(candidates, router_variables)].compact
 
-          if router_identifier
+          routers.each do |router_identifier|
             prefixes.each do |prefix|
               router_prefixes[router_identifier] << prefix unless router_prefixes[router_identifier].includes?(prefix)
             end
