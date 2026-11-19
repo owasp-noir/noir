@@ -1280,8 +1280,10 @@ module Analyzer::Go
     # A handler shared by `/short` and `/short/:word` reads `word` on both,
     # so both get the path parameter; the route without the slot has none.
     # Only that shape is dropped: a sibling route of the same handler that
-    # is this URL plus the slot's segment. A route whose prefix noir could
-    # not resolve (`Group(s.base)`) has no such sibling and keeps its params.
+    # is this URL plus the slot's segment, or that extends this URL with
+    # segments holding the slot (`/q/:id` beside `/q/:id/:title/:answer`).
+    # A route whose prefix noir could not resolve (`Group(s.base)`) has no
+    # such sibling and keeps its params.
     # Middleware is not that handler: `GoNamedHandler` credits a middleware
     # path read only to routes whose URL has the slot.
     def self.drop_unslotted_path_params(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -1302,7 +1304,8 @@ module Analyzer::Go
               indexes.any? do |other|
                 sibling = endpoints[other].url
                 other != idx && path_slot?(sibling, param.name) &&
-                  sibling.split('/').reject { |segment| path_slot?(segment, param.name) }.join('/').rchop('/') == url
+                  (sibling.split('/').reject { |segment| path_slot?(segment, param.name) }.join('/').rchop('/') == url ||
+                    (sibling.starts_with?("#{url}/") && path_slot?(sibling[url.size..], param.name)))
               end
           end
           next if kept.size == endpoint.params.size

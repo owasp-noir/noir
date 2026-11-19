@@ -10,7 +10,8 @@ type Handlers struct {
 }
 
 type Server struct {
-	engine   *gin.Engine
-	handlers *Handlers
-	orders   *handler.OrderHandler
+	engine    *gin.Engine
+	handlers  *Handlers
+	orders    *handler.OrderHandler
+	questions *handler.QuestionHandler
 }

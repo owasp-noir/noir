@@ -165,6 +165,15 @@ describe "Analyzer::Go::GoEngine.drop_unslotted_path_params" do
     endpoints.map { |endpoint| path_names.call(endpoint) }.should eq([[] of String, ["word"], ["user"], ["user", "range"]])
   end
 
+  it "drops a slot that a longer sibling route of the handler adds further down" do
+    endpoints = Analyzer::Go::GoEngine.drop_unslotted_path_params([
+      routed.call("/questions/:id", ["id", "answerid"], 6),
+      routed.call("/questions/:id/:title", ["id", "answerid"], 6),
+      routed.call("/questions/:id/:title/:answerid", ["id", "answerid"], 6),
+    ])
+    endpoints.map { |endpoint| path_names.call(endpoint) }.should eq([["id"], ["id"], ["id", "answerid"]])
+  end
+
   it "keeps a param whose slot may sit in a prefix noir could not resolve" do
     endpoints = Analyzer::Go::GoEngine.drop_unslotted_path_params([
       # `Group(fmt.Sprintf("/teams/:%s", "team"))`, `Group(s.base)`: one route each
