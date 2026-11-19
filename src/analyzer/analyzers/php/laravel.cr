@@ -117,8 +117,9 @@ module Analyzer::Php
       # apps group routes in subdirectories — snipe-it keeps per-resource
       # files in `routes/web/hardware.php`, `routes/web/users.php`, etc.
       # Prefer substring checks over allocating a dirname split array.
-      path.includes?("/routes/") || path.includes?("\\routes\\") ||
-        File.basename(File.dirname(path)) == "routes"
+      # `Routes/` is the nwidart-module (<= v10) and Bagisto package layout.
+      path.includes?("/routes/") || path.includes?("\\routes\\") || path.includes?("/Routes/") ||
+        File.basename(File.dirname(path)).in?("routes", "Routes")
     end
 
     private def analyze_routes_file(path : String) : Array(Endpoint)
@@ -163,7 +164,7 @@ module Analyzer::Php
     # `->withRouting(api: __DIR__.'/../routes/api.php', apiPrefix: 'v2')` in
     # `bootstrap/app.php` (Laravel 11+, `apiPrefix` defaulting to `api`),
     # whose `then:` closure registers further groups the same way.
-    ROUTE_FILE_REF_RE   = /(['"])([^'"\n]*routes\/[^'"\n]*\.php)\1/
+    ROUTE_FILE_REF_RE   = /(['"])([^'"\n]*[Rr]outes\/[^'"\n]*\.php)\1/
     WITH_ROUTING_API_RE = /\bapi\s*:\s*(?:\[[^\]]*\]|[^,)]*)/
     WITH_ROUTING_WEB_RE = /\bweb\s*:\s*(?:\[[^\]]*\]|[^,)]*)/
     API_PREFIX_RE       = /\bapiPrefix\s*:\s*['"]([^'"]*)['"]/
@@ -178,7 +179,7 @@ module Analyzer::Php
         next if PhpEngine.test_path?(base_relative_path(path))
         begin
           content = read_file_content(path)
-          next unless content.includes?("routes/")
+          next unless content.includes?("routes/") || content.includes?("Routes/")
           base = bootstrap ? File.dirname(File.dirname(path)) : composer_project_root(path)
           collect_route_wiring(php_code(content), path, base, prefixes, @route_file_middleware) unless base.empty?
         rescue e
@@ -1166,8 +1167,7 @@ module Analyzer::Php
     end
 
     private def laravel_project_root(routes_file_path : String) : String?
-      marker = "/routes/"
-      idx = routes_file_path.rindex(marker)
+      idx = [routes_file_path.rindex("/routes/"), routes_file_path.rindex("/Routes/")].compact.max?
       return unless idx
       routes_file_path[0...idx]
     end
