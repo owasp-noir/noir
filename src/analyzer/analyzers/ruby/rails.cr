@@ -2097,6 +2097,7 @@ module Analyzer::Ruby
       permit_buf : String? = nil
       permit_mask = ""
       permit_lines = 0
+      class_heads : Hash(String, Array(Int32))? = nil
 
       controller_lines = controller_content.lines
       class_body = own_class_body(controller_lines)
@@ -2152,7 +2153,8 @@ module Analyzer::Ruby
         if buf = permit_buf
           if args = permit_args(buf, permit_mask)
             permit_buf = nil
-            scope = PermitScope.new(method_bodies[this_method]? || [] of String, class_body)
+            heads = class_heads ||= permit_heads(class_body)
+            scope = PermitScope.new(method_bodies[this_method]? || [] of String, class_body, heads)
             names = permit_mask.match(PERMIT_OPEN).try(&.[0].includes?("expect")) ? expect_names(args, scope) : permit_names(args, scope)
             if !names.empty? && (root = permit_mask.match(/params\.require\s*\(\s*:(\w+)/))
               permit_roots << root[1]
@@ -2439,15 +2441,28 @@ module Analyzer::Ruby
       return [] of String unless idx = controller_path.rindex("/app/controllers/")
       policy = "#{controller_path[0, idx]}/app/policies/#{record.lchop('@').camelcase.underscore.gsub("::", "/")}_policy.rb"
       return [] of String unless known_file?(policy)
-      scope = PermitScope.new([] of String, ruby_source(policy).lines)
+      lines = ruby_source(policy).lines
+      scope = PermitScope.new([] of String, lines, permit_heads(lines))
       names = permit_list_names("permitted_attributes_for_#{action}", scope, 0)
       names.empty? ? permit_list_names("permitted_attributes", scope, 0) : names
     end
 
     # Where a permit list's bare names are looked up: the lines of its method
     # so far (a local list) and the whole controller file (a constant or a
-    # method that returns one).
-    private record PermitScope, body : Array(String), file : Array(String)
+    # method that returns one). `heads` indexes `file` by the name a line
+    # defines (`def name` / `NAME =`), so a lookup does not rescan the file.
+    private record PermitScope, body : Array(String), file : Array(String), heads : Hash(String, Array(Int32))
+
+    PERMIT_HEAD = /\A\s*(?:def\s+(?:self\.)?)?([A-Za-z_]\w*)/
+
+    private def permit_heads(lines : Array(String)) : Hash(String, Array(Int32))
+      heads = Hash(String, Array(Int32)).new
+      lines.each_with_index do |line, idx|
+        next unless m = line.match(PERMIT_HEAD)
+        (heads[m[1]] ||= [] of Int32) << idx
+      end
+      heads
+    end
 
     # Param names from a permit argument list: the leading key of each
     # top-level entry (`:title`, `"title"`, `tags: []`, `a: {b: 1}`, `:a => []`,
@@ -2509,9 +2524,10 @@ module Analyzer::Ruby
           item = item.rchop(')') if item.count('(') < item.count(')')
           names.concat(list_literal_names(item.starts_with?('[') || item.starts_with?('%') ? item : "[#{item}]", scope, depth + 1))
         end
-      elsif name[0].ascii_uppercase? && (idx = scope.file.index(&.matches?(assign)))
+      elsif name[0].ascii_uppercase? && (idx = scope.heads[name]?.try(&.find { |i| scope.file[i].matches?(assign) }))
         names.concat(list_literal_names(statement_from(scope.file, idx, assign), scope, depth + 1))
-      elsif idx = scope.file.index(&.matches?(/\A\s*def\s+(?:self\.)?#{Regex.escape(name)}\s*(?:\(\s*\))?\s*\z/))
+      elsif (definition = /\A\s*def\s+(?:self\.)?#{Regex.escape(name)}\s*(?:\(\s*\))?\s*\z/) &&
+            (idx = scope.heads[name]?.try(&.find { |i| scope.file[i].matches?(definition) }))
         # A method's value is its last statement: from the last body line at
         # the body's own indent to its end.
         indent = scope.file[idx].size - scope.file[idx].lstrip.size
@@ -2523,10 +2539,10 @@ module Analyzer::Ruby
           if body[start].strip == "end"
             # An `if`/`case` ends it: each branch's list is a value it returns.
             body.each do |l|
-              names.concat(list_literal_names(l, PermitScope.new(body, scope.file), depth + 1)) if l.lstrip.matches?(/\A(?:\[|%[iwIW][\[(])/)
+              names.concat(list_literal_names(l, PermitScope.new(body, scope.file, scope.heads), depth + 1)) if l.lstrip.matches?(/\A(?:\[|%[iwIW][\[(])/)
             end
           else
-            names.concat(list_literal_names(body[start..].join(" "), PermitScope.new(body, scope.file), depth + 1))
+            names.concat(list_literal_names(body[start..].join(" "), PermitScope.new(body, scope.file, scope.heads), depth + 1))
           end
         end
       end
