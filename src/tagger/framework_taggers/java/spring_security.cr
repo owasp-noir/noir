@@ -458,21 +458,28 @@ class SpringSecurityTagger < FrameworkTagger
   # `@Valid` / `@Validated` applied to the handler's parameters (scan the
   # signature up to the body brace) or `@Validated` on the controller class.
   private def check_input_validation(path : String, lines : Array(String), method_idx : Int32, endpoint : Endpoint) : String?
-    idx = method_idx
-    end_idx = [method_idx + 10, lines.size - 1].min
-    while idx <= end_idx
-      current = lines[idx]
-      if current.includes?("@Valid") || current.includes?("@Validated")
-        return "Request payload validated by Bean Validation (@Valid/@Validated)."
+    depth = 0
+    (method_idx..[method_idx + 30, lines.size - 1].min).each do |idx|
+      break if idx > method_idx && spring_mapping_annotation?(lines[idx])
+      # The signature ends at the first `{` (body) or Kotlin `=` (expression
+      # body) outside parentheses. A path variable `"/{id}"`, an annotation
+      # array `consumes = {..}` or `value = ".."` sits inside a string or
+      # the annotation's parentheses.
+      code = lines[idx].gsub(/"(?:[^"\\]|\\.)*"/, "\"\"").sub(/\/\/.*/, "")
+      stop = code.size
+      code.each_char_with_index do |char, i|
+        case char
+        when '(' then depth += 1
+        when ')' then depth -= 1
+        when '{', '='
+          if depth <= 0
+            stop = i
+            break
+          end
+        end
       end
-      # The first body brace closes the signature — stop before scanning the
-      # method body so a `@Valid` used deeper inside cannot leak in.
-      break if current.includes?("{")
-      # Kotlin expression-bodied handlers (`fun list() = service.list()`)
-      # have no body brace. Stop if we reach the next route annotation so a
-      # following handler's `@Valid` does not bleed into this endpoint.
-      break if idx > method_idx && spring_mapping_annotation?(current)
-      idx += 1
+      return "Request payload validated by Bean Validation (@Valid/@Validated)." if code[0, stop].includes?("@Valid")
+      break if stop < code.size
     end
 
     if endpoint.params.present? && class_level_annotation(path, lines, "@Validated")

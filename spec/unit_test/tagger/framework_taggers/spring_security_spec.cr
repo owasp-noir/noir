@@ -255,6 +255,79 @@ describe "SpringSecurityTagger" do
         File.delete(path) if File.exists?(path)
       end
     end
+
+    it "reads past a path variable or annotation array brace to a @Valid parameter" do
+      java = <<-JAVA
+        package com.example;
+
+        @RestController
+        public class ItemController {
+            @PutMapping("/items/{id}")
+            public String update(@PathVariable Long id, @Valid @RequestBody ItemDto body) {
+                return "u";
+            }
+
+            @PostMapping(value = "/items", consumes = {"application/json"})
+            @ApiResponses({@ApiResponse(code = 200, message = "ok")})
+            public String create(
+                    @Valid @RequestBody ItemDto body) {
+                return "c";
+            }
+
+            @PutMapping("/plain/{id}")
+            public String plain(@PathVariable Long id, @RequestBody ItemDto body) {
+                Object checked = new Object(); // @Valid
+                return "p";
+            }
+
+            @PostMapping("/next")
+            public String next(@Valid @RequestBody ItemDto body) {
+                return "n";
+            }
+        }
+        JAVA
+      kotlin = <<-KOTLIN
+        package com.example
+
+        @RestController
+        class OrderController {
+            @PutMapping("/orders/{id}")
+            fun update(@PathVariable id: Long, @Valid @RequestBody body: OrderDto): String = "u"
+
+            @GetMapping("/orders/{id}")
+            fun get(@PathVariable id: Long): String =
+                "g"
+
+            fun check(@Valid body: OrderDto) = body
+        }
+        KOTLIN
+
+      root = File.tempname("spring_valid")
+      begin
+        Dir.mkdir_p(root)
+        java_path = File.join(root, "ItemController.java")
+        kotlin_path = File.join(root, "OrderController.kt")
+        File.write(java_path, java)
+        File.write(kotlin_path, kotlin)
+        CodeLocator.instance.register_path(java_path)
+        CodeLocator.instance.register_path(kotlin_path)
+        endpoints = {
+          build_endpoint(java_path, 5, "/items/{id}", "PUT")    => true,
+          build_endpoint(java_path, 10, "/items", "POST")       => true,
+          build_endpoint(java_path, 17, "/plain/{id}", "PUT")   => false,
+          build_endpoint(java_path, 23, "/next", "POST")        => true,
+          build_endpoint(kotlin_path, 5, "/orders/{id}", "PUT") => true,
+          build_endpoint(kotlin_path, 8, "/orders/{id}", "GET") => false,
+        }
+
+        SpringSecurityTagger.new(global_options).perform(endpoints.keys)
+
+        endpoints.map { |endpoint, _| tag_named(endpoint, "input-validation").nil? ? "#{endpoint.method} #{endpoint.url} -" : "#{endpoint.method} #{endpoint.url} +" }
+          .should eq(endpoints.map { |endpoint, valid| "#{endpoint.method} #{endpoint.url} #{valid ? "+" : "-"}" })
+      ensure
+        FileUtils.rm_rf(root)
+      end
+    end
   end
 
   it "applies multiple independent tags to one handler" do
