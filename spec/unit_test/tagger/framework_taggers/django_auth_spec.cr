@@ -2558,4 +2558,39 @@ describe "DjangoAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "keeps a dispatch flag unknown when URLconf entries pass it different values" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_dispatch_flag_twice")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    urls_a = File.join(tmpdir, "urls_a.py")
+    urls_b = File.join(tmpdir, "urls_b.py")
+    File.write(views, <<-PY)
+      class PageView(TemplateView):
+          login_required = False
+
+          def dispatch(self, request, *args, **kwargs):
+              if self.login_required and not request.user.is_authenticated:
+                  return redirect_to_login(request.path)
+              return super().dispatch(request, *args, **kwargs)
+      PY
+    File.write(urls_a, "urlpatterns = [\n    path(\"page/\", PageView.as_view(login_required=True)),\n]\n")
+    File.write(urls_b, "urlpatterns = [\n    path(\"page/\", PageView.as_view()),\n]\n")
+    [views, urls_a, urls_b].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      details = Details.new(PathInfo.new(views, 1))
+      details.add_path(PathInfo.new(urls_a, 2))
+      details.add_path(PathInfo.new(urls_b, 2))
+      page = Endpoint.new("/page/", "GET", [] of Param, details)
+      DjangoAuthTagger.new(noir_options).perform([page])
+      page.tags.map(&.description).should eq(["Protected by PageView.dispatch"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end

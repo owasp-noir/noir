@@ -292,17 +292,20 @@ class DjangoAuthTagger < FrameworkTagger
     end
   end
 
-  # The `name=value` arguments `ClassName.as_view(...)` passes in every
-  # entry that builds the view; none when the entries disagree.
+  # The `name=value` arguments `ClassName.as_view(...)` passes in the
+  # entries that build the view. A name the entries pass different values
+  # for (or only some pass) holds "", a value not read.
   private def as_view_kwargs(urlconf : Array(String), class_name : String) : Hash(String, String)
     call = /\b#{Regex.escape(class_name)}\s*\.\s*as_view\s*(?=\()/
-    found = urlconf.compact_map { |entry| bracketed_after(entry, call) }.uniq!
+    passed = urlconf.compact_map { |entry| bracketed_after(entry, call) }.map do |args|
+      Noir::TopLevelSplit.split(args[1...-1], ',', Noir::TopLevelSplit::Rules::PYTHON).compact_map do |arg|
+        arg.strip.match(/\A(\w+)\s*=(?!=)\s*(.+)\z/m).try { |m| {m[1], m[2].strip} }
+      end.to_h
+    end
     kwargs = {} of String => String
-    return kwargs unless found.size == 1
-    Noir::TopLevelSplit.split(found.first[1...-1], ',', Noir::TopLevelSplit::Rules::PYTHON).each do |arg|
-      if m = arg.strip.match(/\A(\w+)\s*=(?!=)\s*(.+)\z/m)
-        kwargs[m[1]] = m[2].strip
-      end
+    passed.flat_map(&.keys).uniq!.each do |name|
+      values = passed.map(&.[name]?).uniq!
+      kwargs[name] = values.size == 1 ? values.first || "" : ""
     end
     kwargs
   end
