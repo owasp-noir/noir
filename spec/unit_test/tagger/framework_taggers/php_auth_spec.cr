@@ -448,4 +448,92 @@ describe "PhpAuthTagger (expanded targets)" do
     end
   end
 
+  it "reads a Yii AccessControl behavior: only/except, then the first rule a guest matches" do
+    tmpdir = File.tempname("php_yii_acf")
+    Dir.mkdir_p(tmpdir)
+    site = File.join(tmpdir, "SiteController.php")
+    admin = File.join(tmpdir, "AdminController.php")
+    File.write(site, <<-PHP)
+      <?php
+      class SiteController extends Controller
+      {
+          public function behaviors()
+          {
+              return [
+                  'access' => [
+                      'class' => AccessControl::class,
+                      'only' => ['logout', 'signup'],
+                      'rules' => [
+                          ['actions' => ['signup'], 'allow' => true, 'roles' => ['?']],
+                          ['actions' => ['logout'], 'allow' => true, 'roles' => ['@']],
+                      ],
+                  ],
+              ];
+          }
+
+          public function actionIndex()
+          {
+              return $this->render('index');
+          }
+
+          public function actionSignup()
+          {
+              return $this->render('signup');
+          }
+
+          public function actionLogout()
+          {
+              return $this->goHome();
+          }
+      }
+      PHP
+    File.write(admin, <<-PHP)
+      <?php
+      class AdminController extends Controller
+      {
+          public function behaviors()
+          {
+              return [
+                  'access' => [
+                      'class' => AccessControl::class,
+                      'except' => ['health'],
+                      'rules' => [
+                          ['actions' => ['login', 'error'], 'allow' => true],
+                          ['actions' => ['list-users', 'index'], 'allow' => true, 'roles' => ['@']],
+                      ],
+                  ],
+              ];
+          }
+
+          public function actionLogin() {}
+
+          public function actionListUsers() {}
+
+          public function actionReport() {}
+
+          public function actionHealth() {}
+      }
+      PHP
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(path : String, line : Int32) do
+        details = Details.new(PathInfo.new(path, line))
+        details.technology = "php_yii"
+        Endpoint.new("/#{line}", "GET", [] of Param, details)
+      end
+      endpoints = {
+        index: at.call(site, 18), signup: at.call(site, 23), logout: at.call(site, 28),
+        login: at.call(admin, 18), list_users: at.call(admin, 20), report: at.call(admin, 22), health: at.call(admin, 24),
+      }.to_h
+
+      PhpAuthTagger.new(noir_options).perform(endpoints.values)
+
+      # A guest matches no rule for `logout` or `report` (`'@'` is not a guest), so both are denied.
+      endpoints.select { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys.should eq([:logout, :list_users, :report])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end
