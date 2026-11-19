@@ -57,11 +57,14 @@ module Analyzer::Ruby
         next unless line.valid_encoding?
 
         stripped_for_code = strip_comment(line)
+        # Blocks are counted with string interiors blanked: a `do` or `}` in
+        # `"nothing to do"` opens or closes nothing.
+        structure = Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: false)
 
         unless in_route
           if stripped_for_code =~ /\broute\s+(?:do\b|\{)/
             in_route = true
-            depth = count_opens(stripped_for_code) - count_closes(stripped_for_code)
+            depth = count_opens(structure) - count_closes(structure)
             prefix_stack.clear
             last_endpoint_index = -1
           end
@@ -75,8 +78,8 @@ module Analyzer::Ruby
 
         extract_params_for_line(stripped_for_code, last_endpoint_index)
 
-        opens = count_opens(stripped_for_code)
-        closes = count_closes(stripped_for_code)
+        opens = count_opens(structure)
+        closes = count_closes(structure)
         depth += opens - closes
 
         while !prefix_stack.empty? && prefix_stack.last[:depth] > depth

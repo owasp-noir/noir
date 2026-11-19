@@ -165,6 +165,10 @@ module Analyzer::Elixir
       return endpoints unless content.matches?(PLUG_ROUTE_EVIDENCE_RE)
 
       include_callee = callees_needed?
+      # `mix format` writes `get("/x") do`; read the parenthesised macro as
+      # `get "/x"`, only in a real Plug.Router so HTTP-client `get("/x")`
+      # calls stay out.
+      plug_router = content.matches?(PLUG_ROUTER_USE_RE)
 
       # Find all route blocks and extract params
       lines = content.lines
@@ -192,6 +196,7 @@ module Analyzer::Elixir
         code = strip_trailing_comment(line).strip
         next if code.empty?
 
+        code = code.sub(PLUG_PAREN_MACRO_RE, "\\1 ") if plug_router
         line_endpoints = line_to_endpoint(code)
         line_endpoints.each do |endpoint|
           unless endpoint.method.empty?
@@ -360,6 +365,8 @@ module Analyzer::Elixir
     PLUG_ROUTE_PATTERNS = PLUG_ROUTE_MACROS.keys.to_h do |verb|
       {verb, Regex.new("(?:^|[^.\\w])#{verb}\\s+[\"']([^\"']+)[\"']")}
     end
+
+    PLUG_PAREN_MACRO_RE = /\A(get|post|put|patch|delete|head|options|query|match|forward)\s*\(\s*/
 
     def line_to_endpoint(line : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new

@@ -112,9 +112,14 @@ module Analyzer::Ruby
     # Full form capturing both Child and Super for the inheritance graph.
     GRAPE_CLASS_EDGE   = /^\s*class\s+([A-Z][\w:]*)\s*<\s*([:\w][\w:]*)/
     GRAPE_PREFIX_DECL  = /^\s*prefix\s+['":]([\w\/]+)['"]?/
-    GRAPE_VERSION_DECL = /^\s*version\s+(.+)\busing:\s*:path\b/
+    GRAPE_VERSION_DECL = /^\s*version\s+(['":\[%].*)$/
     # `mount Child` / `mount Child => "/path"` (capture 2: the mount path).
     GRAPE_MOUNT_DECL = /^\s*mount\s+([:\w][\w:]*)(?:\s*=>\s*['"]([^'"]*)['"])?/
+    # A Rails routes file's `mount API::Base, at: "/api"` / `=> "/api"`.
+    RAILS_MOUNT_DECL = /^\s*mount\s*\(?\s*(?:::)?([A-Z][\w:]*)\s*(?:,\s*at:\s*|=>\s*)['"]([^'"]*)['"]/
+    # `version 'v1'` is path versioning unless `using:` names another
+    # strategy. The argument must be a literal, so `version = x` is not one.
+    GRAPE_VERSION_NOT_PATH = /\busing(?::|\s*=>)\s*['":]?(?!path\b)\w/
 
     # Build the transitive closure of Grape classes and the mount-inherited
     # prefix per class. Names are reduced to their final `::` segment so
@@ -126,6 +131,8 @@ module Analyzer::Ruby
       mounts = {} of String => Array({String, String}) # mounter class -> {mounted class, mount path}
       mounted = Set(String).new                        # classes mounted by someone
       concerns = {} of String => String                # concern module -> its file
+      rails_mounts = {} of String => String            # full constant -> Rails mount path
+      full_names = {} of String => Set(String)         # class -> full constants it is defined as
 
       all_files.each do |path|
         next unless path.ends_with?(".rb")
@@ -143,6 +150,13 @@ module Analyzer::Ruby
         if content.includes?("ActiveSupport::Concern") && content.includes?("included do") && content.matches?(GRAPE_CONCERN_ROUTE)
           grape_concern_name(content).try { |name| concerns.put_if_absent(name) { path } }
         end
+        if rails_router_source?(content)
+          content.each_line do |raw_line|
+            next unless raw_line.includes?("mount") && (m = raw_line.match(RAILS_MOUNT_DECL))
+            rails_mounts.put_if_absent(m[1]) { m[2] }
+          end
+          next
+        end
         next unless content.includes?("class ") && content.includes?("<")
 
         # Edges are collected for every `class X < Y`, but the
@@ -155,7 +169,16 @@ module Analyzer::Ruby
         primary : String? = nil
         prefix = ""
         version = ""
+        modules = [] of {Int32, String}
         content.each_line do |raw_line|
+          if raw_line.includes?("module ") && (mm = raw_line.match(GRAPE_MODULE_DEF))
+            indent = raw_line.size - raw_line.lstrip.size
+            while (top = modules.last?) && top[0] >= indent
+              modules.pop
+            end
+            modules << {indent, mm[1].lchop("::")}
+            next
+          end
           # Cheap substring gates keep the per-line regex work off the
           # (vast) majority of lines in non-trivial repos — without them the
           # whole-tree pre-pass dominated Grape scan time on GitLab-scale
@@ -163,6 +186,11 @@ module Analyzer::Ruby
           if raw_line.includes?("class ")
             next unless m = raw_line.match(GRAPE_CLASS_EDGE)
             child = grape_simple_class_name(m[1])
+            indent = raw_line.size - raw_line.lstrip.size
+            while (top = modules.last?) && top[0] >= indent
+              modules.pop
+            end
+            (full_names[child] ||= Set(String).new) << (modules.map(&.[1]) << m[1].lchop("::")).join("::")
             super_full = m[2]
             if super_full.includes?("Grape::API")
               grape << child
@@ -174,8 +202,8 @@ module Analyzer::Ruby
             if raw_line.includes?("prefix") && (m = raw_line.match(GRAPE_PREFIX_DECL))
               prefix = m[1]
               own_base[cls] = grape_join_segments(prefix, version)
-            elsif raw_line.includes?("version") && (m = raw_line.match(GRAPE_VERSION_DECL))
-              version = parse_first_grape_version(m[1])
+            elsif raw_line.includes?("version") && (v = grape_path_version(raw_line))
+              version = v
               own_base[cls] = grape_join_segments(prefix, version)
             elsif raw_line.includes?("mount") && (m = raw_line.match(GRAPE_MOUNT_DECL))
               mounted_child = grape_simple_class_name(m[1])
@@ -212,7 +240,12 @@ module Analyzer::Ruby
       inherited = Hash(String, String).new("")
       roots = grape.select { |c| !mounted.includes?(c) }
       visited = Set(String).new
-      queue = roots.map { |r| {r, "", ""} }
+      # A root mounted from Rails routes starts under that mount path; the
+      # full constant must match, since the index keys on the last segment.
+      queue = roots.map do |r|
+        at = full_names[r]?.try { |fulls| rails_mounts[fulls.first]? if fulls.size == 1 }
+        {r, at || "", ""}
+      end
       until queue.empty?
         cls, mount_path, prefix = queue.shift
         next unless visited.add?(cls)
@@ -327,17 +360,20 @@ module Analyzer::Ruby
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
 
+        # Block structure is counted with string interiors blanked, so a
+        # `do`/`end` in `desc 'what to do'` opens or closes nothing.
+        structure = Noir::RubyCalleeExtractor.strip_comment(stripped, preserve_strings: false)
         if params_block_depth > 0
           # Grape allows nested validation blocks (`requires :x, type: Hash do
           # ... end`), so the params block closes only when depth returns to 0.
           # A plain boolean let the first inner `end` close it early, leaking the
           # remaining `end`(s) to the main parser, which then popped the
           # enclosing namespace/resource prefix frame.
-          if grape_end?(stripped)
+          if grape_end?(structure)
             params_block_depth -= 1
             next if params_block_depth <= 0
           else
-            params_block_depth += ruby_do_block_open_delta(stripped)
+            params_block_depth += ruby_do_block_open_delta(structure)
             stripped.scan(/(?:requires|optional)\s+[:\'"]([\w]+)[\'"]?/) do |m|
               pending_params << m[1] if m.size > 1
             end
@@ -357,6 +393,7 @@ module Analyzer::Ruby
           end
           skip_through = last
           do_index = stmts[last][1]
+          structure = Noir::RubyCalleeExtractor.strip_comment(stripped, preserve_strings: false)
         end
 
         if stripped == "params do" || stripped.starts_with?("params do")
@@ -369,8 +406,8 @@ module Analyzer::Ruby
           next
         end
 
-        if m = stripped.match(/^version\s+(.+)\busing:\s*:path\b/)
-          version_prefix = parse_first_grape_version(m[1])
+        if stripped.starts_with?("version") && (v = grape_path_version(stripped))
+          version_prefix = v
           next
         end
 
@@ -412,7 +449,7 @@ module Analyzer::Ruby
             include_sites, pending_params, route_methods, route_paths
           )
           pending_params.clear
-          block_kinds << :other unless stripped.match(/\bend\b/)
+          block_kinds << :other unless structure.match(/\bend\b/)
           verb_handled = true
         end
 
@@ -433,7 +470,7 @@ module Analyzer::Ruby
                 include_sites, pending_params, [verb.upcase], [raw_path]
               )
               pending_params.clear
-              block_kinds << :other unless stripped.match(/\bend\b/)
+              block_kinds << :other unless structure.match(/\bend\b/)
               verb_handled = true
               break
             end
@@ -445,7 +482,7 @@ module Analyzer::Ruby
                 include_sites, pending_params, [verb.upcase], [""]
               )
               pending_params.clear
-              block_kinds << :other unless stripped.match(/\bend\b/)
+              block_kinds << :other unless structure.match(/\bend\b/)
               verb_handled = true
               break
             end
@@ -476,15 +513,17 @@ module Analyzer::Ruby
           end
         end
 
-        if ruby_do_block_open_delta(stripped) > 0
-          block_kinds << :other
-        end
-
-        if grape_end?(stripped)
+        closes = grape_end?(structure)
+        if closes
           popped = block_kinds.pop?
           if popped == :prefix && !prefix_segments.empty?
             prefix_segments.pop
           end
+        end
+
+        # `end.each do |x|` closes one block and opens the next.
+        if ruby_do_block_open_delta(closes ? structure.sub(/\Aend\s*(?=\.)/, "") : structure) > 0
+          block_kinds << :other
         end
       end
     end
@@ -645,6 +684,12 @@ module Analyzer::Ruby
       endpoint.push_param(param)
     end
 
+    private def grape_path_version(line : String) : String?
+      return unless m = line.match(GRAPE_VERSION_DECL)
+      return if m[1].matches?(GRAPE_VERSION_NOT_PATH)
+      parse_first_grape_version(m[1])
+    end
+
     private def parse_first_grape_version(args : String) : String
       if m = args.match(/['"]([^'"]+)['"]/)
         return m[1]
@@ -672,8 +717,9 @@ module Analyzer::Ruby
       path.gsub(/#\{\s*([a-zA-Z_]\w*)[^}]*\}/) { "{#{$~[1]}}" }.gsub(/:([a-zA-Z_][\w]*)/) { "{#{$~[1]}}" }
     end
 
+    # `end`, and chained closers such as `end.compact` or `end)`.
     private def grape_end?(stripped : String) : Bool
-      stripped == "end" || stripped.starts_with?("end ") || stripped.starts_with?("end#")
+      stripped.matches?(/\Aend(?![\w?!:])/)
     end
 
     # Unrolls `.each do |var|` over a literal list into one copy of its body
