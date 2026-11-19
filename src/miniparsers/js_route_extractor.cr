@@ -9,6 +9,7 @@ require "../utils/url_path"
 require "../utils/js_literal_scanner"
 require "../analyzer/analyzers/javascript/express_constants"
 require "../utils/text_file"
+require "./ts_class_fields"
 
 module Noir
   # JSRouteExtractor provides a unified interface for extracting routes from JavaScript files
@@ -2195,7 +2196,9 @@ module Noir
         end
       end
 
-      extract_multer_params(handler ? args_slice.byte_slice(0, handler[0]) : args_slice, endpoint)
+      middleware = handler ? args_slice.byte_slice(0, handler[0]) : args_slice
+      extract_multer_params(middleware, endpoint)
+      extract_zod_validator_params(middleware, content, endpoint)
 
       return unless handler
 
@@ -2547,6 +2550,36 @@ module Noir
       middleware.scan(MULTER_FIELDS_RE) do |m|
         m[1].scan(MULTER_NAME_RE) { |field| endpoint.push_param(Param.new(field[1], "", "file")) }
       end
+    end
+
+    # `@hono/zod-validator` middleware names the validated target and its
+    # schema: `zValidator('json', z.object({ title: z.string() }))`, or a
+    # same-file `const loginForm = z.object({...})`.
+    ZOD_VALIDATOR_RE    = /\bzValidator\s*\(\s*['"](json|form|query|header|cookie|param)['"]\s*,\s*(?:(z\s*\.\s*(?:object|strictObject|looseObject)\s*\(\s*\{)|([A-Za-z_$][\w$]*)\s*[,)])/
+    ZOD_VALIDATOR_TYPES = {"json" => "json", "form" => "form", "query" => "query", "header" => "header", "cookie" => "cookie", "param" => "path"}
+
+    private def self.extract_zod_validator_params(middleware : String, content : String, endpoint : Endpoint)
+      return unless middleware.includes?("zValidator")
+      middleware.scan(ZOD_VALIDATOR_RE) do |m|
+        fields = if m[2]?
+                   open = m.byte_end(0) - 1
+                   close = JSLiteralScanner.find_matching_brace_at_byte(middleware, open)
+                   close ? TsClassFields.members(middleware.byte_slice(open + 1, close - open - 1)) : [] of String
+                 else
+                   zod_object_fields(content, m[3])
+                 end
+        fields.each { |field| endpoint.push_param(Param.new(field, "", ZOD_VALIDATOR_TYPES[m[1]])) }
+      end
+    end
+
+    private def self.zod_object_fields(content : String, name : String) : Array(String)
+      content.scan(TsClassFields::ZOD_OBJECT_DECL) do |m|
+        next unless m[1] == name
+        open = m.byte_end(0) - 1
+        close = JSLiteralScanner.find_matching_brace_at_byte(content, open) || break
+        return TsClassFields.members(content.byte_slice(open + 1, close - open - 1))
+      end
+      [] of String
     end
 
     def self.extract_body_params(handler_body : String, endpoint : Endpoint)

@@ -369,7 +369,7 @@ module Analyzer::Javascript
 
               if options_node
                 if s_val = extract_prop_value(options_node, "schema", source)
-                  s_params = extract_schema_params_from_node(s_val, declarations, source)
+                  s_params = extract_schema_params_from_node(s_val, declarations, source, path)
                   line = Noir::TreeSitter.node_start_row(node) + 1
                   schema_params_by_line[line] = s_params unless s_params.empty?
                 end
@@ -461,7 +461,7 @@ module Analyzer::Javascript
           end
 
           if s_val = extract_prop_value(config_node, "schema", source)
-            s_params = extract_schema_params_from_node(s_val, declarations, source)
+            s_params = extract_schema_params_from_node(s_val, declarations, source, path)
             body_params.concat(s_params)
             schema_params_by_line[line] = s_params unless s_params.empty?
           end
@@ -834,7 +834,7 @@ module Analyzer::Javascript
       decode_string(curr, source)
     end
 
-    private def extract_schema_params_from_node(node : LibTreeSitter::TSNode, declarations : Hash(String, LibTreeSitter::TSNode), source : String) : Array(Param)
+    private def extract_schema_params_from_node(node : LibTreeSitter::TSNode, declarations : Hash(String, LibTreeSitter::TSNode), source : String, path : String, depth : Int32 = 0) : Array(Param)
       params = [] of Param
       node = resolve_decl_or_expr(node, declarations, source)
       if typebox_call?(node, source)
@@ -842,34 +842,70 @@ module Analyzer::Javascript
         node = args_node.try { |a| Noir::TreeSitter.first_named_arg(a) } || return params
         node = resolve_decl_or_expr(node, declarations, source)
       end
+      if Noir::TreeSitter.node_type(node) == "identifier"
+        return imported_schema(node, source, path, depth) do |decl, decls, text, file|
+          extract_schema_params_from_node(decl, decls, text, file, depth + 1)
+        end
+      end
       return params unless Noir::TreeSitter.node_type(node) == "object"
 
       SCHEMA_PARAM_TYPES.each do |part, type|
         part_node = extract_prop_value(node, part, source) || next
-        part_node = resolve_decl_or_expr(part_node, declarations, source)
-        if typebox_call?(part_node, source)
-          if args_node = Noir::TreeSitter.field(part_node, "arguments")
-            if arg = Noir::TreeSitter.first_named_arg(args_node)
-              arg = resolve_decl_or_expr(arg, declarations, source)
-              if Noir::TreeSitter.node_type(arg) == "object"
-                collect_object_property_names(arg, source).each do |pname|
-                  params << Param.new(pname, "", type)
-                end
-              end
-            end
-          end
-        elsif Noir::TreeSitter.node_type(part_node) == "object"
-          if props = extract_prop_value(part_node, "properties", source)
-            props = resolve_decl_or_expr(props, declarations, source)
-            if Noir::TreeSitter.node_type(props) == "object"
-              collect_object_property_names(props, source).each do |pname|
+        params.concat(schema_part_params(part_node, type, declarations, source, path, depth))
+      end
+
+      params
+    end
+
+    private def schema_part_params(part_node : LibTreeSitter::TSNode, type : String, declarations : Hash(String, LibTreeSitter::TSNode), source : String, path : String, depth : Int32) : Array(Param)
+      params = [] of Param
+      part_node = resolve_decl_or_expr(part_node, declarations, source)
+      if typebox_call?(part_node, source)
+        if args_node = Noir::TreeSitter.field(part_node, "arguments")
+          if arg = Noir::TreeSitter.first_named_arg(args_node)
+            arg = resolve_decl_or_expr(arg, declarations, source)
+            if Noir::TreeSitter.node_type(arg) == "object"
+              collect_object_property_names(arg, source).each do |pname|
                 params << Param.new(pname, "", type)
               end
             end
           end
         end
+      elsif Noir::TreeSitter.node_type(part_node) == "object"
+        if props = extract_prop_value(part_node, "properties", source)
+          props = resolve_decl_or_expr(props, declarations, source)
+          if Noir::TreeSitter.node_type(props) == "object"
+            collect_object_property_names(props, source).each do |pname|
+              params << Param.new(pname, "", type)
+            end
+          end
+        end
+      elsif Noir::TreeSitter.node_type(part_node) == "identifier"
+        params = imported_schema(part_node, source, path, depth) do |decl, decls, text, file|
+          schema_part_params(decl, type, decls, text, file, depth + 1)
+        end
       end
+      params
+    end
 
+    # A schema bound by a named import (`const { listQuery } = require('./schemas')`):
+    # the same-named top-level declaration of that module, read in its own tree.
+    private def imported_schema(ident : LibTreeSitter::TSNode, source : String, path : String, depth : Int32, & : LibTreeSitter::TSNode, Hash(String, LibTreeSitter::TSNode), String, String -> Array(Param)) : Array(Param)
+      params = [] of Param
+      return params if depth >= 3
+      name = Noir::TreeSitter.node_text(ident, source)
+      spec = Noir::JSHandlerResolver.imports_of(source, path)[name]? || return params
+      exported = spec[1] || return params
+      target = Noir::JSHandlerResolver.resolve_specifier(path, spec[0]) || return params
+      text = Noir::JSRouteExtractor.strip_js_comments(read_file_content(target))
+      return params if text.empty?
+      Noir::TreeSitter.parse_js_family(text, target) do |root|
+        decls = Hash(String, LibTreeSitter::TSNode).new
+        collect_top_level_declarations(root, text, decls)
+        if decl = decls[exported]?
+          params = yield decl, decls, text, target
+        end
+      end
       params
     end
 
@@ -888,7 +924,8 @@ module Analyzer::Javascript
       return false unless Noir::TreeSitter.node_type(node) == "call_expression"
       fn = Noir::TreeSitter.field(node, "function") || return false
       fn_text = Noir::TreeSitter.node_text(fn, source)
-      fn_text.ends_with?("Object")
+      # TypeBox `Type.Object`, zod `z.object` / `z.strictObject`.
+      fn_text.ends_with?("Object") || fn_text.ends_with?(".object")
     end
 
     private def collect_object_property_names(obj_node : LibTreeSitter::TSNode, source : String) : Array(String)
