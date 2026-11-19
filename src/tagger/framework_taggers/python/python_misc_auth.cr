@@ -120,20 +120,23 @@ class PythonMiscAuthTagger < FrameworkTagger
   # puts its middleware in front of every route of that app. It lets a
   # request through when the path matches an `exclude` pattern anywhere
   # (Litestar joins them into one regex and `findall`s the path), when the
-  # route's opt carries `exclude_opt_key` (`exclude_from_auth=True`), or for
-  # an `exclude_http_methods` verb (OPTIONS and HEAD by default).
+  # route's opt carries `exclude_opt_key`
+  # (`exclude_from_auth=True`), or for an `exclude_http_methods` verb
+  # (OPTIONS and HEAD by default).
   LITESTAR_AUTH_BACKEND = /^([A-Za-z_]\w*)\s*(?::[^=\n]+)?=\s*(?:[\w.]+\.)?(JWTAuth|JWTCookieAuth|OAuth2PasswordBearerAuth|SessionAuth)\b/
-  PY_MANIFEST           = /\A(?:pyproject\.toml|setup\.py|setup\.cfg)\z/
   PY_STRING             = /[rbu]?(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/
 
-  private record LitestarBackend, name : String, kind : String, exclude : Array(Regex), opt_key : String, methods : Array(String)
+  # `scope`: the directory holding the backend and every file wiring it,
+  # the app it guards.
+  private record LitestarBackend, name : String, kind : String, exclude : Array(Regex), opt_key : String, methods : Array(String), scope : String
 
-  @litestar_backends : Hash(String?, Array(LitestarBackend))? = nil
+  @litestar_backends : Array(LitestarBackend)? = nil
 
   private def litestar_backend_guard(endpoint : Endpoint, path : String, call : String) : String?
-    backends = litestar_backends[nearest_project_root(path, PY_MANIFEST)]? || return
+    file = File.expand_path(path)
     url = endpoint.url.sub(/\A[a-zA-Z][\w+.-]*:\/\/[^\/]*/, "")
-    backends.each do |backend|
+    litestar_backends.each do |backend|
+      next unless file.starts_with?(backend.scope)
       next if backend.methods.includes?(endpoint.method.upcase)
       key = Regex.escape(backend.opt_key)
       next if call.matches?(/\b#{key}\s*=\s*True\b|["']#{key}["']\s*:\s*True\b/)
@@ -143,21 +146,26 @@ class PythonMiscAuthTagger < FrameworkTagger
     nil
   end
 
-  # The wired auth backends of each project root.
-  private def litestar_backends : Hash(String?, Array(LitestarBackend))
+  # The auth backends some file wires into an app: the file declaring the
+  # backend, or one importing it from there, references `.on_app_init` or
+  # `.middleware` on it.
+  private def litestar_backends : Array(LitestarBackend)
     @litestar_backends ||= begin
-      found = Hash(String?, Array(LitestarBackend)).new
+      found = [] of LitestarBackend
       sources = collect_files_by_extension(".py").compact_map { |file| read_file(file).try { |content| {file, content} } }
       sources.each do |file, content|
         next unless content.includes?("Auth")
         lines = content.lines
         lines.each_with_index do |line, idx|
           m = line.match(LITESTAR_AUTH_BACKEND) || next
-          root = nearest_project_root(file, PY_MANIFEST)
           wired = /\b#{Regex.escape(m[1])}\.(?:on_app_init|middleware)\b/
-          next unless sources.any? { |other, text| text.matches?(wired) && nearest_project_root(other, PY_MANIFEST) == root }
-          if backend = litestar_backend(m[1], m[2], route_call(lines, idx))
-            (found[root] ||= [] of LitestarBackend) << backend
+          wiring = sources.compact_map do |other, text|
+            next unless text.matches?(wired)
+            other if other == file || python_imported_symbols(other)[m[1]]?.try(&.[0]) == file
+          end
+          next if wiring.empty?
+          if backend = litestar_backend(m[1], m[2], route_call(lines, idx), common_dir([file] + wiring))
+            found << backend
           end
         end
       end
@@ -165,9 +173,15 @@ class PythonMiscAuthTagger < FrameworkTagger
     end
   end
 
+  private def common_dir(files : Array(String)) : String
+    parts = files.map { |file| File.dirname(File.expand_path(file)).split('/') }
+    shared = parts.first.each_with_index.take_while { |part, i| parts.all? { |other| other[i]? == part } }.map(&.[0]).to_a
+    shared.join('/') + '/'
+  end
+
   # nil when an `exclude` the scan cannot read (a name, a pattern this
   # regex engine rejects) leaves the open paths unknown.
-  private def litestar_backend(name : String, kind : String, statement : String) : LitestarBackend?
+  private def litestar_backend(name : String, kind : String, statement : String, scope : String) : LitestarBackend?
     exclude = [] of Regex
     if m = statement.match(/\bexclude\s*=\s*/)
       value = m.post_match
@@ -182,7 +196,7 @@ class PythonMiscAuthTagger < FrameworkTagger
       value = m.post_match.match(/\A[\[(][^\])]*[\])]|\ANone\b/) || return
       methods = value[0].scan(/["'](\w+)["']/).map(&.[1].upcase)
     end
-    LitestarBackend.new(name, kind, exclude, opt_key, methods)
+    LitestarBackend.new(name, kind, exclude, opt_key, methods, scope)
   end
 
   # The guard named by the route decorator call `call` at `route_idx`,

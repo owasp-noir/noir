@@ -305,4 +305,71 @@ describe "PythonMiscAuthTagger" do
       tag.call(sibling, 3, "/api/me", "GET").should be_empty
     end
   end
+
+  describe "Litestar auth backend scope and settings" do
+    # No manifest anywhere: each service directory is its own app.
+    tmpdir = File.tempname("litestar_scope")
+    svc_a = File.join(tmpdir, "svc_a", "app.py")
+    svc_b = File.join(tmpdir, "svc_b", "app.py")
+    svc_c = File.join(tmpdir, "svc_c", "app.py")
+
+    before_all do
+      [svc_a, svc_b, svc_c].each { |path| Dir.mkdir_p(File.dirname(path)) }
+      File.write(svc_a, [
+        "from litestar import Controller, Litestar, get",
+        "from litestar.security.jwt import JWTAuth",
+        "",
+        "jwt_auth = JWTAuth[dict](",
+        "    retrieve_user_handler=retrieve_user,",
+        "    token_secret=\"x\",",
+        "    exclude=[\"/static/[a-z]+\", \"/health\"],",
+        ")",
+        "",
+        "@get(\"/a/me\")",
+        "async def me() -> dict: ...",
+        "",
+        "@get(\"/health\")",
+        "async def health() -> dict: ...",
+        "",
+        "class PublicController(Controller):",
+        "    path = \"/pub\"",
+        "    opt = {\"exclude_from_auth\": True}",
+        "",
+        "    @get(\"/info\")",
+        "    async def info(self) -> dict: ...",
+        "",
+        "app = Litestar(route_handlers=[me, health, PublicController], on_app_init=[jwt_auth.on_app_init])",
+      ].join("\n"))
+      File.write(svc_b, "from litestar import Litestar, get\n\n@get(\"/b/public\")\nasync def public() -> dict: ...\n\napp = Litestar(route_handlers=[public])\n")
+      File.write(svc_c, [
+        "from litestar import Litestar, route",
+        "from litestar.security.jwt import JWTAuth",
+        "",
+        "jwt_auth = JWTAuth[dict](retrieve_user_handler=retrieve_user, token_secret=\"x\", exclude_http_methods=None)",
+        "",
+        "@route(\"/c/cors\", http_method=[\"OPTIONS\", \"HEAD\"])",
+        "async def cors() -> None: ...",
+        "",
+        "app = Litestar(route_handlers=[cors], middleware=[jwt_auth.middleware])",
+      ].join("\n"))
+    end
+
+    after_all { FileUtils.rm_rf(tmpdir) }
+
+    tag = ->(file : String, line : Int32, url : String, method : String) do
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      [svc_a, svc_b, svc_c].each { |path| CodeLocator.instance.register_path(path) }
+      details = Details.new(PathInfo.new(file, line))
+      details.technology = "python_litestar"
+      endpoint = Endpoint.new(url, method, [] of Param, details)
+      PythonMiscAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags
+    end
+
+    it "guards only the app the backend is wired into" do
+      tag.call(svc_a, 10, "/a/me", "GET").map(&.name).should eq(["auth"])
+      tag.call(svc_b, 3, "/b/public", "GET").should be_empty
+    end
+  end
 end
