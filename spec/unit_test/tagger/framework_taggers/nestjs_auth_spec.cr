@@ -372,8 +372,8 @@ describe "NestjsAuthTagger" do
 
   it "follows forRoutes spreads through top-level arrays and stops on a cycle" do
     files = {
-      "package.json"            => "{}",
-      "src/app.module.ts"       => <<-TS,
+      "package.json"      => "{}",
+      "src/app.module.ts" => <<-TS,
         function extraControllers() {
           const base = [...controllers];
           return base;
@@ -403,8 +403,8 @@ describe "NestjsAuthTagger" do
     end
     controller = ->(name : String, path : String) { "@Controller('#{path}')\nexport class #{name} {\n  @Get()\n  list() {}\n}\n" }
     files = {
-      "package.json"           => "{}",
-      "src/app.module.ts"      => <<-TS,
+      "package.json"      => "{}",
+      "src/app.module.ts" => <<-TS,
         @Module({})
         export class AppModule implements NestModule {
           configure(consumer: MiddlewareConsumer) {
@@ -415,7 +415,7 @@ describe "NestjsAuthTagger" do
           }
         }
         TS
-      "src/middlewares.ts"     => [
+      "src/middlewares.ts" => [
         middleware.call("FlagMiddleware", %(!flags.isEnabled(req.headers["x-tenant"]))),
         middleware.call("IpMiddleware", %(!ALLOWED.includes(req.headers["x-forwarded-for"] || req.ip))),
         middleware.call("MaintMiddleware", %(settings.maintenance && !req.headers["x-bypass"])),
