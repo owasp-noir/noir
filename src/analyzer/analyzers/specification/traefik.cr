@@ -7,6 +7,7 @@ module Analyzer::Specification
     analyzer_for "traefik"
 
     METHOD_ANY = "ANY"
+    MATCHER_RE = /([A-Za-z]+)\s*\(((?:\s*+(?:`[^`]*+`|'[^']*+'|"[^"]*+")\s*+,?)*+)\s*\)/
 
     def analyze
       # Shared across every file so one route defined in two providers
@@ -26,18 +27,13 @@ module Analyzer::Specification
     end
 
     private def process_yaml(content : String, details : Details, seen : Set(String))
-      docs = split_yaml_documents(content)
-      docs.each do |doc|
-        next if doc.strip.empty?
-        begin
-          data = YAML.parse(doc)
-          extract_dynamic_config_rules(data).each { |rule| parse_rule(rule, details, seen) }
-          extract_compose_label_rules(data).each { |rule| parse_rule(rule, details, seen) }
-          extract_ingress_route_rules(data).each { |rule| parse_rule(rule, details, seen) }
-        rescue e
-          logger.debug "Failed to parse Traefik YAML document: #{e}"
-        end
+      parse_all_yaml_template(content).each do |data|
+        extract_dynamic_config_rules(data).each { |rule| parse_rule(rule, details, seen) }
+        extract_compose_label_rules(data).each { |rule| parse_rule(rule, details, seen) }
+        extract_ingress_route_rules(data).each { |rule| parse_rule(rule, details, seen) }
       end
+    rescue e
+      logger.debug "Failed to parse Traefik YAML document: #{e}"
     end
 
     private def process_toml(content : String, details : Details, seen : Set(String))
@@ -58,11 +54,6 @@ module Analyzer::Specification
           parse_rule(unescape_toml_string(rule_match[1]), details, seen)
         end
       end
-    end
-
-    private def split_yaml_documents(content : String) : Array(String)
-      docs = content.split(/^---\s*$/)
-      docs.empty? ? [content] : docs
     end
 
     private def extract_dynamic_config_rules(data : YAML::Any) : Array(String)
@@ -91,27 +82,30 @@ module Analyzer::Specification
 
       services_h.each_value do |service_any|
         next unless service = service_any.as_h?
-        labels = service[YAML::Any.new("labels")]?
-        next if labels.nil?
-
-        if labels_h = labels.try(&.as_h?)
-          labels_h.each do |k, v|
-            key = k.to_s
-            next unless traefik_rule_label?(key)
-            rules << v.to_s
-          end
-        elsif labels_a = labels.try(&.as_a?)
-          labels_a.each do |entry|
-            value = entry.to_s
-            next unless match = value.match(/^(traefik\.http\.routers\.[^.]+\.rule)\s*=\s*(.+)$/)
-            key = match[1]
-            next unless traefik_rule_label?(key)
-            rules << strip_quotes(match[2].strip)
-          end
-        end
+        # Swarm mode reads only `deploy.labels`.
+        deploy_labels = service[YAML::Any.new("deploy")]?.try(&.as_h?).try(&.[YAML::Any.new("labels")]?)
+        [service[YAML::Any.new("labels")]?, deploy_labels].each { |labels| collect_label_rules(labels, rules) if labels }
       end
 
       rules
+    end
+
+    private def collect_label_rules(labels : YAML::Any, rules : Array(String))
+      if labels_h = labels.as_h?
+        labels_h.each do |k, v|
+          key = k.to_s
+          next unless traefik_rule_label?(key)
+          rules << v.to_s
+        end
+      elsif labels_a = labels.as_a?
+        labels_a.each do |entry|
+          value = entry.to_s
+          next unless match = value.match(/^(traefik\.http\.routers\.[^.]+\.rule)\s*=\s*(.+)$/)
+          key = match[1]
+          next unless traefik_rule_label?(key)
+          rules << strip_quotes(match[2].strip)
+        end
+      end
     end
 
     private def extract_ingress_route_rules(data : YAML::Any) : Array(String)
@@ -181,7 +175,9 @@ module Analyzer::Specification
     end
 
     private def scan_matchers(expression : String, & : String, Array(String) ->)
-      expression.scan(/([A-Za-z]+)\s*\(([^)]*)\)/) do |match|
+      # The argument list is read as quoted strings, so a `)` inside one
+      # (`PathRegexp(`^/(v1|v2)/`)`) does not end the matcher.
+      expression.scan(MATCHER_RE) do |match|
         next unless match.size >= 3
         name = match[1]
         args = extract_quoted_values(match[2])

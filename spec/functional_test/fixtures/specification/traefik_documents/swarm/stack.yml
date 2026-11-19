@@ -1,0 +1,9 @@
+version: "3.8"
+services:
+  api:
+    image: api
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.api.rule=Host(`sw.example.com`) && PathPrefix(`/swarm-api`)"
+        - "traefik.http.services.api.loadbalancer.server.port=8080"

@@ -1,0 +1,23 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: {name: strip}
+spec:
+  stripPrefix: {prefixes: [/api]}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata: {name: first}
+spec:
+  routes:
+    - match: Host(`k.example.com`) && PathPrefix(`/first`)
+      kind: Rule
+      services: [{name: svc, port: 80}]
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata: {name: second}
+spec:
+  routes:
+    - match: PathPrefix(`/second`)
+      kind: Rule
+      services: [{name: svc, port: 80}]
