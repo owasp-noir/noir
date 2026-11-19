@@ -1377,7 +1377,7 @@ describe "RubyAuthTagger (Grape route scope)" do
       listed.tags.first.description.should contain("mounts")
       ping.tags.should be_empty
       # A Pundit call in the body does not hide the route's authentication.
-      report.tags.map(&.name).sort.should eq(["auth", "authz"])
+      report.tags.map(&.name).sort!.should eq(["auth", "authz"])
     ensure
       FileUtils.rm_rf(dir)
       CodeLocator.instance.clear_all
