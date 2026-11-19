@@ -167,7 +167,7 @@ describe "PerlAuthTagger" do
 
     begin
       guarded = {2, 5, 8, 11, 14, 17}.map { |line| perl_auth_tag_for(app, line, create_test_options) }
-      guarded.each { |endpoint| endpoint.tags.map(&.name).should eq(["auth"]) }
+      guarded.each(&.tags.map(&.name).should(eq(["auth"])))
       perl_auth_tag_for(app, 20, create_test_options).tags.should be_empty
     ensure
       FileUtils.rm_rf(dir)
