@@ -174,6 +174,69 @@ describe "PerlAuthTagger" do
     end
   end
 
+  it "skips CSRF, CORS and maintenance bridges" do
+    dir = File.tempname("noir_perl_bridge_negatives")
+    Dir.mkdir_p(File.join(dir, "lib/MyApp/Controller"))
+    app = File.join(dir, "lib/MyApp.pm")
+    File.write(app, <<-PL)
+      package MyApp;
+      sub startup ($self) {
+          my $r = $self->routes;
+          my $csrf = $r->under('/')->to('gate#csrf');
+          my $cors = $r->under('/api')->to('gate#cors');
+          my $maint = $r->under('/')->to('gate#maintenance');
+          my $rev = $r->under('/')->to(action => 'ensure_user', controller => 'gate');
+          $csrf->post('/c')->to('x#c');
+          $cors->get('/cors')->to('x#cors');
+          $maint->get('/m')->to('x#m');
+          $rev->get('/rev')->to('x#rev');
+      }
+      1;
+      PL
+    File.write(File.join(dir, "lib/MyApp/Controller/Gate.pm"), <<-PL)
+      package MyApp::Controller::Gate;
+      sub ensure_user ($c) {
+          return 1 if $c->session('user_id');
+          $c->redirect_to('login');
+          return undef;
+      }
+      sub csrf ($c) {
+          return 1 if ($c->req->headers->header('X-CSRF-Token') // '') eq $c->csrf_token;
+          $c->render(text => 'Bad CSRF token', status => 400);
+          return undef;
+      }
+      sub cors ($c) {
+          $c->res->headers->header('Access-Control-Allow-Headers' => 'Authorization, Content-Type');
+          if ($c->req->method eq 'OPTIONS') {
+              $c->rendered(204);
+              return undef;
+          }
+          return 1;
+      }
+      sub maintenance ($c) {
+          return $c->render(template => 'maintenance', status => 503) if $c->config->{maintenance};
+          $c->stash(user => $c->current_user);
+          return 1;
+      }
+      1;
+      PL
+
+    begin
+      CodeLocator.instance.clear_all
+      Dir.glob("#{dir}/**/*.pm").each { |file| CodeLocator.instance.register_path(file) }
+      options = create_test_options
+      options["base"] = YAML::Any.new(dir)
+      csrf, cors, maint, rev = {8, 9, 10, 11}.map { |line| perl_auth_tag_for(app, line, options, "perl_mojolicious") }
+      csrf.tags.should be_empty
+      cors.tags.should be_empty
+      maint.tags.should be_empty
+      rev.tags.map(&.description).should eq(["Protected by Mojolicious under gate#ensure_user"])
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   it "applies a Mojolicious full-app `under` bridge to the routes built on it" do
     dir = File.tempname("noir_perl_bridge")
     Dir.mkdir_p(File.join(dir, "lib/MyApp/Controller"))

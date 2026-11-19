@@ -191,21 +191,31 @@ class PerlAuthTagger < FrameworkTagger
   private def mojo_under_guard(chain : String) : String?
     return unless at = chain.index("->under")
     bridge = chain[at..]
-    m = bridge.match(/->to\s*\(\s*['"]([\w:-]+)#(\w+)['"]/) ||
-        bridge.match(/controller\s*=>\s*['"]([\w:-]+)['"]\s*,\s*action\s*=>\s*['"](\w+)['"]/)
-    return unless m
-    "Mojolicious under #{m[1]}##{m[2]}" if mojo_bridge_action_guard?(m[1], m[2])
+    if m = bridge.match(/->to\s*\(\s*['"]([\w:-]+)#(\w+)['"]/)
+      controller, action = m[1], m[2]
+    else
+      controller = bridge[/controller\s*=>\s*['"]([\w:-]+)['"]/, 1]?
+      action = bridge[/action\s*=>\s*['"](\w+)['"]/, 1]?
+    end
+    return unless controller && action
+    "Mojolicious under #{controller}##{action}" if mojo_bridge_action_guard?(controller, action)
   end
 
+  # A bridge action path that returns false: `return 0` / `return undef`,
+  # `? 1 : $c->helper`, or returning a helper's result. A returned render or
+  # redirect counts only as a 401/403 or a redirect to log in: a 503
+  # maintenance page also returns false, but not for who the caller is.
+  BRIDGE_RETURNS_FALSE = /\breturn\s+(?:0|undef)\b|\breturn\s*;|\breturn\s+\$\w+->(?!render\b|rendered\b|redirect_to\b)|\breturn\s+\$\w+->render\b[^;]*(?<![\w.])40[13](?![\d.])|\breturn\s+\$\w+->redirect_to\b[^;]*(?:log[_-]?in|sign[_-]?in)|\?\s*1\s*:/i
+
   # The bridge action reads who the caller is and has a path that returns
-  # false (`return 0`, `return undef`, `? 1 : $c->redirect...`). The
-  # identity read may sit in a `$self->helper` of the same file, two hops deep.
+  # false. The identity read may sit in a `$self->helper` of the same file,
+  # two hops deep.
   private def mojo_bridge_action_guard?(controller : String, action : String) : Bool
     @bridge_verdicts.fetch({controller, action}) do |key|
       suffix = "/#{mojo_camelize(controller).gsub("::", "/")}.pm"
       @bridge_verdicts[key] = collect_files_by_extension(".pm").select(&.ends_with?(suffix)).any? do |file|
         next false unless (lines = read_file_lines(file)) && (body = perl_sub_body(lines, action))
-        body.matches?(/\breturn\s+(?:0|undef)\b|\breturn\s*;|\breturn\s+\$\w+->|\?\s*1\s*:/) && reaches_identity?(lines, body, action)
+        body.matches?(BRIDGE_RETURNS_FALSE) && reaches_identity?(lines, body, action)
       end
     end
   end
@@ -221,7 +231,12 @@ class PerlAuthTagger < FrameworkTagger
     false
   end
 
-  PERL_IDENTITY = /\b(?:current_user|is_user_authenticated|user_exists|logged_in_user)\b|->\s*session\s*(?:\(\s*['"]|->\s*\{\s*['"]?)\w*(?:user|login|account)|\bAuthorization\b|->\s*header\s*\(\s*['"][^'"]*(?:auth|token|key)/i
+  # A read of the caller's credentials: the signed-in user, a session user,
+  # or a request header carrying a credential (`->authorization`,
+  # `->header('X-API-Key')`). A header read takes the name alone, so a
+  # response header write (`->header('Access-Control-Allow-Headers' => ...)`)
+  # is not one; CSRF tokens prove the origin, not the caller.
+  PERL_IDENTITY = /\b(?:current_user|is_user_authenticated|user_exists|logged_in_user)\b|->\s*session\s*(?:\(\s*['"]|->\s*\{\s*['"]?)\w*(?:user|login|account)|->\s*authorization\b(?!\s*\(\s*\S)|->\s*header\s*\(\s*['"](?![^'"]*(?:csrf|xsrf))[^'"]*(?:auth|token|key)[^'"]*['"]\s*\)/i
 
   # Mojolicious::Util::camelize: `api_key` -> `ApiKey`, `admin-user` ->
   # `Admin::User`; a name starting uppercase is used as is.
