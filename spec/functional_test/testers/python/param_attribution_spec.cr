@@ -41,6 +41,12 @@ describe "Python param attribution", tags: "functional" do
     rows["POST /acks/{item_id}/meta"].should eq(["item:json", "item_id:path", "meta:json"])
   end
 
+  it "reads FastAPI value annotations as query and skips injected classes" do
+    rows = params_for.call("fastapi_query_value_types")
+    rows["GET /orders"].should eq(%w[color customer_id end kind level limit min_total order page q start status].map { |name| "#{name}:query" })
+    rows["POST /items"].should eq(["name:json"])
+  end
+
   it "reads Flask fields through a request.form / request.args alias" do
     rows = params_for.call("flask_form_alias")
     rows["POST /users/action"].should eq(["first_name:form", "last_name:form"])

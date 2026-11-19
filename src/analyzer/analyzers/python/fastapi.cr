@@ -1439,7 +1439,13 @@ module Analyzer::Python
         end
 
         if param_type.nil?
-          next unless model
+          unless model
+            # `Literal[...]`, `conint(gt=0)`: a value, read from the query.
+            if fastapi_peeled_type(param.type).try(&.matches?(QUERY_VALUE_TYPE_RE))
+              params << Param.new(fastapi_wire_name(param, "query"), default_value, "query")
+            end
+            next
+          end
           if model.in?(%w[Request dict])
             function_codeblock = parse_code_block(codelines[def_line..])
             next if function_codeblock.nil?
@@ -1449,7 +1455,13 @@ module Analyzer::Python
             # A model from a package the scan does not hold (a sibling
             # project scanned alone) is still the body: one opaque field,
             # as an unresolved `Body()` model is kept.
-            fields << Param.new(param.name, default_value, "json") if fields.empty? && foreign_project_model?(model, source, path, base_path)
+            if fields.empty?
+              if foreign_project_model?(model, source, path, base_path)
+                fields << Param.new(param.name, default_value, "json")
+              elsif fastapi_query_value_type?(model, source, path, base_path)
+                fields << Param.new(fastapi_wire_name(param, "query"), default_value, "query")
+              end
+            end
             params.concat(fields)
           end
         else
@@ -1461,7 +1473,34 @@ module Analyzer::Python
     end
 
     NON_BODY_MODULES = %w[typing typing_extensions uuid datetime decimal enum pathlib ipaddress fastapi starlette pydantic]
-    FROM_IMPORT_RE   = /^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]*))/m
+    # Classes FastAPI injects instead of reading from the request.
+    INJECTED_TYPES      = %w[Request Response BackgroundTasks SecurityScopes HTTPConnection WebSocket]
+    ENUM_BASE_RE        = /(?:\A|\.)(?:\w*Enum|IntFlag|Flag)\z/
+    QUERY_VALUE_TYPE_RE = /\A(?:(?:typing(?:_extensions)?\.)?Literal\[|(?:pydantic\.)?con(?:int|float|str|decimal|date|bytes)\()/
+
+    @query_value_types = Hash(Tuple(::String, ::String, ::String), Bool).new
+
+    # Whether a model-less annotation that yields no body fields is a value
+    # FastAPI reads from the query: an unresolved name (`UUID`, `date`,
+    # `PositiveInt`, a stdlib-qualified `datetime.date`) or a project Enum.
+    # ponytail: an Enum is recognised by its own base names only, not through
+    # a project base class.
+    private def fastapi_query_value_type?(model : ::String, source : ::String, path : ::String, base_path : ::String) : Bool
+      @query_value_types.fetch({model, path, base_path}) do
+        receiver, _, name = model.rpartition('.')
+        @query_value_types[{model, path, base_path}] = if INJECTED_TYPES.includes?(name)
+                                                         false
+                                                       elsif resolved = resolve_model_reference(model, source, path, base_path)
+                                                         class_name, class_source, _ = resolved
+                                                         header = class_source.match(/^[ \t]*class[ \t]+#{Regex.escape(class_name)}[ \t]*\(([^)]*)\)/m)
+                                                         !!header && split_python_top_level(header[1], ',').any?(&.strip.matches?(ENUM_BASE_RE))
+                                                       else
+                                                         receiver.empty? || NON_BODY_MODULES.includes?(receiver.split('.').first)
+                                                       end
+      end
+    end
+
+    FROM_IMPORT_RE = /^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]*))/m
 
     # Whether bare class `model` is imported (`from pkg.schemas import
     # Model`) from a module the scan cannot resolve and that is no stdlib or
