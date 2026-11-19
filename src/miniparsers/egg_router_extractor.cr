@@ -25,8 +25,10 @@ module Noir
     NAMESPACE = /(?<![\w$.])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:app\.)?router\s*\.\s*namespace\s*\(\s*(['"`])([^'"`]+)\2/
     CALL      = /(?<![\w$.])((?:app\.)?[A-Za-z_$][\w$]*)\s*\.\s*(get|post|put|patch|delete|del|head|options|all|resources|redirect)\s*\(/
 
-    def extract(content : String) : Array(Route)
+    # `path`, when given, lets a path constant come from a relative import.
+    def extract(content : String, path : String? = nil) : Array(Route)
       code = JSRouteExtractor.strip_js_comments(content)
+      constants = path ? JSRouteExtractor.file_string_constants(path, code) : JSRouteExtractor.string_constants(code)
       prefixes = {"router" => "", "app.router" => "", "app" => ""}
       code.scan(NAMESPACE) { |m| prefixes[m[1]] = m[3] }
 
@@ -44,13 +46,31 @@ module Noir
 
         # `redirect(source, destination, status)` is koa-router's own and
         # never takes a route name.
-        named = m[2] != "redirect" && args.size >= 3 && string_literal(args[1])
-        path = string_literal(named ? args[1] : args[0]) || next
-        next unless path.starts_with?('/')
+        named = m[2] != "redirect" && args.size >= 3 && path_arg(args[1], constants)
+        route_path = path_arg(named ? args[1] : args[0], constants) || next
+        next unless route_path.starts_with?('/')
 
-        routes << Route.new(m[2], URLPath.join(prefix, path), args.last, offsets.line(m.byte_begin(0)))
+        routes << Route.new(m[2], URLPath.join(prefix, route_path), args.last, offsets.line(m.byte_begin(0)))
       end
       routes
+    end
+
+    private def path_arg(arg : String, constants : Hash(String, String)) : String?
+      string_literal(arg) || constant_path(arg, constants)
+    end
+
+    # A path built from string constants: `PATH`, `${prefix}/users` or
+    # `prefix + '/users'`. Nil unless every part resolves.
+    private def constant_path(arg : String, constants : Hash(String, String)) : String?
+      arg = arg.strip
+      if arg.size >= 2 && arg[0] == '`' && arg[-1] == '`'
+        value = JSRouteExtractor.resolve_template(arg[1...-1], constants)
+        return value unless value.includes?("${") || value.includes?('`')
+        return
+      end
+      parts = TopLevelSplit.split(arg, '+', TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+      values = parts.map { |part| string_literal(part.strip) || constants[part.strip]? || return }
+      values.join
     end
 
     # The value of a plain quoted string (no template interpolation).

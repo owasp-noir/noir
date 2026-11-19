@@ -31,6 +31,25 @@ describe Noir::EggRouterExtractor do
     routes.map { |r| {r.path, r.handler} }.should eq [{"/home", "'home.index'"}]
   end
 
+  it "resolves paths built from string constants" do
+    content = <<-JS
+      const prefix = '/api/v1';
+      const USERS = '/users';
+      router.get(`${prefix}/users`, controller.u.index);
+      router.post(prefix + '/users', controller.u.create);
+      router.put(USERS, controller.u.update);
+      router.get('named', prefix + USERS, auth, controller.u.show);
+      router.get(`${unknown}/x`, controller.u.x);
+      router.get(unknown + '/y', controller.u.y);
+      JS
+    Noir::EggRouterExtractor.extract(content).map { |r| {r.verb, r.path} }.should eq [
+      {"get", "/api/v1/users"},
+      {"post", "/api/v1/users"},
+      {"put", "/users"},
+      {"get", "/api/v1/users"},
+    ]
+  end
+
   it "skips comments, other receivers and non-path calls" do
     content = <<-JS
       // router.get('/commented', controller.x.y);

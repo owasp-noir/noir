@@ -60,7 +60,7 @@ module Analyzer::Javascript
       ordered_scan_files(routers) do |path|
         expanded = Noir::PathScope.expand(path)
         app_dir = expanded[0, (expanded.rindex("/app/router") || 0) + 4]
-        Noir::EggRouterExtractor.extract(read_file_content(path)).flat_map do |route|
+        Noir::EggRouterExtractor.extract(read_file_content(path), path).flat_map do |route|
           endpoints_for(path, route, app_dir, controllers, include_callee)
         end
       end.each { |endpoints| @result.concat(endpoints) }
