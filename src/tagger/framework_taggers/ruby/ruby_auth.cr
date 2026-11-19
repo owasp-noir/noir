@@ -314,7 +314,7 @@ class RubyAuthTagger < FrameworkTagger
         return
       end
 
-      if tech == "ruby_hanami" && (guard = hanami_app_guard(path))
+      if tech == "ruby_hanami" && (guard = hanami_app_guard(path, lines, line_idx))
         endpoint.add_tag(Tag.new("auth", "Protected by #{guard} (the app's controller.prepare)", "ruby_auth"))
         return
       end
@@ -1612,12 +1612,31 @@ class RubyAuthTagger < FrameworkTagger
   # Hanami 1 evaluates an app's `controller.prepare do ... end` (in
   # `apps/<app>/application.rb`) in every action of that app, so a `before
   # :authenticate!` there guards each route its `config/routes.rb` draws.
-  private def hanami_app_guard(path : String) : String?
+  # An action opts out by overriding the callback method with a body that
+  # refuses no one (the Hanami 1 guide's `def authenticate!; end`).
+  private def hanami_app_guard(path : String, lines : Array(String), line_idx : Int32) : String?
     return unless path.ends_with?("/config/routes.rb")
-    app = (Path[path].parent.parent / "application.rb").to_s
-    return unless lines = read_file_lines(app)
-    return unless start = lines.index(&.matches?(/\A\s*controller\.prepare\s+do\b/))
-    match_scope(ruby_block_lines(scope_lines(app, lines), start).reject(&.starts_with?('#')), HANAMI_AUTHN_PATTERNS)
+    app_dir = Path[path].parent.parent
+    app = (app_dir / "application.rb").to_s
+    return unless app_lines = read_file_lines(app)
+    return unless start = app_lines.index(&.matches?(/\A\s*controller\.prepare\s+do\b/))
+    block = ruby_block_lines(scope_lines(app, app_lines), start).reject(&.starts_with?('#'))
+    return unless desc = match_scope(block, HANAMI_AUTHN_PATTERNS)
+    callback = block.join('\n')[/\bbefore\s+:(\w+[!?]?)/, 1]?
+    route = lines[line_idx].match(/\bto:\s*['"]([\w\/]+)#(\w+)['"]/)
+    if callback && route && (action_lines = read_file_lines((app_dir / "controllers" / route[1] / "#{route[2]}.rb").to_s))
+      return if overrides_without_refusal?(action_lines, callback)
+    end
+    desc
+  end
+
+  # Whether `lines` define `def name` with a body no line of which refuses.
+  private def overrides_without_refusal?(lines : Array(String), name : String) : Bool
+    return false unless def_idx = lines.index(&.matches?(/\A\s*def\s+#{Regex.escape(name)}(?![\w!?])/))
+    indent = line_indent(lines[def_idx])
+    lines[(def_idx + 1)..].take_while { |source| source.strip.empty? || line_indent(source) > indent }
+      .map { |source| code_only(source.strip) }.reject { |text| text.empty? || text.starts_with?('#') }
+      .none?(&.matches?(CALLBACK_REJECTS))
   end
 
   private def match_scope(scope : Array(String), patterns) : String?

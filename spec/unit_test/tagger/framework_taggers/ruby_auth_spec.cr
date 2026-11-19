@@ -1451,15 +1451,17 @@ describe "RubyAuthTagger (Grape route scope)" do
 end
 
 describe "RubyAuthTagger (Hanami controller.prepare)" do
-  it "tags an app's routes when its controller.prepare registers an authenticate callback, not a commented one" do
+  it "tags an app's routes when its controller.prepare registers an authenticate callback, not a commented or overridden one" do
     CodeLocator.instance.clear_all
     dir = File.tempname("noir_hanami_prepare")
     prepare = ->(callback : String) { "module App\n  class Application < Hanami::Application\n    configure do\n      controller.prepare do\n        include Authentication\n        #{callback}\n      end\n    end\n  end\nend\n" }
     files = {
-      "apps/admin/application.rb"   => prepare.call("before :authenticate_admin!"),
-      "apps/admin/config/routes.rb" => "resources :users, only: [:index]\n",
-      "apps/web/application.rb"     => prepare.call("# before :authenticate!"),
-      "apps/web/config/routes.rb"   => "get '/about', to: 'static#about'\n",
+      "apps/admin/application.rb"              => prepare.call("before :authenticate_admin!"),
+      "apps/admin/config/routes.rb"            => "get '/users', to: 'users#index'\nget '/login', to: 'sessions#new'\n",
+      "apps/admin/controllers/users/index.rb"  => "module Admin\n  module Controllers\n    module Users\n      class Index\n        include Admin::Action\n        def call(params)\n        end\n      end\n    end\n  end\nend\n",
+      "apps/admin/controllers/sessions/new.rb" => "module Admin\n  module Controllers\n    module Sessions\n      class New\n        include Admin::Action\n        def call(params)\n        end\n\n        private\n\n        def authenticate_admin!\n          # the login page stays public\n        end\n      end\n    end\n  end\nend\n",
+      "apps/web/application.rb"                => prepare.call("# before :authenticate!"),
+      "apps/web/config/routes.rb"              => "get '/about', to: 'static#about'\n",
     }
     begin
       files.each do |rel, body|
@@ -1469,16 +1471,19 @@ describe "RubyAuthTagger (Hanami controller.prepare)" do
       end
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(dir)
-      at = ->(app : String, url : String) do
-        details = Details.new(PathInfo.new(File.join(dir, "apps", app, "config", "routes.rb"), 1))
+      at = ->(app : String, url : String, line : Int32) do
+        details = Details.new(PathInfo.new(File.join(dir, "apps", app, "config", "routes.rb"), line))
         details.technology = "ruby_hanami"
         Endpoint.new(url, "GET", [] of Param, details)
       end
-      users = at.call("admin", "/users")
-      about = at.call("web", "/about")
-      RubyAuthTagger.new(noir_options).perform([users, about])
+      users = at.call("admin", "/users", 1)
+      login = at.call("admin", "/login", 2)
+      about = at.call("web", "/about", 1)
+      RubyAuthTagger.new(noir_options).perform([users, login, about])
 
       users.tags.map(&.name).should eq(["auth"])
+      # An action opts out by overriding the callback with an empty body.
+      login.tags.should be_empty
       about.tags.should be_empty
     ensure
       FileUtils.rm_rf(dir)
