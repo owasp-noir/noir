@@ -146,8 +146,8 @@ class AspnetAuthTagger < FrameworkTagger
   # extension maps; one after it covers only the builder it returns.
   private def collect_extension_auth
     @extension_auth.clear
-    @auth_call = MINIMAL_API_REQUIRE_AUTH
-    @group_declaration = GROUP_DECLARATION_RE
+    @helper_roots.clear
+    @call_patterns.clear
     sources = [] of Tuple(String, String)
     names = Set(String).new
     collect_files_by_extension(".cs").each do |path|
@@ -164,8 +164,9 @@ class AspnetAuthTagger < FrameworkTagger
 
     sites = Hash(String, Array(Tuple(Bool, Bool))).new
     call_re = /\.\s*(#{names.map { |n| Regex.escape(n) }.join('|')})\s*\(/
-    sources.each do |_, code|
+    sources.each do |path, code|
       next unless code.matches?(call_re)
+      auth_call = call_patterns(path)[0]
       statements = code.split(/[;{}]/)
       statements.each do |statement|
         statement.scan(call_re) do |m|
@@ -174,13 +175,13 @@ class AspnetAuthTagger < FrameworkTagger
           next if after.matches?(MINIMAL_API_ALLOW_ANON)
           # `.AllowAnonymous()` on the chain lifts the authorization it inherits.
           anonymous = before.matches?(MINIMAL_API_ALLOW_ANON)
-          before_auth = !anonymous && before.matches?(@auth_call)
+          before_auth = !anonymous && before.matches?(auth_call)
           # `admin.MapGroup("/users").MapUsers()`: a child group takes `admin`'s conventions.
           if !before_auth && !anonymous && (receiver = before.match(/\A\s*(\w+)\s*(?:\z|\.\s*MapGroup\s*\()/))
             declaration = /\b#{Regex.escape(receiver[1])}\s*=[^=]/
-            before_auth = statements.any? { |s| s.matches?(declaration) && s.matches?(@auth_call) && !s.matches?(MINIMAL_API_ALLOW_ANON) }
+            before_auth = statements.any? { |s| s.matches?(declaration) && s.matches?(auth_call) && !s.matches?(MINIMAL_API_ALLOW_ANON) }
           end
-          (sites[m[1]] ||= [] of Tuple(Bool, Bool)) << {before_auth || after.matches?(@auth_call), before_auth}
+          (sites[m[1]] ||= [] of Tuple(Bool, Bool)) << {before_auth || after.matches?(auth_call), before_auth}
         end
       end
     end
@@ -189,8 +190,12 @@ class AspnetAuthTagger < FrameworkTagger
     end
   end
 
-  @auth_call : Regex = MINIMAL_API_REQUIRE_AUTH
-  @group_declaration : Regex = GROUP_DECLARATION_RE
+  # Authorizing helper name -> the project roots declaring it.
+  @helper_roots = Hash(String, Set(String?)).new
+  # Per project root: the auth-call and group-declaration patterns that
+  # include the helpers it can call (its own and its referenced projects').
+  @call_patterns = Hash(String?, Tuple(Regex, Regex)).new
+  @project_references : Hash(String, Array(String))? = nil
 
   # Route-builder extensions whose returned builder carries authorization,
   # so a call to one reads like `.RequireAuthorization()` on the chain:
@@ -202,30 +207,74 @@ class AspnetAuthTagger < FrameworkTagger
   #
   # Helpers built on helpers are found by iterating to a fixpoint.
   private def collect_authorizing_helpers(paths : Array(String)) : Nil
-    bodies = [] of Tuple(String, String, Bool)
+    bodies = [] of Tuple(String?, String, String, Bool)
     paths.each do |path|
       masked = lexer_for(path).try(&.masked_source) || next
       next unless masked.includes?("this")
+      root = nearest_project_root(path, CSPROJ)
       masked.scan(ROUTE_BUILDER_EXTENSION) do |m|
         open = masked.match(/\G[^)]*\)\s*(?:where\s[^{=;]*)?(\{|=>)/, m.end(0)) || next
         start = open.end(0)
         if open[1] == "=>"
-          bodies << {m[1], masked[start...(masked.index(';', start) || masked.size)], true}
+          bodies << {root, m[1], masked[start...(masked.index(';', start) || masked.size)], true}
         elsif close = closing_brace(masked, start - 1)
-          bodies << {m[1], masked[start...close], false}
+          bodies << {root, m[1], masked[start...close], false}
         end
       end
     end
-    helpers = Set(String).new
+    found = Set(Tuple(String?, String)).new
     5.times do
-      found = bodies.select { |name, body, expression| !helpers.includes?(name) && authorizes_result?(body, expression, helpers) }
-      break if found.empty?
-      found.each { |entry| helpers << entry[0] }
+      fresh = bodies.select do |root, name, body, expression|
+        !found.includes?({root, name}) && authorizes_result?(body, expression, visible_helpers(root, found))
+      end
+      break if fresh.empty?
+      fresh.each { |root, name, _, _| found << {root, name} }
     end
-    return if helpers.empty?
-    names = helpers.map { |name| Regex.escape(name) }.join('|')
-    @auth_call = /\.\s*(?:RequireAuthorization|#{names})\s*\(/
-    @group_declaration = /\b(\w+)\s*=\s*[\w.]*(?:MapGroup|#{names})\s*\(/
+    found.each { |root, name| (@helper_roots[name] ||= Set(String?).new) << root }
+  end
+
+  # The helper names of `found` a project at `root` can call: declared in it
+  # or in a project it references.
+  private def visible_helpers(root : String?, found : Set(Tuple(String?, String))) : Set(String)
+    visible = visible_roots(root)
+    found.select { |declared, _| visible.includes?(declared) }.map(&.[1]).to_set
+  end
+
+  private def visible_roots(root : String?) : Set(String?)
+    roots = Set(String?){root}
+    project_closure([root], project_references).each { |dir| roots << dir } if root
+    roots
+  end
+
+  private def call_patterns(path : String) : Tuple(Regex, Regex)
+    root = nearest_project_root(path, CSPROJ)
+    @call_patterns[root] ||= begin
+      visible = visible_roots(root)
+      names = @helper_roots.select { |_, roots| roots.any? { |declared| visible.includes?(declared) } }.keys
+      if names.empty?
+        {MINIMAL_API_REQUIRE_AUTH, GROUP_DECLARATION_RE}
+      else
+        alternatives = names.map { |name| Regex.escape(name) }.join('|')
+        {/\.\s*(?:RequireAuthorization|#{alternatives})\s*\(/, /\b(\w+)\s*=\s*[\w.]*(?:MapGroup|#{alternatives})\s*\(/}
+      end
+    end
+  end
+
+  # `<ProjectReference>` edges between the scan's non-test projects.
+  private def project_references : Hash(String, Array(String))
+    @project_references ||= begin
+      references = Hash(String, Array(String)).new
+      collect_files_by_extension(".csproj").each do |csproj|
+        next if base_relative_path(csproj).matches?(TEST_PATH)
+        content = read_file(csproj) || next
+        dir = Noir::PathScope.expand(File.dirname(csproj))
+        content.scan(PROJECT_REFERENCE_RE) do |match|
+          target = Noir::PathScope.expand(File.expand_path(File.dirname(match[1].tr("\\", "/")), dir))
+          (references[dir] ||= [] of String) << target
+        end
+      end
+      references
+    end
   end
 
   private def closing_brace(text : String, open : Int32) : Int32?
@@ -1068,7 +1117,7 @@ class AspnetAuthTagger < FrameworkTagger
     statement = statement_at(lines, route_line)
 
     return "" if statement.matches?(MINIMAL_API_ALLOW_ANON)
-    return "ASP.NET .RequireAuthorization()" if statement.matches?(@auth_call)
+    return "ASP.NET .RequireAuthorization()" if statement.matches?(call_patterns(path)[0])
     return if depth >= 5
 
     receiver = (statement.match(MINIMAL_API_RECEIVER) || statement.match(GROUP_DECLARATION_RECEIVER)).try(&.[1])
@@ -1108,7 +1157,7 @@ class AspnetAuthTagger < FrameworkTagger
         level += line.count('{') - line.count('}')
         members << idx if line.matches?(MEMBER_DECLARATION)
         line.match(GROUP_STATEMENT_RE).try { |m| (statements[m[1]] ||= [] of Int32) << idx }
-        line.scan(@group_declaration) { |m| (groups[m[1]] ||= [] of Int32) << idx }
+        line.scan(call_patterns(path)[1]) { |m| (groups[m[1]] ||= [] of Int32) << idx }
       end
       depth << level
       FluentIndex.new(depth, members, statements, groups)

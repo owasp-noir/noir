@@ -705,6 +705,42 @@ describe "AspnetAuthTagger" do
     end
   end
 
+  it "credits a route-group helper only to its own project and the projects that reference it" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("aspnet_helper_projects")
+    files = {
+      "ApiA/ApiA.csproj"   => %(<Project Sdk="Microsoft.NET.Sdk.Web"></Project>),
+      "ApiB/ApiB.csproj"   => %(<Project Sdk="Microsoft.NET.Sdk.Web"></Project>),
+      "ApiA/Extensions.cs" => "public static class RouteExtensions\n{\n    public static RouteGroupBuilder WithApiDefaults(this RouteGroupBuilder group)\n    {\n        group.MapGroup(\"/x\");\n        group.RequireAuthorization();\n        return group;\n    }\n}\n",
+      "ApiB/Extensions.cs" => "public static class RouteExtensions\n{\n    public static RouteGroupBuilder WithApiDefaults(this RouteGroupBuilder group)\n    {\n        group.MapGroup(\"/x\");\n        group.WithOpenApi();\n        return group;\n    }\n}\n",
+      "ApiA/Program.cs"    => "var api = app.MapGroup(\"/a\").WithApiDefaults();\napi.MapGet(\"/secret\", () => \"x\");\n",
+      "ApiB/Program.cs"    => "var api = app.MapGroup(\"/b\").WithApiDefaults();\napi.MapGet(\"/open\", () => \"x\");\n",
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = %w[ApiA ApiB].map do |project|
+        details = Details.new(PathInfo.new(File.join(tmpdir, project, "Program.cs"), 2))
+        details.technology = "cs_aspnet_core_minimal_api"
+        Endpoint.new("/#{project}", "GET", [] of Param, details)
+      end
+
+      AspnetAuthTagger.new(noir_options).perform(endpoints)
+
+      endpoints.map(&.tags.map(&.name)).should eq([["auth"], [] of String])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   describe "filter attributes, inherited attributes and in-action refusals" do
     filters_base = File.expand_path("../../../functional_test/fixtures/csharp/aspnet_auth_filters", __DIR__)
     controllers = "#{filters_base}/Controllers/Controllers.cs"
