@@ -1015,7 +1015,8 @@ module Analyzer::Go
     def go_route_source_candidate?(content : String, extra_methods : Array(String), verb_calls : Bool = true) : Bool
       return true if verb_calls && content_matches?(content, GO_HTTP_ROUTE_CALL_RE)
       extra_methods.any? do |method|
-        method_regex = @extra_method_regexes[method] ||= /\.#{Regex.escape(method)}\s*\(/
+        # A chain broken after the dot (`router.\n  Methods(m).\n  Handler(h)`).
+        method_regex = @extra_method_regexes[method] ||= /\.\s*#{Regex.escape(method)}\s*\(/
         content_matches?(content, method_regex)
       end
     end

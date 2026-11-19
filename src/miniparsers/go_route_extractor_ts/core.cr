@@ -226,6 +226,22 @@ module Noir
         @path = path
       end
 
+      # The route one element of a route table registers (see `TableLoop`):
+      # at the element's row, its handler for a handler argument naming the
+      # loop variable's field, and `verb` when the element sets it.
+      def for_table_element(element : TableElement, verb : String? = nil) : Route
+        route = self
+        route.retarget!(element, verb)
+        route
+      end
+
+      protected def retarget!(element : TableElement, verb : String?)
+        @line = element.row
+        @verb = verb if verb
+        @handler = element.texts[@handler]? || @handler
+        @handler_args = @handler_args.map { |arg| element.texts[arg]? || arg }
+      end
+
       # Marks the route (see `GoEngine#unread_builder_routes`).
       def unresolve_prefix! : self
         @prefix_unresolved = true
@@ -348,22 +364,30 @@ module Noir
         end
 
         declarers = DeclarerCache.new
-        Noir::TreeSitter.walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          if verb_calls && (route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups, literal_join, declarers, router_fields))
-            routes << route
-          elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method, group_method, group_aliases, string_values, router_fields))
-            routes << route
-          elsif !all_handle_many.empty? && (many = decode_handle_many_call(node, source, group_prefixes, all_handle_many, group_method, group_aliases, string_values, router_fields)) && !many.empty?
-            many.each { |r| routes << r }
+        decode = ->(node : LibTreeSitter::TSNode, values : Hash(String, String)) do
+          found = [] of Route
+          if verb_calls && (route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, values, closure_groups, literal_join, declarers, router_fields))
+            found << route
+          elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method, group_method, group_aliases, values, router_fields))
+            found << route
+          elsif !all_handle_many.empty? && (many = decode_handle_many_call(node, source, group_prefixes, all_handle_many, group_method, group_aliases, values, router_fields)) && !many.empty?
+            found.concat(many)
           elsif handlefunc_methods && !mux_chained_operands.includes?(node_key(node))
             # Mux's `.Methods(...)` can list several verbs at once
             # (`.Methods("GET", "POST")`), so the decoder returns an
             # array and we fan out into one Route per verb.
-            decode_handlefunc_methods_call(node, source, group_prefixes, string_values, subrouters).each do |r|
-              routes << r
-            end
+            found.concat(decode_handlefunc_methods_call(node, source, group_prefixes, values, subrouters))
           end
+          found
+        end
+        tables = collect_table_loops(root, source, string_values)
+        Noir::TreeSitter.walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          found = decode.call(node, string_values)
+          if found.empty? && !tables.empty?
+            found = table_routes(node, source, tables, string_values) { |values| decode.call(node, values) }
+          end
+          routes.concat(found)
         end
       end
       dedupe_routes(routes)
@@ -1309,6 +1333,257 @@ module Noir
     # route. Chi's default middleware `.Group(closure)` also works here
     # since the middleware arg-shape classifier is arg-based.
     # --- Static-file route extraction ------------------------------------
+
+    # One element of a route table: its row, and per `v.Field` of the loop
+    # variable `v` the value it reads (`values`: a path, or a method as its
+    # verb) and the field's text as written (`texts`, for the handler).
+    record TableElement, row : Int32, values : Hash(String, String), texts : Hash(String, String)
+
+    # `for _, v := range routes { r.GET(v.Pattern, v.Handler) }` over a
+    # literal table: OpenAPI Generator's go-gin-server and go-server, and
+    # hand-written `[]struct{method, path string; h http.HandlerFunc}{...}`.
+    record TableLoop, start_byte : UInt32, end_byte : UInt32, var : String, elements : Array(TableElement)
+
+    # ponytail: a table is read only from a literal in the same file (a
+    # local, a package `var`, or the one `return` of a function the loop
+    # calls), and only up to this many elements; a table assembled across
+    # files, from a map, or by `append` stays unread.
+    MAX_TABLE_ELEMENTS = 500
+
+    # The loops of `root` over a literal route table, in source order.
+    private def collect_table_loops(root : LibTreeSitter::TSNode, source : String,
+                                    string_values : Hash(String, String)) : Array(TableLoop)
+      loops = [] of TableLoop
+      return loops unless source.includes?("range")
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "for_statement"
+        if table = table_loop(node, root, source, string_values)
+          loops << table
+        end
+      end
+      loops
+    end
+
+    # The routes `decode` reads off `call` once per element of the table the
+    # loop around it ranges over, each with that element's values; empty when
+    # `call` is in no such loop or reads no field of its variable. Inside
+    # `switch v.Method { case http.MethodGet: ... }` only the elements of that
+    # case count.
+    private def table_routes(call : LibTreeSitter::TSNode, source : String, tables : Array(TableLoop),
+                             string_values : Hash(String, String), & : Hash(String, String) -> Array(Route)) : Array(Route)
+      routes = [] of Route
+      start = LibTreeSitter.ts_node_start_byte(call)
+      table = tables.reverse_each.find { |t| t.start_byte <= start < t.end_byte } || return routes
+      text = Noir::TreeSitter.node_text(call, source)
+      return routes unless text.includes?("#{table.var}.")
+      cases = table_case_values(call, source, table)
+      table.elements.each do |element|
+        if cases
+          field, wanted = cases
+          next unless (value = element.values[field]?) && wanted.includes?(value)
+        end
+        # A method the call hands over as an argument (`.Methods(v.Method)`)
+        # is the element's verb.
+        verb = element.values.find { |key, field_value| ALLOWED_HTTP_METHODS.includes?(field_value) && text.matches?(/[(,]\s*#{Regex.escape(key)}\s*[,)]/) }.try(&.[1])
+        yield(string_values.merge(element.values)).each { |route| routes << route.for_table_element(element, verb) }
+      end
+      routes
+    end
+
+    # `{"v.F", case values}` when `call` sits in a case of `switch v.F`
+    # within `table`'s loop; nil otherwise. A default case matches nothing.
+    private def table_case_values(call : LibTreeSitter::TSNode, source : String, table : TableLoop) : Tuple(String, Set(String))?
+      node = Noir::TreeSitter.parent(call)
+      depth = 0
+      while node && depth < Noir::TreeSitter::MAX_AST_DEPTH && LibTreeSitter.ts_node_start_byte(node) > table.start_byte
+        kind = Noir::TreeSitter.node_type(node)
+        if kind == "expression_case" || kind == "default_case"
+          switch = Noir::TreeSitter.parent(node)
+          tag = switch.try { |sw| Noir::TreeSitter.field(sw, "value") }
+          if tag && (tag_text = Noir::TreeSitter.node_text(tag, source)).starts_with?("#{table.var}.")
+            wanted = Set(String).new
+            if kind == "expression_case" && (list = Noir::TreeSitter.field(node, "value"))
+              Noir::TreeSitter.each_named_child(list) do |value|
+                decoded = table_value(value, source, Hash(String, String).new)
+                wanted << decoded if decoded
+              end
+            end
+            return {tag_text, wanted}
+          end
+        end
+        node = Noir::TreeSitter.parent(node)
+        depth += 1
+      end
+    end
+
+    # The loop `for_node` as a `TableLoop`, when it ranges with a value
+    # variable over a literal table whose elements set at least one field
+    # the loop body reads.
+    private def table_loop(for_node : LibTreeSitter::TSNode, root : LibTreeSitter::TSNode, source : String,
+                           string_values : Hash(String, String)) : TableLoop?
+      clause = nil
+      Noir::TreeSitter.each_named_child(for_node) { |child| clause = child if Noir::TreeSitter.node_type(child) == "range_clause" }
+      clause = clause || return
+      left = Noir::TreeSitter.field(clause, "left") || return
+      right = Noir::TreeSitter.field(clause, "right") || return
+      names = [] of String
+      Noir::TreeSitter.each_named_child(left) { |id| names << Noir::TreeSitter.node_text(id, source) if Noir::TreeSitter.node_type(id) == "identifier" }
+      return unless names.size == 2
+      var = names[1]
+      body = Noir::TreeSitter.field(for_node, "body") || return
+      return unless Noir::TreeSitter.node_text(body, source).includes?("#{var}.")
+      literal = table_literal(right, for_node, root, source) || return
+      fields = table_fields(Noir::TreeSitter.field(literal, "type"), root, source) || return
+      elements = [] of TableElement
+      Noir::TreeSitter.field(literal, "body").try do |items|
+        Noir::TreeSitter.each_named_child(items) do |item|
+          break if elements.size >= MAX_TABLE_ELEMENTS
+          next unless Noir::TreeSitter.node_type(item) == "literal_element"
+          value = Noir::TreeSitter.first_named_child(item) || next
+          value = Noir::TreeSitter.first_named_child(value) || next if Noir::TreeSitter.node_type(value) == "unary_expression"
+          value = Noir::TreeSitter.field(value, "body") || next if Noir::TreeSitter.node_type(value) == "composite_literal"
+          next unless Noir::TreeSitter.node_type(value) == "literal_value"
+          if element = table_element(value, fields, var, source, string_values)
+            elements << element
+          end
+        end
+      end
+      return if elements.empty?
+      TableLoop.new(LibTreeSitter.ts_node_start_byte(for_node), LibTreeSitter.ts_node_end_byte(for_node), var, elements)
+    end
+
+    # The composite literal `range` expression `right` names: a `name :=`
+    # in the loop's function or a package `var name =`, bound once, or the
+    # sole `return` of the function a call names (`getRoutes(h)`).
+    private def table_literal(right : LibTreeSitter::TSNode, for_node : LibTreeSitter::TSNode,
+                              root : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
+      case Noir::TreeSitter.node_type(right)
+      when "composite_literal"
+        right
+      when "identifier"
+        name = Noir::TreeSitter.node_text(right, source)
+        found = [] of LibTreeSitter::TSNode
+        scopes = [root]
+        if function = enclosing_declaration(for_node)
+          scopes.unshift(function)
+        end
+        scopes.each do |scope|
+          Noir::TreeSitter.walk(scope) do |node|
+            kind = Noir::TreeSitter.node_type(node)
+            next unless kind == "short_var_declaration" || kind == "var_spec"
+            target = Noir::TreeSitter.field(node, kind == "var_spec" ? "name" : "left")
+            value = Noir::TreeSitter.field(node, kind == "var_spec" ? "value" : "right")
+            next unless target && value && Noir::TreeSitter.node_text(target, source) == name
+            # Only the function's own bindings, then the package's.
+            next if scope == root && enclosing_declaration(node)
+            literal = Noir::TreeSitter.first_named_child(value)
+            found << literal if literal && Noir::TreeSitter.node_type(literal) == "composite_literal"
+          end
+          break unless found.empty?
+        end
+        found.first if found.size == 1
+      when "call_expression"
+        callee = Noir::TreeSitter.field(right, "function") || return
+        callee = Noir::TreeSitter.field(callee, "field") || return if Noir::TreeSitter.node_type(callee) == "selector_expression"
+        name = Noir::TreeSitter.node_text(callee, source)
+        returned = [] of LibTreeSitter::TSNode
+        Noir::TreeSitter.each_named_child(root) do |decl|
+          next unless {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(decl))
+          next unless Noir::TreeSitter.field(decl, "name").try { |n| Noir::TreeSitter.node_text(n, source) } == name
+          Noir::TreeSitter.walk(decl) do |node|
+            next unless Noir::TreeSitter.node_type(node) == "return_statement"
+            returned << (Noir::TreeSitter.first_named_child(node).try { |list| Noir::TreeSitter.first_named_child(list) } || node)
+          end
+        end
+        literal = returned.first if returned.size == 1
+        literal if literal && Noir::TreeSitter.node_type(literal) == "composite_literal"
+      end
+    end
+
+    # The field names, in declaration order, of the struct a table literal of
+    # type `type_node` holds: `[]struct{...}`, `[]Route`, `[]*Route`, or a
+    # `type Routes []Route` declared in the file. Nil for anything else, a
+    # struct with an embedded field included.
+    private def table_fields(type_node : LibTreeSitter::TSNode?, root : LibTreeSitter::TSNode, source : String, depth : Int32 = 0) : Array(String)?
+      return unless type_node && depth < 6
+      case Noir::TreeSitter.node_type(type_node)
+      when "slice_type", "array_type", "implicit_length_array_type", "pointer_type"
+        element = Noir::TreeSitter.field(type_node, "element") || Noir::TreeSitter.first_named_child(type_node)
+        table_fields(element, root, source, depth + (Noir::TreeSitter.node_type(type_node) == "pointer_type" ? 0 : 1))
+      when "struct_type"
+        names = [] of String
+        embedded = false
+        Noir::TreeSitter.walk(type_node) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "field_declaration"
+          before = names.size
+          Noir::TreeSitter.each_named_child(node) do |child|
+            names << Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "field_identifier"
+          end
+          embedded ||= names.size == before
+        end
+        names unless embedded
+      when "type_identifier"
+        name = Noir::TreeSitter.node_text(type_node, source)
+        declared = nil
+        Noir::TreeSitter.walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "type_spec"
+          next unless Noir::TreeSitter.field(node, "name").try { |n| Noir::TreeSitter.node_text(n, source) } == name
+          declared = Noir::TreeSitter.field(node, "type")
+        end
+        table_fields(declared, root, source, depth + 1)
+      end
+    end
+
+    # One table element (`{http.MethodGet, "/users", listUsers}`, or keyed)
+    # read against `fields`; nil when it sets no readable value.
+    private def table_element(value : LibTreeSitter::TSNode, fields : Array(String), var : String, source : String,
+                              string_values : Hash(String, String)) : TableElement?
+      values = Hash(String, String).new
+      texts = Hash(String, String).new
+      position = 0
+      Noir::TreeSitter.each_named_child(value) do |child|
+        field = nil
+        expr = nil
+        case Noir::TreeSitter.node_type(child)
+        when "literal_element"
+          field = fields[position]?
+          expr = Noir::TreeSitter.first_named_child(child)
+          position += 1
+        when "keyed_element"
+          parts = [] of LibTreeSitter::TSNode
+          Noir::TreeSitter.each_named_child(child) do |part|
+            parts << (Noir::TreeSitter.node_type(part) == "literal_element" ? Noir::TreeSitter.first_named_child(part) || part : part)
+          end
+          next unless parts.size == 2
+          field = Noir::TreeSitter.node_text(parts[0], source)
+          expr = parts[1]
+        end
+        next unless field && expr
+        key = "#{var}.#{field}"
+        texts[key] = Noir::TreeSitter.node_text(expr, source)
+        if decoded = table_value(expr, source, string_values)
+          values[key] = decoded
+        end
+      end
+      TableElement.new(Noir::TreeSitter.node_start_row(value), values, texts) unless values.empty?
+    end
+
+    # A table value as a route reads it: a string (path or method), an
+    # `http.MethodGet`-style constant, or `strings.ToUpper("Post")`.
+    private def table_value(expr : LibTreeSitter::TSNode, source : String, string_values : Hash(String, String)) : String?
+      if text = string_expr_text(expr, source, string_values)
+        return text
+      end
+      case Noir::TreeSitter.node_type(expr)
+      when "selector_expression"
+        verb = decode_method_token(expr, source)
+        verb if ALLOWED_HTTP_METHODS.includes?(verb)
+      when "call_expression"
+        return unless Noir::TreeSitter.field(expr, "function").try { |fn| Noir::TreeSitter.node_text(fn, source) } == "strings.ToUpper"
+        arg = Noir::TreeSitter.field(expr, "arguments").try { |args| Noir::TreeSitter.first_named_arg(args) } || return
+        string_expr_text(arg, source, string_values).try(&.upcase)
+      end
+    end
 
     private def extract_scoped_routes(source : String,
                                       config : ScopedConfig,

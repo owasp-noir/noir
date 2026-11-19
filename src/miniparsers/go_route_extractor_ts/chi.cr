@@ -406,6 +406,26 @@ module Noir
         bind_local_group(node, source, local_groups, config, string_values)
       end
 
+      # A loop over a literal route table registers one route per element;
+      # a route the loop body registers without the table is read once.
+      if ty == "for_statement" && (table = table_loop(node, tree_root(node), source, string_values))
+        plain = [] of Route
+        Noir::TreeSitter.each_named_child(node) do |child|
+          walk_chi(child, source, prefix_stack, local_groups, plain, skip_functions, config, string_values, helpers)
+        end
+        rows = plain.map(&.line).to_set
+        table.elements.each do |element|
+          found = [] of Route
+          values = string_values.merge(element.values)
+          Noir::TreeSitter.each_named_child(node) do |child|
+            walk_chi(child, source, prefix_stack, local_groups, found, skip_functions, config, values, helpers)
+          end
+          found.each { |route| routes << route.for_table_element(element) unless rows.includes?(route.line) }
+        end
+        routes.concat(plain)
+        return
+      end
+
       if ty == "call_expression"
         kind = classify_chi_call(node, source, config, string_values)
         case kind
@@ -483,6 +503,14 @@ module Noir
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_chi(child, source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
       end
+    end
+
+    private def tree_root(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode
+      root = node
+      while up = Noir::TreeSitter.parent(root)
+        root = up
+      end
+      root
     end
 
     # `chi.NewRouter()` / `chi.NewMux()`: a router built in place.
