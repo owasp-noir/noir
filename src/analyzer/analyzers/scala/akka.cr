@@ -1,4 +1,5 @@
 require "../../engines/scala_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Scala
   class Akka < ScalaEngine
@@ -24,6 +25,10 @@ module Analyzer::Scala
     # used to keep a leaf-method emission from firing on a line that already
     # carries its own path directive.
     PATH_DIRECTIVE_RE = /(?<![.\w])path[A-Za-z]*/
+    # Directive name, then its balanced argument list.
+    PARAM_DIRECTIVE_RE    = /(?<![.\w])(parameters?|cookie|optionalCookie)\s*(\((?:[^()]|(?2))*\))/
+    DIRECTIVE_ARG_NAME_RE = /\A(?:"([^"]+)"|'(\w+)|Symbol\s*\(\s*"([^"]+)")/
+    DIRECTIVE_ARG_RULES   = Noir::TopLevelSplit::Rules.new(quotes: "\"")
 
     def analyze_file(path : String) : Array(Endpoint)
       content = read_file_content(path)
@@ -213,42 +218,15 @@ module Analyzer::Scala
 
     # Extract parameters from a code block
     private def extract_params_from_block(endpoint : Endpoint, block : String)
-      # Extract query parameters
-      if block.includes?("parameter") || block.includes?("Symbol")
-        # Extract single parameter: parameter("name") { ... }
-        block.scan(/parameter\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-          endpoint.push_param(Param.new(match[1], "", "query"))
-        end
-
-        # Extract symbol parameters: parameter('name) { ... }
-        block.scan(/parameter\s*\(\s*'(\w+)/) do |match|
-          param_name = match[1]
-          endpoint.push_param(Param.new(param_name, "", "query"))
-        end
-
-        # Extract Symbol("name") parameters.
-        block.scan(/parameter\s*\(\s*Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-          param_name = match[1]
-          endpoint.push_param(Param.new(param_name, "", "query"))
-        end
-
-        # Extract multiple parameters: parameters("name", "age") or parameters("name", "age".optional)
-        if params_match = block.match(/parameters\s*\(([^)]+)\)/)
-          params_content = params_match[1]
-          params_content.scan(/['"](\w+)['"]/) do |match|
-            param_name = match[1]
-            # Avoid duplicating parameters already added
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
-
-          params_content.scan(/'(\w+)/) do |match|
-            param_name = match[1]
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
-
-          params_content.scan(/Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-            param_name = match[1]
-            endpoint.push_param(Param.new(param_name, "", "query"))
+      # parameter(s)("a", "b".as[Int], "c".withDefault("x"), 'd, Symbol("e")) and
+      # (optional)cookie("x"): only each argument's leading name is a parameter.
+      if block.includes?("parameter") || block.includes?("ookie")
+        block.scan(PARAM_DIRECTIVE_RE) do |match|
+          param_type = match[1].ends_with?("ookie") ? "cookie" : "query"
+          Noir::TopLevelSplit.split(match[2][1...-1], ',', DIRECTIVE_ARG_RULES).each do |arg|
+            if name = arg.match(DIRECTIVE_ARG_NAME_RE)
+              endpoint.push_param(Param.new(name[1]? || name[2]? || name[3], "", param_type))
+            end
           end
         end
       end
