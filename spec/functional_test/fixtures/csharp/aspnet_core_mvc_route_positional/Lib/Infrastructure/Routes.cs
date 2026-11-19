@@ -15,7 +15,7 @@ namespace App.Infrastructure
             var tpl = "wrong/{action}";
         }
 
-        // None of these templates can be read: each is skipped.
+        // The first two templates cannot be read; the concatenation can.
         public static void UseMoreRoutes(this IEndpointRouteBuilder app, string tpl)
         {
             app.MapControllerRoute(name: "param", pattern: tpl, defaults: new { controller = "Tools", action = "Details" });

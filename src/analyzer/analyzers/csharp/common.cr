@@ -560,11 +560,11 @@ module Analyzer::CSharp::Common
   # `$"{{{RouteValue.SeName}}}"`. `csharp_string_value` reads the value an
   # expression has when it is fixed by the source: a literal, an
   # interpolation of readable holes, a local or `const`/`static` string, a
-  # `Type.Member` constant the scan declares, or a parameterless string
+  # `Type.Member` constant the scan declares, a parameterless string
   # method's single `return` (or an empty fall-through after
-  # setting-gated early returns). Anything else (a parameter, a
-  # concatenation, a ternary, a call with arguments) is nil, and the caller
-  # keeps its old behaviour.
+  # setting-gated early returns), or a `+` concatenation of readable
+  # operands. Anything else (a parameter, a ternary, a call with arguments)
+  # is nil, and the caller keeps its old behaviour.
   MAX_STRING_VALUE_DEPTH    =    6
   MAX_STRING_VALUE_STEPS    =   64
   MAX_STRING_VALUE_SIZE     = 1024
@@ -593,7 +593,11 @@ module Analyzer::CSharp::Common
   end
 
   private def string_value_of(expr : String, file : String, before : String, depth : Int32) : String?
-    if m = expr.match(STRING_LITERAL_VALUE_RE)
+    if operands = concatenation_operands(expr)
+      io = String::Builder.new
+      operands.each { |operand| io << (csharp_string_value(operand, file, before, depth + 1) || return) }
+      io.to_s
+    elsif m = expr.match(STRING_LITERAL_VALUE_RE)
       m[1].gsub(/\\(.)/) { |_, esc| esc[1] }
     elsif m = expr.match(VERBATIM_LITERAL_VALUE_RE)
       m[1].gsub("\"\"", "\"")
@@ -610,6 +614,28 @@ module Analyzer::CSharp::Common
     elsif m = expr.match(MEMBER_ACCESS_VALUE_RE)
       member_string_value(m[1], m[2], file, depth)
     end
+  end
+
+  # The operands of `expr` when it is a `+` chain at its top level (outside
+  # strings and brackets), else nil.
+  private def concatenation_operands(expr : String) : Array(String)?
+    return unless expr.includes?('+')
+    chars = expr.chars
+    operands = [] of String
+    nest = 0
+    start = 0
+    Noir::CSharpLexer.new(expr).masked.each_with_index do |char, i|
+      case char
+      when '(', '[', '{' then nest += 1
+      when ')', ']', '}' then nest -= 1
+      when '+'
+        next unless nest == 0
+        operands << chars[start...i].join
+        start = i + 1
+      end
+    end
+    return if operands.empty?
+    operands << chars[start..].join
   end
 
   # The text between the quotes of `expr` when the whole of it is one

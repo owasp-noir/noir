@@ -4,7 +4,7 @@ require "../../func_spec.cr"
 # `MapAreaControllerRoute(name, area, pattern)` in the host, which owns its
 # routing table: an area no declared route reaches is not given one, and
 # templates that cannot be read (a parameter, a method with branching
-# returns, a concatenation) are skipped.
+# returns) are skipped. A concatenation of readable parts is read.
 expected_endpoints = [
   Endpoint.new("/Home/Index", "GET"),
   Endpoint.new("/blog/Index", "GET"),
@@ -13,6 +13,7 @@ expected_endpoints = [
   Endpoint.new("/Admin/Dashboard/Index", "GET"),
   # The library's unreadable templates are skipped; it keeps the default route.
   Endpoint.new("/Tools/Details/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/pre/zone/post", "GET", [Param.new("id", "", "query")]),
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_route_positional/", {
@@ -26,8 +27,8 @@ describe "ASP.NET Core MVC positional route templates", tags: "functional" do
     tester.app.endpoints.any?(&.url.includes?("Cart")).should be_false
   end
 
-  it "does not read a parameter, a branching method or a concatenation" do
+  it "does not read a parameter or a branching method" do
     urls = tester.app.endpoints.map(&.url)
-    urls.any? { |url| url.includes?("wrong") || url.includes?("/en/") || url.includes?("zone") || url.includes?("pre") }.should be_false
+    urls.any? { |url| url.includes?("wrong") || url.includes?("/en/") }.should be_false
   end
 end

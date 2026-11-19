@@ -648,6 +648,12 @@ module Analyzer::CSharp
       attr.argument("template")
     end
 
+    # A template argument's value: a literal, or a constant expression the
+    # scan can read (`ApiRoutes.Posts.Get`, `Base + "/tags"`).
+    private def route_template(arg : Noir::CSharpDecl::Arg, file : String) : String?
+      arg.literal || csharp_string_value(arg.text, file)
+    end
+
     # Reads the class's own attribute list, however many lines and other
     # attributes it spans. `[Route("")]` is a real template: it roots the
     # actions at `/` and, being the class's own, replaces an inherited
@@ -663,7 +669,7 @@ module Analyzer::CSharp
         case attr.name
         when "Route"
           arg = template_arg(attr) || next
-          template = arg.literal || (arg.text.matches?(IDENTIFIER_PATH_RE) ? csharp_string_value(arg.text, file) : nil)
+          template = route_template(arg, file)
           routes << (template.empty? ? "/" : template) if template
         when "Area"
           area ||= attr.argument("areaName").try { |arg| csharp_string_value(arg.text, file) }
@@ -675,8 +681,6 @@ module Analyzer::CSharp
       end
       {routes + custom, area.presence}
     end
-
-    IDENTIFIER_PATH_RE = /\A[A-Za-z_][\w.]*\z/
 
     # `[Route]` and `[Area]` are `Inherited = true`: a controller without its
     # own takes them from the nearest base class that declares them.
@@ -718,9 +722,10 @@ module Analyzer::CSharp
       "HttpPatch" => "PATCH", "HttpHead" => "HEAD", "HttpOptions" => "OPTIONS",
     }
 
-    # A route argument that is a name (`ApiRoutes.Item`, `Const + "/x"`): the
-    # route exists but cannot be read here, so the action is reported at the
-    # class route with an `unresolved-route` tag.
+    # A route argument the analyzer cannot read (`ApiRoutes.Item` the scan
+    # does not declare): the route exists, so the action is reported at the
+    # class route, or conventionally without one, with an `unresolved-route`
+    # tag. For a custom route attribute, only a name argument counts.
     UNREAD_ROUTE_ARG_RE = /\A[A-Za-z_]/
 
     # ASP.NET Core routing has always accepted an arbitrary method string
@@ -729,7 +734,7 @@ module Analyzer::CSharp
     ACCEPT_VERB_TOKENS  = %w[GET POST PUT DELETE PATCH HEAD OPTIONS QUERY]
     HTTP_METHODS_ARG_RE = /\A(?:\w+\.)*HttpMethods\s*\.\s*([A-Za-z]+)\z/
 
-    private def action_attributes(attrs : Array(Noir::CSharpDecl::Attribute), scope : String) : ActionAttributes
+    private def action_attributes(attrs : Array(Noir::CSharpDecl::Attribute), scope : String, file : String) : ActionAttributes
       templated = [] of Tuple(String, String?, Bool)
       bare_verbs = [] of String
       routes = [] of Tuple(String?, Bool)
@@ -740,9 +745,9 @@ module Analyzer::CSharp
         next unless attr.target.nil? || attr.target == "method"
         if verb = VERB_ATTRIBUTES[attr.name]?
           arg = template_arg(attr)
-          if template = arg.try(&.literal)
+          if template = arg.try { |template_arg| route_template(template_arg, file) }
             templated << {verb, template, false}
-          elsif arg && arg.positional? && arg.text.matches?(UNREAD_ROUTE_ARG_RE)
+          elsif arg
             templated << {verb, nil, true}
           else
             bare_verbs << verb
@@ -750,9 +755,9 @@ module Analyzer::CSharp
           explicit = true
         elsif attr.name == "Route"
           arg = template_arg(attr)
-          if template = arg.try(&.literal)
+          if template = arg.try { |template_arg| route_template(template_arg, file) }
             routes << {template, false}
-          elsif arg && arg.positional? && arg.text.matches?(UNREAD_ROUTE_ARG_RE)
+          elsif arg
             routes << {nil, true}
           end
           explicit = true
@@ -765,7 +770,7 @@ module Analyzer::CSharp
             token if ACCEPT_VERB_TOKENS.includes?(token)
           end.uniq!
           next if verbs.empty?
-          if route = attr.property("Route").try(&.literal)
+          if route = attr.property("Route").try { |route_arg| route_template(route_arg, file) }
             verbs.each { |accept_verb| templated << {accept_verb, route, false} }
           else
             bare_verbs.concat(verbs)
@@ -816,7 +821,7 @@ module Analyzer::CSharp
       type.decl.methods.each do |method|
         # An open generic method is never an action.
         next unless method.public? && method.type_params.nil?
-        action = action_attributes(method.attributes, attribute_scope)
+        action = action_attributes(method.attributes, attribute_scope, file)
         next if action.non_action || !action_method?(method, action.explicit)
         next unless owner.nil? || action.explicit
         next if skip.try(&.includes?(method.name))
