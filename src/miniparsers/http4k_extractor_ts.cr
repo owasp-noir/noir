@@ -4,6 +4,7 @@ require "../models/endpoint"
 require "./kotlin_callee_extractor"
 require "./kotlin_source_mask"
 require "./jvm_ts_helpers"
+require "./kotlin_route_extractor_ts"
 require "./extraction_result_cache"
 
 module Noir
@@ -78,26 +79,34 @@ module Noir
       # in by the analyzer (the route extractor doesn't carry the
       # file path); each tuple is (callee_name, line_1_based).
       getter callees : Array(Tuple(String, Int32))
+      # Innermost `val name =` / `fun name()` the route is declared in, so
+      # the analyzer can place it under every `"/p" bind name` mount.
+      getter owner : String?
 
       def initialize(@verb, @path, @line, @has_body,
                      @query_params, @header_params, @form_params,
-                     @callees)
+                     @callees, @owner = nil)
       end
 
       def with_path(path : String) : Route
-        Route.new(@verb, path, @line, @has_body, @query_params, @header_params, @form_params, @callees)
+        Route.new(@verb, path, @line, @has_body, @query_params, @header_params, @form_params, @callees, @owner)
       end
     end
+
+    # `"/p" bind name` / `"/p" bind name()` inside the declaration `owner`:
+    # the routes declared in `name` are served under `prefix`.
+    record Mount, name : String, prefix : String, owner : String?
 
     def extract_routes(source : String,
                        string_constants = Hash(String, String).new,
                        *,
                        include_callees : Bool = false,
-                       contract_routes = Hash(String, Array(Route)).new) : Array(Route)
+                       contract_routes = Hash(String, Array(Route)).new,
+                       mounts = [] of Mount) : Array(Route)
       routes = [] of Route
       local_string_constants = extract_string_constants(source)
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees, false, contract_routes)
+        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees, false, contract_routes, mounts)
       end
       routes
     end
@@ -169,7 +178,7 @@ module Noir
         end
       end
 
-      constants
+      TreeSitterKotlinRouteExtractor.expand_constant_interpolations(constants)
     end
 
     # ---- traversal --------------------------------------------------
@@ -183,12 +192,18 @@ module Noir
                      depth : Int32,
                      include_callees : Bool,
                      in_routes : Bool,
-                     contract_routes : Hash(String, Array(Route)))
+                     contract_routes : Hash(String, Array(Route)),
+                     mounts : Array(Mount),
+                     owner : String? = nil)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       ty = Noir::TreeSitter.node_type(node)
 
-      if ty == "infix_expression" && handle_bind(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees, in_routes, contract_routes)
+      if ty == "property_declaration" || ty == "function_declaration"
+        owner = declaration_name(node, source) || owner
+      end
+
+      if ty == "infix_expression" && handle_bind(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees, in_routes, contract_routes, mounts, owner)
         return
       end
 
@@ -196,7 +211,7 @@ module Noir
         # Arguments of a `routes(...)` call are inside the routing
         # block — a bare `VERB to handler` arg there is a real route
         # bound to the current prefix (the verbs-under-path idiom).
-        walk_routes_args(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees, true, contract_routes)
+        walk_routes_args(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees, true, contract_routes, mounts, owner)
         return
       end
 
@@ -205,7 +220,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, in_routes, contract_routes)
+        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, in_routes, contract_routes, mounts, owner)
       end
     end
 
@@ -225,7 +240,9 @@ module Noir
                             depth : Int32,
                             include_callees : Bool,
                             in_routes : Bool,
-                            contract_routes : Hash(String, Array(Route))) : Bool
+                            contract_routes : Hash(String, Array(Route)),
+                            mounts : Array(Mount),
+                            owner : String?) : Bool
       lhs, op, rhs = infix_parts(node, source)
       return false unless lhs && rhs
 
@@ -255,7 +272,7 @@ module Noir
 
           path_text = route_path_from(inner_lhs, source, string_constants, local_string_constants)
           return false unless path_text
-          emit_route(verb, Noir::URLPath.join_trimmed(prefix, path_text), node, rhs, source, routes, include_callees)
+          emit_route(verb, Noir::URLPath.join_trimmed(prefix, path_text), node, rhs, source, routes, include_callees, owner)
           true
         else
           # Bare `VERB to handler` directly inside a `routes(...)` call
@@ -267,17 +284,23 @@ module Noir
           return false unless in_routes
           verb = resolve_verb(lhs, source)
           return false unless verb
-          emit_route(verb, prefix.empty? ? "/" : prefix, node, rhs, source, routes, include_callees)
+          emit_route(verb, prefix.empty? ? "/" : prefix, node, rhs, source, routes, include_callees, owner)
           true
         end
       when "bind"
+        if name = router_reference(rhs, source)
+          path_text = resolve_string_value(lhs, source, string_constants, local_string_constants)
+          return false unless path_text
+          mounts << Mount.new(name, Noir::URLPath.join_trimmed(prefix, path_text), owner)
+          return true
+        end
         return false unless Noir::TreeSitter.node_type(rhs) == "call_expression"
         return false unless call_function_name(rhs, source) == "routes"
 
         path_text = resolve_string_value(lhs, source, string_constants, local_string_constants)
         return false unless path_text
         new_prefix = Noir::URLPath.join_trimmed(prefix, path_text)
-        walk_routes_args(rhs, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, contract_routes)
+        walk_routes_args(rhs, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, contract_routes, mounts, owner)
         true
       else
         false
@@ -328,7 +351,8 @@ module Noir
                            handler : LibTreeSitter::TSNode,
                            source : String,
                            routes : Array(Route),
-                           include_callees : Bool)
+                           include_callees : Bool,
+                           owner : String?)
       line = Noir::TreeSitter.node_start_row(node)
 
       query, header, form = [] of String, [] of String, [] of String
@@ -355,7 +379,7 @@ module Noir
         end
       end
 
-      routes << Route.new(verb, full, line, has_body, query, header, form, callees)
+      routes << Route.new(verb, full, line, has_body, query, header, form, callees, owner)
     end
 
     # Resolve the path for a contract/bind LHS. Plain string literals
@@ -388,14 +412,16 @@ module Noir
                                  depth : Int32,
                                  include_callees : Bool,
                                  in_routes : Bool,
-                                 contract_routes : Hash(String, Array(Route)))
+                                 contract_routes : Hash(String, Array(Route)),
+                                 mounts : Array(Mount),
+                                 owner : String?)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       args = call_value_arguments(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "value_argument"
         Noir::TreeSitter.each_named_child(arg) do |child|
-          walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, in_routes, contract_routes)
+          walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, in_routes, contract_routes, mounts, owner)
         end
       end
     end
@@ -413,7 +439,7 @@ module Noir
         name = function_name(node, source)
         if !name.empty? && Noir::TreeSitter.node_text(node, source).includes?("bindContract")
           routes = [] of Route
-          walk(node, source, "", routes, string_constants, local_string_constants, 0, include_callees, true, Hash(String, Array(Route)).new)
+          walk(node, source, "", routes, string_constants, local_string_constants, 0, include_callees, true, Hash(String, Array(Route)).new, [] of Mount)
           routes_by_function[name] = routes unless routes.empty?
         end
         return
@@ -429,6 +455,33 @@ module Noir
         return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "simple_identifier"
       end
       ""
+    end
+
+    # `fun name()` or `val name =`.
+    private def declaration_name(node : LibTreeSitter::TSNode, source : String) : String?
+      if Noir::TreeSitter.node_type(node) == "function_declaration"
+        name = function_name(node, source)
+        return name.empty? ? nil : name
+      end
+      Noir::TreeSitter.each_named_child(node) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "variable_declaration"
+        Noir::TreeSitter.each_named_child(child) do |sub|
+          return Noir::TreeSitter.node_text(sub, source) if Noir::TreeSitter.node_type(sub) == "simple_identifier"
+        end
+      end
+      nil
+    end
+
+    # The router a `bind` mounts by name: `userRoutes` or `orderRoutes()`.
+    private def router_reference(node : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "simple_identifier"
+        Noir::TreeSitter.node_text(node, source)
+      when "call_expression"
+        name = call_function_name(node, source)
+        args = call_value_arguments(node)
+        name if !name.empty? && name != "routes" && args && Noir::TreeSitter.named_arg_count(args) == 0
+      end
     end
 
     # ---- handler-body scan ------------------------------------------
@@ -556,16 +609,22 @@ module Noir
       nil
     end
 
-    private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
+    private def decode_string_literal(node : LibTreeSitter::TSNode,
+                                      source : String,
+                                      constants : Hash(String, String)? = nil,
+                                      local_constants : Hash(String, String)? = nil) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
           case Noir::TreeSitter.node_type(child)
           when "string_content"
             io << Noir::TreeSitter.kotlin_string_content(child, node, source)
           when "interpolated_identifier", "interpolated_expression"
-            io << '{'
-            io << Noir::TreeSitter.node_text(child, source).strip
-            io << '}'
+            ident = Noir::TreeSitter.node_text(child, source).strip
+            if value = local_constants.try(&.[ident]?) || constants.try(&.[ident]?)
+              io << value
+            else
+              io << '{' << ident << '}'
+            end
           end
         end
       end

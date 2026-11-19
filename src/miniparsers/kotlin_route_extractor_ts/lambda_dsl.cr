@@ -11,9 +11,10 @@
 # wrapping the inner `get("/x")` call, which `lambda_dsl_call` folds back
 # into one call.
 #
-# ponytail: handlers passed as a `Handler` variable or an `object :`
-# expression are not resolved for params (the route itself is still
-# emitted when the call has a receiver-less or lambda/reference shape).
+# ponytail: handlers passed as a `Handler` variable or property or an
+# `object :` expression are not resolved for params (the route itself is
+# still emitted when the call has a receiver-less, lambda/reference or
+# `/`-path-plus-handler-value shape).
 module Noir
   module TreeSitterKotlinRouteExtractor
     private record LambdaDslCall,
@@ -105,13 +106,14 @@ module Noir
       # Java, a bare call is no exception: Kotlin scope functions make
       # `buildJsonObject { put("status", "up") }` receiver-less.
       receiver = call.receiver
-      return unless lambda_dsl_handler?(call) ||
+      handler_reference = lambda_dsl_handler_reference?(call, source, constants, prefix)
+      return unless lambda_dsl_handler?(call) || handler_reference ||
                     (receiver && config.router_receivers.includes?(Noir::TreeSitter.node_text(receiver, source).split('.').last.strip))
 
       path = lambda_dsl_string_argument(call, source, constants)
       if path.nil?
         # Javalin's path-less `get(handler)` inside a `path("...")` block.
-        return if prefix.empty? || !lambda_dsl_handler_first?(call)
+        return if prefix.empty? || !(lambda_dsl_handler_first?(call) || handler_reference)
         path = ""
       end
 
@@ -283,6 +285,27 @@ module Noir
 
     private def lambda_dsl_handler?(call : LambdaDslCall) : Bool
       !call.lambda.nil? || call.args.any? { |arg| lambda_dsl_handler_arg?(arg) }
+    end
+
+    # `get("/x", UserController.list)`, or `get(UserController.list)` /
+    # `get("x", UserController.list)` inside `path()`: a `Handler` property or
+    # factory call. Such a value is a handler only after a `/` path, or in a
+    # receiver-less verb under a prefix; `map.put("k", v.x)` is neither.
+    private def lambda_dsl_handler_reference?(call : LambdaDslCall,
+                                              source : String,
+                                              constants : Hash(String, String),
+                                              prefix : String) : Bool
+      return false unless call.lambda.nil?
+      reference = ->(arg : LibTreeSitter::TSNode) { Noir::TreeSitter.node_type(arg).in?("navigation_expression", "call_expression") }
+      if call.args.size == 1
+        arg = call.args.first
+        !prefix.empty? && call.receiver.nil? && reference.call(arg) && resolve_string_value(arg, source, constants, constants).nil?
+      elsif path = call.args.first?.try { |arg| resolve_string_value(arg, source, constants, constants) }
+        # ApiBuilder's `path()` takes relative paths (`get("search", X.feed)`).
+        (path.starts_with?('/') || (!prefix.empty? && call.receiver.nil?)) && call.args[1..].any?(&reference)
+      else
+        false
+      end
     end
 
     private def lambda_dsl_handler_first?(call : LambdaDslCall) : Bool

@@ -334,8 +334,10 @@ module Analyzer::Kotlin
       prefix.empty? ? route : route.with_path(MountPrefixes.join(prefix, route.path))
     end
 
+    # `Routes.ITEM` or `com.example.Routes.ITEM`; a bare name collides
+    # across files too often to share.
     private def fully_qualified_constant?(name : String) : Bool
-      name.count('.') >= 2
+      name.includes?('.')
     end
 
     # The parameter name inside one Ktor placeholder. Ktor spells the
@@ -383,6 +385,10 @@ module Analyzer::Kotlin
 
       route.form_params.each do |name|
         params << Param.new(name, "", "form")
+      end
+
+      route.cookie_params.each do |name|
+        params << Param.new(name, "", "cookie")
       end
 
       endpoint = Endpoint.new(route.path, route.verb, params, details)
