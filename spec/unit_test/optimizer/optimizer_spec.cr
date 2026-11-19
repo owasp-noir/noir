@@ -2024,6 +2024,23 @@ describe "EndpointOptimizer" do
         elapsed.should be < 5.seconds
       end
 
+      # A collection `:id` URL is a source and a template at once, so every
+      # request used to be tested against every other one.
+      it "merges a collection of path-variable requests in linear time" do
+        timed = ->(n : Int32) do
+          endpoints = (0...n).map { |i| tech_endpoint("/p#{i}/:id", "GET", "postman", "c.json") }
+          result = [] of Endpoint
+          elapsed = Time.measure { result = EndpointOptimizer.new(logger, options).optimize_endpoints(endpoints) }
+          result.size.should eq(n)
+          elapsed
+        end
+
+        small = (0...3).min_of { timed.call(1500) }
+        large = (0...3).min_of { timed.call(3000) }
+        # Linear is ~2x; the pairwise scan was ~4x.
+        (large < small * 3 || large < 50.milliseconds).should be_true
+      end
+
       it "orders the list the same way whichever duplicate sorts first" do
         optimizer = EndpointOptimizer.new(logger, options)
 

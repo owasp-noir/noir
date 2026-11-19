@@ -476,40 +476,53 @@ class EndpointOptimizer
   # Folds each concrete collection request (`/users/42`) into the first
   # templated endpoint (`/users/{id}`) it instantiates.
   #
-  # Candidate templates are bucketed once by method and segment count — the
-  # only ones `template_matches_concrete_example?` can accept — in endpoint
-  # order, so the first match is the same one a scan of every endpoint found.
-  # That scan re-tested every endpoint per concrete request: O(n²), 13s for
-  # a 4000-request Postman collection. A template is never a concrete source
-  # and a merge keeps its URL, so the buckets stay valid while merging.
+  # A template matches when its literal segments equal the request's and each
+  # placeholder sits on an example value (`42`, a UUID, `:id`). Templates are
+  # indexed by {method, size}, then placeholder mask, then literal segments,
+  # so a request looks up one list per mask instead of testing every template:
+  # a collection's `:id` URLs are all templates, and that scan was O(n²).
   private def merge_concrete_example_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
-    templates = Hash(Tuple(String, Int32), Array(Tuple(Int32, Array(String)))).new
+    templates = Hash({String, Int32}, Hash(Array(Bool), Hash(Array(String), Array(Int32)))).new
     endpoints.each_with_index do |endpoint, idx|
       next unless templated_endpoint?(endpoint)
       segments = comparable_path_segments(endpoint.url)
-      (templates[{endpoint.method, segments.size}] ||= [] of Tuple(Int32, Array(String))) << {idx, segments}
+      mask = segments.map { |seg| placeholder_segment?(seg) }
+      next unless mask.includes?(true)
+      by_mask = templates[{endpoint.method, segments.size}] ||= Hash(Array(Bool), Hash(Array(String), Array(Int32))).new
+      by_literals = by_mask[mask] ||= Hash(Array(String), Array(Int32)).new
+      (by_literals[masked_segments(segments, mask)] ||= [] of Int32) << idx
     end
     return endpoints if templates.empty?
 
+    # A merge can change a template's origins, so its cached scope is dropped.
+    scopes = Hash(Int32, RouteScope).new
     removed = Set(Int32).new
     endpoints.each_with_index do |source, source_idx|
       next unless concrete_example_source?(source)
       concrete_segments = comparable_path_segments(source.url)
-      next unless candidates = templates[{source.method, concrete_segments.size}]?
+      next unless by_mask = templates[{source.method, concrete_segments.size}]?
 
-      candidates.each do |target_idx, template_segments|
+      examples = concrete_segments.map { |seg| example_path_value?(seg) }
+      source_scope = scopes[source_idx] ||= origin_scope(source)
+      best = nil
+      by_mask.each do |mask, by_literals|
+        next unless mask.each_with_index.all? { |placeholder, idx| !placeholder || examples[idx] }
+        next unless candidates = by_literals[masked_segments(concrete_segments, mask)]?
+
         # A collection `:id` URL is both a source and a template, so two of
         # them would fold into each other and both vanish; a template that
         # already folded away is gone too.
-        next if target_idx == source_idx || removed.includes?(target_idx)
-        target = endpoints[target_idx]
-        next unless origin_scope(target) == origin_scope(source)
-        next unless template_matches_concrete_example?(template_segments, concrete_segments)
-
-        endpoints[target_idx] = merge_endpoint_context(endpoints[target_idx], source)
-        removed << source_idx
-        break
+        hit = candidates.find do |target_idx|
+          target_idx != source_idx && !removed.includes?(target_idx) &&
+            (scopes[target_idx] ||= origin_scope(endpoints[target_idx])) == source_scope
+        end
+        best = hit if hit && (best.nil? || hit < best)
       end
+      next unless best
+
+      endpoints[best] = merge_endpoint_context(endpoints[best], source)
+      scopes.delete(best)
+      removed << source_idx
     end
 
     merged = [] of Endpoint
@@ -517,6 +530,11 @@ class EndpointOptimizer
       merged << endpoint unless removed.includes?(idx)
     end
     merged
+  end
+
+  # Placeholder positions blanked out; path segments are never empty.
+  private def masked_segments(segments : Array(String), mask : Array(Bool)) : Array(String)
+    segments.map_with_index { |seg, idx| mask[idx] ? "" : seg }
   end
 
   private def concrete_example_source?(endpoint : Endpoint) : Bool
@@ -582,23 +600,6 @@ class EndpointOptimizer
     return false unless param.param_type == "header"
 
     COLLECTION_NOISE_HEADERS.includes?(param.name.downcase)
-  end
-
-  private def template_matches_concrete_example?(template_segments : Array(String), concrete_segments : Array(String)) : Bool
-    return false unless template_segments.size == concrete_segments.size
-
-    matched_placeholder = false
-    template_segments.each_with_index do |template_segment, idx|
-      concrete_segment = concrete_segments[idx]
-      if placeholder_segment?(template_segment)
-        return false unless example_path_value?(concrete_segment)
-        matched_placeholder = true
-      elsif template_segment != concrete_segment
-        return false
-      end
-    end
-
-    matched_placeholder
   end
 
   private def comparable_path_segments(url : String) : Array(String)

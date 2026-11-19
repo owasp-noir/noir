@@ -67,3 +67,22 @@ FunctionalTester.new("fixtures/specification/http_file/query_method/", {
     Param.new("limit", "10", "form"),
   ]),
 ]).perform_tests
+
+# Unquoted REST Client system variables (`{{$timestamp}}`, `{{$randomInt 5
+# 200}}`) and request-variable references are JSON body values, not a reason
+# to drop the whole body.
+FunctionalTester.new("fixtures/specification/http_file/system_vars/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/system-vars", "POST", [
+    Param.new("request_id", "", "json"),
+    Param.new("updated_at", "", "json"),
+    Param.new("price", "", "json"),
+    Param.new("address", %({"city":"Seoul"}), "json"),
+  ]),
+  Endpoint.new("/request-var", "POST", [
+    Param.new("order_id", "", "json"),
+    Param.new("note", "x", "json"),
+  ]),
+]).perform_tests

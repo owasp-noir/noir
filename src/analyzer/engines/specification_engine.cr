@@ -220,7 +220,7 @@ module Analyzer::Specification
       while Noir::PathScope.under_root?(dir, base)
         manifest = File.join(dir, ".openapi-generator", "FILES")
         if File.file?(manifest) && (content = CodeLocator.instance.read_source(manifest))
-          lines = content.lines
+          lines = content.lines.map(&.strip)
           return lines.includes?(path[(dir.size + 1)..]) &&
             lines.any?(&.matches?(GENERATED_CLIENT_FILE)) &&
             lines.none?(&.matches?(GENERATED_SERVER_FILE)) &&
@@ -369,16 +369,22 @@ module Analyzer::Specification
 
     # Top-level keys (and stringified values) of a JSON object request body.
     # API clients allow an unquoted placeholder as a JSON value (`"n":
-    # {{count}}`), which is invalid JSON, so a failed parse is retried with
-    # every `placeholder` in value position nulled out. A quoted one
-    # (`"{{name}}"`) follows a `"`, so it keeps its text.
+    # {{count}}`, `{{$randomInt 5 200}}`), which is invalid JSON, so a failed
+    # parse is retried with every `placeholder` or `{{...}}` in value position
+    # nulled out. A quoted one (`"{{name}}"`) follows a `"`, so it keeps its text.
     protected def json_body_pairs(text : String, placeholder : Regex) : Array(Tuple(String, String))
       stripped = text.strip
       return [] of Tuple(String, String) unless stripped.starts_with?('{')
-      parsed = json_any?(stripped) || json_any?(stripped.gsub(/([:\[,]\s*)(?:#{placeholder})/) { "#{$1}null" })
+      parsed = json_any?(stripped) || json_any?(stripped.gsub(/([:\[,]\s*)(?:#{placeholder}|\{\{[^{}]*\}\})/) { "#{$1}null" })
       hash = parsed.try(&.as_h?)
       return [] of Tuple(String, String) unless hash
-      hash.map { |k, v| {k, v.to_s} }
+      hash.map { |k, v| {k, json_value_text(v)} }
+    end
+
+    # A JSON value as request text: nested objects and arrays as JSON, not
+    # `JSON::Any#to_s`'s Crystal inspect form.
+    protected def json_value_text(value : JSON::Any) : String
+      value.raw.is_a?(Hash) || value.raw.is_a?(Array) ? value.to_json : value.to_s
     end
 
     # `:name` and `{name}` placeholders in a request path.
@@ -654,13 +660,23 @@ module Analyzer::Specification
       end
     end
 
+    # YAML 1.1 boolean spellings that Crystal's core schema resolves to Bool,
+    # as a mapping key or a `name:` value. OpenAPI is YAML 1.2, where
+    # `on`/`off`/`yes`/`no` are strings, so they are quoted before parsing.
+    YAML11_BOOL_KEY  = /^([ \t]*(?:-[ \t]+)*)(yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF)([ \t]*:(?:[ \t\r]|$))/m
+    YAML11_BOOL_NAME = /^([ \t]*(?:-[ \t]+)*name[ \t]*:[ \t]+)(yes|Yes|YES|no|No|NO|on|On|ON|off|Off|OFF)([ \t\r]*(?:#[^\n]*)?)$/m
+
+    protected def parse_spec_yaml(content : String) : YAML::Any
+      parse_yaml(content.gsub(YAML11_BOOL_KEY, %(\\1"\\2"\\3)).gsub(YAML11_BOOL_NAME, %(\\1"\\2"\\3)))
+    end
+
     private def external_yaml_doc(from_path : String, file_ref : String) : SpecDoc(YAML::Any)?
       return unless path = external_ref_path(from_path, file_ref)
       return @external_yaml_docs[path] if @external_yaml_docs.has_key?(path)
 
       @external_yaml_docs[path] = begin
         if content = read_ref_file(from_path, path, file_ref)
-          SpecDoc.new(parse_yaml(content), path)
+          SpecDoc.new(parse_spec_yaml(content), path)
         end
       rescue e
         record_ref_gap(from_path, file_ref, e.message.presence || e.class.name)

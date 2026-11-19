@@ -3,7 +3,8 @@ require "../../func_spec.cr"
 # The OpenAPI document an SDK was generated from describes a remote API the SDK
 # consumes: `.openapi-generator/FILES` lists it beside the client runtime
 # (`client.go`, `configuration.go`). A server stub lists its document too, but
-# has no client runtime, so its endpoints stay.
+# has no client runtime, so its endpoints stay. `padded_sdk` pads its manifest
+# lines with trailing whitespace and is still a client.
 expected_endpoints = [
   Endpoint.new("/pets", "GET"),
 ]

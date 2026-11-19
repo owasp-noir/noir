@@ -1,0 +1,12 @@
+{
+  "info": {"name": "Shop", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+  "item": [
+    {"name": "create order", "request": {"method": "POST",
+      "header": [{"key": "Content-Type", "value": "application/json"}],
+      "body": {"mode": "raw", "raw": "{\"customer\": {\"id\": 7, \"email\": \"a@b.c\"}, \"items\": [{\"sku\": \"x1\", \"qty\": 2}], \"note\": \"plain\", \"sent_at\": {{$timestamp}}}"},
+      "url": {"raw": "https://shop.example.com/orders", "protocol": "https", "host": ["shop", "example", "com"], "path": ["orders"]}}},
+    {"name": "search", "request": {"method": "POST",
+      "body": {"mode": "graphql", "graphql": {"query": "query Q($filter: Filter) { orders(filter: $filter) { id } }", "variables": "{\"filter\": {\"status\": \"open\"}, \"first\": 10}"}},
+      "url": {"raw": "https://shop.example.com/graphql", "protocol": "https", "host": ["shop", "example", "com"], "path": ["graphql"]}}}
+  ]
+}

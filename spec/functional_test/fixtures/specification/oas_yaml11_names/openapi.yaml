@@ -1,0 +1,27 @@
+openapi: 3.0.3
+info: {title: tiles, version: "1"}
+paths:
+  /tiles/{z}:
+    get:
+      parameters:
+        - {name: z, in: path, required: true, schema: {type: integer}}
+        - name: on
+          in: query
+          schema: {type: string}
+        - name: No # tile number
+          in: query
+          schema: {type: string}
+      responses: {"200": {description: ok}}
+  /points:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                x: {type: number}
+                on: {type: boolean}
+                OFF: {type: boolean}
+                yes: {type: boolean}
+      responses: {"200": {description: ok}}

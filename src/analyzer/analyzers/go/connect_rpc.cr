@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../engines/go_engine"
 require "../../engines/specification_engine"
+require "../specification/grpc"
 
 module Analyzer::Go
   # Connect (https://connectrpc.com/) is Buf's gRPC-compatible RPC
@@ -180,20 +181,7 @@ module Analyzer::Go
         msg_body = extract_brace_block(content, chars, brace_pos)
         next if msg_body.nil?
 
-        fields = [] of Param
-
-        msg_body.each_line do |line|
-          line = line.strip
-          next if line.empty? || line.starts_with?("//") || line.starts_with?("reserved") || line.starts_with?("option")
-          next if line.starts_with?("message ") || line.starts_with?("enum ") || line.starts_with?("oneof ")
-          next if line == "}"
-
-          if field_match = line.match(/^\s*(?:optional\s+|repeated\s+|required\s+)?(?:map<[\w.]+\s*,\s*[\w.]+>|[\w.]+)\s+(\w+)\s*=\s*\d+/)
-            fields << Param.new(field_match[1], "", "json")
-          end
-        end
-
-        messages[msg_name] = fields
+        messages[msg_name] = Analyzer::Specification::Grpc.message_fields(msg_body)
       end
 
       messages
