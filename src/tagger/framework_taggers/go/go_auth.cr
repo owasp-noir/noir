@@ -3006,7 +3006,7 @@ class GoAuthTagger < FrameworkTagger
     ephemeral = nil
 
     @middleware_scopes.each do |scope|
-      next unless prefix_covers?(scope[:prefix], url)
+      next unless scope_covers?(scope[:prefix], url)
       next if !endpoint.details.code_paths.empty? && endpoint.details.code_paths.none? { |path_info| same_program?(go_module(path_info.path), scope[:module]) }
       if gate = scope[:gate]
         next unless registered_on?(endpoint, gate)

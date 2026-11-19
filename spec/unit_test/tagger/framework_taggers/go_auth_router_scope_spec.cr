@@ -574,14 +574,21 @@ describe "GoAuthTagger (router identity of .Use guards)" do
       \tapp.Use("/admin", keyauth.New(keyauth.Config{KeyLookup: "header:x"}))
       \tapp.Get("/health", func(c *fiber.Ctx) error { return nil })
       \tapp.Get("/admin/users", func(c *fiber.Ctx) error { return nil })
+      \tapp.Get("/administrator", func(c *fiber.Ctx) error { return nil })
       }
       GO
-    result = router_scope_scan({"go.mod" => "module f\n", "main.go" => src},
-      [{"POST", "/mcp/call", "main.go", %("/mcp/call")}, {"GET", "/health", "main.go", %("/health")},
-       {"GET", "/admin/users", "main.go", %("/admin/users")}], "go_fiber")
+    routes = [{"POST", "/mcp/call", "main.go", %("/mcp/call")}, {"GET", "/health", "main.go", %("/health")},
+              {"GET", "/admin/users", "main.go", %("/admin/users")}, {"GET", "/administrator", "main.go", %("/administrator")}]
+    result = router_scope_scan({"go.mod" => "module f\n", "main.go" => src}, routes, "go_fiber")
     guarded?(result["GET /admin/users"]).should be_true
     guarded?(result["POST /mcp/call"]).should be_true
     guarded?(result["GET /health"]).should be_false
+    # Fiber v2 matches a Use path as a plain string prefix; v3 stops at a
+    # segment boundary.
+    guarded?(result["GET /administrator"]).should be_true
+    result = router_scope_scan({"go.mod" => "module f\n", "main.go" => src.gsub("fiber/v2", "fiber/v3")}, routes, "go_fiber")
+    guarded?(result["GET /administrator"]).should be_false
+    guarded?(result["GET /admin/users"]).should be_true
   end
 
   it "keeps the .Use of a router returned as http.Handler off every other router's routes (chi)" do
