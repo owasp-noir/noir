@@ -109,6 +109,11 @@ module Noir
 
         string_values = collect_string_values(root, source)
         external_string_values.each { |k, v| string_values[k] ||= v }
+        # `mux.HandleFunc(http.MethodGet+" /users", h)`: the stdlib method
+        # constants are read like any other string constant.
+        http_aliases.each do |a|
+          ALLOWED_HTTP_METHODS.each { |verb| string_values["#{a}.Method#{verb.capitalize}"] ||= verb }
+        end
 
         serve_mux_vars = collect_serve_mux_vars(root, source, http_aliases)
         serve_mux_params = collect_serve_mux_params(root, source, http_aliases)
