@@ -38,18 +38,25 @@ class JsMiscAuthTagger < FrameworkTagger
   ]
 
   # `reply.code(401)` / `reply.status(401)` inside a hook or preHandler.
-  FASTIFY_REPLY_401 = /reply\s*\.\s*(?:code|status)\s*\(\s*401\b|\.statusCode\s*=\s*401\b/
+  # `reply.unauthorized()` is @fastify/sensible's 401.
+  FASTIFY_REPLY_401 = /reply\s*\.\s*(?:code|status)\s*\(\s*401\b|\.statusCode\s*=\s*401\b|\breply\s*\.\s*unauthorized\s*\(/
   # `if (!req.auth) throw new UnauthorizedError(...)`: Fastify answers a hook's
   # thrown error through the error handler, a 401 for these.
   FASTIFY_THROW_REFUSAL = /\bthrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Unauthenticated)\w*\s*\(/
   # `fastify.post<{ Body: T }>(`: TypeScript type arguments may sit before the `(`.
   FASTIFY_ROUTE  = /\.\s*(get|post|put|patch|delete|del|head|options|all|route)\s*(?:<[\s\S]*?>\s*)?\(/
   FASTIFY_EXEMPT = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*===?\s*['"]([^'"]+)['"]\s*\)\s*return\b/
-  HOOK_KINDS     = %w[onRequest preHandler]
+  # `if (request.url.startsWith('/api/auth/login')) { return }`.
+  FASTIFY_EXEMPT_PREFIX = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*\.\s*startsWith\s*\(\s*['"]([^'"]+)['"]\s*\)\s*\)\s*\{?\s*return\b/
+  HOOK_KINDS            = %w[onRequest preHandler]
+  AUTOHOOKS_FILE        = /\Aautohooks\.(?:[cm]?js|[cm]?ts)\z/
 
   # `exempt_keys`: route config keys whose routes the hook lets through
-  # (`if (request.routeOptions.config.public) return`).
-  record FastifyHook, file : String, start_line : Int32, end_line : Int32, kind : String, exempt : Array(String), exempt_keys : Array(String)
+  # (`if (request.routeOptions.config.public) return`). `folder`: the
+  # directory an autohooks hook covers besides its own file, and whether
+  # it cascades to subfolders.
+  record FastifyHook, file : String, start_line : Int32, end_line : Int32, kind : String, exempt : Array(String), exempt_keys : Array(String),
+    exempt_prefixes : Array(String) = [] of String, folder : {String, Bool}? = nil
 
   # `request.jwtVerify()` (@fastify/jwt) throws a 401 for a missing or bad
   # token; a `catch` that neither replies nor rethrows lets the caller in.
@@ -700,11 +707,29 @@ class JsMiscAuthTagger < FrameworkTagger
           hook_line = text[0...m.begin(0)].count('\n') + 1
           range = fastify_innermost(registers, hook_line) || {1, text.count('\n') + 1}
           exempt = callback.scan(FASTIFY_EXEMPT).map(&.[1])
-          rules << FastifyHook.new(Noir::PathScope.expand(file), range[0], range[1], m[1], exempt, exempt_keys)
+          prefixes = callback.scan(FASTIFY_EXEMPT_PREFIX).map(&.[1])
+          expanded = Noir::PathScope.expand(file)
+          folder = autohooks_folder(expanded) if File.basename(file).matches?(AUTOHOOKS_FILE) && !fastify_innermost(registers, hook_line)
+          rules << FastifyHook.new(expanded, range[0], range[1], m[1], exempt, exempt_keys, prefixes, folder)
         end
       end
     end
     rules
+  end
+
+  AUTOLOAD_AUTOHOOKS = /\bautoHooks\s*:\s*true\b/
+  AUTOLOAD_CASCADE   = /\bcascadeHooks\s*:\s*true\b/
+
+  # The folder an `autohooks` file at `file` covers when its package loads
+  # routes with @fastify/autoload `autoHooks: true`, and whether
+  # `cascadeHooks: true` carries it into subfolders.
+  # ponytail: read per package, not per autoload call and its `dir`.
+  private def autohooks_folder(file : String) : {String, Bool}?
+    root = package_root(file) || return
+    sources = js_sources.select { |source| Noir::PathScope.expand(source).starts_with?("#{root}/") }
+    enabling = sources.compact_map { |source| read_file(source) }.select(&.matches?(AUTOLOAD_AUTOHOOKS))
+    return if enabling.empty?
+    {File.dirname(file), enabling.any?(&.matches?(AUTOLOAD_CASCADE))}
   end
 
   # Every `decorate('name', fn)` in the scan, keyed by its package: whether
@@ -926,8 +951,10 @@ class JsMiscAuthTagger < FrameworkTagger
   private def fastify_plugin_hook(path : String, line : Int32, method : String, url : String) : String?
     expanded = Noir::PathScope.expand(path)
     @fastify_hooks.each do |hook|
-      next unless hook.file == expanded && hook.start_line <= line && line <= hook.end_line
+      in_file = hook.file == expanded && hook.start_line <= line && line <= hook.end_line
+      next unless in_file || hook.folder.try { |dir, cascade| File.dirname(expanded) == dir || (cascade && expanded.starts_with?("#{dir}/")) }
       next if hook.exempt.any? { |exempt| exempt == url || exempt.rstrip('/') == url.rstrip('/') }
+      next if hook.exempt_prefixes.any? { |prefix| url.starts_with?(prefix) }
       next if hook.exempt_keys.any? { |key| fastify_route_config(path, line - 1, method, url, key) }
       return "Fastify #{hook.kind} hook"
     end

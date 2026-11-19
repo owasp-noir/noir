@@ -173,6 +173,70 @@ describe "JsMiscAuthTagger" do
     end
   end
 
+  # @fastify/autoload with `autoHooks: true` applies a folder's
+  # `autohooks.ts` to the route plugins of that folder, and with
+  # `cascadeHooks: true` to its subfolders too.
+  it "applies a refusing autohooks hook to the routes its folder autoloads" do
+    dir = File.tempname("fastify_autohooks")
+    Dir.mkdir_p("#{dir}/src/routes/api/items")
+    Dir.mkdir_p("#{dir}/src/routes/api/auth")
+    File.write("#{dir}/package.json", %({"name":"api","dependencies":{"fastify":"^5.0.0","@fastify/autoload":"^6.0.0"}}))
+    File.write("#{dir}/src/app.ts", <<-TS)
+      export default async function serviceApp (fastify, opts) {
+        fastify.register(fastifyAutoload, {
+          dir: path.join(import.meta.dirname, 'routes'),
+          autoHooks: true,
+          cascadeHooks: true,
+          options: { ...opts }
+        })
+      }
+      TS
+    File.write("#{dir}/src/routes/api/autohooks.ts", <<-TS)
+      export default async function (fastify) {
+        fastify.addHook('onRequest', async (request, reply) => {
+          if (request.url.startsWith('/api/auth/login')) {
+            return
+          }
+
+          if (!request.session.user) {
+            reply.unauthorized('You must be authenticated to access this route.')
+          }
+        })
+      }
+      TS
+    File.write("#{dir}/src/routes/api/items/index.ts", <<-TS)
+      export default async function (fastify) {
+        fastify.get('/', async () => listItems())
+      }
+      TS
+    File.write("#{dir}/src/routes/api/auth/index.ts", <<-TS)
+      export default async function (fastify) {
+        fastify.post('/login', async (request) => login(request.body))
+      }
+      TS
+    File.write("#{dir}/src/routes/home.ts", <<-TS)
+      export default async function (fastify) {
+        fastify.get('/', async () => 'home')
+      }
+      TS
+    begin
+      Dir.glob("#{dir}/**/*.ts").each { |file| CodeLocator.instance.register_path(file) }
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      endpoints = [{"api/items/index.ts", "/api/items/", "GET"}, {"api/auth/index.ts", "/api/auth/login", "POST"}, {"home.ts", "/", "GET"}].map do |file, url, method|
+        details = Details.new(PathInfo.new("#{dir}/src/routes/#{file}", 2))
+        details.technology = "js_fastify"
+        Endpoint.new(url, method, [] of Param, details)
+      end
+      verdicts = JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.map(&.description)} }
+      verdicts["/api/items/"].should eq(["Protected by Fastify onRequest hook"])
+      verdicts["/api/auth/login"].should be_empty
+      verdicts["/"].should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   # nuxt-auth-utils: `requireUserSession(event)` answers 401 without a
   # session; `getUserSession(event)` only reads one.
   it "counts a Nuxt handler that requires the user session before anything else returns" do
