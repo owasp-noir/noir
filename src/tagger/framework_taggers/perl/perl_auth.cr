@@ -25,18 +25,28 @@ class PerlAuthTagger < FrameworkTagger
     {/\brequire_login\b/, "Dancer2 require_login"},
   ]
 
-  # Checks that appear inside the handler body (or a nearby helper).
-  BODY_PATTERNS = [
+  # Handler-body calls that refuse the caller themselves.
+  REFUSING_BODY_PATTERNS = [
+    {/->\s*assert_user_roles\b/, "Catalyst assert_user_roles"},
+    {/\$c\s*->\s*require_login\b/, "Catalyst require_login"},
+  ]
+
+  # Handler-body calls that only read who the caller is, or log them in
+  # (`authenticate_user`, `$c->authenticate` in a login action). They guard
+  # the handler only when it also refuses (REFUSAL): a home page greeting
+  # `logged_in_user` serves anonymous callers too.
+  READING_BODY_PATTERNS = [
     {/\blogged_in_user\b/, "Dancer2 logged_in_user"},
     {/\buser_has_role\b/, "Dancer2 user_has_role"},
     {/\bauthenticate_user\b/, "Dancer2 authenticate_user"},
-    {/->\s*assert_user_roles\b/, "Catalyst assert_user_roles"},
     {/->\s*check_user_roles\b/, "Catalyst check_user_roles"},
     {/->\s*user_exists\b/, "Catalyst user_exists"},
-    {/\$c\s*->\s*require_login\b/, "Catalyst require_login"},
     {/\$c\s*->\s*authenticate\b/, "Catalyst authenticate"},
     {/->\s*is_user_authenticated\b/, "Mojolicious is_user_authenticated"},
   ]
+
+  # A 401/403, a forbidden/denied page, or a redirect to the login page.
+  REFUSAL = /(?<![\w.])40[13](?![\d.])|\bsend_error\b|\bforbidden\b|\bdenied\b|\bunauthori[sz]ed\b|\bredirect\w*\b[^;]*\blog_?in\b/i
 
   # Keywords that make a `hook before` / Catalyst `sub auto` block an
   # application-wide guard covering every route in the file.
@@ -93,17 +103,24 @@ class PerlAuthTagger < FrameworkTagger
   # Scan forward from the route into the handler body for an inline
   # authentication / authorization check.
   private def check_handler_body(lines : Array(String), idx : Int32) : String?
-    start_idx = idx
     end_idx = [idx + 20, lines.size - 1].min
-
-    (start_idx..end_idx).each do |i|
-      current = lines[i]
+    body = [] of String
+    (idx..end_idx).each do |i|
       # Stop if we fall into the next route/sub declaration — or a
       # Mojolicious::Lite `under`, whose guard covers the routes after it.
-      break if i > idx && current.matches?(/^\s*(?:get|post|put|patch|options|del|any|prefix|under)\b/)
+      break if i > idx && lines[i].matches?(/^\s*(?:get|post|put|patch|options|del|any|prefix|under)\b/)
+      body << lines[i]
+    end
 
-      BODY_PATTERNS.each do |pattern, desc|
-        return desc if current.matches?(pattern)
+    body.each do |line|
+      REFUSING_BODY_PATTERNS.each do |pattern, desc|
+        return desc if line.matches?(pattern)
+      end
+    end
+    return unless body.any?(&.matches?(REFUSAL))
+    body.each do |line|
+      READING_BODY_PATTERNS.each do |pattern, desc|
+        return desc if line.matches?(pattern)
       end
     end
     nil

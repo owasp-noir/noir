@@ -77,6 +77,44 @@ describe "PerlAuthTagger" do
     endpoint.tags[0].description.should_not contain("Dancer2")
   end
 
+  it "needs a refusal before a user read or a login call counts as a guard" do
+    dir = File.tempname("noir_perl_read")
+    Dir.mkdir_p(dir)
+    app = File.join(dir, "App.pm")
+    File.write(app, <<-PL)
+      use Dancer2;
+
+      get '/' => sub {
+          my $content = "home";
+          if (my $user = logged_in_user()) {
+              $content .= "hi";
+          }
+          return $content;
+      };
+
+      post '/login' => sub {
+          my ($ok) = authenticate_user(body_parameters->get('username'), body_parameters->get('password'));
+          return $ok ? 'ok' : 'no';
+      };
+
+      get '/reports' => sub {
+          send_error('Forbidden', 403) unless user_has_role('Admin');
+          return 'reports';
+      };
+      PL
+
+    begin
+      home = perl_auth_tag_for(app, 3, create_test_options)
+      login = perl_auth_tag_for(app, 11, create_test_options)
+      reports = perl_auth_tag_for(app, 16, create_test_options)
+      home.tags.should be_empty
+      login.tags.should be_empty
+      reports.tags.map(&.description).should eq(["Protected by Dancer2 user_has_role"])
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   it "applies a Mojolicious::Lite `under` guard to the routes after it, not before" do
     dir = File.tempname("noir_perl_under")
     Dir.mkdir_p(dir)
