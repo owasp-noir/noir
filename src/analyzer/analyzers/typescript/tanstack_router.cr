@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/js_serverless_function_extractor"
 
 module Analyzer::Typescript
   class TanstackRouter < Analyzer::Javascript::JavascriptEngine
@@ -121,12 +122,78 @@ module Analyzer::Typescript
         # Convert TanStack Router path params ($param) to standard format (:param)
         normalized_path = normalize_path(route_path)
 
+        serves_page = true
+        if content.includes?("handlers")
+          serves_page = analyze_server_handlers(content, path, match.begin(0) || 0, normalized_path, result)
+        end
+        next unless serves_page
+
         endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
         extract_path_parameters(normalized_path, endpoint)
         extract_search_params(content, endpoint)
         attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
         result << endpoint
       end
+    end
+
+    # TanStack Start server routes: `server: { handlers: { GET, POST } }`,
+    # or `handlers: ({ createHandlers }) => createHandlers({ DELETE: {
+    # middleware, handler } })`. One endpoint per verb, at its key. Returns
+    # whether the route still serves a page, which a handlers-only route
+    # does not.
+    private def analyze_server_handlers(content : String, path : String, start_pos : Int32, url : String, result : Array(Endpoint)) : Bool
+      found = false
+      page = true
+      each_file_route_config(content, path, line_number_for_index(content, start_pos)) do |config|
+        server = object_property(config, "server", content) || next
+        handlers = object_property(server, "handlers", content) || next
+        if {"arrow_function", "function_expression"}.includes?(Noir::TreeSitter.node_type(handlers))
+          call = Noir::TreeSitter.field(handlers, "body").try { |body| Noir::TreeSitter.unwrap_expression(body) }
+          handlers = call.try { |c| Noir::TreeSitter.field(c, "arguments") }.try { |args| Noir::TreeSitter.first_named_arg(args) }.try { |arg| Noir::TreeSitter.unwrap_expression(arg) } || next
+        end
+        next unless Noir::TreeSitter.node_type(handlers) == "object"
+        page = !object_property(config, "component", content).nil?
+        Noir::TreeSitter.each_named_child(handlers) do |member|
+          next unless Noir::TreeSitter.node_type(member) == "pair"
+          verb = Noir::TreeSitter.field(member, "key").try { |node| Noir::TreeSitter.node_text(node, content).strip("'\"") } || next
+          next unless Noir::JSServerlessFunctionExtractor::KNOWN_METHODS.includes?(verb)
+          fn = Noir::TreeSitter.field(member, "value").try { |node| Noir::TreeSitter.unwrap_expression(node) } || next
+          fn = object_property(fn, "handler", content) || next if Noir::TreeSitter.node_type(fn) == "object"
+          found = true
+          result << server_handler_endpoint(url, verb, path, Noir::TreeSitter.node_start_row(member) + 1, fn, content)
+        end
+      end
+      page || !found
+    end
+
+    private def server_handler_endpoint(url : String, verb : String, path : String, line : Int32, fn : LibTreeSitter::TSNode, content : String) : Endpoint
+      endpoint = Endpoint.new(url, verb)
+      endpoint.details = Details.new(PathInfo.new(path, line))
+      extract_path_parameters(url, endpoint)
+      if {"arrow_function", "function_expression"}.includes?(Noir::TreeSitter.node_type(fn))
+        params = Noir::TreeSitter.field(fn, "parameters").try { |node| Noir::TreeSitter.node_text(node, content).lchop('(') } || ""
+        body = Noir::TreeSitter.field(fn, "body").try { |node| Noir::TreeSitter.node_text(node, content) } || ""
+        handler = Noir::JSServerlessFunctionExtractor::Handler.new(verb, params, body, line, line, [] of Noir::JSCalleeExtractor::Entry, [] of String)
+        Noir::JSServerlessFunctionExtractor.extract_request_params(handler, endpoint, :context)
+        if callees_needed?
+          Noir::JSCalleeExtractor.callees_for_handler_node(fn, content, path).each do |name, callee_path, callee_line|
+            endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+          end
+        end
+      end
+      endpoint
+    end
+
+    # The value of `key` in the object literal `object`, unwrapped.
+    private def object_property(object : LibTreeSitter::TSNode, key : String, content : String) : LibTreeSitter::TSNode?
+      return unless Noir::TreeSitter.node_type(object) == "object"
+      found = nil.as(LibTreeSitter::TSNode?)
+      Noir::TreeSitter.each_named_child(object) do |member|
+        next unless found.nil? && Noir::TreeSitter.node_type(member) == "pair"
+        name = Noir::TreeSitter.field(member, "key").try { |node| Noir::TreeSitter.node_text(node, content).strip("'\"") }
+        found = Noir::TreeSitter.field(member, "value").try { |node| Noir::TreeSitter.unwrap_expression(node) } if name == key
+      end
+      found
     end
 
     private def analyze_lazy_file_routes(content : String, path : String, result : Array(Endpoint), literal_mask : Array(Bool))
@@ -313,12 +380,21 @@ module Analyzer::Typescript
     # `createFileRoute("/x")({...})` starting at `start_pos`: the config
     # object is the argument of the call that call returns.
     private def attach_file_route_callees(content : String, path : String, start_pos : Int32, endpoint : Endpoint)
-      line = line_number_for_index(content, start_pos)
       references = [] of Callee
       bodies = [] of Callee
+      each_file_route_config(content, path, line_number_for_index(content, start_pos)) do |config|
+        collect_route_slots(config, content, path, 1, references, bodies)
+      end
+      (references + bodies).each { |callee| endpoint.push_callee(callee) }
+    end
+
+    # Yields the config object of the first `createFileRoute(...)({...})`
+    # call whose factory name sits on `line`, while its tree is alive.
+    private def each_file_route_config(content : String, path : String, line : Int32, &block : LibTreeSitter::TSNode ->)
+      done = false
       Noir::TreeSitter.parse_js_family(content, path) do |root|
         Noir::TreeSitter.walk(root) do |node|
-          next unless references.empty? && bodies.empty? && Noir::TreeSitter.node_type(node) == "call_expression"
+          next if done || Noir::TreeSitter.node_type(node) != "call_expression"
           factory = Noir::TreeSitter.field(node, "function").try { |f| Noir::TreeSitter.unwrap_expression(f) }
           next unless factory && Noir::TreeSitter.node_type(factory) == "call_expression"
           name = Noir::TreeSitter.field(factory, "function")
@@ -326,10 +402,11 @@ module Analyzer::Typescript
           next unless FILE_ROUTE_FACTORIES.includes?(Noir::TreeSitter.node_text(name, content))
           args = Noir::TreeSitter.field(node, "arguments") || next
           config = Noir::TreeSitter.first_named_arg(args).try { |arg| Noir::TreeSitter.unwrap_expression(arg) }
-          collect_route_slots(config, content, path, 1, references, bodies) if config
+          next unless config
+          done = true
+          block.call(config)
         end
       end
-      (references + bodies).each { |callee| endpoint.push_callee(callee) }
     end
 
     ROUTE_REFERENCE_SLOTS = Set{"component", "loader", "beforeLoad", "pendingComponent", "errorComponent"}
