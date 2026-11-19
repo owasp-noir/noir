@@ -327,17 +327,20 @@ module Analyzer::Ruby
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
 
+        # Block structure is counted with string interiors blanked, so a
+        # `do`/`end` in `desc 'what to do'` opens or closes nothing.
+        structure = Noir::RubyCalleeExtractor.strip_comment(stripped, preserve_strings: false)
         if params_block_depth > 0
           # Grape allows nested validation blocks (`requires :x, type: Hash do
           # ... end`), so the params block closes only when depth returns to 0.
           # A plain boolean let the first inner `end` close it early, leaking the
           # remaining `end`(s) to the main parser, which then popped the
           # enclosing namespace/resource prefix frame.
-          if grape_end?(stripped)
+          if grape_end?(structure)
             params_block_depth -= 1
             next if params_block_depth <= 0
           else
-            params_block_depth += ruby_do_block_open_delta(stripped)
+            params_block_depth += ruby_do_block_open_delta(structure)
             stripped.scan(/(?:requires|optional)\s+[:\'"]([\w]+)[\'"]?/) do |m|
               pending_params << m[1] if m.size > 1
             end
@@ -357,6 +360,7 @@ module Analyzer::Ruby
           end
           skip_through = last
           do_index = stmts[last][1]
+          structure = Noir::RubyCalleeExtractor.strip_comment(stripped, preserve_strings: false)
         end
 
         if stripped == "params do" || stripped.starts_with?("params do")
@@ -412,7 +416,7 @@ module Analyzer::Ruby
             include_sites, pending_params, route_methods, route_paths
           )
           pending_params.clear
-          block_kinds << :other unless stripped.match(/\bend\b/)
+          block_kinds << :other unless structure.match(/\bend\b/)
           verb_handled = true
         end
 
@@ -433,7 +437,7 @@ module Analyzer::Ruby
                 include_sites, pending_params, [verb.upcase], [raw_path]
               )
               pending_params.clear
-              block_kinds << :other unless stripped.match(/\bend\b/)
+              block_kinds << :other unless structure.match(/\bend\b/)
               verb_handled = true
               break
             end
@@ -445,7 +449,7 @@ module Analyzer::Ruby
                 include_sites, pending_params, [verb.upcase], [""]
               )
               pending_params.clear
-              block_kinds << :other unless stripped.match(/\bend\b/)
+              block_kinds << :other unless structure.match(/\bend\b/)
               verb_handled = true
               break
             end
@@ -476,15 +480,17 @@ module Analyzer::Ruby
           end
         end
 
-        if ruby_do_block_open_delta(stripped) > 0
-          block_kinds << :other
-        end
-
-        if grape_end?(stripped)
+        closes = grape_end?(structure)
+        if closes
           popped = block_kinds.pop?
           if popped == :prefix && !prefix_segments.empty?
             prefix_segments.pop
           end
+        end
+
+        # `end.each do |x|` closes one block and opens the next.
+        if ruby_do_block_open_delta(closes ? structure.sub(/\Aend\s*(?=\.)/, "") : structure) > 0
+          block_kinds << :other
         end
       end
     end
@@ -672,8 +678,9 @@ module Analyzer::Ruby
       path.gsub(/#\{\s*([a-zA-Z_]\w*)[^}]*\}/) { "{#{$~[1]}}" }.gsub(/:([a-zA-Z_][\w]*)/) { "{#{$~[1]}}" }
     end
 
+    # `end`, and chained closers such as `end.compact` or `end)`.
     private def grape_end?(stripped : String) : Bool
-      stripped == "end" || stripped.starts_with?("end ") || stripped.starts_with?("end#")
+      stripped.matches?(/\Aend(?![\w?!:])/)
     end
 
     # Unrolls `.each do |var|` over a literal list into one copy of its body
