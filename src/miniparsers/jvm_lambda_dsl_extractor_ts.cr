@@ -377,7 +377,8 @@ module Noir
     # `post("new", new CreateHandler())`) when something else says "route":
     # the pattern has a slash or a `{param}` / `:param` / `<param>`, the call
     # sits in a `path()` / `routes()` body, or it is `addHandler(HandlerType.X,
-    # ..)`. A class literal never counts as a handler here: it is `Config#get`'s
+    # ..)`. A `Handler` field or factory call (`Ctrl.feed`, `ctrl.feed()`)
+    # counts as a handler object there. A class literal never counts as a handler here: it is `Config#get`'s
     # type argument.
     private def route_path?(call : LibTreeSitter::TSNode,
                             source : String,
@@ -396,7 +397,7 @@ module Noir
       return false unless args
       Noir::TreeSitter.each_named_arg(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
-        when "object_creation_expression"
+        when "object_creation_expression", "field_access", "method_invocation"
           return true
         when "identifier"
           return true if handler_vars.has_key?(Noir::TreeSitter.node_text(arg, source))

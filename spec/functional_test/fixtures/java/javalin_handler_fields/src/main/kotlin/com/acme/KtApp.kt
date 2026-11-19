@@ -16,11 +16,18 @@ fun ktMain() {
             path("/kt-api") {
                 path("/users") {
                     get(KtUsers.list)
+                    // ApiBuilder paths may be relative.
+                    get("search", KtUsers.list)
+                    path("library") {
+                        get("series", KtUsers.list)
+                    }
                 }
             }
         }
     }
     app.get("/kt-field", KtUsers.list)
+    // Outside `path()`, a receiver call needs a `/` path to be a route.
+    app.get("kt-relative", KtUsers.list)
     // Map calls with a value expression are not routes.
     cache.put("key", KtUsers.list.toString())
     app.start(7070)

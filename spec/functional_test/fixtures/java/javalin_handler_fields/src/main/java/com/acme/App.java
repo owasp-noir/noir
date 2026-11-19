@@ -1,5 +1,8 @@
 package com.acme;
 
+import static io.javalin.apibuilder.ApiBuilder.get;
+import static io.javalin.apibuilder.ApiBuilder.path;
+
 import io.javalin.Javalin;
 
 public class App {
@@ -15,6 +18,14 @@ public class App {
         // Control: lambda and method reference.
         app.get("/control-lambda", ctx -> ctx.result("x"));
         app.delete("/control-ref/{id}", App::remove);
+        // ApiBuilder paths may be relative.
+        app.routes(() -> {
+            path("java-api", () -> {
+                get("feed", UserController.fetchById);
+            });
+        });
+        // Outside `path()`, a receiver call needs a `/` path to be a route.
+        app.get("relative", UserController.fetchById);
         // Map calls with a value expression are not routes.
         java.util.Map<String, String> settings = new java.util.HashMap<>();
         settings.put("key", users.toString());

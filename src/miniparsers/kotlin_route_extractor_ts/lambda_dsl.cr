@@ -287,9 +287,9 @@ module Noir
       !call.lambda.nil? || call.args.any? { |arg| lambda_dsl_handler_arg?(arg) }
     end
 
-    # `get("/x", UserController.list)`, or `get(UserController.list)` inside
-    # `path()`: a `Handler` property or factory call. Such a value is a
-    # handler only after a `/` path, or as the lone argument of a
+    # `get("/x", UserController.list)`, or `get(UserController.list)` /
+    # `get("x", UserController.list)` inside `path()`: a `Handler` property or
+    # factory call. Such a value is a handler only after a `/` path, or in a
     # receiver-less verb under a prefix; `map.put("k", v.x)` is neither.
     private def lambda_dsl_handler_reference?(call : LambdaDslCall,
                                               source : String,
@@ -301,7 +301,8 @@ module Noir
         arg = call.args.first
         !prefix.empty? && call.receiver.nil? && reference.call(arg) && resolve_string_value(arg, source, constants, constants).nil?
       elsif path = call.args.first?.try { |arg| resolve_string_value(arg, source, constants, constants) }
-        path.starts_with?('/') && call.args[1..].any?(&reference)
+        # ApiBuilder's `path()` takes relative paths (`get("search", X.feed)`).
+        (path.starts_with?('/') || (!prefix.empty? && call.receiver.nil?)) && call.args[1..].any?(&reference)
       else
         false
       end
