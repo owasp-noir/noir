@@ -131,6 +131,22 @@ class SwiftAuthTagger < FrameworkTagger
     nil
   end
 
+  TYPE_DECLARATION = /\A\s*(?:(?:public|private|internal|open|fileprivate|final)\s+)*(?:struct|class|extension|enum|actor)\s+(?!func\b|var\b|let\b)(\w+)/
+
+  # The name of the innermost type block holding `line`, nil at top level.
+  private def enclosing_type(masked_lines : Array(String), line : Int32) : String?
+    depth = 0
+    (line - 1).downto(0) do |i|
+      depth += masked_lines[i].count('}') - masked_lines[i].count('{')
+      next unless depth < 0
+      depth = 0
+      if m = masked_lines[i].match(TYPE_DECLARATION)
+        return m[1]
+      end
+    end
+    nil
+  end
+
   private def function_boundary?(line : String) : Bool
     line.matches?(/^(?:(?:public|private|internal|open|fileprivate|final|override|static|class|mutating|nonmutating)\s+)*func\b/) ||
       line.matches?(/^(?:(?:public|private|internal|open|fileprivate|final|override)\s+)*(?:class|struct|enum|extension|actor|protocol)\b/)
@@ -175,11 +191,17 @@ class SwiftAuthTagger < FrameworkTagger
     check_named_handler(masked_lines, route_line)
   end
 
-  # `use: self.current` / `use: current`: the handler method of this file.
+  # `use: self.current` / `use: current`: the handler method of the type
+  # registering the route (its `struct`/`class` and `extension` blocks in
+  # this file), or a top-level func when the route is outside any type.
   private def check_named_handler(masked_lines : Array(String), route_line : Int32) : String?
     return unless m = masked_lines[route_line].match(/\buse:\s*(?:self\.)?(\w+)\s*\)/)
     head = /\bfunc\s+#{Regex.escape(m[1])}\s*[(<]/
-    return unless start = masked_lines.index(&.matches?(head))
+    owner = enclosing_type(masked_lines, route_line)
+    candidates = (0...masked_lines.size).select do |i|
+      masked_lines[i].matches?(head) && enclosing_type(masked_lines, i) == owner
+    end
+    return unless start = candidates.first?
     depth = 0
     masked_lines[start, 80].each do |line|
       REQUIRE_AUTH_PATTERNS.each do |pattern, desc|

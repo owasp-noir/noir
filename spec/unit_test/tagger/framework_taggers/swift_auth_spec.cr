@@ -196,6 +196,45 @@ describe "SwiftAuthTagger" do
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
 
+  it "resolves a use: handler within the type that registers the route" do
+    tmpdir = File.tempname("swift_handler_owner")
+    Dir.mkdir_p(tmpdir)
+    controllers = File.join(tmpdir, "Controllers.swift")
+    File.write(controllers, <<-SWIFT)
+      struct AdminController: RouteCollection {
+          func boot(routes: RoutesBuilder) throws {
+              routes.get("admin", "index", use: self.index)
+          }
+
+          func index(req: Request) async throws -> String {
+              let user = try req.auth.require(User.self)
+              return user.name
+          }
+      }
+
+      struct PublicController: RouteCollection {
+          func boot(routes: RoutesBuilder) throws {
+              routes.get("public", "index", use: self.index)
+          }
+
+          func index(req: Request) async throws -> String {
+              return "hello"
+          }
+      }
+      SWIFT
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    at = ->(line : Int32) { Endpoint.new("/x", "GET", [] of Param, Details.new(PathInfo.new(controllers, line))) }
+    admin, public_index = at.call(3), at.call(14)
+    SwiftAuthTagger.new(noir_options).perform([admin, public_index])
+
+    admin.tags.map(&.description).should eq(["Protected by Vapor req.auth.require"])
+    public_index.tags.should be_empty
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
   it "treats a redirectMiddleware group as guarded" do
     tmpdir = File.tempname("swift_redirect_mw")
     Dir.mkdir_p(tmpdir)
