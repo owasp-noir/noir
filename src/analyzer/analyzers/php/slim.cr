@@ -85,7 +85,8 @@ module Analyzer::Php
                                        prefix : String,
                                        file_path : String,
                                        include_callee : Bool,
-                                       base_line : Int32 = 1) : Array(Endpoint)
+                                       base_line : Int32 = 1,
+                                       depth : Int32 = 0) : Array(Endpoint)
       endpoints = [] of Endpoint
 
       working_content = content
@@ -99,9 +100,13 @@ module Analyzer::Php
 
         match_start, after_open_brace, body_end, close_end, group_prefix = info
         group_body = working_content[after_open_brace...body_end]
-        group_base_line = base_line + newline_count_before(working_content, after_open_brace)
-        new_prefix = build_full_path(prefix, group_prefix)
-        endpoints.concat(analyze_routes_content(group_body, new_prefix, file_path, include_callee, group_base_line))
+        if depth < ROUTE_GROUP_MAX_DEPTH
+          group_base_line = base_line + newline_count_before(working_content, after_open_brace)
+          new_prefix = build_full_path(prefix, group_prefix)
+          endpoints.concat(analyze_routes_content(group_body, new_prefix, file_path, include_callee, group_base_line, depth + 1))
+        else
+          record_route_group_depth_skip(file_path)
+        end
 
         replacement = "\n" * working_content[match_start...close_end].count('\n')
         working_content = working_content[0...match_start] + replacement + working_content[close_end..]

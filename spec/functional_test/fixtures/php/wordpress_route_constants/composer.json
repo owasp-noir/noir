@@ -1,0 +1,7 @@
+{
+  "name": "acme/wordpress-route-constants",
+  "type": "wordpress-plugin",
+  "require": {
+    "php": ">=7.4"
+  }
+}

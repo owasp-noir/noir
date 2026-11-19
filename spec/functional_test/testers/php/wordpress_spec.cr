@@ -17,11 +17,12 @@ expected_endpoints = [
   # Commented-out 'methods' => 'DELETE' must not emit a phantom verb.
   Endpoint.new("/wp-json/myplugin/v1/comments", "GET"),
 
-  # admin-ajax.php actions (wp_ajax_ / wp_ajax_nopriv_)
-  Endpoint.new("/wp-admin/admin-ajax.php?action=get_user_data", "GET", [Param.new("action", "get_user_data", "query")]),
-  Endpoint.new("/wp-admin/admin-ajax.php?action=get_user_data", "POST", [Param.new("action", "get_user_data", "query")]),
-  Endpoint.new("/wp-admin/admin-ajax.php?action=save_settings", "GET", [Param.new("action", "save_settings", "query")]),
-  Endpoint.new("/wp-admin/admin-ajax.php?action=save_settings", "POST", [Param.new("action", "save_settings", "query")]),
+  # admin-ajax.php actions (wp_ajax_ / wp_ajax_nopriv_), with the input
+  # their callbacks read (`$_REQUEST` follows the verb)
+  Endpoint.new("/wp-admin/admin-ajax.php?action=get_user_data", "GET", [Param.new("action", "get_user_data", "query"), Param.new("user", "", "query")]),
+  Endpoint.new("/wp-admin/admin-ajax.php?action=get_user_data", "POST", [Param.new("action", "get_user_data", "query"), Param.new("user", "", "form")]),
+  Endpoint.new("/wp-admin/admin-ajax.php?action=save_settings", "GET", [Param.new("action", "save_settings", "query"), Param.new("settings", "", "form")]),
+  Endpoint.new("/wp-admin/admin-ajax.php?action=save_settings", "POST", [Param.new("action", "save_settings", "query"), Param.new("settings", "", "form")]),
 
   # admin-post.php actions (admin_post_ / admin_post_nopriv_)
   Endpoint.new("/wp-admin/admin-post.php?action=export_csv", "GET", [Param.new("action", "export_csv", "query")]),
