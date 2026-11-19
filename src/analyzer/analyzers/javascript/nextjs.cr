@@ -857,6 +857,12 @@ module Analyzer::Javascript
       content.scan(/(?:searchParams|nextUrl\.searchParams)\.(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
         add_param(endpoint, m[1], "query")
       end
+      # `const sp = request.nextUrl.searchParams; sp.get("X")`
+      content.scan(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$.]+|new\s+URL\s*\([^()]*\))\.searchParams\s*(?:[;\n]|\z)/) do |m|
+        content.scan(cached_regex("nextjs:var_query:#{m[1]}") { /(?<![\w$.])#{Regex.escape(m[1])}\.(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |mm|
+          add_param(endpoint, mm[1], "query")
+        end
+      end
 
       # await request.json() — body present; try to extract field access patterns
       if content.includes?("request.json()") || content.includes?(".json()")
@@ -886,7 +892,7 @@ module Analyzer::Javascript
           form_vars << m[1] unless form_vars.includes?(m[1])
         end
         form_vars.each do |varname|
-          content.scan(cached_regex("nextjs:var_get:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |m|
+          content.scan(cached_regex("nextjs:var_form:#{varname}") { /\b#{Regex.escape(varname)}\.(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |m|
             add_param(endpoint, m[1], "form")
           end
         end
@@ -900,28 +906,29 @@ module Analyzer::Javascript
         add_unresolved_param(endpoint, m[1], "header")
       end
 
-      # Headers — Next.js server API: headers() from "next/headers"
-      content.scan(/headers\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m| # .get("literal")
-        add_param(endpoint, m[1], "header")
-      end
-      content.scan(/headers\(\)\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m| # .get(CONST) — unresolved
-        add_unresolved_param(endpoint, m[1], "header")
-      end
-
-      # Cookies — Next.js server API: cookies() from "next/headers"
-      content.scan(/cookies\(\)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m| # .get("literal")
+      # Request cookies — NextRequest: request.cookies.get("session")
+      content.scan(/(?:request|req)\.cookies\.(?:get|has)\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
         add_param(endpoint, m[1], "cookie")
       end
-      content.scan(/cookies\(\)\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |m| # .get(CONST) — unresolved
-        add_unresolved_param(endpoint, m[1], "cookie")
-      end
-      content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?cookies\s*\(\s*\)/) do |m|
-        varname = m[1]
-        content.scan(cached_regex("nextjs:var_get:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |mm| # store.get("literal")
-          add_param(endpoint, mm[1], "cookie")
+
+      # headers() / cookies() from "next/headers", read in place
+      # (`headers().get`, Next 15's `(await headers()).get`) or through a
+      # variable (`const store = await cookies(); store.get`).
+      {"headers" => "header", "cookies" => "cookie"}.each do |fn, type|
+        content.scan(cached_regex("nextjs:call_get:#{fn}") { /#{fn}\(\)\)?\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |m| # .get("literal")
+          add_param(endpoint, m[1], type)
         end
-        content.scan(cached_regex("nextjs:var_get_ident:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/ }) do |mm| # store.get(CONST) — unresolved
-          add_unresolved_param(endpoint, mm[1], "cookie")
+        content.scan(cached_regex("nextjs:call_get_ident:#{fn}") { /#{fn}\(\)\)?\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/ }) do |m| # .get(CONST) — unresolved
+          add_unresolved_param(endpoint, m[1], type)
+        end
+        content.scan(cached_regex("nextjs:call_var:#{fn}") { /(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?#{fn}\s*\(\s*\)/ }) do |m|
+          varname = m[1]
+          content.scan(cached_regex("nextjs:var_get:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |mm| # store.get("literal")
+            add_param(endpoint, mm[1], type)
+          end
+          content.scan(cached_regex("nextjs:var_get_ident:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/ }) do |mm| # store.get(CONST) — unresolved
+            add_unresolved_param(endpoint, mm[1], type)
+          end
         end
       end
     end
