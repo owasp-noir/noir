@@ -27,5 +27,6 @@ examples:
     - { url: /chat, params: [{ name: Upgrade, value: websocket, type: header }] }
     - { url: /chat, params: [{ name: sec-websocket-version, type: header }, { name: sec-websocket-protocol, type: header }] }
   no_match:
+    - { url: /api/health }
     - { url: /topic, protocol: kafka }
     - { url: /chat, params: [{ name: sec-websocket-version, type: header }] }
