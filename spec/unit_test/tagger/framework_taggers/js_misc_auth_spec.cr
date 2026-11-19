@@ -174,66 +174,63 @@ describe "JsMiscAuthTagger" do
   end
 
   # @fastify/autoload with `autoHooks: true` applies a folder's
-  # `autohooks.ts` to the route plugins of that folder, and with
-  # `cascadeHooks: true` to its subfolders too.
-  it "applies a refusing autohooks hook to the routes its folder autoloads" do
-    dir = File.tempname("fastify_autohooks")
-    Dir.mkdir_p("#{dir}/src/routes/api/items")
-    Dir.mkdir_p("#{dir}/src/routes/api/auth")
-    File.write("#{dir}/package.json", %({"name":"api","dependencies":{"fastify":"^5.0.0","@fastify/autoload":"^6.0.0"}}))
-    File.write("#{dir}/src/app.ts", <<-TS)
-      export default async function serviceApp (fastify, opts) {
-        fastify.register(fastifyAutoload, {
-          dir: path.join(import.meta.dirname, 'routes'),
-          autoHooks: true,
-          cascadeHooks: true,
-          options: { ...opts }
-        })
-      }
-      TS
-    File.write("#{dir}/src/routes/api/autohooks.ts", <<-TS)
-      export default async function (fastify) {
-        fastify.addHook('onRequest', async (request, reply) => {
-          if (request.url.startsWith('/api/auth/login')) {
-            return
-          }
+  # `autohooks.ts` (or `_autohooks.js`, `auto_hooks.ts`, …) to the route
+  # plugins of that folder, and with `cascadeHooks: true` to its subfolders
+  # too. The flag belongs to the autoload whose `dir` holds the file.
+  describe "Fastify autohooks" do
+    verdicts = ->(autoloads : String, hooks_file : String) do
+      dir = File.tempname("fastify_autohooks")
+      Dir.mkdir_p("#{dir}/src/routes/api/items")
+      Dir.mkdir_p("#{dir}/src/routes/api/auth")
+      Dir.mkdir_p("#{dir}/src/plugins")
+      File.write("#{dir}/package.json", %({"name":"api","dependencies":{"fastify":"^5.0.0","@fastify/autoload":"^6.0.0"}}))
+      File.write("#{dir}/src/app.ts", "export default async function serviceApp (fastify, opts) {\n#{autoloads}\n}\n")
+      File.write("#{dir}/src/routes/api/#{hooks_file}", <<-TS)
+        export default async function (fastify) {
+          fastify.addHook('onRequest', async (request, reply) => {
+            if (request.url.startsWith('/api/auth/login')) {
+              return
+            }
 
-          if (!request.session.user) {
-            reply.unauthorized('You must be authenticated to access this route.')
-          }
-        })
-      }
-      TS
-    File.write("#{dir}/src/routes/api/items/index.ts", <<-TS)
-      export default async function (fastify) {
-        fastify.get('/', async () => listItems())
-      }
-      TS
-    File.write("#{dir}/src/routes/api/auth/index.ts", <<-TS)
-      export default async function (fastify) {
-        fastify.post('/login', async (request) => login(request.body))
-      }
-      TS
-    File.write("#{dir}/src/routes/home.ts", <<-TS)
-      export default async function (fastify) {
-        fastify.get('/', async () => 'home')
-      }
-      TS
-    begin
-      Dir.glob("#{dir}/**/*.ts").each { |file| CodeLocator.instance.register_path(file) }
-      noir_options = create_test_options
-      noir_options["base"] = YAML::Any.new(dir)
-      endpoints = [{"api/items/index.ts", "/api/items/", "GET"}, {"api/auth/index.ts", "/api/auth/login", "POST"}, {"home.ts", "/", "GET"}].map do |file, url, method|
-        details = Details.new(PathInfo.new("#{dir}/src/routes/#{file}", 2))
-        details.technology = "js_fastify"
-        Endpoint.new(url, method, [] of Param, details)
+            if (!request.session.user) {
+              reply.unauthorized('You must be authenticated to access this route.')
+            }
+          })
+        }
+        TS
+      File.write("#{dir}/src/routes/api/items/index.ts", "export default async function (fastify) {\n  fastify.get('/', async () => listItems())\n}\n")
+      File.write("#{dir}/src/routes/api/auth/index.ts", "export default async function (fastify) {\n  fastify.post('/login', async (request) => login(request.body))\n}\n")
+      File.write("#{dir}/src/routes/home.ts", "export default async function (fastify) {\n  fastify.get('/', async () => 'home')\n}\n")
+      begin
+        Dir.glob("#{dir}/**/*", match: File::MatchOptions::DotFiles).each { |file| CodeLocator.instance.register_path(file) unless File.directory?(file) }
+        noir_options = create_test_options
+        noir_options["base"] = YAML::Any.new(dir)
+        endpoints = [{"api/items/index.ts", "/api/items/", "GET"}, {"api/auth/index.ts", "/api/auth/login", "POST"}, {"home.ts", "/", "GET"}].map do |file, url, method|
+          details = Details.new(PathInfo.new("#{dir}/src/routes/#{file}", 2))
+          details.technology = "js_fastify"
+          Endpoint.new(url, method, [] of Param, details)
+        end
+        JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.map(&.description)} }
+      ensure
+        CodeLocator.instance.clear_all
+        FileUtils.rm_rf(dir)
       end
-      verdicts = JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.map(&.description)} }
-      verdicts["/api/items/"].should eq(["Protected by Fastify onRequest hook"])
-      verdicts["/api/auth/login"].should be_empty
-      verdicts["/"].should be_empty
-    ensure
-      FileUtils.rm_rf(dir)
+    end
+    autoload = ->(folder : String, options : String) { "  fastify.register(fastifyAutoload, {\n    dir: path.join(import.meta.dirname, '#{folder}'),\n#{options}\n  })" }
+
+    it "applies a refusing hook to the routes its folder autoloads" do
+      %w[autohooks.ts _autohooks.js auto_hooks.ts .AutoHooks.mjs].each do |name|
+        tags = verdicts.call(autoload.call("routes", "    autoHooks: true,\n    cascadeHooks: true"), name)
+        tags["/api/items/"].should eq(["Protected by Fastify onRequest hook"])
+        tags["/api/auth/login"].should be_empty
+        tags["/"].should be_empty
+      end
+    end
+
+    it "applies none when the autoload holding the hook does not enable autoHooks" do
+      verdicts.call(autoload.call("routes", "    options: {}"), "autohooks.ts")["/api/items/"].should be_empty
+      both = "#{autoload.call("plugins", "    autoHooks: true,\n    cascadeHooks: true")}\n#{autoload.call("routes", "    options: {}")}"
+      verdicts.call(both, "autohooks.ts")["/api/items/"].should be_empty
     end
   end
 

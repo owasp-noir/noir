@@ -51,7 +51,8 @@ class JsMiscAuthTagger < FrameworkTagger
   # that replies refuses it.
   FASTIFY_EXEMPT_PREFIX = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*\.\s*startsWith\s*\(\s*['"]([^'"]+)['"]\s*\)\s*\)\s*\{?\s*return(?:\s*[;}]|[ \t]*(?:\n|\z)|\s+(?:done|next)\s*\(\s*\))/
   HOOK_KINDS            = %w[onRequest preHandler]
-  AUTOHOOKS_FILE        = /\Aautohooks\.(?:[cm]?js|[cm]?ts)\z/
+  # @fastify/autoload's default `autoHooksPattern`.
+  AUTOHOOKS_FILE = /\A[_.]?auto_?hooks\.(?:[cm]?js|[cm]?ts)\z/i
 
   # `exempt_keys`: route config keys whose routes the hook lets through
   # (`if (request.routeOptions.config.public) return`). `folder`: the
@@ -720,18 +721,33 @@ class JsMiscAuthTagger < FrameworkTagger
   end
 
   AUTOLOAD_AUTOHOOKS = /\bautoHooks\s*:\s*true\b/
-  AUTOLOAD_CASCADE   = /\bcascadeHooks\s*:\s*true\b/
 
-  # The folder an `autohooks` file at `file` covers when its package loads
-  # routes with @fastify/autoload `autoHooks: true`, and whether
-  # `cascadeHooks: true` carries it into subfolders.
-  # ponytail: read per package, not per autoload call and its `dir`.
+  # The folder an `autohooks` file at `file` covers, and whether
+  # `cascadeHooks: true` carries it into subfolders: set when a
+  # `register(autoload, { dir, autoHooks: true })` of its package loads a
+  # `dir` that holds the file. `dir` is read as its string parts joined
+  # onto the registering file's folder (`path.join(__dirname, 'routes')`).
   private def autohooks_folder(file : String) : {String, Bool}?
     root = package_root(file) || return
-    sources = js_sources.select { |source| Noir::PathScope.expand(source).starts_with?("#{root}/") }
-    enabling = sources.compact_map { |source| read_file(source) }.select(&.matches?(AUTOLOAD_AUTOHOOKS))
-    return if enabling.empty?
-    {File.dirname(file), enabling.any?(&.matches?(AUTOLOAD_CASCADE))}
+    hooks_dir = File.dirname(file)
+    js_sources.each do |source|
+      expanded = Noir::PathScope.expand(source)
+      next unless expanded.starts_with?("#{root}/")
+      raw = read_file(source) || next
+      next unless raw.matches?(AUTOLOAD_AUTOHOOKS)
+      code = Noir::CComments.strip(raw, quotes: %("'`))
+      code.scan(/\.\s*register\s*\(/) do |m|
+        close = Noir::JSLiteralScanner.find_matching_paren(code, m.end(0) - 1) || next
+        options = Noir::TopLevelSplit.split(code[m.end(0)...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)[1]? || next
+        next unless Noir::JSObjectLiteral.property(options, "autoHooks") == "true"
+        parts = (Noir::JSObjectLiteral.property(options, "dir") || next).scan(/['"`]([^'"`]+)['"`]/).map(&.[1])
+        next if parts.empty?
+        folder = File.expand_path(File.join(parts), File.dirname(expanded))
+        next unless hooks_dir == folder || hooks_dir.starts_with?("#{folder}/")
+        return {hooks_dir, Noir::JSObjectLiteral.property(options, "cascadeHooks") == "true"}
+      end
+    end
+    nil
   end
 
   # Every `decorate('name', fn)` in the scan, keyed by its package: whether
