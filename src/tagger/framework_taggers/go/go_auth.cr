@@ -3406,8 +3406,21 @@ class GoAuthTagger < FrameworkTagger
       mount = /\A\w+\s*\.\s*Mount\s*\(\s*""\s*,\s*#{receiver}\s*\)\z/
       # Returned as an `http.Handler`, it can only be served or mounted.
       handed_back = code_only(owner_lines[start]).matches?(HANDLER_RESULT) ? "return #{owner[:receiver]}" : nil
+      # A func literal whose parameters rebind the name (`r.Get("/x",
+      # func(w http.ResponseWriter, r *http.Request) {`) speaks of another
+      # `r` until it closes.
+      shadow = /\bfunc\s*\([^()]*\b#{receiver}\s+[^()]*\)/
+      nested = 0
       ((start + 1)...Math.min(last, owner_lines.size)).any? do |row|
         code = code_only(owner_lines[row]).strip
+        if nested > 0
+          nested += code.count('{') - code.count('}')
+          next false
+        end
+        if at = code.index(shadow)
+          nested = code[at..].count('{') - code[at..].count('}')
+          code = code[0, at]
+        end
         mentions = code.split(/\W+/).count(owner[:receiver])
         next false if mentions.zero?
         next true if mentions > 1

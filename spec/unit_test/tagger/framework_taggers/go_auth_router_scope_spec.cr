@@ -606,6 +606,15 @@ describe "GoAuthTagger (router identity of .Use guards)" do
       \treturn r
       }
 
+      func debugHandler() http.Handler {
+      \tr := chi.NewRouter()
+      \tr.Use(middleware.BasicAuth("debug", map[string]string{"user": "pass"}))
+      \tr.Get("/debug/vars", func(w http.ResponseWriter, r *http.Request) {
+      \t\tw.Write([]byte(r.URL.Path))
+      \t})
+      \treturn r
+      }
+
       func (s *Server) mountLogin() {
       \tr := s.router
       \tr.Post("/login", func(w http.ResponseWriter, r *http.Request) {})
@@ -617,8 +626,9 @@ describe "GoAuthTagger (router identity of .Use guards)" do
       GO
     result = router_scope_scan({"go.mod" => "module c\n", "main.go" => src},
       [{"GET", "/metrics", "main.go", %("/metrics")}, {"POST", "/login", "main.go", %("/login")},
-       {"GET", "/items", "main.go", %("/items")}], "go_chi")
+       {"GET", "/items", "main.go", %("/items")}, {"GET", "/debug/vars", "main.go", %("/debug/vars")}], "go_chi")
     guarded?(result["GET /metrics"]).should be_true
+    guarded?(result["GET /debug/vars"]).should be_true
     guarded?(result["POST /login"]).should be_false
     guarded?(result["GET /items"]).should be_false
 
