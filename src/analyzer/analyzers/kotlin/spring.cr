@@ -23,6 +23,8 @@ module Analyzer::Kotlin
     # walks the whole tree, and every handler in a controller asks for
     # the same class.
     @injected_receiver_types = Hash(Tuple(String, String), Hash(String, String)).new
+    # ponytail: keyed by simple name scan-wide, not by import visibility.
+    @meta_mappings = Noir::TreeSitterKotlinRouteExtractor::MetaMappings.new
 
     SPRING_FRAMEWORK_CALLEE_NAMES = Set{
       "ok", "created", "accepted", "noContent", "notFound", "badRequest",
@@ -214,6 +216,15 @@ module Analyzer::Kotlin
       # legitimately span build modules, so they resolve against the merged
       # view of every base; in a single-base scan this is just the one map.
       string_constants = merge_string_constants(string_constants_by_base)
+      file_list.each do |path|
+        content = read_file_content(path)
+        next unless content.includes?("annotation class") && content.matches?(SPRING_MAPPING_ANNOTATION_RE)
+        Noir::TreeSitter.parse_kotlin(content) do |root|
+          Noir::TreeSitterKotlinRouteExtractor.extract_meta_mappings_from(
+            root, content, @meta_mappings, string_constants, local_string_constants[path]? || Hash(String, String).new
+          )
+        end
+      end
       interface_route_index = collect_interface_route_index(file_list, string_constants, local_string_constants)
       method_index = (include_callee || functional_router_seen) ? collect_method_index(file_list) : SpringMethodIndex.new
       stomp_prefixes = stomp_application_prefixes_for(file_list, string_constants, local_string_constants)
@@ -368,15 +379,15 @@ module Analyzer::Kotlin
         next if KotlinEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
-        next unless content.includes?("interface")
-        next unless content.matches?(SPRING_MAPPING_ANNOTATION_RE)
+        next unless content.includes?("interface") || content.includes?("abstract")
+        next unless kotlin_spring_mapping_route_file?(content)
 
         Noir::TreeSitter.parse_kotlin(content) do |root|
           package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
           next if package_name.empty?
 
           Noir::TreeSitterKotlinRouteExtractor.extract_interface_routes_from(
-            root, content, string_constants, local_string_constants[path]?
+            root, content, string_constants, local_string_constants[path]?, @meta_mappings
           ).each do |interface_name, routes|
             routes.each do |route|
               index.add(package_name, interface_name, SpringInterfaceRouteEntry.new(route, path, content, package_name))
@@ -573,7 +584,7 @@ module Analyzer::Kotlin
     end
 
     private def kotlin_spring_mapping_route_file?(content : String) : Bool
-      content.matches?(SPRING_MAPPING_ANNOTATION_RE)
+      content.matches?(SPRING_MAPPING_ANNOTATION_RE) || @meta_mappings.each_key.any? { |name| content.includes?("@#{name}") }
     end
 
     private def spring_gateway_route_file?(content : String) : Bool
@@ -780,7 +791,7 @@ module Analyzer::Kotlin
 
         routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes_from(
           root, content, string_constants, local_string_constants,
-          spring6_module?(project_root) ? spring_inert_annotations(path) : nil
+          spring6_module?(project_root) ? spring_inert_annotations(path) : nil, @meta_mappings
         )
         implementations = Noir::TreeSitterKotlinRouteExtractor.extract_controller_interface_implementations_from(
           root, content, string_constants, local_string_constants
