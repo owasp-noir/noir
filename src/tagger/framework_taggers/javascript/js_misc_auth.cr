@@ -46,8 +46,10 @@ class JsMiscAuthTagger < FrameworkTagger
   # `fastify.post<{ Body: T }>(`: TypeScript type arguments may sit before the `(`.
   FASTIFY_ROUTE  = /\.\s*(get|post|put|patch|delete|del|head|options|all|route)\s*(?:<[\s\S]*?>\s*)?\(/
   FASTIFY_EXEMPT = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*===?\s*['"]([^'"]+)['"]\s*\)\s*return\b/
-  # `if (request.url.startsWith('/api/auth/login')) { return }`.
-  FASTIFY_EXEMPT_PREFIX = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*\.\s*startsWith\s*\(\s*['"]([^'"]+)['"]\s*\)\s*\)\s*\{?\s*return\b/
+  # `if (request.url.startsWith('/api/auth/login')) { return }`: a bare
+  # `return` (or `return done()` / `next()`) passes the caller on; a return
+  # that replies refuses it.
+  FASTIFY_EXEMPT_PREFIX = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*\.\s*startsWith\s*\(\s*['"]([^'"]+)['"]\s*\)\s*\)\s*\{?\s*return(?:\s*[;}]|[ \t]*(?:\n|\z)|\s+(?:done|next)\s*\(\s*\))/
   HOOK_KINDS            = %w[onRequest preHandler]
   AUTOHOOKS_FILE        = /\Aautohooks\.(?:[cm]?js|[cm]?ts)\z/
 

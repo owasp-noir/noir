@@ -237,6 +237,39 @@ describe "JsMiscAuthTagger" do
     end
   end
 
+  # A `startsWith` branch that refuses is no exemption.
+  it "keeps a Fastify hook guard whose startsWith branch refuses" do
+    dir = File.tempname("fastify_startswith_refuse")
+    Dir.mkdir_p(dir)
+    File.write("#{dir}/package.json", %({"name":"api","dependencies":{"fastify":"^5.0.0"}}))
+    File.write("#{dir}/app.js", <<-JS)
+      const fastify = require('fastify')()
+
+      fastify.register(async function (app) {
+        app.addHook('onRequest', async (request, reply) => {
+          if (request.url.startsWith('/admin')) {
+            return reply.code(401).send({ error: 'admin login required' })
+          }
+          await request.jwtVerify()
+        })
+        app.get('/admin/stats', async () => ({}))
+      })
+      JS
+    begin
+      CodeLocator.instance.register_path("#{dir}/app.js")
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      details = Details.new(PathInfo.new("#{dir}/app.js", 10))
+      details.technology = "js_fastify"
+      endpoint = Endpoint.new("/admin/stats", "GET", [] of Param, details)
+      JsMiscAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags.map(&.description).should eq(["Protected by Fastify onRequest hook"])
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   # nuxt-auth-utils: `requireUserSession(event)` answers 401 without a
   # session; `getUserSession(event)` only reads one.
   it "counts a Nuxt handler that requires the user session before anything else returns" do
