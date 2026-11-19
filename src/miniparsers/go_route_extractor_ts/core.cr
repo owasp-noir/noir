@@ -293,7 +293,7 @@ module Noir
     def extract_routes(source : String,
                        external_groups : Hash(String, String) = Hash(String, String).new,
                        group_method : String = "Group",
-                       handle_method : String? = nil,
+                       handle_method : (String | Array(String))? = nil,
                        handlefunc_methods : Bool = false,
                        group_aliases : Array(String) = [] of String,
                        extra_verbs : Array(String) = [] of String,
@@ -1958,7 +1958,7 @@ module Noir
     private def decode_handle_call(call : LibTreeSitter::TSNode,
                                    source : String,
                                    groups : Hash(String, String),
-                                   handle_method : String,
+                                   handle_method : String | Array(String),
                                    group_method : String = "Group",
                                    group_aliases : Array(String) = [] of String,
                                    string_values : Hash(String, String) = Hash(String, String).new,
@@ -1970,7 +1970,8 @@ module Noir
       operand = Noir::TreeSitter.field(function, "operand")
       field = Noir::TreeSitter.field(function, "field")
       return unless operand && field
-      return unless Noir::TreeSitter.node_text(field, source) == handle_method
+      name = Noir::TreeSitter.node_text(field, source)
+      return unless handle_method.is_a?(String) ? name == handle_method : handle_method.includes?(name)
 
       router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values, router_fields)
       return unless router_info

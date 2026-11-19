@@ -53,11 +53,11 @@ module Analyzer::Go
         # Tree-sitter pre-pass: httprouter exposes HTTP verbs as
         # methods on the router AND a `Handle("METHOD", "/path",
         # handler)` shape where the method is the first argument.
-        # Pass `handle_method: "Handle"` so both shapes resolve in
-        # a single parse. httprouter has no groups, so we don't
-        # pass any cross-file group map.
+        # `Handler` / `HandlerFunc` take the same arguments for stdlib
+        # handlers. httprouter has no groups, so we don't pass any
+        # cross-file group map.
         ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
-          content, handle_method: "Handle")
+          content, handle_method: ["Handle", "Handler", "HandlerFunc"])
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
