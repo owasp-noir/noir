@@ -109,11 +109,12 @@ describe "RailsSecurityTagger" do
       dir = File.tempname("noir_rails_csrf_chain")
       files = {
         "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::Base\nend\n",
-        "app/controllers/api/base_controller.rb"    => "module Api\n  class BaseController < ApplicationController\n    skip_before_action :verify_authenticity_token\n  end\nend\n",
-        "app/controllers/api/items_controller.rb"   => "module Api\n  class ItemsController < BaseController\n    def index\n    end\n\n    def create\n    end\n  end\nend\n",
+        "app/controllers/api/base_controller.rb"    => "module Api\n  class BaseController < ApplicationController\n    skip_before_action :verify_authenticity_token, only: [:create]\n  end\nend\n",
+        "app/controllers/api/items_controller.rb"   => "module Api\n  class ItemsController < BaseController\n    def update\n    end\n\n    def create\n    end\n  end\nend\n",
         "app/controllers/api/notes_controller.rb"   => "module Api\n  class NotesController < BaseController\n    protect_from_forgery with: :exception\n\n    def create\n    end\n  end\nend\n",
         "app/controllers/concerns/token_api.rb"     => "module TokenApi\n  extend ActiveSupport::Concern\n\n  included do\n    protect_from_forgery with: :null_session\n  end\nend\n",
         "app/controllers/tokens_controller.rb"      => "class TokensController < ApplicationController\n  include TokenApi\n\n  def create\n  end\nend\n",
+        "app/controllers/hooks_controller.rb"       => "class LegacyHooksController < ApplicationController\n  skip_forgery_protection\nend\n\nclass HooksController < ApplicationController\n  def create\n  end\nend\n",
       }
       begin
         files.each do |rel, body|
@@ -125,15 +126,19 @@ describe "RailsSecurityTagger" do
         chain_options["base"] = YAML::Any.new(dir)
         items = "#{dir}/app/controllers/api/items_controller.rb"
         item_create = build_endpoint(items, 6)
-        item_index = build_endpoint(items, 3, "GET")
+        item_update = build_endpoint(items, 3)
         note_create = build_endpoint("#{dir}/app/controllers/api/notes_controller.rb", 5)
         token_create = build_endpoint("#{dir}/app/controllers/tokens_controller.rb", 4)
-        RailsSecurityTagger.new(chain_options).perform([item_create, item_index, note_create, token_create])
+        hook_create = build_endpoint("#{dir}/app/controllers/hooks_controller.rb", 6)
+        RailsSecurityTagger.new(chain_options).perform([item_create, item_update, note_create, token_create, hook_create])
 
         tag_named(item_create, "csrf-protection").not_nil!.description.should contain("disabled")
-        tag_named(item_index, "csrf-protection").should be_nil
+        # A POST action the parent's `only:` leaves out keeps its CSRF check.
+        tag_named(item_update, "csrf-protection").should be_nil
         tag_named(note_create, "csrf-protection").should be_nil
         tag_named(token_create, "csrf-protection").not_nil!.description.should contain("null_session")
+        # A sibling class earlier in the file is not the routed controller.
+        tag_named(hook_create, "csrf-protection").should be_nil
       ensure
         FileUtils.rm_rf(dir)
         CodeLocator.instance.clear_all

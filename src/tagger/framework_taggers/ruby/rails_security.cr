@@ -125,7 +125,7 @@ class RailsSecurityTagger < FrameworkTagger
       if csrf_checked
         handler = endpoint.handler
         dispatch = handler.try(&.dispatch_path) if handler.try(&.path) == path
-        leaf = rails_chain.controller_in(dispatch || path)
+        leaf = dispatch ? rails_chain.controller_in(dispatch) : enclosing_controller(path, line_idx)
         desc = leaf ? chain_csrf(leaf, action_name) : check_csrf(lines, line_idx, action_name, flags)
         endpoint.add_tag(Tag.new("csrf-protection", desc, "rails_security")) if desc
       end
@@ -173,6 +173,14 @@ class RailsSecurityTagger < FrameworkTagger
       controllers, others = collect_files_by_extension(".rb").partition { |path| base_relative_path(path).includes?("controllers") }
       Noir::RailsCallbackChain.build(controllers, others) { |path| read_file(path) }
     end
+  end
+
+  # The controller class whose body holds `row` of `path`; nil when the row
+  # sits in a module (a concern's action) or outside any class.
+  private def enclosing_controller(path : String, row : Int32) : Noir::RailsCallbackChain::Klass?
+    return unless source = read_file(path)
+    return unless home = rails_chain.facts_for(path, source).try(&.home(row))
+    rails_chain.classes[{path, home}]?.try { |klass| klass if klass.name.ends_with?("Controller") }
   end
 
   # The CSRF state `leaf`'s ancestry leaves `action` in: its parents' class
