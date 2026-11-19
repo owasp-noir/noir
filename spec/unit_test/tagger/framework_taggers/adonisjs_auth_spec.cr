@@ -2,7 +2,7 @@ require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
 # adonisjs_auth/start/routes.ts: `middleware.auth()` on a route, on a
-# group, first in a list and on an outer group; `silentAuth`, `guest`, no
+# group, anywhere in a list and on an outer group; `silentAuth`, `guest`, no
 # middleware and a group without it (#3308).
 describe "AdonisjsAuthTagger" do
   base = File.expand_path("../../../functional_test/fixtures/javascript/adonisjs_auth", __DIR__)
@@ -13,7 +13,7 @@ describe "AdonisjsAuthTagger" do
     noir_options["base"] = YAML::Any.new(base)
     lines = {5 => "/notes", 6 => "/notes/:id", 9 => "/api/notes", 13 => "/public", 16 => "/feed", 17 => "/login",
              20 => "/admin", 25 => "/account/me", 28 => "/account/inner/drafts", 37 => "/v2/open",
-             42 => "/posts", 43 => "/drafts"}
+             42 => "/posts", 43 => "/drafts", 46 => "/comments", 47 => "/reviews", 48 => "/browse", 49 => "/roles"}
     endpoints = lines.map do |line, url|
       details = Details.new(PathInfo.new(routes, line))
       details.technology = "js_adonisjs"
@@ -28,7 +28,10 @@ describe "AdonisjsAuthTagger" do
     verdicts["/account/me"].should eq(["Protected by AdonisJS middleware.auth() on its route group"])
     verdicts["/account/inner/drafts"].should eq(["Protected by AdonisJS middleware.auth() on its route group"])
     verdicts["/posts"].should eq(["Protected by AdonisJS middleware.auth()"])
-    %w[/public /feed /login /v2/open /drafts].each { |url| verdicts[url].should be_empty }
+    verdicts["/comments"].should eq(["Protected by AdonisJS middleware.auth()"])
+    verdicts["/reviews"].should eq(["Protected by AdonisJS middleware.auth()"])
+    verdicts["/roles"].should eq(["Protected by AdonisJS middleware.auth()"])
+    %w[/public /feed /login /v2/open /drafts /browse].each { |url| verdicts[url].should be_empty }
   end
 
   it "targets AdonisJS" do

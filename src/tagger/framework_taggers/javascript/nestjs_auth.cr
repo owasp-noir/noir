@@ -26,6 +26,13 @@ class NestjsAuthTagger < FrameworkTagger
     {/\A@(?:Authenticate|UseAuth)\s*\(/, "@Authenticate decorator"},
   ]
 
+  # tsoa `@Middlewares(...)` runs Express middleware in front of the handler.
+  # Whole names only: `allowApiKeyAuthenticationIfPresent` and
+  # `unauthorisedInDemo` sit in the same lists and refuse no anonymous caller.
+  # ponytail: judged by name; reading each middleware's definition is the upgrade.
+  MIDDLEWARES_CALL     = /\A@Middlewares\s*\(/
+  AUTH_MIDDLEWARE_NAME = /\A(?:isAuthenticated|ensureAuthenticated|ensureLoggedIn|requireAuth|requireLogin|authMiddleware)\z/
+
   # NestJS authorization decorators/guards — verify what the caller may do.
   # Distinct from authentication so JwtAuthGuard + @Roles stack as
   # auth_guard + authz_guard rather than collapsing into a single auth tag.
@@ -141,6 +148,12 @@ class NestjsAuthTagger < FrameworkTagger
   RETURNS_REFUSE = /\breturn\s+(?:false\b|!|[^;\n]*?(?:===|!==|==|!=))/
   READS_REQUEST  = /getRequest|switchToHttp|\bheaders\b|\bcookies\b|\.user\b|\bsession\b/
   RETURN_STMT    = /\breturn\b\s*([^;\n]*)/
+  THROWN_CLASS   = /\bthrow\s+new\s+([A-Za-z_$][\w$]*)/
+  # The caller's credential or identity: `req.headers.authorization`,
+  # `req.cookies.auth`, `req.session`, `req.user`, a bearer or API token.
+  IDENTITY_READ = /\b(?:authorization|cookies?|session)\b|\.\s*(?:user|auth)\b|\b\w*(?:[Tt]oken|[Aa]pi[_-]?[Kk]ey)\w*\b/
+  # `class HttpForbiddenException extends HttpException { constructor() { super('Forbidden', 403) } }`
+  FORBIDDEN_SUPER = /\bsuper\s*\([^;]*(?:\b403\b|\bFORBIDDEN\b)/
   # The start of the next top-level statement after a declaration: a line
   # that starts in column 0 with anything but a closing bracket.
   NEXT_TOP_LEVEL = /\n(?=[^\s})\]])/
@@ -483,6 +496,10 @@ class NestjsAuthTagger < FrameworkTagger
       if mw = for_routes_guard(endpoint)
         endpoint.add_tag(Tag.new("auth", "Protected by NestJS #{mw} middleware", "nestjs_auth"))
       end
+      # tsoa runs `@Middlewares` whatever `@NoSecurity` says: that lifts only `@Security`.
+      if endpoint.details.technology == "ts_tsoa" && (mw = tsoa_middlewares(method_decorators, class_decorators))
+        endpoint.add_tag(Tag.new("auth", "Protected by #{mw}", "nestjs_auth"))
+      end
 
       # Check if endpoint (or its whole controller) is explicitly public
       if (method_decorators + class_decorators).any? { |decorator| PUBLIC_PATTERNS.any? { |pattern| decorator.text.matches?(pattern) } }
@@ -560,6 +577,24 @@ class NestjsAuthTagger < FrameworkTagger
     if desc = guard_decorator_desc(decorator, file)
       authn_descs << desc unless authn_descs.includes?(desc)
     end
+  end
+
+  # The authentication middlewares a tsoa route's `@Middlewares` run, method
+  # level first, as a description.
+  private def tsoa_middlewares(method_decorators : Array(Noir::TsDecoratorExtractor::Decorator), class_decorators : Array(Noir::TsDecoratorExtractor::Decorator)) : String?
+    method_decorators.each { |decorator| middlewares_desc(decorator.text).try { |desc| return desc } }
+    class_decorators.each { |decorator| middlewares_desc(decorator.text).try { |desc| return "#{desc} (class-level)" } }
+    nil
+  end
+
+  # For a tsoa `@Middlewares(...)`, its authentication middlewares as a
+  # description; nil for any other decorator or when it runs none.
+  private def middlewares_desc(line : String) : String?
+    args = guard_arg_lists(line, MIDDLEWARES_CALL).first?.try(&.strip) || return
+    args = args[1...-1] if args.starts_with?('[') && args.ends_with?(']')
+    # `requireAuth()`: a factory called with no options builds the same middleware.
+    names = Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip.sub(/\(\s*\)\z/, "")).select(&.matches?(AUTH_MIDDLEWARE_NAME))
+    "tsoa @Middlewares(#{names.join(", ")})" unless names.empty?
   end
 
   # For a `@UseGuards(...)`, the guards in it that refuse anonymous
@@ -642,16 +677,20 @@ class NestjsAuthTagger < FrameworkTagger
       refusing = names.select { |name| middleware_refuses?(name) }
       next if refusing.empty?
       chain = statement_slice(text, close + 1)
-      routes = call_bodies(chain, "forRoutes").flat_map { |body| parse_route_specs(body) }
+      routes = call_bodies(chain, "forRoutes").flat_map { |body| parse_route_specs(body, text) }
       next if routes.empty?
-      excludes = call_bodies(chain, "exclude").flat_map { |body| parse_route_specs(body) }
+      excludes = call_bodies(chain, "exclude").flat_map { |body| parse_route_specs(body, text) }
       @for_routes << ForRoutes.new(refusing.join(", "), routes, excludes)
     end
   end
 
   private def middleware_refuses?(name : String) : Bool
     body = @class_bodies[name]? || return false
-    body.matches?(THROWS_401) || body.matches?(/\bstatus(?:Code)?\s*(?::|\()\s*401\b/) || body.matches?(/\bUNAUTHORIZED\b/)
+    return true if body.matches?(THROWS_401) || body.matches?(/\bstatus(?:Code)?\s*(?::|\()\s*401\b/) || body.matches?(/\bUNAUTHORIZED\b/)
+    # A 403 on the caller's credential or identity; a project exception by
+    # the status its class hands to `super`. A tenant, IP or bypass header
+    # read before a 403 is a feature switch, not a login check.
+    body.matches?(IDENTITY_READ) && (body.matches?(THROWS_403) || body.scan(THROWN_CLASS).any? { |m| (@class_bodies[m[1]]? || "").matches?(FORBIDDEN_SUPER) })
   end
 
   private def statement_slice(text : String, from : Int32) : String
@@ -679,7 +718,19 @@ class NestjsAuthTagger < FrameworkTagger
     bodies
   end
 
-  private def parse_route_specs(body : String) : Array(NestSpec)
+  # The elements text of `const name = [...]` declared at the top level of
+  # `source` (column 0), not a function's local of the same name.
+  private def array_const(source : String, name : String) : String?
+    m = source.match(/^(?:export\s+)?(?:const|let|var)\s+#{Regex.escape(name)}\s*(?::[^=]*)?=\s*\[/m) || return
+    close = Noir::JSLiteralScanner.find_matching_bracket(source, m.end(0) - 1) || return
+    source[m.end(0)...close]
+  end
+
+  # How many spread arrays deep `forRoutes(...a)` is followed.
+  MAX_SPREAD_DEPTH = 4
+
+  # `seen`: the spread names followed so far, so `a = [...b]; b = [...a]` ends.
+  private def parse_route_specs(body : String, source : String, seen : Set(String) = Set(String).new) : Array(NestSpec)
     specs = [] of NestSpec
     Noir::TopLevelSplit.split(body, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |part|
       text = part.strip
@@ -693,6 +744,10 @@ class NestjsAuthTagger < FrameworkTagger
         specs << nest_spec(lit[1], nil, wildcard?(lit[1]))
       elsif text.matches?(/\A[A-Za-z_$][\w$]*\z/) && (path = @controller_paths[text]?)
         specs << NestSpec.new(path, nil, true)
+      elsif (spread = text.match(/\A\.\.\.\s*([A-Za-z_$][\w$]*)\z/)) && seen.size < MAX_SPREAD_DEPTH &&
+            seen.add?(spread[1]) && (list = array_const(source, spread[1]))
+        # `forRoutes(...authenticatedControllers)`: the elements of a const array.
+        specs.concat(parse_route_specs(list, source, seen))
       end
     end
     specs

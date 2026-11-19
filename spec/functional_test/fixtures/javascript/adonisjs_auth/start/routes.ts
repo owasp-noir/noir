@@ -41,3 +41,9 @@ router
 // a resource: auth on every action, and on some actions only
 router.resource('posts', NotesController).use('*', middleware.auth())
 router.resource('drafts', NotesController).use(['store'], middleware.auth())
+
+// auth after other middleware in the list, and soft auth after one
+router.get('/comments', [NotesController, 'index']).use([throttleComments, middleware.auth()])
+router.get('/reviews', [NotesController, 'index']).use([middleware.throttle(), middleware.auth({ guards: ['web'] })])
+router.get('/browse', [NotesController, 'index']).use([throttleComments, middleware.silentAuth()])
+router.get('/roles', [NotesController, 'index']).use([middleware.role(['admin']), middleware.auth()])

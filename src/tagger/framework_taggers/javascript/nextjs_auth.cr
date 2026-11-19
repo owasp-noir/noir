@@ -63,10 +63,17 @@ class NextjsAuthTagger < FrameworkTagger
   # withAuth(handler)` wraps the handler declared above it.
   DEFAULT_EXPORT_WRAPPER = /\A\s*export\s+default\s+([A-Za-z_$][\w$]*)\s*\(/
   PAGES_API_PATH         = %r{(?:\A|/)pages/api/}
+  # `return withMiddleware(`: group 1 the callee a wrapper returns.
+  RETURNED_CALL = /^\s*return\s+(?:await\s+)?([A-Za-z_$][\w$]*)\s*\(/
   # `throw new DubApiError({ code: "unauthorized" })`: the word lives in a
   # string, so this is matched on text that still has strings. The `{` sits
   # between `throw` and the word, and the object may wrap a line or two.
   THROWN_UNAUTHORIZED = /\bthrow\b[\s\S]{0,240}unauthori[sz]ed/i
+  # `"Unauthorized"`, `"unauthorized:chat"` in a string, or `new
+  # UnauthorizedError(`: not a substring of a name (`showUnauthorizedBanner`).
+  UNAUTHORIZED_TOKEN = /["'`][^"'`\n]*\bunauthori[sz]ed\b[^"'`\n]*["'`]|\bnew\s+[\w$]*Unauthori[sz]ed[\w$]*\s*\(/i
+  REFUSAL_KEYWORD    = /\b(throw|return)\b/
+  IF_OPEN            = /\bif\s*\(/
 
   # A refusal found in a body: the `if` it sits under, the status, whether
   # it throws (stopping its caller too) or returns a response (which its
@@ -136,6 +143,12 @@ class NextjsAuthTagger < FrameworkTagger
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{refusal.condition}` (replies #{refusal.status})", "nextjs_auth"))
       return
     end
+    # A server action has no response to put a status on: it throws, or
+    # returns an error type that maps its code to one.
+    if denial = handler_denial(code, raw)
+      endpoint.add_tag(Tag.new("auth", "Protected by Next.js handler check `#{denial[0]}` (#{denial[1]} unauthorized)", "nextjs_auth"))
+      return
+    end
     if found = helper_refusal(code, raw, path, 0)
       # Located at the helper's definition, so `noir reach` on its file finds the route.
       how = found.note ? "#{found.how}; #{found.note}" : found.how
@@ -147,8 +160,7 @@ class NextjsAuthTagger < FrameworkTagger
     if wrapper.nil? && path.matches?(PAGES_API_PATH)
       wrapper = lines.each.compact_map { |text| code_only(text).match(DEFAULT_EXPORT_WRAPPER).try(&.[1]) }.first?
     end
-    if wrapper && (kind = wrapper_refusal(path, wrapper))
-      detail = kind == :throw ? "throws unauthorized" : "replies 401"
+    if wrapper && (detail = wrapper_refusal(path, wrapper))
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js #{wrapper} wrapper (#{detail})", "nextjs_auth"))
       return
     end
@@ -183,6 +195,7 @@ class NextjsAuthTagger < FrameworkTagger
   private def session_refusal(code : Array(String), raw : Array(String), mark : Regex, path : String? = nil) : Refusal?
     verb = verb_matcher(code)
     callers = caller_assignments(code, path)
+    heads = nil.as(Array(Int32?)?)
     code.each_with_index do |text, i|
       break if method_branch?(code, i, verb)
       hit = text.match(mark).try { |m| m[1]? || "401" }
@@ -196,16 +209,43 @@ class NextjsAuthTagger < FrameworkTagger
           break if j < i && (stripped.ends_with?(';') || (stripped.ends_with?('}') && stripped.count('{') <= stripped.count('}')))
           status = hit || reply_helper_status(text, path)
           break unless status
-          throws = code[j..i].any?(&.matches?(/\bthrow\b/))
-          carrier = code[(j + 1)..i].compact_map(&.match(CARRIER).try(&.[1])).first?
-          condition = code[j].includes?("typeof") ? typed_code(raw[j]? || code[j]) : code[j]
-          return Refusal.new(condition.strip.rchop('{').strip, status, throws, enclosing_conditions(code, j), carrier)
+          return refusal_at(code, raw, j, i, status)
         end
         # Nor is an `else` branch of one above it.
         break if j < i && stripped.matches?(ELSE_BRANCH)
       end
+      # Past the lookback, a multi-line log call ahead of the reply: the
+      # block the reply sits in must open on the condition.
+      head = (heads ||= block_heads(code))[i] || next
+      next unless head < i - CONDITION_LOOKBACK && refusal_condition?(code, raw, head, callers)
+      status = hit || reply_helper_status(text, path) || next
+      return refusal_at(code, raw, head, i, status)
     end
     nil
+  end
+
+  # The refusal at line `i` under the condition at line `j`.
+  private def refusal_at(code : Array(String), raw : Array(String), j : Int32, i : Int32, status : String) : Refusal
+    throws = code[j..i].any?(&.matches?(/\bthrow\b/))
+    carrier = code[(j + 1)..i].compact_map(&.match(CARRIER).try(&.[1])).first?
+    condition = code[j].includes?("typeof") ? typed_code(raw[j]? || code[j]) : code[j]
+    Refusal.new(condition.strip.rchop('{').strip, status, throws, enclosing_conditions(code, j), carrier)
+  end
+
+  # For each line, the line opening the innermost block still open where it starts.
+  private def block_heads(code : Array(String)) : Array(Int32?)
+    open = [] of Int32
+    code.map_with_index do |text, j|
+      head = open.last?
+      text.each_char do |char|
+        if char == '{'
+          open << j
+        elsif char == '}'
+          open.pop?
+        end
+      end
+      head
+    end
   end
 
   private def refusal_condition?(code : Array(String), raw : Array(String), j : Int32, callers : Hash(String, Int32)) : Bool
@@ -490,20 +530,76 @@ class NextjsAuthTagger < FrameworkTagger
     joined[(open + 1)...close]
   end
 
-  # `:status` when the wrapper's body replies 401 under a missing session,
-  # `:throw` when it throws an error whose code or name says unauthorized.
-  # Nil when the wrapper does not refuse (`withPassthrough`).
-  private def wrapper_refusal(path : String, name : String) : Symbol?
+  # How the wrapper's body refuses: it replies 401 under a missing session,
+  # throws an error whose code or name says unauthorized, or hands a
+  # function that refuses to the runner it returns (`withMiddleware(handler,
+  # authMiddleware)`). Nil when it does not refuse (`withPassthrough`).
+  private def wrapper_refusal(path : String, name : String) : String?
     content = read_file(path) || return
     handler = Noir::JSHandlerResolver.resolve(name, content, path) || return
     def_path = handler.path || return
     def_line = handler.line || return
     source = read_file(def_path) || return
     stripped = Noir::JSRouteExtractor.strip_js_comments(source)
+    # TypeScript overloads: the body is the last declaration's. Named as
+    # declared, not as imported (`import { withLogging as withAuth }`).
+    if declared = stripped.lines[def_line - 1]?.try(&.match(/\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)/).try(&.[1]))
+      decls = stripped.scan(/^[ \t]*(?:export\s+)?(?:async\s+)?function\s*\*?\s*#{Regex.escape(declared)}\s*[(<]/m)
+      def_line = stripped[0, decls.last.begin(0)].count('\n') + 1 if decls.size > 1
+    end
     raw = Noir::JSRouteExtractor.definition_body(stripped, def_line).lines
     code = raw.map { |line| code_only(line) }
-    return :status if session_refusal(code, raw, UNAUTHORIZED, def_path)
-    :throw if thrown_unauthorized?(raw, code)
+    return "replies 401" if session_refusal(code, raw, UNAUTHORIZED, def_path)
+    return "throws unauthorized" if thrown_unauthorized?(raw, code)
+    runner_refusal(code, source, def_path)
+  end
+
+  # `return withMiddleware(handler, authMiddleware)`: every call the wrapper
+  # returns hands a refusing function to a runner that hands the refusal
+  # on. An early `return withMiddleware(handler)` (under `if
+  # (options.public)`) opens the route, so then none counts.
+  private def runner_refusal(code : Array(String), source : String, def_path : String) : String?
+    found_desc = nil
+    code.each_with_index do |text, i|
+      m = text.match(RETURNED_CALL) || next
+      args, _ = call_args(code, i, m.end(0) - 1)
+      hit = args.each_with_index.compact_map do |arg, k|
+        name = arg.strip
+        next unless name.matches?(/\A[A-Za-z_$][\w$]*\z/)
+        found = helper_definition_refusal(name, source, def_path, 0) || next
+        "runs `#{name}()`, #{found.how}" if runner_propagates?(m[1], k, source, def_path, found)
+      end.first?
+      return unless hit
+      found_desc ||= hit
+    end
+    found_desc
+  end
+
+  # Whether `runner`, as named in `path`, hands on what the function in its
+  # parameter `index` returns (`if (result instanceof Response) return
+  # result`), or that function throws, which stops the runner too.
+  private def runner_propagates?(runner : String, index : Int32, source : String, path : String, found : HelperDef) : Bool
+    return true if found.throws
+    handler = Noir::JSHandlerResolver.resolve(runner, source, path) || return false
+    def_path = handler.path || return false
+    def_line = handler.line || return false
+    lines = read_file_lines(def_path) || return false
+    return false unless def_line <= lines.size
+    body = function_body(lines, def_line - 1)
+    params = Noir::TopLevelSplit.split(parameter_list(body), ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+    param = params[index]?.try(&.strip.match(/\A(?:\.\.\.)?([A-Za-z_$][\w$]*)/).try(&.[1])) || return false
+    body.each_with_index do |text, i|
+      m = text.match(HELPER_STATEMENT) || next
+      next unless m[1] == param
+      return true if text.matches?(/^\s*return\b/)
+      result = text.match(RESULT_NAME).try(&.[1]) || next
+      rest = body[(i + 1)..].reject(&.strip.empty?)
+      check = rest.first? || next
+      next unless check.matches?(/^\s*if\s*\(.*\b#{Regex.escape(result)}\b/)
+      block = check.rstrip.ends_with?('{') ? [check] + rest[1..].take_while { |line| !line.strip.starts_with?('}') } : [check]
+      return true if block.join(' ').matches?(/\breturn\s+(?:await\s+)?#{Regex.escape(result)}\b/)
+    end
+    false
   end
 
   # A throw that says unauthorized (in `raw`, strings kept) under a session
@@ -521,6 +617,64 @@ class NextjsAuthTagger < FrameworkTagger
     false
   end
 
+  # The handler's own `if (!session) { throw new Error("Unauthorized") }`
+  # (or `return new AppError("unauthorized:chat").toResponse()`): the
+  # condition and "throws" or "returns". The throw or return must sit in the
+  # body the `if` opens, and say unauthorized in a string or an error type
+  # within its own statement.
+  private def handler_denial(code : Array(String), raw : Array(String)) : {String, String}?
+    verb = verb_matcher(code)
+    text = raw.join('\n')
+    masked = Noir::JSLiteralScanner.blank_literals(text)
+    bytes = masked.to_slice
+    line_start = 0
+    code.each_with_index do |line, j|
+      from = line_start
+      line_start += (raw[j]? || "").bytesize + 1
+      # As in `session_refusal`: past a verb branch the check guards only some verbs.
+      break if method_branch?(code, j, verb)
+      next unless line.matches?(SESSION_DENIED) || secret_list_denied?(line, raw[j]? || "")
+      row = masked.byte_slice(from, Math.min((raw[j]? || "").bytesize, masked.bytesize - from))
+      head = row.match(IF_OPEN) || next
+      open = from + (row.char_index_to_byte_index(head.end(0) - 1) || next)
+      close = Noir::JSLiteralScanner.find_matching_paren_at_byte(masked, open) || next
+      start = close + 1
+      while start < bytes.size && bytes[start].unsafe_chr.ascii_whitespace?
+        start += 1
+      end
+      next if start >= bytes.size
+      body_from, body_to = if bytes[start] == '{'.ord
+                             {start + 1, Noir::JSLiteralScanner.find_matching_brace_at_byte(masked, start) || next}
+                           else
+                             {start, statement_end(bytes, start, bytes.size)}
+                           end
+      body = masked.byte_slice(body_from, body_to - body_from)
+      body.scan(REFUSAL_KEYWORD) do |m|
+        at = body_from + (body.char_index_to_byte_index(m.begin(0)) || next)
+        statement = text.byte_slice(at, statement_end(bytes, at, body_to) - at)
+        next unless statement.matches?(UNAUTHORIZED_TOKEN)
+        return {line.strip.rchop('{').strip, m[1] == "throw" ? "throws" : "returns"}
+      end
+    end
+  end
+
+  # The byte offset where the statement starting at `from` ends: its `;`, or
+  # the end of its line once every bracket it opened is closed, or `limit`.
+  private def statement_end(bytes : Bytes, from : Int32, limit : Int32) : Int32
+    depth = 0
+    (from...limit).each do |i|
+      case bytes[i]
+      when '('.ord, '['.ord, '{'.ord then depth += 1
+      when ')'.ord, ']'.ord, '}'.ord
+        depth -= 1
+        return i if depth < 0
+      when ';'.ord  then return i if depth == 0
+      when '\n'.ord then return i if depth == 0
+      end
+    end
+    limit
+  end
+
   # The comment-stripped lines from `start` to the brace that closes the
   # first one opened from there, or to the first `;` when a statement (an
   # `import` at a line-1 fallback) ends before any brace opens.
@@ -531,8 +685,10 @@ class NextjsAuthTagger < FrameworkTagger
     opened = false
     previous = ' '
     lines[start..].each do |raw|
-      text = code_only(raw)
-      body << text
+      body << code_only(raw)
+      # Brackets are counted with regex literals blanked too: `/^\(/`
+      # opens no parenthesis.
+      text = Noir::JSLiteralScanner.blank_literals(raw)
       # Until the body opens, a brace inside the parameter list is a type
       # or a default (`options?: { skipAuth: boolean },` on its own line);
       # one after `=>` or `)` opens a body even inside a wrapper's call
@@ -552,7 +708,9 @@ class NextjsAuthTagger < FrameworkTagger
         end
         previous = char unless char.whitespace?
       end
-      break if opened ? depth <= 0 : text.rstrip.ends_with?(';')
+      # A `;` inside the parameter list ends a member of its type
+      # (`{ id: string; name: string }` across lines), not the statement.
+      break if opened ? depth <= 0 : parens == 0 && text.rstrip.ends_with?(';')
     end
     body
   end

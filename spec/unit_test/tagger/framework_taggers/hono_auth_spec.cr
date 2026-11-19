@@ -177,4 +177,73 @@ describe "HonoAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  # Hono's documentation writes `app.use('/auth/*', basicAuth({ … }))` over
+  # several lines: the path and the middleware are arguments of one call.
+  it "reads an app.use() call that spans several lines" do
+    tmpdir = File.tempname("hono_multiline_use")
+    Dir.mkdir_p(tmpdir)
+    index_ts = File.join(tmpdir, "index.ts")
+    File.write(index_ts, [
+      "const app = new Hono()",
+      "app.use(",
+      "  '/auth/*',",
+      "  basicAuth({",
+      "    username: 'hono',",
+      "    password: 'secret',",
+      "  })",
+      ")",
+      "app.use(",
+      "  '/etag/*',",
+      "  etag()",
+      ")",
+      "app.get('/auth/page', (c) => c.text('ok'))",
+      "app.get('/etag/cached', (c) => c.text('ok'))",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(index_ts)
+
+    page = Endpoint.new("/auth/page", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 13)))
+    cached = Endpoint.new("/etag/cached", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 14)))
+    HonoAuthTagger.new(noir_options).perform([page, cached])
+    page.tags.map(&.description).should eq(["Protected by Hono app.use() auth on /auth/*"])
+    cached.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  # An inline middleware's body is not a middleware name: one that only
+  # loads the user when a token is sent guards nothing.
+  it "does not read an inline use() middleware's body as auth middleware" do
+    tmpdir = File.tempname("hono_inline_use")
+    Dir.mkdir_p(tmpdir)
+    index_ts = File.join(tmpdir, "index.ts")
+    File.write(index_ts, [
+      "const app = new Hono()",
+      "app.use('*', async (c, next) => {",
+      "  const token = getCookie(c, 'token')",
+      "  if (token) {",
+      "    c.set('user', await verifyToken(token))",
+      "  }",
+      "  await next()",
+      "})",
+      "app.use('/admin/*', async (c, next) => { if (token) c.set('user', await verifyToken(token)); await next() })",
+      "app.get('/public/info', (c) => c.json([]))",
+      "app.get('/admin/info', (c) => c.json([]))",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    CodeLocator.instance.register_path(index_ts)
+
+    info = Endpoint.new("/public/info", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 10)))
+    admin = Endpoint.new("/admin/info", "GET", [] of Param, Details.new(PathInfo.new(index_ts, 11)))
+    HonoAuthTagger.new(noir_options).perform([info, admin])
+    info.tags.should be_empty
+    admin.tags.should be_empty
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end

@@ -173,6 +173,187 @@ describe "JsMiscAuthTagger" do
     end
   end
 
+  # @fastify/autoload with `autoHooks: true` applies a folder's
+  # `autohooks.ts` (or `_autohooks.js`, `auto_hooks.ts`, …) to the route
+  # plugins of that folder, and with `cascadeHooks: true` to its subfolders
+  # too. The flag belongs to the autoload whose `dir` holds the file.
+  describe "Fastify autohooks" do
+    verdicts = ->(autoloads : String, hooks_file : String) do
+      dir = File.tempname("fastify_autohooks")
+      Dir.mkdir_p("#{dir}/src/routes/api/items")
+      Dir.mkdir_p("#{dir}/src/routes/api/auth")
+      Dir.mkdir_p("#{dir}/src/plugins")
+      File.write("#{dir}/package.json", %({"name":"api","dependencies":{"fastify":"^5.0.0","@fastify/autoload":"^6.0.0"}}))
+      File.write("#{dir}/src/app.ts", "export default async function serviceApp (fastify, opts) {\n#{autoloads}\n}\n")
+      File.write("#{dir}/src/routes/api/#{hooks_file}", <<-TS)
+        export default async function (fastify) {
+          fastify.addHook('onRequest', async (request, reply) => {
+            if (request.url.startsWith('/api/auth/login')) {
+              return
+            }
+
+            if (!request.session.user) {
+              reply.unauthorized('You must be authenticated to access this route.')
+            }
+          })
+        }
+        TS
+      File.write("#{dir}/src/routes/api/items/index.ts", "export default async function (fastify) {\n  fastify.get('/', async () => listItems())\n}\n")
+      File.write("#{dir}/src/routes/api/auth/index.ts", "export default async function (fastify) {\n  fastify.post('/login', async (request) => login(request.body))\n}\n")
+      File.write("#{dir}/src/routes/home.ts", "export default async function (fastify) {\n  fastify.get('/', async () => 'home')\n}\n")
+      begin
+        Dir.glob("#{dir}/**/*", match: File::MatchOptions::DotFiles).each { |file| CodeLocator.instance.register_path(file) unless File.directory?(file) }
+        noir_options = create_test_options
+        noir_options["base"] = YAML::Any.new(dir)
+        endpoints = [{"api/items/index.ts", "/api/items/", "GET"}, {"api/auth/index.ts", "/api/auth/login", "POST"}, {"home.ts", "/", "GET"}].map do |file, url, method|
+          details = Details.new(PathInfo.new("#{dir}/src/routes/#{file}", 2))
+          details.technology = "js_fastify"
+          Endpoint.new(url, method, [] of Param, details)
+        end
+        JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.map(&.description)} }
+      ensure
+        CodeLocator.instance.clear_all
+        FileUtils.rm_rf(dir)
+      end
+    end
+    autoload = ->(folder : String, options : String) { "  fastify.register(fastifyAutoload, {\n    dir: path.join(import.meta.dirname, '#{folder}'),\n#{options}\n  })" }
+
+    it "applies a refusing hook to the routes its folder autoloads" do
+      %w[autohooks.ts _autohooks.js auto_hooks.ts .AutoHooks.mjs].each do |name|
+        tags = verdicts.call(autoload.call("routes", "    autoHooks: true,\n    cascadeHooks: true"), name)
+        tags["/api/items/"].should eq(["Protected by Fastify onRequest hook"])
+        tags["/api/auth/login"].should be_empty
+        tags["/"].should be_empty
+      end
+    end
+
+    it "applies none when the autoload holding the hook does not enable autoHooks" do
+      verdicts.call(autoload.call("routes", "    options: {}"), "autohooks.ts")["/api/items/"].should be_empty
+      both = "#{autoload.call("plugins", "    autoHooks: true,\n    cascadeHooks: true")}\n#{autoload.call("routes", "    options: {}")}"
+      verdicts.call(both, "autohooks.ts")["/api/items/"].should be_empty
+    end
+  end
+
+  # A `startsWith` branch that refuses is no exemption.
+  it "keeps a Fastify hook guard whose startsWith branch refuses" do
+    dir = File.tempname("fastify_startswith_refuse")
+    Dir.mkdir_p(dir)
+    File.write("#{dir}/package.json", %({"name":"api","dependencies":{"fastify":"^5.0.0"}}))
+    File.write("#{dir}/app.js", <<-JS)
+      const fastify = require('fastify')()
+
+      fastify.register(async function (app) {
+        app.addHook('onRequest', async (request, reply) => {
+          if (request.url.startsWith('/admin')) {
+            return reply.code(401).send({ error: 'admin login required' })
+          }
+          await request.jwtVerify()
+        })
+        app.get('/admin/stats', async () => ({}))
+      })
+      JS
+    begin
+      CodeLocator.instance.register_path("#{dir}/app.js")
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      details = Details.new(PathInfo.new("#{dir}/app.js", 10))
+      details.technology = "js_fastify"
+      endpoint = Endpoint.new("/admin/stats", "GET", [] of Param, details)
+      JsMiscAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags.map(&.description).should eq(["Protected by Fastify onRequest hook"])
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  # nuxt-auth-utils: `requireUserSession(event)` answers 401 without a
+  # session; `getUserSession(event)` only reads one.
+  it "counts a Nuxt handler that requires the user session before anything else returns" do
+    dir = File.tempname("nuxt_user_session")
+    Dir.mkdir_p("#{dir}/server/api/items")
+    sources = {
+      "index.get.ts"  => "export default eventHandler(async (event) => {\n  const { user } = await requireUserSession(event)\n  return listItems(user.id)\n})\n",
+      "index.post.ts" => "export default defineEventHandler(async (event) => {\n  const body = await readBody(event)\n  // requireUserSession(event)\n  return createItem(body)\n})\n",
+      "mine.get.ts"   => "export default defineEventHandler(async (event) => {\n  if (getQuery(event).mine) {\n    await requireUserSession(event)\n  }\n  return listItems()\n})\n",
+      "peek.get.ts"   => "export default defineEventHandler(async (event) => {\n  const session = await getUserSession(event)\n  return listItems(session.user?.id)\n})\n",
+      "own.get.ts"    => "export default defineEventHandler(async (event) => {\n  if (getQuery(event).own)\n    await requireUserSession(event)\n  return listItems()\n})\n",
+      "id.get.ts"     => "export default defineEventHandler(async (event) => {\n  const id = event.context.params?.id\n  await requireUserSession(event)\n  return getItem(id)\n})\n",
+      "page.get.ts"   => "export default defineEventHandler(async (event) => {\n  const limit = Number(getQuery(event).limit) || 20\n  await requireUserSession(event)\n  return listItems(limit)\n})\n",
+      "obj.get.ts"    => "export default defineEventHandler({\n  handler: async (event) => {\n    await requireUserSession(event)\n    return listItems()\n  }\n})\n",
+      "soft.get.ts"   => "export default defineEventHandler(async (event) => {\n  const session = await requireUserSession(event).catch(() => null)\n  return listItems(session)\n})\n",
+      "lazy.get.ts"   => "export default defineEventHandler(async (event) => {\n  const check = () => requireUserSession(event)\n  return listItems()\n})\n",
+    }
+    begin
+      endpoints = sources.map do |name, source|
+        file = "#{dir}/server/api/items/#{name}"
+        File.write(file, source)
+        details = Details.new(PathInfo.new(file, 1))
+        details.technology = "js_nuxtjs"
+        Endpoint.new("/api/items/#{name}", "GET", [] of Param, details)
+      end
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      verdicts = JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url.split('/').last, ep.tags.map(&.description)} }
+      verdicts["index.get.ts"].should eq(["Protected by Nuxt requireUserSession(event)"])
+      verdicts["index.post.ts"].should be_empty
+      verdicts["mine.get.ts"].should be_empty
+      verdicts["peek.get.ts"].should be_empty
+      verdicts["own.get.ts"].should be_empty
+      %w[id.get.ts page.get.ts obj.get.ts].each { |name| verdicts[name].should eq(["Protected by Nuxt requireUserSession(event)"]) }
+      verdicts["soft.get.ts"].should be_empty
+      verdicts["lazy.get.ts"].should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
+  # `ctx.assert(value, err)` throws `err` when `value` is falsy; http-errors
+  # keeps the error's own 401/403 status.
+  it "counts a Koa ctx.assert on the caller with an authentication error as a refusal" do
+    dir = File.tempname("koa_assert_error")
+    Dir.mkdir_p("#{dir}/middleware")
+    File.write("#{dir}/middleware/auth-required.js", <<-JS)
+      const { AuthenticationError } = require("../lib/errors")
+
+      module.exports = function(ctx, next) {
+        ctx.assert(ctx.state.user, new AuthenticationError())
+        return next()
+      }
+      JS
+    File.write("#{dir}/middleware/found.js", <<-JS)
+      const { NotFoundError } = require("../lib/errors")
+
+      module.exports = function(ctx, next) {
+        ctx.assert(ctx.state.item, new NotFoundError())
+        return next()
+      }
+      JS
+    File.write("#{dir}/routes.js", <<-JS)
+      const Router = require("koa-router")
+      const router = new Router()
+      const auth = require("./middleware/auth-required")
+      const found = require("./middleware/found")
+
+      router.post("/items", auth, (ctx) => { ctx.body = {} })
+      router.get("/items/:id", found, (ctx) => { ctx.body = {} })
+      JS
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      endpoints = {6 => "/items", 7 => "/items/:id"}.map do |line, url|
+        details = Details.new(PathInfo.new("#{dir}/routes.js", line))
+        details.technology = "js_koa"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      verdicts = JsMiscAuthTagger.new(noir_options).perform(endpoints).to_h { |ep| {ep.url, ep.tags.map(&.description)} }
+      verdicts["/items"].should eq(["Protected by Koa auth middleware (ctx.assert(ctx.state.user, new AuthenticationError()))"])
+      verdicts["/items/:id"].should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   # koa_router_use_guard/src/app.ts: `admin.use(requireLogin)` before
   # `admin.get('/items')`; `scoped.use('/private', requireLogin)` between
   # `/before` and the `/private` and `/public` routes; a route that only

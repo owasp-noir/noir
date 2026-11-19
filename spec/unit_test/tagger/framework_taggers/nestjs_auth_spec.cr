@@ -155,6 +155,305 @@ describe "NestjsAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "tags tsoa @Middlewares that run an authentication middleware, method or class level" do
+    tmpdir = File.tempname("tsoa_middlewares")
+    Dir.mkdir_p(tmpdir)
+    items = File.join(tmpdir, "itemController.ts")
+    orders = File.join(tmpdir, "orderController.ts")
+    File.write(items, <<-TS)
+      @Route("items")
+      export class ItemController extends Controller {
+        @Middlewares([allowApiKeyAuthenticationIfPresent, isAuthenticated, unauthorisedInDemo])
+        @Get("/")
+        async list() {}
+
+        @Middlewares([unauthorisedInDemo])
+        @Post("/demo")
+        async demo() {}
+
+        @Middlewares([allowApiKeyAuthenticationIfPresent])
+        @Get("/download")
+        async download() {}
+      }
+      TS
+    File.write(orders, <<-TS)
+      @Route("orders")
+      @Middlewares(isAuthenticated)
+      export class OrderController extends Controller {
+        @Get("/")
+        async list() {}
+      }
+      TS
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      # `Details` is a struct: its technology is set before the endpoint copies it.
+      tsoa = ->(path : String, line : Int32) do
+        details = Details.new(PathInfo.new(path, line))
+        details.technology = "ts_tsoa"
+        details
+      end
+      endpoints = [4, 8, 12].map { |line| Endpoint.new("/items", "GET", [] of Param, tsoa.call(items, line)) }
+      order = Endpoint.new("/orders", "GET", [] of Param, tsoa.call(orders, 4))
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints + [order])
+
+      endpoints[0].tags.map(&.description).should eq(["Protected by tsoa @Middlewares(isAuthenticated)"])
+      endpoints[1].tags.should be_empty
+      endpoints[2].tags.should be_empty
+      order.tags.map(&.description).should eq(["Protected by tsoa @Middlewares(isAuthenticated) (class-level)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
+
+  it "applies forRoutes middleware to the controllers of a spread array" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_forroutes_spread")
+    controller = ->(name : String, path : String) { "@Controller('#{path}')\nexport class #{name} {\n  @Get()\n  list() {}\n}\n" }
+    files = {
+      "package.json"      => "{}",
+      "src/api.module.ts" => <<-TS,
+        const authenticatedControllers = [ItemsController, OrdersController];
+
+        @Module({ controllers: [...authenticatedControllers, PublicController] })
+        export class ApiModule implements NestModule {
+          configure(consumer: MiddlewareConsumer) {
+            consumer.apply(TokenMiddleware).forRoutes(...authenticatedControllers);
+          }
+        }
+        TS
+      "src/token.middleware.ts" => <<-TS,
+        @Injectable()
+        export class TokenMiddleware implements NestMiddleware {
+          use(req: Request, res: Response, next: NextFunction) {
+            if (!req.headers.auth) {
+              throw new UnauthorizedException();
+            }
+            next();
+          }
+        }
+        TS
+      "src/items.controller.ts"  => controller.call("ItemsController", "items"),
+      "src/orders.controller.ts" => controller.call("OrdersController", "orders"),
+      "src/public.controller.ts" => controller.call("PublicController", "public"),
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = %w[items orders public].map do |name|
+        details = Details.new(PathInfo.new(File.join(tmpdir, "src/#{name}.controller.ts"), 4))
+        details.technology = "ts_nestjs"
+        Endpoint.new("/#{name}", "GET", [] of Param, details)
+      end
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints)
+
+      endpoints.map(&.tags.map(&.description)).should eq([
+        ["Protected by NestJS TokenMiddleware middleware"],
+        ["Protected by NestJS TokenMiddleware middleware"],
+        [] of String,
+      ])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "judges a forRoutes middleware throwing a 403 exception subclass by what it reads" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_forroutes_403")
+    controller = ->(name : String, path : String) { "@Controller('#{path}')\nexport class #{name} {\n  @Get()\n  list() {}\n}\n" }
+    files = {
+      "package.json"      => "{}",
+      "src/api.module.ts" => <<-TS,
+        @Module({ controllers: [ItemsController, JobsController] })
+        export class ApiModule implements NestModule {
+          configure(consumer: MiddlewareConsumer) {
+            consumer.apply(TokenMiddleware).forRoutes(ItemsController);
+            consumer.apply(MaintenanceMiddleware).forRoutes(JobsController);
+          }
+        }
+        TS
+      "src/token.middleware.ts" => <<-TS,
+        @Injectable()
+        export class TokenMiddleware implements NestMiddleware {
+          use(req: Request, res: Response, next: NextFunction) {
+            if (!req.headers.auth) {
+              throw new HttpForbiddenException();
+            }
+            next();
+          }
+        }
+
+        @Injectable()
+        export class MaintenanceMiddleware implements NestMiddleware {
+          use(req: Request, res: Response, next: NextFunction) {
+            if (process.env.MAINTENANCE) {
+              throw new HttpForbiddenException();
+            }
+            next();
+          }
+        }
+        TS
+      "src/exceptions.ts" => <<-TS,
+        export class HttpForbiddenException extends HttpException {
+          constructor() {
+            super('Forbidden', 403);
+          }
+        }
+        TS
+      "src/items.controller.ts" => controller.call("ItemsController", "items"),
+      "src/jobs.controller.ts"  => controller.call("JobsController", "jobs"),
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = %w[items jobs].map do |name|
+        details = Details.new(PathInfo.new(File.join(tmpdir, "src/#{name}.controller.ts"), 4))
+        details.technology = "ts_nestjs"
+        Endpoint.new("/#{name}", "GET", [] of Param, details)
+      end
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints)
+
+      endpoints.map(&.tags.map(&.description)).should eq([
+        ["Protected by NestJS TokenMiddleware middleware"],
+        [] of String,
+      ])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  # Writes `files` under a temp dir, runs the tagger over one GET endpoint
+  # per {file, line, url, technology} probe, and returns each one's tag
+  # descriptions.
+  nest_tags = ->(files : Hash(String, String), probes : Array({String, Int32, String, String})) do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_probe")
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = probes.map do |rel, line, url, tech|
+        details = Details.new(PathInfo.new(File.join(tmpdir, rel), line))
+        details.technology = tech
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      NestjsAuthTagger.new(noir_options).perform(endpoints)
+      endpoints.map(&.tags.map(&.description))
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "follows forRoutes spreads through top-level arrays and stops on a cycle" do
+    files = {
+      "package.json"      => "{}",
+      "src/app.module.ts" => <<-TS,
+        function extraControllers() {
+          const base = [...controllers];
+          return base;
+        }
+
+        const base = [ItemsController];
+        const controllers = [...base];
+        const loopA = [...loopB];
+        const loopB = [...loopA];
+
+        @Module({ controllers })
+        export class AppModule implements NestModule {
+          configure(consumer: MiddlewareConsumer) {
+            consumer.apply(TokenMiddleware).forRoutes(...controllers, ...loopA);
+          }
+        }
+        TS
+      "src/token.middleware.ts" => "export class TokenMiddleware implements NestMiddleware {\n  use(req, res, next) {\n    if (!req.headers.authorization) throw new UnauthorizedException();\n    next();\n  }\n}\n",
+      "src/items.controller.ts" => "@Controller('items')\nexport class ItemsController {\n  @Get()\n  list() {}\n}\n",
+    }
+    nest_tags.call(files, [{"src/items.controller.ts", 4, "/items", "ts_nestjs"}]).should eq([["Protected by NestJS TokenMiddleware middleware"]])
+  end
+
+  it "does not count a 403 middleware that reads a tenant, an IP or a bypass header for a guard" do
+    middleware = ->(name : String, condition : String) do
+      "export class #{name} implements NestMiddleware {\n  use(req, res, next) {\n    if (#{condition}) {\n      throw new ForbiddenException();\n    }\n    next();\n  }\n}\n"
+    end
+    controller = ->(name : String, path : String) { "@Controller('#{path}')\nexport class #{name} {\n  @Get()\n  list() {}\n}\n" }
+    files = {
+      "package.json"      => "{}",
+      "src/app.module.ts" => <<-TS,
+        @Module({})
+        export class AppModule implements NestModule {
+          configure(consumer: MiddlewareConsumer) {
+            consumer.apply(FlagMiddleware).forRoutes(FlagController);
+            consumer.apply(IpMiddleware).forRoutes(IpController);
+            consumer.apply(MaintMiddleware).forRoutes(MaintController);
+            consumer.apply(TokenMiddleware).forRoutes(TokenController);
+          }
+        }
+        TS
+      "src/middlewares.ts" => [
+        middleware.call("FlagMiddleware", %(!flags.isEnabled(req.headers["x-tenant"]))),
+        middleware.call("IpMiddleware", %(!ALLOWED.includes(req.headers["x-forwarded-for"] || req.ip))),
+        middleware.call("MaintMiddleware", %(settings.maintenance && !req.headers["x-bypass"])),
+        middleware.call("TokenMiddleware", %(!req.headers.authorization)),
+      ].join('\n'),
+      "src/flag.controller.ts"  => controller.call("FlagController", "flag"),
+      "src/ip.controller.ts"    => controller.call("IpController", "ip"),
+      "src/maint.controller.ts" => controller.call("MaintController", "maint"),
+      "src/token.controller.ts" => controller.call("TokenController", "token"),
+    }
+    probes = %w[flag ip maint token].map { |name| {"src/#{name}.controller.ts", 4, "/#{name}", "ts_nestjs"} }
+    nest_tags.call(files, probes).should eq([[] of String, [] of String, [] of String, ["Protected by NestJS TokenMiddleware middleware"]])
+  end
+
+  it "reads @Middlewares only on tsoa routes" do
+    files = {
+      "package.json"            => "{}",
+      "src/items.controller.ts" => "@Controller('items')\nexport class ItemsController {\n  @Middlewares(isAuthenticated)\n  @Get('a')\n  a() {}\n}\n",
+    }
+    nest_tags.call(files, [{"src/items.controller.ts", 4, "/items/a", "ts_nestjs"}]).should eq([[] of String])
+  end
+
+  it "reads tsoa @Middlewares under @NoSecurity, which lifts only @Security" do
+    files = {
+      "package.json"           => "{}",
+      "src/nosecController.ts" => "@Route('nosec')\n@NoSecurity()\nexport class NosecController extends Controller {\n  @Middlewares(isAuthenticated)\n  @Get('m')\n  public async m() {}\n}\n",
+    }
+    nest_tags.call(files, [{"src/nosecController.ts", 5, "/nosec/m", "ts_tsoa"}]).should eq([["Protected by tsoa @Middlewares(isAuthenticated)"]])
+  end
+
+  it "reads a tsoa authentication middleware factory called with no options" do
+    files = {
+      "package.json"          => "{}",
+      "src/itemController.ts" => "@Route('items')\nexport class ItemController extends Controller {\n  @Middlewares([requireAuth(), authLimiter])\n  @Get('f')\n  public async f() {}\n}\n",
+    }
+    nest_tags.call(files, [{"src/itemController.ts", 4, "/items/f", "ts_tsoa"}]).should eq([["Protected by tsoa @Middlewares(requireAuth)"]])
+  end
+
   it "does not leak a decorator past a one-line handler body" do
     tmpdir = File.tempname("tsoa_one_line")
     Dir.mkdir_p(tmpdir)

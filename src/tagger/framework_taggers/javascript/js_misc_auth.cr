@@ -38,18 +38,28 @@ class JsMiscAuthTagger < FrameworkTagger
   ]
 
   # `reply.code(401)` / `reply.status(401)` inside a hook or preHandler.
-  FASTIFY_REPLY_401 = /reply\s*\.\s*(?:code|status)\s*\(\s*401\b|\.statusCode\s*=\s*401\b/
+  # `reply.unauthorized()` is @fastify/sensible's 401.
+  FASTIFY_REPLY_401 = /reply\s*\.\s*(?:code|status)\s*\(\s*401\b|\.statusCode\s*=\s*401\b|\breply\s*\.\s*unauthorized\s*\(/
   # `if (!req.auth) throw new UnauthorizedError(...)`: Fastify answers a hook's
   # thrown error through the error handler, a 401 for these.
   FASTIFY_THROW_REFUSAL = /\bthrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Unauthenticated)\w*\s*\(/
   # `fastify.post<{ Body: T }>(`: TypeScript type arguments may sit before the `(`.
   FASTIFY_ROUTE  = /\.\s*(get|post|put|patch|delete|del|head|options|all|route)\s*(?:<[\s\S]*?>\s*)?\(/
   FASTIFY_EXEMPT = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*===?\s*['"]([^'"]+)['"]\s*\)\s*return\b/
-  HOOK_KINDS     = %w[onRequest preHandler]
+  # `if (request.url.startsWith('/api/auth/login')) { return }`: a bare
+  # `return` (or `return done()` / `next()`) passes the caller on; a return
+  # that replies refuses it.
+  FASTIFY_EXEMPT_PREFIX = /if\s*\(\s*(?:request|req)\s*\.\s*(?:url|routerPath)\s*\.\s*startsWith\s*\(\s*['"]([^'"]+)['"]\s*\)\s*\)\s*\{?\s*return(?:\s*[;}]|[ \t]*(?:\n|\z)|\s+(?:done|next)\s*\(\s*\))/
+  HOOK_KINDS            = %w[onRequest preHandler]
+  # @fastify/autoload's default `autoHooksPattern`.
+  AUTOHOOKS_FILE = /\A[_.]?auto_?hooks\.(?:[cm]?js|[cm]?ts)\z/i
 
   # `exempt_keys`: route config keys whose routes the hook lets through
-  # (`if (request.routeOptions.config.public) return`).
-  record FastifyHook, file : String, start_line : Int32, end_line : Int32, kind : String, exempt : Array(String), exempt_keys : Array(String)
+  # (`if (request.routeOptions.config.public) return`). `folder`: the
+  # directory an autohooks hook covers besides its own file, and whether
+  # it cascades to subfolders.
+  record FastifyHook, file : String, start_line : Int32, end_line : Int32, kind : String, exempt : Array(String), exempt_keys : Array(String),
+    exempt_prefixes : Array(String) = [] of String, folder : {String, Bool}? = nil
 
   # `request.jwtVerify()` (@fastify/jwt) throws a 401 for a missing or bad
   # token; a `catch` that neither replies nor rethrows lets the caller in.
@@ -173,6 +183,7 @@ class JsMiscAuthTagger < FrameworkTagger
                       fastify_handler_check(path_info.path, line_idx, endpoint.method, endpoint.url)
       end
       description ||= koa_guard(path_info.path, line_idx) if endpoint.details.technology == "js_koa"
+      description ||= nuxt_session_guard(path_info.path) if endpoint.details.technology == "js_nuxtjs"
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "js_misc_auth"))
         return
@@ -180,12 +191,53 @@ class JsMiscAuthTagger < FrameworkTagger
     end
   end
 
+  NUXT_HANDLER         = /\b(?:defineEventHandler|eventHandler|defineCachedEventHandler)\s*\(/
+  NUXT_REQUIRE_SESSION = /(?<![\w$.])requireUserSession\s*\(\s*event\b/
+  # `defineEventHandler({ handler: async (event) => { … } })`: the body's `{`.
+  NUXT_OBJECT_HANDLER = /\A\s*\{[\s\S]*?\bhandler\s*(?::\s*(?:async\s+)?(?:function\b[^(]*)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*(?:=>\s*)?|\([^()]*\)\s*)\{/
+  # What makes the call's own statement conditional, or not run at all:
+  # a branch, a ternary, a short-circuit, or a function it sits in.
+  NUXT_CONDITIONAL = /\b(?:if|else|while|for|case|function)\b|\?(?!\.)|&&|\|\||=>/
+  # A previous line the call's line continues: a brace-less branch head or
+  # a trailing operator.
+  NUXT_CONTINUED = /(?:\b(?:if|while|for)\s*\(.*\)|\belse|&&|\|\||\?\??|:)\s*\z/
+
+  # A Nuxt server handler that calls nuxt-auth-utils' `requireUserSession`
+  # (401 without a session) in its own body, not under an `if`, inside a
+  # nested function, or with its rejection caught (`.catch(() => null)`).
+  private def nuxt_session_guard(path : String) : String?
+    raw = read_file(path) || return
+    return unless raw.includes?("requireUserSession")
+    code = Noir::JSLiteralScanner.blank_literals(Noir::CComments.strip(raw, quotes: %("'`)))
+    head = code.match(NUXT_HANDLER) || return
+    open = if object = code[head.end(0)..].match(NUXT_OBJECT_HANDLER)
+             head.end(0) + object.end(0) - 1
+           else
+             code.index('{', head.end(0)) || return
+           end
+    close = Noir::JSLiteralScanner.find_matching_brace(code, open) || return
+    body = code[open + 1...close]
+    call = body.match(NUXT_REQUIRE_SESSION) || return
+    before = body[0...call.begin(0)]
+    return unless before.count('{') == before.count('}') && before.count('(') == before.count(')')
+    # An earlier `return` can answer first.
+    return if before.matches?(/\breturn\b/)
+    return if before[((before.rindex(/[;{}\n]/) || -1) + 1)..].matches?(NUXT_CONDITIONAL)
+    previous_line = before.rpartition('\n')[0].rpartition('\n')[2]
+    return if previous_line.rstrip.matches?(NUXT_CONTINUED)
+    paren = body.index('(', call.begin(0)) || return
+    call_close = Noir::JSLiteralScanner.find_matching_paren(body, paren) || return
+    return if body[call_close + 1..].matches?(/\A\s*\.\s*catch\b/)
+    "Nuxt requireUserSession(event)"
+  end
+
   # What a Koa middleware's definition does to refuse a caller: throw
-  # (`ctx.throw(401)`, `throw AuthenticationError(…)`), assert, or set 401/403.
+  # (`ctx.throw(401)`, `throw AuthenticationError(…)`), assert (with a 401/403
+  # or an authentication error, which http-errors throws as is), or set 401/403.
   # An error built with a 401/403 status counts when it is thrown or handed
   # to an assertion (logto's `throw new RequestError({ code, status: 401 })`,
   # `assertThat(ok, new RequestError({ status: 403 }))`).
-  KOA_REFUSAL    = /\bctx\.throw\s*\(\s*40[13]\b|\bctx\.status\s*=\s*40[13]\b|\bctx\.assert\s*\([^;]*?,\s*40[13]\b|\bthrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Forbidden|Authentication|Authorization)\w*\s*\(|\b(?:throw|assert\w*\s*\((?:[^;()]|\([^()]*\))*?,)\s*new\s+\w*Error\s*\(\s*\{(?:[^{}]|\{[^{}]*\})*?\bstatus\s*:\s*40[13]\b/
+  KOA_REFUSAL    = /\bctx\.throw\s*\(\s*40[13]\b|\bctx\.status\s*=\s*40[13]\b|\bctx\.assert\s*\([^;]*?,\s*40[13]\b|\bctx\.assert\s*\([^;]*?,\s*new\s+\w*(?:Unauthori[sz]ed|Forbidden|Authentication|Authorization)\w*\s*\(\)?|\bthrow\s+(?:new\s+)?\w*(?:Unauthori[sz]ed|Forbidden|Authentication|Authorization)\w*\s*\(|\b(?:throw|assert\w*\s*\((?:[^;()]|\([^()]*\))*?,)\s*new\s+\w*Error\s*\(\s*\{(?:[^{}]|\{[^{}]*\})*?\bstatus\s*:\s*40[13]\b/
   KOA_ROUTE_CALL = /\.\s*(?:get|post|put|patch|delete|del|all|head|options)\s*\(/
   # `auth`, `auth()`, `mw.requireUser({ … })`: the reference and its arguments.
   KOA_MIDDLEWARE_CALL = /\A((?:[A-Za-z_$][\w$]*\s*\.\s*)?[A-Za-z_$][\w$]*)\s*(?:\((.*)\))?\z/m
@@ -674,11 +726,44 @@ class JsMiscAuthTagger < FrameworkTagger
           hook_line = text[0...m.begin(0)].count('\n') + 1
           range = fastify_innermost(registers, hook_line) || {1, text.count('\n') + 1}
           exempt = callback.scan(FASTIFY_EXEMPT).map(&.[1])
-          rules << FastifyHook.new(Noir::PathScope.expand(file), range[0], range[1], m[1], exempt, exempt_keys)
+          prefixes = callback.scan(FASTIFY_EXEMPT_PREFIX).map(&.[1])
+          expanded = Noir::PathScope.expand(file)
+          folder = autohooks_folder(expanded) if File.basename(file).matches?(AUTOHOOKS_FILE) && !fastify_innermost(registers, hook_line)
+          rules << FastifyHook.new(expanded, range[0], range[1], m[1], exempt, exempt_keys, prefixes, folder)
         end
       end
     end
     rules
+  end
+
+  AUTOLOAD_AUTOHOOKS = /\bautoHooks\s*:\s*true\b/
+
+  # The folder an `autohooks` file at `file` covers, and whether
+  # `cascadeHooks: true` carries it into subfolders: set when a
+  # `register(autoload, { dir, autoHooks: true })` of its package loads a
+  # `dir` that holds the file. `dir` is read as its string parts joined
+  # onto the registering file's folder (`path.join(__dirname, 'routes')`).
+  private def autohooks_folder(file : String) : {String, Bool}?
+    root = package_root(file) || return
+    hooks_dir = File.dirname(file)
+    js_sources.each do |source|
+      expanded = Noir::PathScope.expand(source)
+      next unless expanded.starts_with?("#{root}/")
+      raw = read_file(source) || next
+      next unless raw.matches?(AUTOLOAD_AUTOHOOKS)
+      code = Noir::CComments.strip(raw, quotes: %("'`))
+      code.scan(/\.\s*register\s*\(/) do |m|
+        close = Noir::JSLiteralScanner.find_matching_paren(code, m.end(0) - 1) || next
+        options = Noir::TopLevelSplit.split(code[m.end(0)...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)[1]? || next
+        next unless Noir::JSObjectLiteral.property(options, "autoHooks") == "true"
+        parts = (Noir::JSObjectLiteral.property(options, "dir") || next).scan(/['"`]([^'"`]+)['"`]/).map(&.[1])
+        next if parts.empty?
+        folder = File.expand_path(File.join(parts), File.dirname(expanded))
+        next unless hooks_dir == folder || hooks_dir.starts_with?("#{folder}/")
+        return {hooks_dir, Noir::JSObjectLiteral.property(options, "cascadeHooks") == "true"}
+      end
+    end
+    nil
   end
 
   # Every `decorate('name', fn)` in the scan, keyed by its package: whether
@@ -900,8 +985,10 @@ class JsMiscAuthTagger < FrameworkTagger
   private def fastify_plugin_hook(path : String, line : Int32, method : String, url : String) : String?
     expanded = Noir::PathScope.expand(path)
     @fastify_hooks.each do |hook|
-      next unless hook.file == expanded && hook.start_line <= line && line <= hook.end_line
+      in_file = hook.file == expanded && hook.start_line <= line && line <= hook.end_line
+      next unless in_file || hook.folder.try { |dir, cascade| File.dirname(expanded) == dir || (cascade && expanded.starts_with?("#{dir}/")) }
       next if hook.exempt.any? { |exempt| exempt == url || exempt.rstrip('/') == url.rstrip('/') }
+      next if hook.exempt_prefixes.any? { |prefix| url.starts_with?(prefix) }
       next if hook.exempt_keys.any? { |key| fastify_route_config(path, line - 1, method, url, key) }
       return "Fastify #{hook.kind} hook"
     end
