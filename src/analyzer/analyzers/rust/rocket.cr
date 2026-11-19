@@ -410,7 +410,9 @@ module Analyzer::Rust
       Noir::TreeSitter.each_named_child(attr) do |child|
         case Noir::TreeSitter.node_type(child)
         when "identifier", "scoped_identifier"
-          attr_name = Noir::TreeSitter.node_text(child, source).downcase
+          # `#[get]` or `#[rocket::get]`; another crate's `#[x::get]` is not Rocket's.
+          segs = Noir::TreeSitter.node_text(child, source).downcase.lchop("::").split("::")
+          attr_name = segs[-1] if segs.size == 1 || (segs.size == 2 && segs[0] == "rocket")
           break
         end
       end
