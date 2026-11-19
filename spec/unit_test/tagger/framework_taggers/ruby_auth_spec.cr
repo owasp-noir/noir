@@ -1420,6 +1420,11 @@ describe "RubyAuthTagger (Grape route scope)" do
 
       # Mounted from a guarded and an open API: reachable without the guard.
       items.tags.should be_empty
+      admin_users.tags.map(&.name).should eq(["auth"])
+      # `mount Users` inside `Open::Root` is `Open::Users`, not `Admin::Users`.
+      open_users.tags.should be_empty
+      # A class built on an app base class is mounted all the same.
+      orders.tags.map(&.name).should eq(["auth"])
     ensure
       FileUtils.rm_rf(dir)
       CodeLocator.instance.clear_all

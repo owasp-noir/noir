@@ -1503,12 +1503,11 @@ class RubyAuthTagger < FrameworkTagger
   # Grape: a mounted API inherits the `before` filters of the API that
   # mounts it, wherever they sit around the `mount` (Grape README). A class
   # mounted from several APIs is guarded only when each of them guards it.
-  # ponytail: filters above the `mount` line only, and a mount is matched to
-  # the route's class by constant name, not by load path.
+  # ponytail: filters above the `mount` line only.
   private def mounted_guard(path : String, lines : Array(String), line_idx : Int32, url : String, depth : Int32) : String?
     return if depth > 3
     return unless name = grape_class_name(path, lines, line_idx)
-    sites = grape_mounts.select { |_, _, const| name == const || name.ends_with?("::#{const}") || const.ends_with?("::#{name}") }
+    sites = grape_mounts.select { |_, _, target| target == name }
     guards = sites.map do |mount_path, mount_idx, _|
       next unless mount_lines = read_file_lines(mount_path)
       scope = route_scope(mount_path, mount_lines, mount_idx, url)
@@ -1522,32 +1521,74 @@ class RubyAuthTagger < FrameworkTagger
 
   MOUNTED = " (inherited from the API that mounts it)"
 
-  # The full name of the `Grape::API` class around `line_idx`, from the
-  # `module` / `class` headers enclosing it.
+  # The full name of the class around `line_idx` (a `Grape::API` or an app
+  # base class built on one).
   private def grape_class_name(path : String, lines : Array(String), line_idx : Int32) : String?
+    innermost = lexical_nesting(path, lines, line_idx).first?
+    innermost[0] if innermost && innermost[1]
+  end
+
+  CLASS_HEADER = /\A\s*class\s+((?:::)?[A-Z][\w:]*)/
+
+  # The full names of the `module` / `class` headers around `idx`, innermost
+  # first, each with whether it is a class: Ruby's lexical scope there.
+  private def lexical_nesting(path : String, lines : Array(String), idx : Int32) : Array({String, Bool})
     index = scope_lines(path, lines)
-    names = [] of String
-    idx = line_idx
+    headers = [] of {String, Bool}
     while (idx = index.prev_shallower[idx]) >= 0
-      next unless m = index.stripped[idx].match(/\A(class|module)\s+((?:::)?[A-Z][\w:]*)(\s*<\s*(?:::)?Grape::API\b)?/)
-      return if names.empty? && !(m[1] == "class" && m[3]?)
-      names.unshift(m[2].lchop("::"))
+      if m = index.stripped[idx].match(/\A(class|module)\s+((?:::)?[A-Z][\w:]*)/)
+        headers.unshift({m[2], m[1] == "class"})
+      end
     end
-    names.join("::") unless names.empty?
+    nesting = [] of {String, Bool}
+    headers.each do |name, klass|
+      outer = nesting.last?
+      full = name.starts_with?("::") || outer.nil? ? name.lchop("::") : "#{outer[0]}::#{name}"
+      nesting << {full, klass}
+    end
+    nesting.reverse
   end
 
   @grape_mounts : Array({String, Int32, String})? = nil
 
-  # Every `mount Some::Api` in the scan: its file, row and constant.
+  # Every `mount Some::Api` in the scan: its file, row and the class its
+  # constant names, resolved the way Ruby does from the mount's lexical
+  # scope (`mount Users` in `Admin::Root` is `Admin::Root::Users`, else
+  # `Admin::Users`, else `Users`). A mount of a class the scan does not
+  # define is dropped.
   private def grape_mounts : Array({String, Int32, String})
-    @grape_mounts ||= collect_files_by_extension(".rb").flat_map do |file|
-      found = [] of {String, Int32, String}
-      read_file_lines(file).try &.each_with_index do |line, row|
-        m = line.match(/\A\s*mount\s+\(?((?:::)?[A-Z][\w:]*)/)
-        found << {file, row, m[1].lchop("::")} if m
+    @grape_mounts ||= begin
+      class_rows = Hash(String, Array({String, Int32})).new
+      mounts = [] of {String, Int32, String}
+      collect_files_by_extension(".rb").each do |file|
+        read_file_lines(file).try &.each_with_index do |line, row|
+          if m = line.match(CLASS_HEADER)
+            (class_rows[m[1].split("::").last] ||= [] of {String, Int32}) << {file, row}
+          elsif m = line.match(/\A\s*mount\s+\(?((?:::)?[A-Z][\w:]*)/)
+            mounts << {file, row, m[1]}
+          end
+        end
       end
-      found
+      defined = ->(candidate : String) do
+        (class_rows[candidate.split("::").last]? || [] of {String, Int32}).any? do |file, row|
+          read_file_lines(file).try { |lines| defined_class_name(file, lines, row) == candidate } || false
+        end
+      end
+      mounts.compact_map do |file, row, const|
+        next unless lines = read_file_lines(file)
+        name = const.lchop("::")
+        scopes = const.starts_with?("::") ? [] of String : lexical_nesting(file, lines, row).map(&.[0])
+        (scopes.map { |scope| "#{scope}::#{name}" } + [name]).find { |candidate| defined.call(candidate) }.try { |target| {file, row, target} }
+      end
     end
+  end
+
+  # The full name of the class the `class` header at `row` defines.
+  private def defined_class_name(path : String, lines : Array(String), row : Int32) : String?
+    return unless m = lines[row].match(CLASS_HEADER)
+    return m[1].lchop("::") if m[1].starts_with?("::")
+    outer = lexical_nesting(path, lines, row).first?
+    outer ? "#{outer[0]}::#{m[1]}" : m[1]
   end
 
   # Devise's routes helpers: `authenticate :user do` runs
