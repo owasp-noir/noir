@@ -1,6 +1,8 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../utils/js_literal_scanner"
+require "../../../utils/top_level_split"
+require "../../../miniparsers/js_route_extractor"
 require "../prefix_scope"
 
 @[Noir::TaggerFor(key: "hono_auth", name: "Hono Auth Tagger", desc: "Identifies Hono authentication patterns (bearerAuth, jwt, basicAuth, custom middleware)", order: 250)]
@@ -66,14 +68,14 @@ class HonoAuthTagger < FrameworkTagger
           # and the app-wide app.use('*', …)
           if stripped =~ /(?:app|router|hono)\.use\s*\(\s*['"]([^'"]+)['"]\s*,/
             prefix = $1
-            if has_auth_middleware_in_line?(stripped)
+            if has_auth_middleware_in_line?(use_middleware(stripped))
               @use_auth_scopes << {prefix: prefix, description: "Protected by Hono app.use() auth on #{prefix}"}
             end
           end
 
           # Global app.use(auth)
           if stripped =~ /(?:app|router|hono)\.use\s*\(\s*(?![\s'"])/
-            if has_auth_middleware_in_line?(stripped)
+            if has_auth_middleware_in_line?(use_middleware(stripped))
               @use_auth_scopes << {prefix: "/", description: "Protected by Hono global auth middleware"}
             end
           end
@@ -92,6 +94,16 @@ class HonoAuthTagger < FrameworkTagger
     head = text.match(USE_CALL) || return lines[idx].strip
     close = Noir::JSLiteralScanner.find_matching_paren(text, head.end(0) - 1) || return lines[idx].strip
     text[head.begin(0)..close]
+  end
+
+  # The middleware arguments of a `use(...)` call, without the inline
+  # functions: their body is what they do, not a middleware name
+  # (`async (c, next) => { if (token) c.set('user', await verifyToken(token)) … }`).
+  private def use_middleware(statement : String) : String
+    head = statement.match(USE_CALL) || return statement
+    close = Noir::JSLiteralScanner.find_matching_paren(statement, head.end(0) - 1) || return statement
+    args = Noir::TopLevelSplit.split(statement[head.end(0)...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+    args.reject(&.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE)).join(", ")
   end
 
   private def has_auth_middleware_in_line?(line : String) : Bool
