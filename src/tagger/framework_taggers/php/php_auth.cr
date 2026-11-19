@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../miniparsers/php_block_parser"
 
 @[Noir::TaggerFor(key: "php_auth", name: "PHP Auth Tagger", desc: "Identifies PHP authentication patterns (Laravel, Symfony, CakePHP)", order: 140)]
 class PhpAuthTagger < FrameworkTagger
@@ -171,6 +172,15 @@ class PhpAuthTagger < FrameworkTagger
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
+      if endpoint.details.technology == "php_cakephp" && (description = cakephp_guard(path_info.path, lines, line_idx))
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
+        return
+      end
+      if endpoint.details.technology == "php_yii" && (description = yii_guard(path_info.path, lines, line_idx))
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
+        return
+      end
+
       # A route that calls `->withoutMiddleware('auth')` is outside the auth
       # middleware its group (or the group-opening line above it) applies.
       unless check_patterns_near_line(lines, line_idx, LARAVEL_WITHOUT_AUTH, 10)
@@ -209,6 +219,181 @@ class PhpAuthTagger < FrameworkTagger
         return
       end
     end
+  end
+
+  # CakePHP's AuthenticationComponent requires an identity on every action of
+  # a controller that loads it (directly or through a base class such as
+  # `AppController`), except the actions passed to `allowUnauthenticated` /
+  # `addUnauthenticatedActions`. CakePHP routes name their target in an
+  # options array (`['prefix' => 'Admin', 'controller' => 'Users', 'action'
+  # => 'view']`) or a `'Admin/Users::view'` string.
+  CAKE_AUTHN_COMPONENT = /->\s*loadComponent\s*\(\s*['"](?:Authentication\.)?Authentication['"]/
+  # An exempt list that is not a literal array cannot be read: the
+  # controller is then left untagged.
+  CAKE_UNAUTHENTICATED = /->\s*(?:allowUnauthenticated|addUnauthenticatedActions)\s*\(\s*(\[[^\]]*\])?/
+  # `loadComponent(..., ['requireIdentity' => false])` or
+  # `setConfig('requireIdentity', false)`: no action requires an identity.
+  CAKE_NO_IDENTITY   = /['"]requireIdentity['"]\s*(?:=>|,)\s*false\b/
+  CAKE_TARGET_STRING = /['"](?:\w+(?:\/\w+)*\.)?((?:\w+\/)*)(\w+)::(\w+)['"]/
+  CAKE_EXTENDS       = /\bclass\s+\w+\s+extends\s+\\?(?:\w+\\)*(\w+)/
+  CAKE_PREFIX_SCOPE  = /->\s*prefix\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:\[[^\]]*\]\s*,\s*)?(?:static\s+)?\z/
+
+  # ponytail: the unauthenticated lists of the whole class chain are unioned,
+  # though `allowUnauthenticated` replaces the list; a base class can only
+  # widen what is exempt, never narrow it.
+  private def cakephp_guard(path : String, lines : Array(String), line_idx : Int32) : String?
+    statement = lines[line_idx..statement_end(lines, line_idx, 5)].join(' ')
+    if target = statement.match(CAKE_TARGET_STRING)
+      prefix, controller, action = target[1].rchop('/'), target[2], target[3]
+    else
+      controller = statement.match(/['"]controller['"]\s*=>\s*['"]([\w\/]+)['"]/).try(&.[1]) || return
+      action = statement.match(/['"]action['"]\s*=>\s*['"](\w+)['"]/).try(&.[1])
+      prefix = statement.match(/['"]prefix['"]\s*=>\s*['"]([\w\/]+)['"]/).try(&.[1])
+    end
+    prefix = cakephp_scope_prefix(path, lines, line_idx) if prefix.nil? || prefix.empty?
+    # `config/routes.php` of the app or of a plugin: its `src/Controller`.
+    root = File.dirname(File.dirname(path))
+    file = File.join([root, "src", "Controller", prefix, "#{controller}Controller.php"].reject(&.empty?))
+    exempt = Set(String).new
+    loaded = false
+    5.times do
+      raw = read_file(file) || break
+      # Comments dropped: a commented-out `loadComponent` loads nothing.
+      content = Noir::PhpLexer.new(raw).without_comments(keep_docblocks: false)
+      return if content.matches?(CAKE_NO_IDENTITY)
+      loaded ||= content.matches?(CAKE_AUTHN_COMPONENT)
+      content.scan(CAKE_UNAUTHENTICATED) do |call|
+        list = call[1]? || return
+        list.scan(/['"](\w+)['"]/) { |name| exempt << name[1] }
+      end
+      parent = content.match(CAKE_EXTENDS).try(&.[1]) || break
+      file = cakephp_class_file(file, root, parent) || break
+    end
+    return unless loaded
+    return if action ? exempt.includes?(action) : !exempt.empty?
+    "CakePHP AuthenticationComponent (identity required)"
+  end
+
+  # The controller namespace of the `$routes->prefix('Admin', function ...)`
+  # scopes enclosing the route, outermost first (`admin` reads as `Admin`).
+  private def cakephp_scope_prefix(path : String, lines : Array(String), line_idx : Int32) : String
+    content = read_file(path) || return ""
+    parser = @php_parsers[path] ||= Noir::PhpBlockParser.new(content)
+    offset = lines[0, line_idx].sum { |line| line.size + 1 }
+    names = parser.path(offset).select(&.kind.closure?).compact_map do |closure|
+      content[[closure.start - 200, 0].max...closure.start].match(CAKE_PREFIX_SCOPE).try(&.[1])
+    end
+    names.join('/', &.lchop('/').split('/').join('/', &.split(/[_-]/).join(&.capitalize)))
+  end
+
+  # The base class's file: beside the controller, else the nearest
+  # `src/Controller/<Name>.php` up from it (a plugin's controllers extend the
+  # app's `AppController`). Never the file it is asked from.
+  private def cakephp_class_file(from : String, root : String, name : String) : String?
+    sibling = File.join(File.dirname(from), "#{name}.php")
+    return sibling if sibling != from && read_file(sibling)
+    dir = root
+    4.times do
+      candidate = File.join(dir, "src", "Controller", "#{name}.php")
+      return candidate if candidate != from && read_file(candidate)
+      parent = File.dirname(dir)
+      break if parent == dir
+      dir = parent
+    end
+    nil
+  end
+
+  # Yii's AccessControl filter, declared in the controller's `behaviors()`:
+  # it covers the actions its `only` / `except` select, and a guest gets
+  # what the first rule matching a guest says (a rule with no `roles`, or
+  # with `'?'`); no matching rule denies. `'@'` and named roles never match
+  # a guest.
+  YII_ACCESS_CONTROL = /\bAccessControl::(?:class\b|className\s*\()/
+  YII_RULE_UNKNOWN   = Set{"verbs", "ips", "matchCallback", "controllers", "permissions"}
+
+  @php_parsers = Hash(String, Noir::PhpBlockParser).new
+
+  private def yii_guard(path : String, lines : Array(String), line_idx : Int32) : String?
+    name = lines[line_idx].match(/\bfunction\s+action([A-Z]\w*)\s*\(/).try(&.[1]) || return
+    action = name.gsub(/(?<=[a-z0-9])[A-Z]/) { |upper| "-#{upper}" }.downcase
+    content = read_file(path) || return
+    return unless content.includes?("AccessControl")
+    parser = @php_parsers[path] ||= Noir::PhpBlockParser.new(content)
+    lexer = parser.lexer
+    content.scan(YII_ACCESS_CONTROL) do |match|
+      pos = match.begin(0)
+      next unless lexer.in_code?(pos)
+      open = enclosing_bracket(lexer.masked, pos) || next
+      filter = yii_entries(parser, open)
+      next unless yii_selects?(lexer, filter, action)
+      # Rules the scan cannot read (`$this->accessRules()`) decide nothing it can see.
+      rules = if rules_range = filter["rules"]?
+                parser.array_entries(array_open(lexer, rules_range) || return) || return
+              else
+                [] of Noir::PhpBlockParser::ArrayEntry
+              end
+      rules.each do |entry|
+        rule = yii_entries(parser, array_open(lexer, entry.value) || return)
+        actions = rule["actions"]?.try { |range| yii_strings(lexer, range) }
+        next if actions && !actions.includes?(action)
+        roles = rule["roles"]?.try { |range| yii_strings(lexer, range) }
+        next if roles && !roles.empty? && !roles.includes?("?")
+        return if rule.keys.any? { |key| YII_RULE_UNKNOWN.includes?(key) }
+        allow = rule["allow"]?.try { |range| lexer.source(range).strip.downcase == "true" }
+        return if allow
+        break
+      end
+      return "Yii AccessControl (no rule admits a guest)"
+    end
+    nil
+  end
+
+  # The `[` (or `array(`'s `(`) of the innermost array literal holding `pos`.
+  private def enclosing_bracket(masked : Array(Char), pos : Int32) : Int32?
+    depth = 0
+    (pos - 1).downto(0) do |i|
+      case masked[i]
+      when ']', ')' then depth += 1
+      when '['
+        return i if depth == 0
+        depth -= 1
+      when '('
+        return i if depth == 0 && masked[[i - 5, 0].max...i].join.rstrip.downcase.ends_with?("array")
+        depth -= 1
+      end
+      return if depth < 0
+    end
+    nil
+  end
+
+  # Where the array literal spanning `range` opens: its `[`, or the `(` of
+  # `array(`. Nil for anything else (a call, a variable).
+  private def array_open(lexer : Noir::PhpLexer, range : Range(Int32, Int32)) : Int32?
+    text = lexer.source(range)
+    return range.begin if text.starts_with?('[')
+    text.match(/\Aarray\s*\(/i).try { |m| range.begin + m.end(0) - 1 }
+  end
+
+  # An array literal's string-keyed entries, key => value range.
+  private def yii_entries(parser : Noir::PhpBlockParser, open : Int32) : Hash(String, Range(Int32, Int32))
+    entries = Hash(String, Range(Int32, Int32)).new
+    parser.array_entries(open).try &.each do |entry|
+      key = entry.key || next
+      entries[parser.lexer.source(key).strip.strip("'\"")] = entry.value
+    end
+    entries
+  end
+
+  private def yii_strings(lexer : Noir::PhpLexer, range : Range(Int32, Int32)) : Array(String)
+    lexer.source(range).scan(/['"]([^'"]*)['"]/).map(&.[1])
+  end
+
+  # `only` / `except` patterns, with the `*` wildcard Yii accepts since 2.0.9.
+  private def yii_selects?(lexer : Noir::PhpLexer, filter : Hash(String, Range(Int32, Int32)), action : String) : Bool
+    only = filter["only"]?.try { |range| yii_strings(lexer, range) }
+    except = filter["except"]?.try { |range| yii_strings(lexer, range) } || [] of String
+    hit = ->(patterns : Array(String)) { patterns.any? { |pattern| action.matches?(/\A#{Regex.escape(pattern).gsub("\\*", ".*")}\z/) } }
+    (only.nil? || hit.call(only)) && !hit.call(except)
   end
 
   private def check_patterns_near_line(lines : Array(String), line_idx : Int32,

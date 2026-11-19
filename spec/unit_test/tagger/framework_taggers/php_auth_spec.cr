@@ -346,4 +346,368 @@ describe "PhpAuthTagger (expanded targets)" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "requires identity on CakePHP actions once AuthenticationComponent is loaded, except the unauthenticated ones" do
+    tmpdir = File.tempname("php_cake_authn")
+    controllers = File.join(tmpdir, "src", "Controller")
+    Dir.mkdir_p(File.join(controllers, "Admin"))
+    Dir.mkdir_p(File.join(tmpdir, "config"))
+    routes = File.join(tmpdir, "config", "routes.php")
+    File.write(routes, <<-'PHP')
+      <?php
+      use Cake\Routing\RouteBuilder;
+      return function (RouteBuilder $routes): void {
+          $routes->scope('/', function (RouteBuilder $builder): void {
+              $builder->connect('/login', ['controller' => 'Users', 'action' => 'login']);
+              $builder->connect('/articles', ['controller' => 'Articles', 'action' => 'index']);
+              $builder->connect('/articles/add', ['controller' => 'Articles', 'action' => 'add']);
+              $builder->connect('/articles/{id}', 'Articles::view');
+              $builder->connect('/admin/stats', ['prefix' => 'Admin', 'controller' => 'Stats', 'action' => 'index']);
+              $builder->connect('/health', ['controller' => 'Health', 'action' => 'index']);
+          });
+      };
+      PHP
+    File.write(File.join(controllers, "AppController.php"), <<-'PHP')
+      <?php
+      namespace App\Controller;
+      use Cake\Controller\Controller;
+      class AppController extends Controller
+      {
+          public function initialize(): void
+          {
+              parent::initialize();
+              $this->loadComponent('Authentication.Authentication');
+          }
+      }
+      PHP
+    File.write(File.join(controllers, "UsersController.php"), <<-'PHP')
+      <?php
+      namespace App\Controller;
+      class UsersController extends AppController
+      {
+          public function beforeFilter(\Cake\Event\EventInterface $event)
+          {
+              parent::beforeFilter($event);
+              $this->Authentication->addUnauthenticatedActions(['login', 'add']);
+          }
+          public function login()
+          {
+              $result = $this->Authentication->getResult();
+          }
+      }
+      PHP
+    File.write(File.join(controllers, "ArticlesController.php"), <<-'PHP')
+      <?php
+      namespace App\Controller;
+      class ArticlesController extends AppController
+      {
+          public function beforeFilter(\Cake\Event\EventInterface $event)
+          {
+              parent::beforeFilter($event);
+              $this->Authentication->allowUnauthenticated(['index']);
+          }
+          public function index() {}
+          public function add() {}
+          public function view($id) {}
+      }
+      PHP
+    File.write(File.join(controllers, "Admin", "StatsController.php"), <<-'PHP')
+      <?php
+      namespace App\Controller\Admin;
+      use App\Controller\AppController;
+      class StatsController extends AppController
+      {
+          public function index() {}
+      }
+      PHP
+    File.write(File.join(controllers, "HealthController.php"), <<-'PHP')
+      <?php
+      namespace App\Controller;
+      use Cake\Controller\Controller;
+      class HealthController extends Controller
+      {
+          public function index() {}
+      }
+      PHP
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) do
+        details = Details.new(PathInfo.new(routes, line))
+        details.technology = "php_cakephp"
+        Endpoint.new("/#{line}", "GET", [] of Param, details)
+      end
+      endpoints = {login: 5, index: 6, add: 7, view: 8, admin: 9, health: 10}.to_h.transform_values { |line| at.call(line) }
+
+      PhpAuthTagger.new(noir_options).perform(endpoints.values)
+
+      endpoints.select { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys.should eq([:add, :view, :admin])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
+
+  it "leaves CakePHP actions untagged when identity is optional, the exempt list is unreadable or the component is commented out" do
+    tmpdir = File.tempname("php_cake_edges")
+    files = {
+      "config/routes.php" => <<-PHP,
+        <?php
+        return function (RouteBuilder $routes): void {
+            $routes->connect('/pages', ['controller' => 'Pages', 'action' => 'display']);
+            $routes->connect('/open', ['controller' => 'Open', 'action' => 'index']);
+            $routes->connect('/status', ['controller' => 'Status', 'action' => 'index']);
+            $routes->prefix('Api', function (RouteBuilder $builder): void {
+                $builder->connect('/articles', ['controller' => 'Articles', 'action' => 'add']);
+            });
+            $routes->connect('/articles', ['controller' => 'Articles', 'action' => 'add']);
+        };
+        PHP
+      "src/Controller/AppController.php" => <<-PHP,
+        <?php
+        class AppController extends Controller
+        {
+            public function initialize(): void
+            {
+                $this->loadComponent('Authentication.Authentication');
+            }
+        }
+        PHP
+      "src/Controller/PagesController.php" => <<-PHP,
+        <?php
+        class PagesController extends AppController
+        {
+            protected array $publicActions = ['display'];
+            public function beforeFilter($event)
+            {
+                $this->Authentication->allowUnauthenticated($this->publicActions);
+            }
+        }
+        PHP
+      "src/Controller/OpenController.php" => <<-PHP,
+        <?php
+        class OpenController extends Controller
+        {
+            public function initialize(): void
+            {
+                $this->loadComponent('Authentication.Authentication', ['requireIdentity' => false]);
+            }
+        }
+        PHP
+      "src/Controller/StatusController.php" => <<-PHP,
+        <?php
+        class StatusController extends AppController
+        {
+            public function initialize(): void
+            {
+                $this->Authentication->setConfig('requireIdentity', false);
+            }
+        }
+        PHP
+      "src/Controller/Api/ArticlesController.php" => <<-PHP,
+        <?php
+        class ArticlesController extends Controller
+        {
+            public function initialize(): void
+            {
+                // $this->loadComponent('Authentication.Authentication');
+            }
+        }
+        PHP
+      "src/Controller/ArticlesController.php" => <<-PHP,
+        <?php
+        class ArticlesController extends AppController
+        {
+        }
+        PHP
+      "plugins/Blog/config/routes.php" => <<-PHP,
+        <?php
+        $routes->connect('/blog/posts', ['controller' => 'Posts', 'action' => 'add']);
+        PHP
+      "plugins/Blog/src/Controller/AppController.php" => <<-'PHP',
+        <?php
+        class AppController extends \App\Controller\AppController
+        {
+        }
+        PHP
+      "plugins/Blog/src/Controller/PostsController.php" => <<-PHP,
+        <?php
+        class PostsController extends AppController
+        {
+        }
+        PHP
+    }
+    files.each do |name, body|
+      path = File.join(tmpdir, name)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(file : String, line : Int32) do
+        details = Details.new(PathInfo.new(File.join(tmpdir, file), line))
+        details.technology = "php_cakephp"
+        Endpoint.new("/#{line}", "GET", [] of Param, details)
+      end
+      endpoints = {
+        pages: at.call("config/routes.php", 3), open: at.call("config/routes.php", 4),
+        status: at.call("config/routes.php", 5), api: at.call("config/routes.php", 7),
+        articles: at.call("config/routes.php", 9), plugin: at.call("plugins/Blog/config/routes.php", 2),
+      }.to_h
+
+      PhpAuthTagger.new(noir_options).perform(endpoints.values)
+
+      endpoints.select { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys.should eq([:articles, :plugin])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
+
+  it "reads a Yii AccessControl behavior: only/except, then the first rule a guest matches" do
+    tmpdir = File.tempname("php_yii_acf")
+    Dir.mkdir_p(tmpdir)
+    site = File.join(tmpdir, "SiteController.php")
+    admin = File.join(tmpdir, "AdminController.php")
+    File.write(site, <<-PHP)
+      <?php
+      class SiteController extends Controller
+      {
+          public function behaviors()
+          {
+              return [
+                  'access' => [
+                      'class' => AccessControl::class,
+                      'only' => ['logout', 'signup'],
+                      'rules' => [
+                          ['actions' => ['signup'], 'allow' => true, 'roles' => ['?']],
+                          ['actions' => ['logout'], 'allow' => true, 'roles' => ['@']],
+                      ],
+                  ],
+              ];
+          }
+
+          public function actionIndex()
+          {
+              return $this->render('index');
+          }
+
+          public function actionSignup()
+          {
+              return $this->render('signup');
+          }
+
+          public function actionLogout()
+          {
+              return $this->goHome();
+          }
+      }
+      PHP
+    File.write(admin, <<-PHP)
+      <?php
+      class AdminController extends Controller
+      {
+          public function behaviors()
+          {
+              return [
+                  'access' => [
+                      'class' => AccessControl::class,
+                      'except' => ['health'],
+                      'rules' => [
+                          ['actions' => ['login', 'error'], 'allow' => true],
+                          ['actions' => ['list-users', 'index'], 'allow' => true, 'roles' => ['@']],
+                      ],
+                  ],
+              ];
+          }
+
+          public function actionLogin() {}
+
+          public function actionListUsers() {}
+
+          public function actionReport() {}
+
+          public function actionHealth() {}
+      }
+      PHP
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(path : String, line : Int32) do
+        details = Details.new(PathInfo.new(path, line))
+        details.technology = "php_yii"
+        Endpoint.new("/#{line}", "GET", [] of Param, details)
+      end
+      endpoints = {
+        index: at.call(site, 18), signup: at.call(site, 23), logout: at.call(site, 28),
+        login: at.call(admin, 18), list_users: at.call(admin, 20), report: at.call(admin, 22), health: at.call(admin, 24),
+      }.to_h
+
+      PhpAuthTagger.new(noir_options).perform(endpoints.values)
+
+      # A guest matches no rule for `logout` or `report` (`'@'` is not a guest), so both are denied.
+      endpoints.select { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys.should eq([:logout, :list_users, :report])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
+
+  it "skips Yii AccessControl rules it cannot read and reads array() rules and className()" do
+    tmpdir = File.tempname("php_yii_edges")
+    Dir.mkdir_p(tmpdir)
+    files = {
+      "RulesController.php" => <<-PHP,
+        <?php
+        class RulesController extends Controller
+        {
+            public function behaviors()
+            {
+                return ['access' => ['class' => AccessControl::class, 'rules' => $this->accessRules()]];
+            }
+            public function actionView() {}
+        }
+        PHP
+      "LongController.php" => <<-PHP,
+        <?php
+        class LongController extends Controller
+        {
+            public function behaviors()
+            {
+                return array('access' => array('class' => AccessControl::class, 'rules' => array(array('allow' => true, 'actions' => array('page')))));
+            }
+            public function actionPage() {}
+        }
+        PHP
+      "OldController.php" => <<-PHP,
+        <?php
+        class OldController extends Controller
+        {
+            public function behaviors()
+            {
+                return ['access' => ['class' => AccessControl::className(), 'rules' => [['allow' => true, 'roles' => ['@']]]]];
+            }
+            public function actionSecret() {}
+        }
+        PHP
+    }
+    endpoints = files.map do |name, body|
+      path = File.join(tmpdir, name)
+      File.write(path, body)
+      details = Details.new(PathInfo.new(path, 8))
+      details.technology = "php_yii"
+      {name, Endpoint.new("/#{name}", "GET", [] of Param, details)}
+    end.to_h
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      PhpAuthTagger.new(noir_options).perform(endpoints.values)
+
+      endpoints.select { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys.should eq(["OldController.php"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end
