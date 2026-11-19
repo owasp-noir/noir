@@ -1031,6 +1031,47 @@ describe "RustAuthTagger axum middleware that hands some paths on unchecked" do
     axum_guarded_urls({"src/main.rs" => src}, urls).should eq(["/items", "/logins"])
   end
 
+  it "keeps the guard behind a pass-through that is nested, compared to false, or decided by role" do
+    routes = <<-RUST
+      pub fn routes() -> Router {
+          Router::new()
+              .route("/admin/users", get(admin_users))
+              .route("/items", get(list_items).post(create_item))
+              .route("/reports", get(list_reports))
+              .layer(middleware::from_fn(require_auth))
+      }
+
+      fn allowed(path: &str, role: Role) -> bool {
+          if path.starts_with("/admin") {
+              return matches!(role, Role::Admin);
+          }
+          matches!(role, Role::User | Role::Admin)
+      }
+
+      async fn require_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
+          let path = req.uri().path().to_owned();
+          let role = role_of(&req);
+          if req.method() == Method::GET {
+              if path == "/items" {
+                  return Ok(next.run(req).await);
+              }
+          }
+          if path.starts_with("/reports") == false {
+              return Ok(next.run(req).await);
+          }
+          if allowed(&path, role) {
+              return Ok(next.run(req).await);
+          }
+          if req.headers().get("authorization").is_none() {
+              return Err(StatusCode::UNAUTHORIZED);
+          }
+          Ok(next.run(req).await)
+      }
+      RUST
+    urls = ["/admin/users", "/items", "/reports"]
+    axum_guarded_urls({"src/main.rs" => routes}, urls).should eq(urls.sort)
+  end
+
   it "keeps the guard when the passing condition is not a plain path test" do
     src = <<-RUST
       fn is_open(path: &str) -> bool {

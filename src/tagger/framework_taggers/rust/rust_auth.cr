@@ -453,13 +453,22 @@ class RustAuthTagger < FrameworkTagger
 
   # `if is_public(&path) { return next.run(req).await; }` ahead of the refusal.
   PASS_THROUGH = /\bif\s+([^{};]+?)\s*\{\s*return\s+(?:Ok\s*\(\s*)?next\s*\.\s*run\s*\([^()]*\)\s*\.await\s*\)?\s*;?\s*\}/
-  # A negation, `!=` or `&&` makes a condition more than a path test.
-  NOT_A_PATH_TEST = /&&|(?<!\w)!|!=/
+  # A path value: `path`, `&path`, `req.uri().path()`.
+  PATH_EXPR = /&?\s*[A-Za-z_]\w*(?:\s*\.\s*\w+\s*\(\s*\))*/
+  PATH_LIT  = /"(\/[^"\\]*)"/
+  # Each is the whole of one `||` operand.
+  EQ_TEST      = /\A#{PATH_EXPR}\s*==\s*#{PATH_LIT}\z|\A#{PATH_LIT}\s*==\s*#{PATH_EXPR}\z/
+  PREFIX_TEST  = /\A#{PATH_EXPR}\s*\.\s*starts_with\s*\(\s*#{PATH_LIT}\s*\)\z/
+  MATCHES_TEST = /\Amatches!\s*\(\s*#{PATH_EXPR}\s*,\s*("\/[^"\\]*"(?:\s*\|\s*"\/[^"\\]*")*)\s*,?\s*\)\z/
+  HELPER_CALL  = /\A((?:\w+::)*\w+)\s*\(\s*#{PATH_EXPR}\s*\)\z/
+  # `if <cond> { return true; }` at the head of a helper body.
+  TRUE_IF = /\A\s*if\s+([^{};]+?)\s*\{\s*return\s+true\s*;?\s*\}/
 
-  # The paths a `from_fn` middleware hands on before it refuses, read off the
-  # literal path tests of each passing condition and of the helper it calls
-  # (`matches!(path, "/login" | ..)`, `path == "/x"`, `starts_with("/x/")`).
-  # A helper that can answer `false` or negates is not read.
+  # The paths a `from_fn` middleware hands on before it refuses: each
+  # `if <cond> { return next.run(..) }` at the top of its body, ahead of any
+  # refusal, whose condition is nothing but literal path tests joined by
+  # `||` (`path == "/x"`, `path.starts_with("/x/")`, `matches!(path, "/a" | "/b")`)
+  # or a call of one path-taking helper whose every answer is such a test.
   private def layer_exemptions(arg : LibTreeSitter::TSNode, source : String, file : String) : Array({String, Bool})
     paths = [] of {String, Bool}
     return paths unless Noir::TreeSitter.node_type(arg) == "call_expression"
@@ -474,24 +483,47 @@ class RustAuthTagger < FrameworkTagger
     code = Noir::CComments.strip(entry.body_text)
     refusal = code.index(MIDDLEWARE_REFUSAL) || code.size
     code.scan(PASS_THROUGH) do |m|
-      cond = m[1]
-      next if m.begin(0) > refusal || cond.matches?(NOT_A_PATH_TEST)
-      paths.concat(path_tests(cond))
-      cond.scan(/((?:\w+::)*\w+)\s*\(/) do |call|
-        helper = lookup_function(call[1], entry.file_path) || next
-        body = Noir::CComments.strip(helper.body_text)
-        paths.concat(path_tests(body)) unless body.matches?(/\bfalse\b|#{NOT_A_PATH_TEST}/)
-      end
+      head = code[0, m.begin(0)]
+      next if m.begin(0) > refusal || head.count('{') - head.count('}') != 1
+      condition_paths(m[1], entry.file_path, true).try { |found| paths.concat(found) }
     end
     paths.uniq!
   end
 
-  private def path_tests(code : String) : Array({String, Bool})
+  # The paths a condition tests, or nil when it is anything more.
+  private def condition_paths(cond : String, file : String, helpers : Bool) : Array({String, Bool})?
     paths = [] of {String, Bool}
-    code.scan(/\bstarts_with\s*\(\s*"(\/[^"]*)"\s*\)/) { |m| paths << {m[1], true} }
-    code.scan(/==\s*"(\/[^"]*)"|"(\/[^"]*)"\s*==/) { |m| paths << {m[1]? || m[2], false} }
-    code.scan(/\bmatches!\s*\(\s*[^,()]+,([^)]*)\)/) { |m| m[1].scan(/"(\/[^"]*)"/) { |lit| paths << {lit[1], false} } }
+    cond.split("||").each do |operand|
+      test = operand.strip
+      if m = test.match(EQ_TEST)
+        paths << {m[1]? || m[2], false}
+      elsif m = test.match(PREFIX_TEST)
+        paths << {m[1], true}
+      elsif m = test.match(MATCHES_TEST)
+        m[1].scan(PATH_LIT) { |lit| paths << {lit[1], false} }
+      elsif helpers && (m = test.match(HELPER_CALL))
+        paths.concat(helper_paths(m[1], file) || return)
+      else
+        return
+      end
+    end
     paths
+  end
+
+  # A helper whose body is `if <tests> { return true; }` lines then a tail
+  # of tests answers true exactly on those paths.
+  private def helper_paths(ref : String, file : String) : Array({String, Bool})?
+    entry = lookup_function(ref, file) || return
+    body = Noir::CComments.strip(entry.body_text).strip
+    return unless body.starts_with?('{') && body.ends_with?('}')
+    rest = body[1...-1]
+    paths = [] of {String, Bool}
+    while m = rest.match(TRUE_IF)
+      paths.concat(condition_paths(m[1], file, false) || return)
+      rest = rest[m.end(0)..]
+    end
+    tail = rest.strip.lchop("return").rchop(";").strip
+    paths.concat(condition_paths(tail, file, false) || return)
   end
 
   # A middleware fn whose definition (or closure) is in the scan guards when
