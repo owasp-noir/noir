@@ -393,13 +393,14 @@ class RustAuthTagger < FrameworkTagger
             next unless middleware_name
 
             mounts = collect_axum_layer_mounts(node, content, file)
+            except = layer_exemptions(args[0], content, file)
             mounts.each do |kind, path|
               @middleware_scopes << {
                 prefix:      path,
                 exact:       kind == "route",
                 local:       true,
                 description: "Protected by Rust #{middleware_name} middleware on #{path}",
-                except:      [] of {String, Bool},
+                except:      except,
                 at:          nil,
               }
             end
@@ -448,6 +449,49 @@ class RustAuthTagger < FrameworkTagger
       end
     end
     Noir::TreeSitter.node_text(arg, source).partition('(')[0].match(/\w*[Aa]uth\w*/).try(&.[0])
+  end
+
+  # `if is_public(&path) { return next.run(req).await; }` ahead of the refusal.
+  PASS_THROUGH = /\bif\s+([^{};]+?)\s*\{\s*return\s+(?:Ok\s*\(\s*)?next\s*\.\s*run\s*\([^()]*\)\s*\.await\s*\)?\s*;?\s*\}/
+  # A negation, `!=` or `&&` makes a condition more than a path test.
+  NOT_A_PATH_TEST = /&&|(?<!\w)!|!=/
+
+  # The paths a `from_fn` middleware hands on before it refuses, read off the
+  # literal path tests of each passing condition and of the helper it calls
+  # (`matches!(path, "/login" | ..)`, `path == "/x"`, `starts_with("/x/")`).
+  # A helper that can answer `false` or negates is not read.
+  private def layer_exemptions(arg : LibTreeSitter::TSNode, source : String, file : String) : Array({String, Bool})
+    paths = [] of {String, Bool}
+    return paths unless Noir::TreeSitter.node_type(arg) == "call_expression"
+    args = named_call_args(arg)
+    f = case call_func_leaf_name(arg, source)
+        when "from_fn"            then args[0]?
+        when "from_fn_with_state" then args[1]?
+        end
+    f || return paths
+    ref = Noir::TreeSitter.node_text(f, source).strip.lchop("::").lchop("crate::").lchop("self::")
+    entry = lookup_function(ref, file) || return paths
+    code = Noir::CComments.strip(entry.body_text)
+    refusal = code.index(MIDDLEWARE_REFUSAL) || code.size
+    code.scan(PASS_THROUGH) do |m|
+      cond = m[1]
+      next if m.begin(0) > refusal || cond.matches?(NOT_A_PATH_TEST)
+      paths.concat(path_tests(cond))
+      cond.scan(/((?:\w+::)*\w+)\s*\(/) do |call|
+        helper = lookup_function(call[1], entry.file_path) || next
+        body = Noir::CComments.strip(helper.body_text)
+        paths.concat(path_tests(body)) unless body.matches?(/\bfalse\b|#{NOT_A_PATH_TEST}/)
+      end
+    end
+    paths.uniq!
+  end
+
+  private def path_tests(code : String) : Array({String, Bool})
+    paths = [] of {String, Bool}
+    code.scan(/\bstarts_with\s*\(\s*"(\/[^"]*)"\s*\)/) { |m| paths << {m[1], true} }
+    code.scan(/==\s*"(\/[^"]*)"|"(\/[^"]*)"\s*==/) { |m| paths << {m[1]? || m[2], false} }
+    code.scan(/\bmatches!\s*\(\s*[^,()]+,([^)]*)\)/) { |m| m[1].scan(/"(\/[^"]*)"/) { |lit| paths << {lit[1], false} } }
+    paths
   end
 
   # A middleware fn whose definition (or closure) is in the scan guards when

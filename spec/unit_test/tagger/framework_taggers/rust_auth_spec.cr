@@ -988,3 +988,73 @@ describe "RustAuthTagger request guards a macro_rules! generates" do
     tag_handler.call("list_items").should be_empty
   end
 end
+
+describe "RustAuthTagger axum middleware that hands some paths on unchecked" do
+  it "exempts the literal paths a middleware passes through before it refuses" do
+    src = <<-RUST
+      fn is_public(path: &str) -> bool {
+          if path.starts_with("/assets/") {
+              return true;
+          }
+          matches!(path, "/login" | "/signup")
+      }
+
+      async fn require_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
+          let path = req.uri().path().to_owned();
+          if is_public(&path) {
+              return Ok(next.run(req).await);
+          }
+          if path == "/health" {
+              return Ok(next.run(req).await);
+          }
+          if req.headers().get("authorization").is_none() {
+              return Err(StatusCode::UNAUTHORIZED);
+          }
+          Ok(next.run(req).await)
+      }
+
+      pub fn routes() -> Router {
+          Router::new()
+              .route("/login", post(login))
+              .route("/signup", post(signup))
+              .route("/health", get(health))
+              .route("/assets/app.css", get(stylesheet))
+              .route("/items", get(list_items))
+              .route("/logins", get(list_logins))
+              .layer(middleware::from_fn(require_auth))
+      }
+      RUST
+    urls = ["/login", "/signup", "/health", "/assets/app.css", "/items", "/logins"]
+    axum_guarded_urls({"src/main.rs" => src}, urls).should eq(["/items", "/logins"])
+  end
+
+  it "keeps the guard when the passing condition is not a plain path test" do
+    src = <<-RUST
+      fn is_open(path: &str) -> bool {
+          if path == "/admin" {
+              return false;
+          }
+          path.starts_with("/")
+      }
+
+      async fn require_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
+          let path = req.uri().path().to_owned();
+          if is_open(&path) && req.method() == Method::GET {
+              return Ok(next.run(req).await);
+          }
+          if req.headers().get("authorization").is_none() {
+              return Err(StatusCode::UNAUTHORIZED);
+          }
+          Ok(next.run(req).await)
+      }
+
+      pub fn routes() -> Router {
+          Router::new()
+              .route("/admin", get(admin))
+              .route("/items", get(list_items))
+              .layer(middleware::from_fn(require_auth))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/admin", "/items"]).should eq(["/admin", "/items"])
+  end
+end
