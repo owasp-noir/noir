@@ -128,4 +128,35 @@ describe "SwiftAuthTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "applies a guarded group closure to routes in groups nested inside it" do
+    tmpdir = File.tempname("swift_nested_group")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "routes.swift")
+    File.write(routes, <<-SWIFT)
+      func routes(_ app: Application) throws {
+          app.group(User.TokenAuthenticator(), User.guardMiddleware()) { protected in
+              protected.group(ReportingMiddleware()) {
+                  $0.get("api", "items", use: ItemController.list)
+              }
+              app.get("api", "status", use: StatusController.show)
+          }
+          app.group(LoggingMiddleware()) { logged in
+              logged.get("api", "open", use: ItemController.open)
+          }
+      }
+      SWIFT
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    at = ->(line : Int32) { Endpoint.new("/x", "GET", [] of Param, Details.new(PathInfo.new(routes, line))) }
+    items, status, open = at.call(4), at.call(6), at.call(9)
+    SwiftAuthTagger.new(noir_options).perform([items, status, open])
+
+    items.tags.map(&.description).should eq(["Protected by Vapor User.guardMiddleware()"])
+    status.tags.should be_empty
+    open.tags.should be_empty
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
 end

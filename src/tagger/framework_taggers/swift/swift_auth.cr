@@ -10,6 +10,8 @@ class SwiftAuthTagger < FrameworkTagger
   # guarded by its second one. `.group(...) { name in` is the closure form.
   GROUPED_ARG = /\.group(?:ed)?\s*\((?:[^(),]*(?:\([^()]*\)[^(),]*)?,\s*)*\s*/.source
 
+  ROUTE_RECEIVER = /^(\$0|\w+)\.(?:get|post|put|delete|patch|on|group(?:ed)?)\b/
+
   # Vapor middleware patterns
   VAPOR_MIDDLEWARE_PATTERNS = [
     {/#{GROUPED_ARG}\w*[Aa]uth\w*/, "Vapor auth middleware group"},
@@ -86,20 +88,33 @@ class SwiftAuthTagger < FrameworkTagger
   private def check_middleware_group(lines : Array(String), masked_lines : Array(String), route_line : Int32) : String?
     return if route_line < 0 || route_line >= lines.size
 
-    # Extract the receiver variable from the route line (e.g., "protected" from "protected.get(...)")
-    receiver_match = masked_lines[route_line].strip.match(/^(\w+)\.(?:get|post|put|delete|patch|on|group)\b/)
-    return unless receiver_match
-    receiver = receiver_match[1]
+    # The receiver of the route (`protected` in `protected.get(...)`, `$0` in
+    # a `.group(...) { $0.get(...) }` closure).
+    return unless receiver = masked_lines[route_line].strip.match(ROUTE_RECEIVER).try(&.[1])
 
     # The binding may sit anywhere in this function (`let x = app.grouped(...)`
-    # or `group(...) { x in`). Stop at the enclosing func/type so a same-named
-    # receiver in the previous function is not this route's guard.
+    # or an enclosing `group(...) { x in`, nested any depth). Stop at the
+    # enclosing func/type so a same-named receiver in the previous function
+    # is not this route's guard.
+    depth = 0
     idx = route_line - 1
     while idx >= 0
       masked_stripped = masked_lines[idx].strip
       break if function_boundary?(masked_stripped)
 
-      if binds_receiver?(masked_stripped, receiver)
+      depth += masked_stripped.count('}') - masked_stripped.count('{')
+      if depth < 0
+        depth = 0
+        # A closure enclosing the route. Only a group closure whose parameter
+        # is the receiver puts its middleware in front of the route; then the
+        # group's own receiver is what the next enclosing closure must bind.
+        if (open = masked_stripped.match(/\.group(?:ed)?\s*\(.*\{\s*(?:(\w+)\s+in\b)?/)) && (open[1]? || "$0") == receiver
+          if description = middleware_description(lines[idx])
+            return description
+          end
+          return unless receiver = masked_stripped.match(ROUTE_RECEIVER).try(&.[1])
+        end
+      elsif binds_receiver?(masked_stripped, receiver)
         return middleware_description(lines[idx])
       end
 
