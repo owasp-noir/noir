@@ -150,7 +150,7 @@ module Analyzer::Javascript
 
         mutex.synchronize do
           verbs.each do |verb|
-            endpoint = file_route_endpoint(url, verb, path)
+            endpoint = file_route_endpoint(url, verb, path, verb_line(content, table, verb))
             attach_handler_callees(endpoint, table, verb) if callees_needed?
             result << endpoint
           end
@@ -177,6 +177,17 @@ module Analyzer::Javascript
       callees.each do |name, callee_path, line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
       end
+    end
+
+    # The handler member or function that answers `verb`, else the page's
+    # `export default`.
+    private def verb_line(content : String, table : Noir::JSHandlerTable::Table, verb : String) : Int32
+      line = if members = table.objects["handler"]?
+               members[verb]?.try(&.line)
+             else
+               table.exports["handler"]?.try(&.line)
+             end
+      line || default_export_line(content)
     end
 
     private def strip_extension(name : String) : String

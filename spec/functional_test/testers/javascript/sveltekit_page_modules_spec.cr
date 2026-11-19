@@ -10,7 +10,13 @@ expected_endpoints = [
   Endpoint.new("/news", "GET"),
 ]
 
-FunctionalTester.new("fixtures/javascript/sveltekit_page_modules/", {
+tester = FunctionalTester.new("fixtures/javascript/sveltekit_page_modules/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "reports the page module's `load` line", tags: "functional" do
+  roadmap = tester.endpoints.find! { |endpoint| endpoint.url == "/roadmap" && endpoint.method == "GET" }
+  roadmap.details.code_paths.first.line.should eq(2)
+end

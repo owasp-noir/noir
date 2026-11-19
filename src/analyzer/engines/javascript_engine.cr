@@ -178,6 +178,11 @@ module Analyzer::Javascript
     # without consuming earlier lines, so `line_for_match` lands on it.
     DEFAULT_EXPORT_RE = /^[ \t]*export\s+default\b/m
 
+    # Line of the module's `export default`, or 1 without one.
+    protected def default_export_line(content : String) : Int32
+      content.match(DEFAULT_EXPORT_RE).try { |m| line_for_match(content, m) } || 1
+    end
+
     # Route-directory segments → URL for the `src/routes/` conventions
     # (SvelteKit, SolidStart, Qwik City): `(group)` segments are hidden and
     # every param group normalizes to `{name}`, in place, so static text

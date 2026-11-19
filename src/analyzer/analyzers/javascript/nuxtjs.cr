@@ -200,12 +200,14 @@ module Analyzer::Javascript
       # Read file content to extract parameters
       begin
         content = read_file_content(path)
-        h3_params = h3_event_params(Noir::JSRouteExtractor.strip_js_comments(content))
+        sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
+        h3_params = h3_event_params(sanitized)
         callees = include_callee ? Noir::JSCalleeExtractor.callees_for_default_event_handler(content, path) : [] of Noir::JSCalleeExtractor::Entry
+        line = default_export_line(sanitized)
 
         methods.each do |method|
           endpoint = Endpoint.new(url, method)
-          details = Details.new(PathInfo.new(path, 1))
+          details = Details.new(PathInfo.new(path, line))
           endpoint.details = details
 
           # Extract path parameters from URL

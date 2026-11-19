@@ -55,5 +55,9 @@ describe "Remix route source attribution", tags: "functional" do
 
     user_delete = app.endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/users/{id}" }
     user_delete.details.code_paths.first.line.should eq(7)
+
+    # A page with no `loader` answers GET from its default export.
+    login_get = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/login" }
+    login_get.details.code_paths.first.line.should eq(8)
   end
 end

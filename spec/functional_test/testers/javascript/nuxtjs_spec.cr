@@ -51,7 +51,13 @@ expected_endpoints = [
   ]),
 ]
 
-FunctionalTester.new("fixtures/javascript/nuxtjs/", {
+tester = FunctionalTester.new("fixtures/javascript/nuxtjs/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "reports the default-exported handler's line", tags: "functional" do
+  create = tester.endpoints.find! { |endpoint| endpoint.url == "/api/users" && endpoint.method == "POST" }
+  create.details.code_paths.first.line.should eq(2)
+end

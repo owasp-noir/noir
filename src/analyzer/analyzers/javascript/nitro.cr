@@ -137,10 +137,11 @@ module Analyzer::Javascript
         content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         h3_params = h3_event_params(content)
         callees = include_callee ? Noir::JSCalleeExtractor.callees_for_default_event_handler(content, path) : [] of Noir::JSCalleeExtractor::Entry
+        line = default_export_line(content)
 
         methods.each do |method|
           endpoint = Endpoint.new(url, method)
-          details = Details.new(PathInfo.new(path, 1))
+          details = Details.new(PathInfo.new(path, line))
           endpoint.details = details
 
           # Extract path parameters from URL

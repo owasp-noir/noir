@@ -136,11 +136,20 @@ module Analyzer::Javascript
     # sibling reports it.
     private def analyze_page_module(path : String, url : String, result : Array(Endpoint), mutex : Mutex, page_dirs : Set(String))
       return if page_dirs.includes?(File.dirname(Noir::PathScope.expand(path)))
-      analyze_page(path, url, result, mutex)
+      content = begin
+        Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
+      rescue e
+        logger.debug "Error reading #{path}: #{e.message}"
+        return
+      end
+      line = content.match(LOAD_DECL_RE).try { |m| line_for_match(content, m) } || 1
+      analyze_page(path, url, result, mutex, line)
     end
 
-    private def analyze_page(path : String, url : String, result : Array(Endpoint), mutex : Mutex)
-      endpoint = file_route_endpoint(url, "GET", path)
+    LOAD_DECL_RE = /export\s+(?:const|let|var|(?:async\s+)?function)\s+load\b/
+
+    private def analyze_page(path : String, url : String, result : Array(Endpoint), mutex : Mutex, line : Int32 = 1)
+      endpoint = file_route_endpoint(url, "GET", path, line)
       mutex.synchronize { result << endpoint }
     end
 
