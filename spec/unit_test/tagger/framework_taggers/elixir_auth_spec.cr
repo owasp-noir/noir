@@ -180,6 +180,82 @@ describe "ElixirAuthTagger" do
     endpoint.tags.empty?.should be_true
   end
 
+  it "judges plugs imported or aliased by `use AppWeb, :controller`" do
+    dir = File.tempname("noir_elixir_use_imports")
+    Dir.mkdir_p(dir)
+    web = File.join(dir, "app_web.ex")
+    helpers = File.join(dir, "controller_helpers.ex")
+    admin_plug = File.join(dir, "require_admin.ex")
+    controller = File.join(dir, "dashboard_controller.ex")
+    File.write(web, <<-EX)
+      defmodule AppWeb do
+        def controller do
+          quote do
+            use Phoenix.Controller
+            import AppWeb.{ControllerHelpers, Gettext}
+            alias AppWeb.Plug.{RequireAdmin}
+          end
+        end
+      end
+      EX
+    File.write(admin_plug, <<-EX)
+      defmodule AppWeb.Plug.RequireAdmin do
+        def init(opts), do: opts
+
+        def call(conn, _opts) do
+          if conn.assigns.current_user.admin, do: conn, else: conn |> send_resp(403, "") |> halt()
+        end
+      end
+      EX
+    File.write(helpers, <<-EX)
+      defmodule AppWeb.ControllerHelpers do
+        def requires_login(conn, _opts) do
+          if logged_in?(conn) do
+            conn
+          else
+            conn |> redirect(to: ~p"/login") |> halt()
+          end
+        end
+
+        def assign_theme(conn, _opts), do: assign(conn, :theme, "dark")
+
+        def logged_in?(conn), do: !!conn.assigns[:current_user]
+      end
+      EX
+    File.write(controller, <<-EX)
+      defmodule AppWeb.DashboardController do
+        use AppWeb, :controller
+
+        plug :requires_login when action in [:index]
+        plug RequireAdmin when action in [:settings]
+        plug :assign_theme
+
+        def index(conn, _params), do: render(conn, :index)
+
+        def about(conn, _params), do: render(conn, :about)
+
+        def settings(conn, _params), do: render(conn, :settings)
+      end
+      EX
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      [web, helpers, admin_plug, controller].each { |file| CodeLocator.instance.register_path(file) }
+
+      index = Endpoint.new("/dashboard", "GET", [] of Param, Details.new(PathInfo.new(controller, 8)))
+      about = Endpoint.new("/about", "GET", [] of Param, Details.new(PathInfo.new(controller, 10)))
+      settings = Endpoint.new("/settings", "GET", [] of Param, Details.new(PathInfo.new(controller, 12)))
+      ElixirAuthTagger.new(noir_options).perform([index, about, settings])
+
+      index.tags.map(&.description).should eq(["Protected by Phoenix :requires_login plug"])
+      settings.tags.map(&.description).should eq(["Protected by Phoenix RequireAdmin plug"])
+      about.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   it "counts only enforcing plugs when deciding a pipeline is an auth pipeline" do
     dir = File.tempname("noir_elixir_pipeline_plugs")
     Dir.mkdir_p(dir)

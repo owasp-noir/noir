@@ -50,6 +50,7 @@ module Noir
       @clause_cache = Hash({String, String}, Array(String)).new
       @alias_cache = Hash(String, Hash(String, String)).new
       @import_cache = Hash(String, Array(String)).new
+      @scope_cache = Hash(String, Array(String)).new
       @verdicts = Hash({String, String}, Bool?).new
     end
 
@@ -205,11 +206,12 @@ module Noir
       modules[ref]?
     end
 
-    # `alias A.B.C`, `alias A.B.C, as: X`, `alias A.B.{C, D}` in a file.
+    # `alias A.B.C`, `alias A.B.C, as: X`, `alias A.B.{C, D}` in a file or
+    # in what its `use` statements inject.
     private def aliases(path : String) : Hash(String, String)
       @alias_cache[path] ||= begin
         map = {} of String => String
-        (@reader.call(path) || [] of String).each do |line|
+        scope_lines(path).each do |line|
           stripped = line.strip
           next unless stripped.starts_with?("alias ")
           if m = stripped.match(/\Aalias\s+([A-Z][\w.]*)\.\{([^}]*)\}/)
@@ -225,9 +227,30 @@ module Noir
       end
     end
 
+    # A file's lines followed by the `quote` bodies its `use AppWeb, :kind`
+    # statements expand (`AppWeb.controller/0`), whose `alias` and `import`
+    # lines apply to the file as if written there.
+    private def scope_lines(path : String) : Array(String)
+      @scope_cache[path] ||= begin
+        lines = @reader.call(path) || [] of String
+        injected = lines.flat_map do |line|
+          next [] of String unless (m = line.strip.match(/\Ause\s+([A-Z][\w.]*)\s*,\s*:(\w+)\b/)) && (mod = modules[m[1]]?)
+          clauses(mod, m[2]).flat_map(&.lines)
+        end
+        lines + injected
+      end
+    end
+
+    # `import A.B` and `import A.{B, C}`.
     private def imports(path : String) : Array(String)
-      @import_cache[path] ||= (@reader.call(path) || [] of String).compact_map do |line|
-        line.strip.match(/\Aimport\s+([A-Z][\w.]*)/).try(&.[1])
+      @import_cache[path] ||= scope_lines(path).flat_map do |line|
+        if m = line.strip.match(/\Aimport\s+([A-Z][\w.]*)\.\{([^}]*)\}/)
+          m[2].split(',').map(&.strip).reject(&.empty?).map { |part| "#{m[1]}.#{part}" }
+        elsif m = line.strip.match(/\Aimport\s+([A-Z][\w.]*\w)/)
+          [m[1]]
+        else
+          [] of String
+        end
       end
     end
 
