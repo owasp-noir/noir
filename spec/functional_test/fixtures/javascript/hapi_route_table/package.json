@@ -1,0 +1,1 @@
+{ "name": "hapi-route-table", "version": "1.0.0", "dependencies": { "@hapi/hapi": "^21.3.0" } }

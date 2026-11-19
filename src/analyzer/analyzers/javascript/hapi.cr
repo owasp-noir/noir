@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/hapi_extractor_ts"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/js_handler_resolver"
 require "../../../utils/url_path"
 require "./express/router_mount_scanner"
 
@@ -47,13 +48,34 @@ module Analyzer::Javascript
 
         mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
         mounts = [""] if mounts.empty?
-        Noir::TreeSitterHapiExtractor.extract_routes(content, include_callee, module_exports: route_module, path: path).flat_map do |route|
+        references = [] of String
+        endpoints = Noir::TreeSitterHapiExtractor.extract_routes(content, include_callee, module_exports: route_module, path: path, references: references).flat_map do |route|
           mounts.map { |prefix| build_endpoint(route, prefix, path, include_callee) }
         end
+        imported_routes(references, content, path, include_callee).each do |route, target|
+          mounts.each { |prefix| endpoints << build_endpoint(route, prefix, target, include_callee) }
+        end
+        endpoints
       end
 
       per_file.each { |endpoints| @result.concat(endpoints) }
       @result
+    end
+
+    # `server.route(routes)` with `routes` imported: the route table the
+    # imported module exports under that binding, located in that module.
+    private def imported_routes(references : Array(String), content : String, path : String, include_callee : Bool) : Array(Tuple(Noir::TreeSitterHapiExtractor::Route, String))
+      found = [] of Tuple(Noir::TreeSitterHapiExtractor::Route, String)
+      return found if references.empty?
+      imports = Noir::JSHandlerResolver.imports_of(content, path)
+      references.each do |name|
+        specifier, exported = imports[name]? || next
+        target = Noir::JSHandlerResolver.resolve_specifier(path, specifier) || next
+        Noir::TreeSitterHapiExtractor.extract_exported_routes(read_file_content(target), exported, include_callee, target).each do |route|
+          found << {route, target}
+        end
+      end
+      found
     end
 
     private def haute_couture_module?(path : String, owners : Hash(String, Bool), unowned : Bool) : Bool

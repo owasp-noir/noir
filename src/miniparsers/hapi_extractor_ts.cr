@@ -76,35 +76,108 @@ module Noir
     # (`module.exports = {...}`, `= [...]`, `= Helpers.withDefaults({...})`,
     # `export default {...}`), as in a haute-couture `routes/` module, which
     # haute-couture hands to `server.route()` itself.
-    def extract_routes(source : String, include_callees : Bool = false, module_exports : Bool = false, path : String = "") : Array(Route)
+    #
+    # `references`: names handed to `server.route(name)` (or spread into its
+    # array) that no declaration in this file binds, for the caller to
+    # resolve through the file's imports and `extract_exported_routes`.
+    def extract_routes(source : String, include_callees : Bool = false, module_exports : Bool = false, path : String = "", references : Array(String)? = nil) : Array(Route)
       routes = [] of Route
       Noir::TreeSitter.parse_js_family(source, path) do |root|
-        walk(root, source, routes, 0, include_callees, module_exports)
+        decls = config_declarations(root, source)
+        walk(root, source, routes, 0, include_callees, module_exports, decls, references)
       end
       routes
     end
 
+    # The route config a module exports as `name` (`exports.name = [...]`,
+    # `export const name`, `module.exports = { name }`), or its default
+    # export when `name` is nil; another file passes it to `server.route()`.
+    def extract_exported_routes(source : String, name : String?, include_callees : Bool = false, path : String = "") : Array(Route)
+      routes = [] of Route
+      Noir::TreeSitter.parse_js_family(source, path) do |root|
+        decls = config_declarations(root, source)
+        value = nil.as(LibTreeSitter::TSNode?)
+        Noir::TreeSitter.each_named_child(root) do |stmt|
+          stmt = Noir::TreeSitter.first_named_child(stmt) || next if Noir::TreeSitter.node_type(stmt) == "expression_statement"
+          found = name ? named_export_value(stmt, source, name, decls) : exported_value(stmt, source)
+          value = found if found
+        end
+        value.try { |v| emit_exported(v, source, routes, include_callees, decls, nil) }
+      end
+      routes
+    end
+
+    # Top-level and function-local `NAME = {...}` / `NAME = [...]` bindings,
+    # first declaration wins.
+    private def config_declarations(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
+      decls = Hash(String, LibTreeSitter::TSNode).new
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "variable_declarator"
+        name = Noir::TreeSitter.field(node, "name") || next
+        value = Noir::TreeSitter.field(node, "value") || next
+        next unless Noir::TreeSitter.node_type(name) == "identifier"
+        value = Noir::TreeSitter.unwrap_expression(value)
+        next unless {"object", "array"}.includes?(Noir::TreeSitter.node_type(value))
+        decls[Noir::TreeSitter.node_text(name, source)] ||= value
+      end
+      decls
+    end
+
+    private def named_export_value(stmt : LibTreeSitter::TSNode, source : String, name : String, decls : Hash(String, LibTreeSitter::TSNode)) : LibTreeSitter::TSNode?
+      case Noir::TreeSitter.node_type(stmt)
+      when "assignment_expression"
+        left = Noir::TreeSitter.field(stmt, "left") || return
+        right = Noir::TreeSitter.field(stmt, "right") || return
+        left_text = Noir::TreeSitter.node_text(left, source)
+        return right if left_text == "exports.#{name}" || left_text == "module.exports.#{name}"
+        return unless left_text == "module.exports"
+        right = Noir::TreeSitter.unwrap_expression(right)
+        return unless Noir::TreeSitter.node_type(right) == "object"
+        Noir::TreeSitter.each_named_child(right) do |entry|
+          case Noir::TreeSitter.node_type(entry)
+          when "shorthand_property_identifier"
+            return decls[name]? if Noir::TreeSitter.node_text(entry, source) == name
+          when "pair"
+            key, value = pair_key_value(entry, source)
+            return value if key == name
+          end
+        end
+      when "export_statement"
+        decl = Noir::TreeSitter.field(stmt, "declaration") || return
+        Noir::TreeSitter.each_named_child(decl) do |declarator|
+          next unless Noir::TreeSitter.node_type(declarator) == "variable_declarator"
+          next unless Noir::TreeSitter.field(declarator, "name").try { |n| Noir::TreeSitter.node_text(n, source) } == name
+          return Noir::TreeSitter.field(declarator, "value")
+        end
+      end
+      nil
+    end
+
     # ---- traversal --------------------------------------------------
 
-    private def walk(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), depth : Int32, include_callees : Bool, module_exports : Bool)
+    private def walk(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), depth : Int32, include_callees : Bool, module_exports : Bool, decls : Hash(String, LibTreeSitter::TSNode), refs : Array(String)?)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       if Noir::TreeSitter.node_type(node) == "call_expression" && route_call?(node, source)
-        emit_routes(node, source, routes, include_callees)
+        emit_routes(node, source, routes, include_callees, decls, refs)
         return
       end
       # No early return: a plugin exported from `routes/` still registers
       # its own `server.route(...)` calls below.
       if module_exports && (exported = exported_value(node, source))
-        if Noir::TreeSitter.node_type(exported) == "call_expression"
-          emit_routes(exported, source, routes, include_callees)
-        else
-          emit_config(exported, source, routes, include_callees)
-        end
+        emit_exported(exported, source, routes, include_callees, decls, refs)
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, routes, depth + 1, include_callees, module_exports)
+        walk(child, source, routes, depth + 1, include_callees, module_exports, decls, refs)
+      end
+    end
+
+    private def emit_exported(value : LibTreeSitter::TSNode, source : String, routes : Array(Route), include_callees : Bool, decls : Hash(String, LibTreeSitter::TSNode), refs : Array(String)?)
+      if Noir::TreeSitter.node_type(value) == "call_expression"
+        emit_routes(value, source, routes, include_callees, decls, refs)
+      else
+        emit_config(value, source, routes, include_callees, decls, refs)
       end
     end
 
@@ -136,17 +209,18 @@ module Noir
       false
     end
 
-    private def emit_routes(call : LibTreeSitter::TSNode, source : String, routes : Array(Route), include_callees : Bool)
+    private def emit_routes(call : LibTreeSitter::TSNode, source : String, routes : Array(Route), include_callees : Bool, decls : Hash(String, LibTreeSitter::TSNode), refs : Array(String)?)
       args = arguments_node(call)
       return unless args
 
       Noir::TreeSitter.each_named_child(args) do |arg|
-        emit_config(arg, source, routes, include_callees)
+        emit_config(arg, source, routes, include_callees, decls, refs)
       end
     end
 
-    # One route config object, or an array of them.
-    private def emit_config(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), include_callees : Bool)
+    # One route config object, or an array of them; a name or a spread
+    # (`[...userRoutes, ...noteRoutes]`) stands for the config it binds.
+    private def emit_config(node : LibTreeSitter::TSNode, source : String, routes : Array(Route), include_callees : Bool, decls : Hash(String, LibTreeSitter::TSNode), refs : Array(String)?, hops : Int32 = 0)
       node = Noir::TreeSitter.unwrap_expression(node)
       case Noir::TreeSitter.node_type(node)
       when "object"
@@ -154,7 +228,22 @@ module Noir
       when "array"
         Noir::TreeSitter.each_named_child(node) do |elem|
           elem = Noir::TreeSitter.unwrap_expression(elem)
-          emit_route_object(elem, source, routes, include_callees) if Noir::TreeSitter.node_type(elem) == "object"
+          case Noir::TreeSitter.node_type(elem)
+          when "object"
+            emit_route_object(elem, source, routes, include_callees)
+          when "identifier", "spread_element"
+            emit_config(elem, source, routes, include_callees, decls, refs, hops)
+          end
+        end
+      when "spread_element"
+        Noir::TreeSitter.first_named_child(node).try { |inner| emit_config(inner, source, routes, include_callees, decls, refs, hops) }
+      when "identifier"
+        name = Noir::TreeSitter.node_text(node, source)
+        if value = decls[name]?
+          # A self-referencing spread (`const a = [...a]`) must terminate.
+          emit_config(value, source, routes, include_callees, decls, refs, hops + 1) if hops < 4
+        else
+          refs.try { |r| r << name unless r.includes?(name) }
         end
       end
     end
