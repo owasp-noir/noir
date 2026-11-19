@@ -1286,8 +1286,15 @@ module Analyzer::Rust
       return unless name
 
       arguments = Noir::TreeSitter.field(attr, "arguments")
-      route_path = first_string_literal_text(arguments, source)
-      return unless route_path
+      # The path is the first literal even when empty (`#[get("")]` is the
+      # scope root); a later literal is a guard, name or method value.
+      return unless arguments
+      found = nil.as(String?)
+      walk(arguments) do |child|
+        next if found || Noir::TreeSitter.node_type(child) != "string_literal"
+        found = string_content(child, source) || "/"
+      end
+      return unless route_path = found
       row = Noir::TreeSitter.node_start_row(attr_item) + 1
 
       if HTTP_VERBS.includes?(name)
