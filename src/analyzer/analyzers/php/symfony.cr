@@ -201,6 +201,7 @@ module Analyzer::Php
       parser = Noir::PhpBlockParser.new(content)
       lexer = parser.lexer
       content = lexer.without_comments
+      offsets = Noir::CharOffsets.new(content)
 
       attrs = route_attributes(content, parser)
       classes = extract_classes(content, parser, attrs)
@@ -215,8 +216,8 @@ module Analyzer::Php
 
         klass = classes.find { |c| attr.start >= c.body_start && attr.start < c.body_end }
         routed_classes << klass.body_start if klass
-        action = (sig = content.match(SIGNATURE_RE, attr.stop)) ? action_at(path, content, lexer, sig, klass) : nil
-        emit_attribute_endpoints(endpoints, path, content, attr, route_paths, klass, action, import_prefixes, include_callee)
+        action = (sig = offsets.match(SIGNATURE_RE, attr.stop)) ? action_at(path, offsets, lexer, sig, klass) : nil
+        emit_attribute_endpoints(endpoints, path, offsets, attr, route_paths, klass, action, import_prefixes, include_callee)
       end
 
       # Class-level `#[Route]` on an invocable controller (`__invoke`): only
@@ -227,10 +228,10 @@ module Analyzer::Php
         next if docblock_orphaned?(content, attr)
         route_paths = klass.prefixes
         next if route_paths.empty?
-        next unless sig = content.match(SIGNATURE_RE, invoke_start)
+        next unless sig = offsets.match(SIGNATURE_RE, invoke_start)
 
-        action = action_at(path, content, lexer, sig, klass)
-        emit_attribute_endpoints(endpoints, path, content, attr, route_paths, nil, action, import_prefixes, include_callee)
+        action = action_at(path, offsets, lexer, sig, klass)
+        emit_attribute_endpoints(endpoints, path, offsets, attr, route_paths, nil, action, import_prefixes, include_callee)
       end
 
       endpoints
@@ -238,7 +239,7 @@ module Analyzer::Php
 
     private def emit_attribute_endpoints(endpoints : Array(Endpoint),
                                          path : String,
-                                         content : String,
+                                         offsets : Noir::CharOffsets,
                                          attr : RouteAttr,
                                          route_paths : Array(Tuple(String?, String)),
                                          klass : ClassInfo?,
@@ -249,7 +250,7 @@ module Analyzer::Php
       methods = ["GET"] if methods.empty?
       method_body = action.try(&.body)
       body_params = action.try(&.params) || [] of Param
-      route_line = line_number_for_index(content, attr.start)
+      route_line = offsets.line(attr.start)
 
       combine_symfony_paths(klass.try(&.prefixes), route_paths).each do |class_path|
         import_prefixes.each do |import_prefix|
@@ -313,9 +314,9 @@ module Analyzer::Php
     # Start of the attributes/docblock in front of the declaration at `pos`:
     # just past the previous `;`, `{` or `}` that is code.
     private def member_prelude_start(content : String, lexer : Noir::PhpLexer, pos : Int32) : Int32
-      i = pos
-      while i > 0 && (i = content.rindex(/[;{}]/, i - 1))
-        return i + 1 if lexer.in_code?(i)
+      masked = lexer.masked
+      (pos - 1).downto(0) do |i|
+        return i + 1 if (masked[i] == ';' || masked[i] == '{' || masked[i] == '}') && lexer.in_code?(i)
       end
       0
     end
@@ -335,11 +336,13 @@ module Analyzer::Php
     end
 
     # Handler, request params and guard of the method whose signature is `sig`.
-    private def action_at(path : String, content : String, lexer : Noir::PhpLexer, sig : Regex::MatchData, klass : ClassInfo?) : Action
-      body = extract_php_method_body_after(content, sig.begin(0))
+    private def action_at(path : String, offsets : Noir::CharOffsets, lexer : Noir::PhpLexer, sig : Regex::MatchData, klass : ClassInfo?) : Action
+      content = offsets.content
+      sig_start = offsets.begin(sig)
+      body = body_after(content, sig).try { |code, brace| {code, offsets.line(offsets.char(brace))} }
       name = klass ? "#{klass.name}::#{sig[1]}" : sig[1]
-      handler = Handler.new(name, path, line_number_for_index(content, sig.begin(1)))
-      prelude = content[member_prelude_start(content, lexer, sig.begin(0))...sig.begin(0)]
+      handler = Handler.new(name, path, offsets.line(offsets.begin(sig, 1)))
+      prelude = offsets.slice(member_prelude_start(content, lexer, sig_start), sig_start)
       guard = security_attribute_guard(prelude) || klass.try(&.guard)
       params = fos_rest_params(prelude)
       if body
@@ -415,7 +418,16 @@ module Analyzer::Php
 
     private def method_body(content : String, name : String) : String?
       sig = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+#{Regex.escape(name)}\s*\(/)
-      sig.try { |m| extract_php_method_body_after(content, m.begin(0)).try(&.[0]) }
+      sig.try { |m| body_after(content, m).try(&.[0]) }
+    end
+
+    # {body, byte offset of its `{`} of the method whose signature is `sig`,
+    # cut as `extract_php_method_body_after` would, without copying the rest
+    # of the file or counting lines from the top.
+    private def body_after(content : String, sig : Regex::MatchData) : Tuple(String, Int32)?
+      brace = content.byte_index('{'.ord.to_u8, sig.byte_end(0)) || return
+      close = find_matching_php_close_brace_at_byte(content, brace)
+      {content.byte_slice(brace + 1, close - brace - 1), brace} if close && close > brace + 1
     end
 
     private def php_namespace(content : String) : String?
@@ -424,10 +436,14 @@ module Analyzer::Php
 
     # The file declaring `fqcn`: a `<Short>.php` whose namespace matches.
     private def class_file(fqcn : String) : String?
+      @cache_mutex.synchronize do
+        return @class_files[fqcn] if @class_files.has_key?(fqcn)
+      end
       namespace, _, short = fqcn.lchop('\\').rpartition('\\')
-      get_files_by_basename("#{short}.php").find do |file|
+      found = get_files_by_basename("#{short}.php").find do |file|
         (php_namespace(read_file_content(file)) || "") == namespace
       end
+      @cache_mutex.synchronize { @class_files[fqcn] = found }
     end
 
     # The parent class's comment-stripped source, or "" when it is not in the tree.
@@ -682,13 +698,33 @@ module Analyzer::Php
             route_h[YAML::Any.new("defaults")]?.try(&.as_h?).try(&.[YAML::Any.new("_controller")]?).try(&.as_s?)
       return unless ref && (m = ref.match(/\A\\?([A-Za-z_][\w\\]*)(?:::(\w+))?\z/))
       return unless file = class_file(m[1])
+      source = yaml_controller(file)
+      return unless sig = source.signatures[m[2]? || "__invoke"]?
+      sig_start = source.offsets.begin(sig)
+      klass = source.classes.find { |c| sig_start >= c.body_start && sig_start < c.body_end }
+      action_at(file, source.offsets, source.lexer, sig, klass)
+    end
+
+    # A parsed controller and the first signature of each method name in it.
+    private record YamlController, lexer : Noir::PhpLexer, offsets : Noir::CharOffsets,
+      classes : Array(ClassInfo), signatures : Hash(String, Regex::MatchData)
+
+    @yaml_controllers = {} of String => YamlController
+    @class_files = {} of String => String?
+    @cache_mutex = Mutex.new
+
+    # A YAML-routed controller parsed once, however many routes name it.
+    # `analyze_file` runs in parallel workers, hence the lock.
+    private def yaml_controller(file : String) : YamlController
+      if cached = @cache_mutex.synchronize { @yaml_controllers[file]? }
+        return cached
+      end
       parser = Noir::PhpBlockParser.new(read_file_content(file))
-      lexer = parser.lexer
-      content = lexer.without_comments
-      method = Regex.escape(m[2]? || "__invoke")
-      return unless sig = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+(#{method})\s*\(/)
-      klass = extract_classes(content, parser, [] of RouteAttr).find { |c| sig.begin(0) >= c.body_start && sig.begin(0) < c.body_end }
-      action_at(file, content, lexer, sig, klass)
+      content = parser.lexer.without_comments
+      signatures = {} of String => Regex::MatchData
+      content.scan(SIGNATURE_RE) { |sig| signatures[sig[1]] ||= sig }
+      controller = YamlController.new(parser.lexer, Noir::CharOffsets.new(content), extract_classes(content, parser, [] of RouteAttr), signatures)
+      @cache_mutex.synchronize { @yaml_controllers[file] ||= controller }
     end
 
     private def extract_yaml_methods(node : YAML::Any?) : Array(String)
