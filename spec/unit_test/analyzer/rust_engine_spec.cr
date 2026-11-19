@@ -96,5 +96,25 @@ describe Analyzer::Rust::RustEngine do
 
       Analyzer::Rust::RustEngine.collect_cfg_test_regions(source).should be_empty
     end
+
+    it "treats cfg(all(.., test, ..)) as test-only, but not test under not() or any()" do
+      source = <<-RUST
+        #[cfg(all(test, feature = "integration"))]
+        mod integration { fn a() {} }
+        #[cfg(all(not(test), feature = "x"))]
+        mod not_test { fn b() {} }
+        #[cfg(any(test, feature = "x"))]
+        mod any_test { fn c() {} }
+        #[cfg(all(feature = "test"))]
+        mod feature_named_test { fn d() {} }
+        RUST
+
+      regions = Analyzer::Rust::RustEngine.collect_cfg_test_regions(source)
+      regions.size.should eq(1)
+      start_byte, end_byte = regions[0]
+      inside = source.byte_index("fn a").not_nil!
+      (inside >= start_byte && inside < end_byte).should be_true
+      (source.byte_index("fn b").not_nil! >= end_byte).should be_true
+    end
   end
 end

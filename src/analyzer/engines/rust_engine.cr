@@ -224,7 +224,9 @@ module Analyzer::Rust
     def self.collect_cfg_test_regions(source : String) : Array(Tuple(Int32, Int32))
       regions = [] of Tuple(Int32, Int32)
       bytes = source.to_slice
-      pattern = /\#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/
+      # `cfg(test)`, or `cfg(all(.., test, ..))` with `test` a direct operand
+      # of `all` (inside `not(..)` / `any(..)` it does not gate to tests).
+      pattern = /\#\s*\[\s*cfg\s*\(\s*(?:test|all\s*\((?:[^()\]]|\([^()]*\))*?(?<![\w"])test(?![\w"])(?:[^()\]]|\([^()]*\))*\))\s*\)\s*\]/
       source.scan(pattern) do |match|
         # Byte offset: the scan below and tree-sitter's ranges are both in
         # bytes, and `begin` counts chars, so non-ASCII text above the
