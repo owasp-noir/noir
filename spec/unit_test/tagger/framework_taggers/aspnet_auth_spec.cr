@@ -606,6 +606,7 @@ describe "AspnetAuthTagger" do
               endpoints.MapGroup("/orders").WithApiDefaults().MapOrderEndpoints();
               var admin = endpoints.MapGroup("/orgs/{orgId}/admin").WithAdminDefaults();
               admin.MapGroup("/users").MapUserEndpoints();
+              admin.MapGroup("/pub").AllowAnonymous().MapOpenEndpoints();
               endpoints.MapGroup("/public").WithTags("public").MapPublicEndpoints();
           }
 
@@ -674,6 +675,12 @@ describe "AspnetAuthTagger" do
               var reports = endpoints.MapReportEndpoints();
               reports.MapGet("c", () => "c");
           }
+
+          public static RouteGroupBuilder MapOpenEndpoints(this RouteGroupBuilder group)
+          {
+              group.MapGet("", () => "open");
+              return group;
+          }
       }
       CS
     {wiring, routes}.each { |path| CodeLocator.instance.register_path(path) }
@@ -686,7 +693,7 @@ describe "AspnetAuthTagger" do
         details.technology = "cs_aspnet_core_minimal_api"
         Endpoint.new("/#{line}", "GET", [] of Param, details)
       end
-      endpoints = {order: 5, user: 11, public: 17, billing: 24, report_b: 32, report_c: 39}.to_h.transform_values { |line| at.call(line) }
+      endpoints = {order: 5, user: 11, public: 17, billing: 24, report_b: 32, report_c: 39, open: 44}.to_h.transform_values { |line| at.call(line) }
 
       AspnetAuthTagger.new(noir_options).perform(endpoints.values)
 

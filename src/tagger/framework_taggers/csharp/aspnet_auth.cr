@@ -172,9 +172,11 @@ class AspnetAuthTagger < FrameworkTagger
           before = statement[0...m.begin]
           after = statement[m.end..]
           next if after.matches?(MINIMAL_API_ALLOW_ANON)
-          before_auth = before.matches?(@auth_call)
+          # `.AllowAnonymous()` on the chain lifts the authorization it inherits.
+          anonymous = before.matches?(MINIMAL_API_ALLOW_ANON)
+          before_auth = !anonymous && before.matches?(@auth_call)
           # `admin.MapGroup("/users").MapUsers()`: a child group takes `admin`'s conventions.
-          if !before_auth && (receiver = before.match(/\A\s*(\w+)\s*(?:\z|\.\s*MapGroup\s*\()/))
+          if !before_auth && !anonymous && (receiver = before.match(/\A\s*(\w+)\s*(?:\z|\.\s*MapGroup\s*\()/))
             declaration = /\b#{Regex.escape(receiver[1])}\s*=[^=]/
             before_auth = statements.any? { |s| s.matches?(declaration) && s.matches?(@auth_call) && !s.matches?(MINIMAL_API_ALLOW_ANON) }
           end
