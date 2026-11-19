@@ -353,9 +353,9 @@ describe "PhpAuthTagger (expanded targets)" do
     Dir.mkdir_p(File.join(controllers, "Admin"))
     Dir.mkdir_p(File.join(tmpdir, "config"))
     routes = File.join(tmpdir, "config", "routes.php")
-    File.write(routes, <<-PHP)
+    File.write(routes, <<-'PHP')
       <?php
-      use Cake\\Routing\\RouteBuilder;
+      use Cake\Routing\RouteBuilder;
       return function (RouteBuilder $routes): void {
           $routes->scope('/', function (RouteBuilder $builder): void {
               $builder->connect('/login', ['controller' => 'Users', 'action' => 'login']);
@@ -367,10 +367,10 @@ describe "PhpAuthTagger (expanded targets)" do
           });
       };
       PHP
-    File.write(File.join(controllers, "AppController.php"), <<-PHP)
+    File.write(File.join(controllers, "AppController.php"), <<-'PHP')
       <?php
-      namespace App\\Controller;
-      use Cake\\Controller\\Controller;
+      namespace App\Controller;
+      use Cake\Controller\Controller;
       class AppController extends Controller
       {
           public function initialize(): void
@@ -380,12 +380,12 @@ describe "PhpAuthTagger (expanded targets)" do
           }
       }
       PHP
-    File.write(File.join(controllers, "UsersController.php"), <<-PHP)
+    File.write(File.join(controllers, "UsersController.php"), <<-'PHP')
       <?php
-      namespace App\\Controller;
+      namespace App\Controller;
       class UsersController extends AppController
       {
-          public function beforeFilter(\\Cake\\Event\\EventInterface $event)
+          public function beforeFilter(\Cake\Event\EventInterface $event)
           {
               parent::beforeFilter($event);
               $this->Authentication->addUnauthenticatedActions(['login', 'add']);
@@ -396,12 +396,12 @@ describe "PhpAuthTagger (expanded targets)" do
           }
       }
       PHP
-    File.write(File.join(controllers, "ArticlesController.php"), <<-PHP)
+    File.write(File.join(controllers, "ArticlesController.php"), <<-'PHP')
       <?php
-      namespace App\\Controller;
+      namespace App\Controller;
       class ArticlesController extends AppController
       {
-          public function beforeFilter(\\Cake\\Event\\EventInterface $event)
+          public function beforeFilter(\Cake\Event\EventInterface $event)
           {
               parent::beforeFilter($event);
               $this->Authentication->allowUnauthenticated(['index']);
@@ -411,19 +411,19 @@ describe "PhpAuthTagger (expanded targets)" do
           public function view($id) {}
       }
       PHP
-    File.write(File.join(controllers, "Admin", "StatsController.php"), <<-PHP)
+    File.write(File.join(controllers, "Admin", "StatsController.php"), <<-'PHP')
       <?php
-      namespace App\\Controller\\Admin;
-      use App\\Controller\\AppController;
+      namespace App\Controller\Admin;
+      use App\Controller\AppController;
       class StatsController extends AppController
       {
           public function index() {}
       }
       PHP
-    File.write(File.join(controllers, "HealthController.php"), <<-PHP)
+    File.write(File.join(controllers, "HealthController.php"), <<-'PHP')
       <?php
-      namespace App\\Controller;
-      use Cake\\Controller\\Controller;
+      namespace App\Controller;
+      use Cake\Controller\Controller;
       class HealthController extends Controller
       {
           public function index() {}
