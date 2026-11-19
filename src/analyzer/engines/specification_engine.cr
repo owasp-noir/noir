@@ -220,7 +220,7 @@ module Analyzer::Specification
       while Noir::PathScope.under_root?(dir, base)
         manifest = File.join(dir, ".openapi-generator", "FILES")
         if File.file?(manifest) && (content = CodeLocator.instance.read_source(manifest))
-          lines = content.lines
+          lines = content.lines.map(&.strip)
           return lines.includes?(path[(dir.size + 1)..]) &&
             lines.any?(&.matches?(GENERATED_CLIENT_FILE)) &&
             lines.none?(&.matches?(GENERATED_SERVER_FILE)) &&
