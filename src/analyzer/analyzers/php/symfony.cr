@@ -251,7 +251,9 @@ module Analyzer::Php
                                          action : Action?,
                                          import_prefixes : Array(String),
                                          include_callee : Bool)
-      methods = route_methods(attr)
+      # A class-level `#[Route(methods: ...)]` adds its verbs to each route's.
+      methods = (klass.try(&.route_attr).try { |class_attr| route_methods(class_attr) } || [] of String)
+      methods = (methods + route_methods(attr)).uniq
       methods = ["GET"] if methods.empty?
       method_body = action.try(&.body)
       body_params = action.try(&.params) || [] of Param
