@@ -205,6 +205,9 @@ module Analyzer::Go
       @named_scope = named_scope
       resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents_cache, @import_dirs)
       @resolver = resolver
+      external_helper = ->(from_file : String, qualifier : String, name : String) do
+        external_route_helper(from_file, qualifier, name, package_files, file_contents_cache)
+      end
 
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
@@ -237,13 +240,25 @@ module Analyzer::Go
         ts_routes = if route_file
                       Noir::TreeSitterGoRouteExtractor
                         .extract_chi_routes(content, mounted_functions,
-                          string_values_for(dir))
+                          string_values_for(dir), path, external_helper)
                     else
                       [] of Noir::TreeSitterGoRouteExtractor::Route
                     end
         # ponytail: names, not scopes — a wrapper-bound `r` admits every
         # `r.Get` in the file; track bindings per scope if that ever bites.
         ts_routes.select! { |r| wrapper_names.includes?(r.router_name.split('.').last) } unless chi_file
+        # Routes a route helper declared in another file registered at a call
+        # site here, with this call site's prefix: emitted in their own file.
+        helper_routes = ts_routes.select(&.file)
+        unless helper_routes.empty?
+          ts_routes.reject!(&.file)
+          helper_routes.group_by(&.file).each do |owner, routes|
+            next unless helper_file = owner
+            file_content = file_contents_cache[helper_file]? || next
+            @mutex.synchronize { routes.each { |route| @external_route_sites << {helper_file, route.line + 1} } }
+            result.concat(routes_endpoints(helper_file, file_content, routes, file_lines_cache, named_params: true))
+          end
+        end
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
@@ -752,25 +767,8 @@ module Analyzer::Go
         # file: its line, handler lookup and params are read there.
         collected.group_by { |route| route.file || search_path }.each do |route_file, routes|
           file_content = route_file == search_path ? content : (file_contents_cache[route_file]? || next)
-          routes.each { |route| @external_route_sites << {route_file, route.line + 1} } unless route_file == search_path
-          named = Noir::GoNamedHandler.new(file_content, route_file, routes, @named_scope)
-          file_endpoints = [] of Endpoint
-          routes.each do |route|
-            details = Details.new(PathInfo.new(route_file, route.line + 1))
-            handler = named.handler_for(route)
-            Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-              endpoint = Endpoint.new(route.path, verb, details)
-              endpoint.handler = handler
-              # The mount prefix joined on by the caller does not read the
-              # path's own leading operand, so the mark stays.
-              endpoint.resolution = named.resolution_for(route)
-              add_handler_body_params(named, route, endpoint)
-              file_endpoints << endpoint
-            end
-          end
-          lines = file_lines_cache[route_file]? || GoEngine.strip_comments(file_content).lines
-          attach_router_function_params(file_endpoints, lines)
-          endpoints.concat(file_endpoints)
+          @mutex.synchronize { routes.each { |route| @external_route_sites << {route_file, route.line + 1} } } unless route_file == search_path
+          endpoints.concat(routes_endpoints(route_file, file_content, routes, file_lines_cache))
         end
         endpoints.concat(nested)
 
@@ -800,6 +798,46 @@ module Analyzer::Go
       end
 
       endpoints
+    end
+
+    # Endpoints for `routes`, all registered in `route_file`, with the params
+    # of their handlers. `named_params` also reads them the way the free pass
+    # does for its own routes (inline closures and named-handler lines).
+    private def routes_endpoints(route_file : String, file_content : String,
+                                 routes : Array(Noir::TreeSitterGoRouteExtractor::Route),
+                                 file_lines_cache : Hash(String, Array(String)),
+                                 named_params : Bool = false) : Array(Endpoint)
+      named = Noir::GoNamedHandler.new(file_content, route_file, routes, @named_scope)
+      inline_params = nil
+      if named_params && (scope = @named_scope)
+        dir = File.dirname(route_file)
+        inline_params = Noir::GoRequestParamExtractor.params_for_routes(file_content, routes.map(&.line).to_set,
+          routes.to_h { |r| {r.line, r.verb} }, scope.bodies.functions_for(dir), scope.bodies.methods_for(dir),
+          resolver: @resolver, path: route_file)
+      end
+      file_endpoints = [] of Endpoint
+      routes.each do |route|
+        details = Details.new(PathInfo.new(route_file, route.line + 1))
+        handler = named.handler_for(route)
+        Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+          endpoint = Endpoint.new(route.path, verb, details)
+          endpoint.handler = handler
+          # The mount prefix joined on by the caller does not read the
+          # path's own leading operand, so the mark stays.
+          endpoint.resolution = named.resolution_for(route)
+          inline_params[route.line]?.try &.each { |param| add_param_to_endpoint(param, endpoint) } if inline_params
+          add_handler_body_params(named, route, endpoint)
+          named.bind(route, endpoint) if named_params
+          file_endpoints << endpoint
+        end
+      end
+      lines = file_lines_cache[route_file]? || GoEngine.strip_comments(file_content).lines
+      attach_router_function_params(file_endpoints, lines)
+      if named_params
+        lines.each_with_index { |line, index| named.claim?(index, line) }
+        named.each_attribution { |line, ep| extract_handler_params(line, ep) }
+      end
+      file_endpoints
     end
 
     # Keep Chi's module-backed lookup: GoEngine's modless fallback could

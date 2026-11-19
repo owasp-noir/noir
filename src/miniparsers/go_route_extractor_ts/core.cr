@@ -1268,7 +1268,9 @@ module Noir
     private def extract_scoped_routes(source : String,
                                       config : ScopedConfig,
                                       skip_functions : Set(String) = Set(String).new,
-                                      external_string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)
+                                      external_string_values : Hash(String, String) = Hash(String, String).new,
+                                      file : String = "",
+                                      external : Proc(String, String, String, Tuple(String, String)?)? = nil) : Array(Route)
       routes = [] of Route
       local_groups = Hash(String, String).new
       Noir::TreeSitter.parse_go(source) do |root|
@@ -1278,6 +1280,8 @@ module Noir
         string_values = external_string_values.dup
         collect_string_values(root, source).each { |k, v| string_values[k] = v }
         helpers = collect_route_helpers(root, source, config.prefix_method)
+        helpers.file = file
+        helpers.external = external
         walk_chi(root, source, [] of String, local_groups, routes, skip_functions, config, string_values, helpers)
       end
       routes

@@ -7,10 +7,14 @@ module Noir
     # `r.HandleFunc("/x", h)` / `r.Handle("/x", h)` (match ANY method).
     # Gated behind `ScopedConfig#net_http_methods?` so the gf walker —
     # which shares this recognizer — is untouched.
+    # `file` and `external` resolve a route helper declared in another file
+    # (see `RouteHelperIndex#external`); its routes come back with `file` set.
     def extract_chi_routes(source : String,
                            skip_functions : Set(String) = Set(String).new,
-                           external_string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)
-      extract_scoped_routes(source, ScopedConfig.new(net_http_methods: true), skip_functions, external_string_values)
+                           external_string_values : Hash(String, String) = Hash(String, String).new,
+                           file : String = "",
+                           external : Proc(String, String, String, Tuple(String, String)?)? = nil) : Array(Route)
+      extract_scoped_routes(source, ScopedConfig.new(net_http_methods: true), skip_functions, external_string_values, file, external)
     end
 
     # The prefix each `r.Mount(...)` call of `source` sits under, by its
@@ -62,7 +66,7 @@ module Noir
       # called here but declared elsewhere: another file of the package
       # (`addGitHTTPRoutes(m)`) or an imported one (`common.AddLFSRoutes(m)`).
       # Given `{file, qualifier, name}` it answers `{path, source}` of the
-      # declaring file, or nil. Only Mount expansion sets it.
+      # declaring file, or nil.
       property file : String = ""
       property external : Proc(String, String, String, Tuple(String, String)?)? = nil
 
@@ -135,6 +139,16 @@ module Noir
                                        source : String,
                                        prefix_method : String,
                                        helpers : RouteHelperIndex) : Tuple(String, RouteHelper)?
+      return unless arg = route_callback_arg(call, source, prefix_method)
+      return unless Noir::TreeSitter.node_type(arg) == "identifier"
+      name = Noir::TreeSitter.node_text(arg, source)
+      helper = helpers[name]
+      {name, helper} if helper && helper.router_index == 0
+    end
+
+    # The last argument of a `<prefix_method>(...)` call: the callback of
+    # `r.Route("/users", userRoutes)`.
+    private def route_callback_arg(call : LibTreeSitter::TSNode, source : String, prefix_method : String) : LibTreeSitter::TSNode?
       function = Noir::TreeSitter.field(call, "function")
       return unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
       field = Noir::TreeSitter.field(function, "field")
@@ -143,10 +157,24 @@ module Noir
       return unless args
       last = nil
       Noir::TreeSitter.each_named_arg(args) { |arg| last = arg }
-      return unless (arg = last) && Noir::TreeSitter.node_type(arg) == "identifier"
-      name = Noir::TreeSitter.node_text(arg, source)
-      helper = helpers[name]
-      {name, helper} if helper && helper.router_index == 0
+      last
+    end
+
+    # `{qualifier, name}` of a callback naming a function that is not a
+    # route helper of this file: `registerUsers` (another file of the
+    # package) or `users.Register` (an imported one).
+    private def external_callback(arg : LibTreeSitter::TSNode, source : String, helpers : RouteHelperIndex) : Tuple(String, String)?
+      case Noir::TreeSitter.node_type(arg)
+      when "identifier"
+        name = Noir::TreeSitter.node_text(arg, source)
+        {"", name} unless helpers[name]
+      when "selector_expression"
+        operand = Noir::TreeSitter.field(arg, "operand")
+        field = Noir::TreeSitter.field(arg, "field")
+        if operand && field && Noir::TreeSitter.node_type(operand) == "identifier"
+          {Noir::TreeSitter.node_text(operand, source), Noir::TreeSitter.node_text(field, source)}
+        end
+      end
     end
 
     # `{name, position}` of the first router-typed parameter of a
@@ -225,7 +253,8 @@ module Noir
                                        skip_functions : Set(String),
                                        config : ScopedConfig,
                                        string_values : Hash(String, String),
-                                       helpers : RouteHelperIndex) : Bool
+                                       helpers : RouteHelperIndex,
+                                       scope_prefix : String? = nil) : Bool
       external = helpers.external || return false
       key = "#{qualifier}.#{name}"
       return false if helpers.active.includes?(key) || helpers.active.size >= 8
@@ -238,19 +267,27 @@ module Noir
         index.external = external
         index.active = helpers.active
         first = routes.size
-        helpers.active << key
-        # The router argument is spelled in the caller's source, so its
-        # prefix resolves here; the body then walks in the helper's own.
-        args = Noir::TreeSitter.field(call, "arguments")
-        router_arg = nil
-        position = 0
-        args.try { |a| Noir::TreeSitter.each_named_arg(a) { |arg| router_arg = arg if position == helper.router_index; position += 1 } }
-        if (arg = router_arg) && Noir::TreeSitter.node_type(arg) == "identifier"
-          base_prefix = local_groups[Noir::TreeSitter.node_text(arg, source)]? || prefix_stack.join
+        # A `r.Route("/p", helper)` callback is handed the sub-router whose
+        # prefix is `scope_prefix`. Otherwise the router argument is spelled
+        # in the caller's source, so its prefix resolves here; the body then
+        # walks in the helper's own.
+        base_prefix = if scope_prefix
+                        scope_prefix if helper.router_index == 0
+                      else
+                        args = Noir::TreeSitter.field(call, "arguments")
+                        router_arg = nil
+                        position = 0
+                        args.try { |a| Noir::TreeSitter.each_named_arg(a) { |arg| router_arg = arg if position == helper.router_index; position += 1 } }
+                        if (arg = router_arg) && Noir::TreeSitter.node_type(arg) == "identifier"
+                          local_groups[Noir::TreeSitter.node_text(arg, source)]? || prefix_stack.join
+                        end
+                      end
+        if base_prefix
+          helpers.active << key
           walk_chi(helper.body, helper_source, [base_prefix], Hash(String, String).new, routes, skip_functions, config, string_values, index)
+          helpers.active.delete(key)
           expanded = true
         end
-        helpers.active.delete(key)
         (first...routes.size).each do |i|
           next if routes[i].file
           route = routes[i]
@@ -313,6 +350,12 @@ module Noir
             helpers.active << name
             walk_chi(helper.body, source, prefix_stack + [prefix], inner_groups, routes, skip_functions, config, string_values, helpers)
             helpers.active.delete(name)
+            return
+          elsif helpers.external && (callback = route_callback_arg(node, source, config.prefix_method)) &&
+                (target = external_callback(callback, source, helpers)) &&
+                (prefix = chi_first_string_arg(node, source, string_values)) &&
+                expand_external_helper(node, target[0], target[1], source, prefix_stack, local_groups, routes, skip_functions,
+                  config, string_values, helpers, scope_prefix: (prefix_stack + [prefix]).join)
             return
           end
         end
