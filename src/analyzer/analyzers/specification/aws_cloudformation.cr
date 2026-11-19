@@ -9,6 +9,17 @@ module Analyzer::Specification
     APIGW_RESOURCE_TYPE   = "AWS::ApiGateway::Resource"
     APIGW_METHOD_TYPE     = "AWS::ApiGateway::Method"
     APIGW_RESOURCE_PARENT = "ParentId"
+    APIGW_REST_API_TYPE   = "AWS::ApiGateway::RestApi"
+    APIGW_V2_ROUTE_TYPE   = "AWS::ApiGatewayV2::Route"
+    # Resources whose inline OpenAPI document (`DefinitionBody` / `Body`)
+    # declares the API's routes.
+    INLINE_DEFINITION_KEYS = {
+      "AWS::Serverless::Api"     => "DefinitionBody",
+      "AWS::Serverless::HttpApi" => "DefinitionBody",
+      APIGW_REST_API_TYPE        => "Body",
+      "AWS::ApiGatewayV2::Api"   => "Body",
+    }
+    OPENAPI_METHODS = %w[get put post delete options head patch trace]
 
     record ApigwResource, name : String, path_part : String, parent : String?
 
@@ -20,6 +31,7 @@ module Analyzer::Specification
 
         process_sam(resources, details)
         process_cloudformation(resources, details)
+        process_inline_definitions(resources, details)
       end
 
       @result
@@ -97,21 +109,53 @@ module Analyzer::Specification
           resource_id = ref_target(info[:properties]["ResourceId"]?) || ""
           next if resource_id.empty?
           methods << {parent_id: resource_id, method: http_method}
+        when APIGW_V2_ROUTE_TYPE
+          # `RouteKey: "GET /items/{id}"`; `$default` / `$connect` select no path.
+          verb, _, route_path = (info[:properties]["RouteKey"]?.try(&.as_s?) || "").partition(' ')
+          next unless route_path.starts_with?('/')
+          emit_rest(route_path, verb, "httpapi", details)
         end
       end
 
       return if methods.empty?
 
       methods.each do |m|
-        path = build_path(m[:parent_id], apigw_resources)
+        # `ResourceId: !GetAtt RestApi.RootResourceId` is the API's `/`.
+        path = if resources[m[:parent_id].split('.').first]?.try(&.[:type]) == APIGW_REST_API_TYPE
+                 "/"
+               else
+                 build_path(m[:parent_id], apigw_resources)
+               end
         next if path.empty?
 
-        resolved_method = m[:method].empty? ? METHOD_ANY : m[:method].upcase
-        resolved_method = METHOD_ANY if resolved_method == "*"
-        endpoint = Endpoint.new(path, resolved_method, details)
-        endpoint.add_tag(Tag.new("sam-event-type", "rest", "aws_cloudformation_analyzer"))
-        @result << endpoint
+        emit_rest(path, m[:method], "rest", details)
       end
+    end
+
+    private def process_inline_definitions(resources : ResourceMap, details : Details)
+      resources.each_value do |info|
+        next unless key = INLINE_DEFINITION_KEYS[info[:type]]?
+        next unless paths = info[:properties][key]?.try(&.as_h?).try(&.["paths"]?).try(&.as_h?)
+        kind = (info[:type].ends_with?("HttpApi") || info[:type].includes?("V2")) ? "httpapi" : "rest"
+        paths.each do |path, item|
+          next unless path.starts_with?('/')
+          item.as_h?.try &.each_key do |verb|
+            if OPENAPI_METHODS.includes?(verb.downcase)
+              emit_rest(path, verb, kind, details)
+            elsif verb == "x-amazon-apigateway-any-method"
+              emit_rest(path, METHOD_ANY, kind, details)
+            end
+          end
+        end
+      end
+    end
+
+    private def emit_rest(path : String, method : String, kind : String, details : Details)
+      resolved_method = method.empty? ? METHOD_ANY : method.upcase
+      resolved_method = METHOD_ANY if resolved_method == "*"
+      endpoint = Endpoint.new(path, resolved_method, details)
+      endpoint.add_tag(Tag.new("sam-event-type", kind, "aws_cloudformation_analyzer"))
+      @result << endpoint
     end
 
     # Resolve `Fn::Ref` / `Fn::GetAtt` / `!Ref` shorthand references that the
