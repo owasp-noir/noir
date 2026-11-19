@@ -50,6 +50,8 @@ jobs:
       generated_docs: ${{ steps.gate.outputs.generated_docs }}
       snap: ${{ steps.gate.outputs.snap }}
       nix: ${{ steps.gate.outputs.nix }}
+      tag_rules: ${{ steps.gate.outputs.tag_rules }}
+      test_versions: ${{ steps.gate.outputs.test_versions }}
     steps:
       # `push` events resolve the base from `github.event.before`, which needs
       # the git history present; `pull_request` events use the API and would not
@@ -58,6 +60,9 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
+          # Only `everything_files` is read (by the gate step below), but the
+          # option is per-step, not per-filter.
+          list-files: json
           filters: |
             crystal: &crystal
               - .github/workflows/ci.yml
@@ -109,6 +114,15 @@ jobs:
               - shard.lock
               - scripts/check_shards_nix.cr
               - src/ext/**
+            tag_rules:
+              - .github/workflows/ci.yml
+              - scripts/check_tag_rules.cr
+              - src/tagger/rule_tagger.cr
+              - src/tagger/rules/**
+            # Not a gate: its file list is what the step below reads to tell a
+            # rules-only change set from everything else.
+            everything:
+              - '**'
       - name: Resolve job gates
         id: gate
         # A manual run has no "before" commit to diff against, so the filter
@@ -116,19 +130,69 @@ jobs:
         # workflow by hand is an explicit request for a full run, so force all
         # gates open — this is also what makes the `workflow_dispatch` entry
         # point (and build-snapcraft's dispatch path) still mean something.
+        #
+        # A change set made up of nothing but tag rule files takes a short path.
+        # Those files are data: `scripts/check_tag_rules.cr` (the tag-rules job)
+        # proves each rule against its own examples in seconds, and the spec
+        # suite still runs once as the full check. What a rule file cannot
+        # affect is skipped: a second Crystal version, the plain build, lint,
+        # both Docker images, the action e2e and the snap. windows.yml carries
+        # the matching `!src/tagger/rules/**`. The first contribution most
+        # people make is a word added to one of these files, and without this a
+        # room of them queues eleven jobs each for a one-line YAML edit.
         env:
           MATCHED: ${{ steps.filter.outputs.changes }}
+          CHANGED_FILES: ${{ steps.filter.outputs.everything_files }}
           FORCE_ALL: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          for gate in crystal spec lint docker action generated_docs snap nix; do
+          rules_only=false
+          if [ "$FORCE_ALL" != "true" ]; then
+            rules_only=$(jq -r 'length > 0 and all(.[]; test("^src/tagger/rules/[^/]+\\.ya?ml$"))' <<<"${CHANGED_FILES:-[]}")
+          fi
+          echo "rules_only=$rules_only"
+
+          for gate in crystal spec lint docker action generated_docs snap nix tag_rules; do
             if [ "$FORCE_ALL" = "true" ]; then
               value=true
             else
               value=$(jq -r --arg g "$gate" 'index($g) != null' <<<"$MATCHED")
             fi
+            if [ "$rules_only" = "true" ]; then
+              case "$gate" in
+                crystal | lint | docker | action | snap) value=false ;;
+              esac
+            fi
             echo "$gate=$value" >> "$GITHUB_OUTPUT"
             echo "$gate=$value"
           done
+
+          if [ "$rules_only" = "true" ]; then
+            test_versions='["1.22.0"]'
+          else
+            test_versions='["1.21.0", "1.22.0"]'
+          fi
+          echo "test_versions=$test_versions" >> "$GITHUB_OUTPUT"
+          echo "test_versions=$test_versions"
+
+  tag-rules:
+    # Seconds, not minutes: the checker requires only the rule loader, so there
+    # is no `shards install` and no tree-sitter build. Keep it that way; if
+    # this job ever needs either, something has pulled the analyzers into the
+    # rule loader. Failures are also written as annotations, so they show next
+    # to the rule file in the pull request.
+    name: Tag rule examples
+    needs: changes
+    if: needs.changes.outputs.tag_rules == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Refresh apt package indexes
+        run: sudo apt-get update
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
+      - name: Check every rule against its examples
+        run: crystal run scripts/check_tag_rules.cr
 
   build-crystal:
     needs: changes
@@ -370,7 +434,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crystal-version: [1.21.0, 1.22.0]
+        # Both versions, except for a rules-only change set (one is enough
+        # there; see the gate step in `changes`).
+        crystal-version: ${{ fromJSON(needs.changes.outputs.test_versions) }}
     steps:
       - uses: actions/checkout@v7
       - name: Refresh apt package indexes

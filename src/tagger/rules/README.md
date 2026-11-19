@@ -55,6 +55,8 @@ A single string works wherever a list does. Unknown keys, empty lists and a `pat
 
 Put the false positive you are guarding against in `no_match`. Run `just spec-build && ./bin/noir_spec -e "tag rules"`.
 
+For a check that needs no build, `crystal run scripts/check_tag_rules.cr` runs every rule against its examples in a few seconds. CI runs it on any change in this directory, and a pull request that touches nothing else skips the heavier jobs.
+
 If a tagger needs logic these conditions can't express, write it in Crystal under `src/tagger/taggers/` instead.
 
 ## Your own rules

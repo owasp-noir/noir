@@ -12,6 +12,9 @@ on:
       - shard.lock
       - src/**
       - spec/**
+      # Tag rules are data with nothing platform-specific in them; ci.yml
+      # checks them on a short path of their own.
+      - "!src/tagger/rules/**"
   push:
     branches: [main]
     paths:
@@ -20,6 +23,9 @@ on:
       - shard.lock
       - src/**
       - spec/**
+      # Tag rules are data with nothing platform-specific in them; ci.yml
+      # checks them on a short path of their own.
+      - "!src/tagger/rules/**"
   workflow_dispatch:
 
 concurrency:
