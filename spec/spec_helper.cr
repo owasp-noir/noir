@@ -22,3 +22,16 @@ def create_test_options : Hash(String, YAML::Any)
   options["nolog"] = YAML::Any.new(true)
   options
 end
+
+# Times the block with the collector kept out, for ratio (n vs 2n) guards: a
+# collection tends to land in the larger run only, and on the Windows runner
+# one costs about as much as the work being measured.
+def measure_without_gc(&) : Time::Span
+  GC.collect
+  GC.disable
+  begin
+    Time.measure { yield }
+  ensure
+    GC.enable
+  end
+end

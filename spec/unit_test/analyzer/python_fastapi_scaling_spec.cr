@@ -26,7 +26,7 @@ private def timed_fastapi_scan(routes : Int32) : Tuple(Array(Endpoint), Time::Sp
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
   endpoints = [] of Endpoint
-  elapsed = Time.measure { endpoints = Analyzer::Python::FastAPI.new(options).analyze }
+  elapsed = measure_without_gc { endpoints = Analyzer::Python::FastAPI.new(options).analyze }
   {endpoints, elapsed}
 ensure
   CodeLocator.instance.clear_all

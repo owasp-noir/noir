@@ -2030,7 +2030,7 @@ describe "EndpointOptimizer" do
         timed = ->(n : Int32) do
           endpoints = (0...n).map { |i| tech_endpoint("/p#{i}/:id", "GET", "postman", "c.json") }
           result = [] of Endpoint
-          elapsed = Time.measure { result = EndpointOptimizer.new(logger, options).optimize_endpoints(endpoints) }
+          elapsed = measure_without_gc { result = EndpointOptimizer.new(logger, options).optimize_endpoints(endpoints) }
           result.size.should eq(n)
           elapsed
         end

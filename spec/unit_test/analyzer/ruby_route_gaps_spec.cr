@@ -754,9 +754,9 @@ describe "Ruby route gaps" do
     small = app.call(300)
     large = app.call(1200)
     scan_ruby_tree(small)
-    small_time = Time.measure { scan_ruby_tree(small) }
+    small_time = measure_without_gc { scan_ruby_tree(small) }
     endpoints = [] of Endpoint
-    large_time = Time.measure { endpoints = scan_ruby_tree(large) }
+    large_time = measure_without_gc { endpoints = scan_ruby_tree(large) }
     endpoints.size.should eq 1200
     param_names(find_ep(endpoints, "POST", "/a1198"), "form").should eq(%w[body title])
     param_names(find_ep(endpoints, "POST", "/a1199"), "form").should be_empty
