@@ -10,6 +10,10 @@ module Analyzer::Python
     # Base path for the Django project
     @django_base_path : ::String = ""
     @visited_url_paths = Hash(String, Bool).new
+    # A urlconf can be mounted under several prefixes: `{file, prefix}` of
+    # the mounts already read, and the urlconfs being read (include cycles).
+    @visited_url_mounts = Set(Tuple(String, String)).new
+    @urlconfs_in_progress = Set(String).new
     # `{file, list, prefix}` of the imported url lists already followed,
     # and the `{file, list}` being read (a list including itself).
     @visited_url_lists = Set(Tuple(String, String, String)).new
@@ -478,7 +482,11 @@ module Analyzer::Python
       endpoints = [] of Endpoint
       url_base_path = File.dirname(django_urls.filepath)
       own_urlpatterns = django_urls.list_name == "urlpatterns"
-      @visited_url_paths[django_urls.filepath] = true if own_urlpatterns
+      if own_urlpatterns
+        @visited_url_paths[django_urls.filepath] = true
+        @visited_url_mounts << {django_urls.filepath, url_mount_key(django_urls.prefix)}
+        @urlconfs_in_progress << django_urls.filepath
+      end
 
       # Prefer the detector-cached content over a fresh disk read; falls
       # back to File.read (same encoding: utf-8, invalid: :skip) when the
@@ -540,7 +548,7 @@ module Analyzer::Python
           end
           if new_route_path = resolve_dotted_include_target(view)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", new_route_path, django_urls.basepath)
-            unless @visited_url_paths.has_key? new_django_urls.filepath
+            unless urlconf_include_seen?(new_django_urls)
               extract_endpoints(new_django_urls).each do |endpoint|
                 append_code_path(endpoint.details, PathInfo.new(new_route_path))
                 endpoints << endpoint
@@ -569,7 +577,7 @@ module Analyzer::Python
 
           if imported_urlconf_path = extract_imported_include_target(view, package_map, django_urls.filepath)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", imported_urlconf_path, django_urls.basepath)
-            unless @visited_url_paths.has_key? new_django_urls.filepath
+            unless urlconf_include_seen?(new_django_urls)
               extract_endpoints(new_django_urls).each do |endpoint|
                 append_code_path(endpoint.details, PathInfo.new(imported_urlconf_path))
                 endpoints << endpoint
@@ -634,6 +642,17 @@ module Analyzer::Python
       endpoints.concat(direct_router_endpoints)
       endpoints.concat(imported_endpoints)
       endpoints
+    ensure
+      @urlconfs_in_progress.delete(django_urls.filepath) if own_urlpatterns
+    end
+
+    private def urlconf_include_seen?(django_urls : DjangoUrls) : Bool
+      @urlconfs_in_progress.includes?(django_urls.filepath) ||
+        @visited_url_mounts.includes?({django_urls.filepath, url_mount_key(django_urls.prefix)})
+    end
+
+    private def url_mount_key(prefix : ::String) : ::String
+      prefix.gsub(/\/+/, "/").strip('/')
     end
 
     # The routes of url list `name` when the urlconf behind `django_urls`
@@ -651,7 +670,7 @@ module Analyzer::Python
       # `from .presale.urls import urlpatterns as presale_patterns`: that
       # module, read once like any included urlconf.
       if list == "urlpatterns"
-        return [] of Endpoint if @visited_url_paths.has_key?(file)
+        return [] of Endpoint if urlconf_include_seen?(DjangoUrls.new(prefix, file, django_urls.basepath))
       else
         return [] of Endpoint if @url_lists_in_progress.includes?({file, list})
         return [] of Endpoint unless @visited_url_lists.add?({file, list, prefix})
@@ -1222,7 +1241,7 @@ module Analyzer::Python
 
         if imported_urlconf_path = extract_imported_include_target(view, package_map, current_app_config_path)
           new_django_urls = DjangoUrls.new(nested_prefix, imported_urlconf_path, @django_base_path)
-          unless @visited_url_paths.has_key? new_django_urls.filepath
+          unless urlconf_include_seen?(new_django_urls)
             extract_endpoints(new_django_urls).each do |endpoint|
               append_code_path(endpoint.details, entry_path)
               append_code_path(endpoint.details, parent_route_path)
@@ -1786,7 +1805,7 @@ module Analyzer::Python
         # instead of the app's routes.
         if dotted_urlconf_path = resolve_dotted_include_target(view)
           new_django_urls = DjangoUrls.new(join_url_parts(django_urls.prefix, nested_mount).lchop("/"), dotted_urlconf_path, django_urls.basepath)
-          unless @visited_url_paths.has_key? new_django_urls.filepath
+          unless urlconf_include_seen?(new_django_urls)
             extract_endpoints(new_django_urls).each do |endpoint|
               append_code_path(endpoint.details, PathInfo.new(dotted_urlconf_path))
               endpoints << endpoint
@@ -1824,7 +1843,7 @@ module Analyzer::Python
 
         if imported_urlconf_path = extract_imported_include_target(view, package_map, django_urls.filepath)
           new_django_urls = DjangoUrls.new(join_url_parts(django_urls.prefix, nested_mount).lchop("/"), imported_urlconf_path, django_urls.basepath)
-          unless @visited_url_paths.has_key? new_django_urls.filepath
+          unless urlconf_include_seen?(new_django_urls)
             extract_endpoints(new_django_urls).each do |endpoint|
               append_code_path(endpoint.details, PathInfo.new(imported_urlconf_path))
               endpoints << endpoint
