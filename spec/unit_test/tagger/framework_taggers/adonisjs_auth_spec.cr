@@ -13,7 +13,7 @@ describe "AdonisjsAuthTagger" do
     noir_options["base"] = YAML::Any.new(base)
     lines = {5 => "/notes", 6 => "/notes/:id", 9 => "/api/notes", 13 => "/public", 16 => "/feed", 17 => "/login",
              20 => "/admin", 25 => "/account/me", 28 => "/account/inner/drafts", 37 => "/v2/open",
-             42 => "/posts", 43 => "/drafts", 46 => "/comments", 47 => "/reviews", 48 => "/browse"}
+             42 => "/posts", 43 => "/drafts", 46 => "/comments", 47 => "/reviews", 48 => "/browse", 49 => "/roles"}
     endpoints = lines.map do |line, url|
       details = Details.new(PathInfo.new(routes, line))
       details.technology = "js_adonisjs"
@@ -30,6 +30,7 @@ describe "AdonisjsAuthTagger" do
     verdicts["/posts"].should eq(["Protected by AdonisJS middleware.auth()"])
     verdicts["/comments"].should eq(["Protected by AdonisJS middleware.auth()"])
     verdicts["/reviews"].should eq(["Protected by AdonisJS middleware.auth()"])
+    verdicts["/roles"].should eq(["Protected by AdonisJS middleware.auth()"])
     %w[/public /feed /login /v2/open /drafts /browse].each { |url| verdicts[url].should be_empty }
   end
 

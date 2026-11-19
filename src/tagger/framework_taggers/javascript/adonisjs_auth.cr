@@ -14,7 +14,7 @@ class AdonisjsAuthTagger < FrameworkTagger
   # routes, so neither counts.
   # Earlier list elements are references or calls (`throttle`,
   # `middleware.throttle()`), never strings: `.use(['store'], …)` names actions.
-  AUTH_USE   = /\.\s*use\s*\(\s*(?:['"]\*['"]\s*,\s*)?(?:\[\s*(?:[A-Za-z_$][\w$.]*(?:\s*\([^()\[\]]*\))?\s*,\s*)*)?middleware\s*\.\s*auth\s*\(|\.\s*middleware\s*\(\s*(?:\{\s*['"]\*['"]\s*:\s*)?(?:\[\s*)?['"]auth(?::[\w,]+)?['"]/
+  AUTH_USE   = /\.\s*use\s*\(\s*(?:['"]\*['"]\s*,\s*)?(?:\[\s*(?:[A-Za-z_$][\w$.]*(?:\s*\((?:[^()\[\]]|\[[^()\[\]]*\])*\))?\s*,\s*)*)?middleware\s*\.\s*auth\s*\(|\.\s*middleware\s*\(\s*(?:\{\s*['"]\*['"]\s*:\s*)?(?:\[\s*)?['"]auth(?::[\w,]+)?['"]/
   GROUP_CALL = /\.\s*group\s*\(/
   # A call chained on at the match position: `.prefix('/api')`.
   CHAINED_CALL = /\G\s*\.\s*[A-Za-z_$][\w$]*\s*\(/
