@@ -270,71 +270,11 @@ module Analyzer::Go
             end
           end
 
-          # Handle parameter extraction patterns in Go (identical to mux / stdlib Request usage).
-          # Order: more specific first.
-          if line.includes?("Query().Get(")
-            add_param_to_endpoint(get_param(line, "Query"), last_endpoint)
-          elsif line.includes?("PostFormValue(")
-            add_param_to_endpoint(get_param(line, "PostFormValue", last_endpoint), last_endpoint)
-          elsif line.includes?("FormValue(")
-            add_param_to_endpoint(get_param(line, "FormValue", last_endpoint), last_endpoint)
-          elsif line.includes?("Cookie(")
-            add_param_to_endpoint(get_param(line, "Cookie"), last_endpoint)
-          end
-          Noir::GoRequestParamExtractor.header_params(line).each { |header| add_param_to_endpoint(header, last_endpoint) }
-
-          # Stdlib-style body reads (json or raw) — same heuristic used by mux analyzer.
-          if !last_endpoint.url.empty? &&
-             (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
-             line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
-            body_param = Param.new("body", "", "json")
-            last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
-          end
+          add_request_line_params(line, last_endpoint)
         end
       end
 
       result
-    end
-
-    def get_param(line : String, pattern : String, endpoint : Endpoint? = nil) : Param
-      param_name = ""
-      param_type = ""
-
-      case pattern
-      when "Query"
-        if match = line.match(/Query\(\)\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "query"
-        end
-      when "PostFormValue"
-        if match = line.match(/PostFormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "form"
-        end
-      when "FormValue"
-        if match = line.match(/FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = form_value_param_type(endpoint)
-        end
-      when "Cookie"
-        if match = line.match(/Cookie\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "cookie"
-        end
-      end
-
-      Param.new(param_name, "", param_type)
-    end
-
-    private def form_value_param_type(endpoint : Endpoint?) : String
-      return "query" unless endpoint
-
-      case endpoint.method
-      when "GET", "HEAD", "QUERY", ""
-        "query"
-      else
-        "form"
-      end
     end
 
     # A `PathValue("x")` read (the handler's or a helper's it calls) is a

@@ -79,6 +79,9 @@ module Analyzer::Go
           public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
         end
 
+        # The lines credited to `last_endpoint` since its route, read as one
+        # body when the next route starts (or the file ends).
+        segment = [] of String
         lines.each_with_index do |line, index|
           # Expanded router-builder bodies are emitted below with their
           # call-site prefix.
@@ -88,6 +91,8 @@ module Analyzer::Go
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
+            add_fiber_body_params(segment, path, [last_endpoint], named_scope.structs)
+            segment = [] of String
             ts_hits.each do |route|
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                 new_endpoint = Endpoint.new(route.path, verb, details)
@@ -107,14 +112,15 @@ module Analyzer::Go
             end
           end
 
-          add_fiber_param_patterns(line, last_endpoint)
+          segment << line
         end
+        add_fiber_body_params(segment, path, [last_endpoint], named_scope.structs)
 
         expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add") do |line, ep|
           add_fiber_param_patterns(line, ep)
         end
 
-        named.each_attribution { |line, ep| add_fiber_param_patterns(line, ep) }
+        named.each_bound_body { |file, body_lines, eps| add_fiber_body_params(body_lines, file, eps, named_scope.structs) }
       end
 
       resolve_public_dirs(public_dirs)
@@ -124,20 +130,61 @@ module Analyzer::Go
 
     REQUEST_HEADER_GET_RE = /\b(?:c|ctx)\.Get\(\s*"([^"]+)"/
 
-    private def add_fiber_param_patterns(line : String, ep : Endpoint)
-      if line.includes?(".Query(") || line.includes?(".FormValue(") ||
-         line.includes?(".Params(") || line.includes?(".ParamsInt(")
-        add_param_to_endpoint(get_param(line), ep)
+    # The context's readers, every one on the line: `Query` and its typed
+    # forms, `FormValue`, `FormFile`, `Params` / `ParamsInt`.
+    ACCESSOR_RE = /\.(Query(?:Int|Bool|Float)?|FormValue|FormFile|Params(?:Int)?)\s*\(\s*"([^"]*)"/
+
+    # Fiber's struct parsers (`c.QueryParser(&f)`) and the tags each fills
+    # from, by param type. `BodyParser` takes `json` or `form` by
+    # Content-Type, so both are listed.
+    PARSER_CALL = /\.(BodyParser|QueryParser|ReqHeaderParser|ParamsParser|CookieParser)\s*\(\s*&?\s*([A-Za-z_]\w*)\s*\)/
+    PARSER_TAGS = {
+      "BodyParser"      => {"json" => "json", "form" => "form"},
+      "QueryParser"     => {"query" => "query"},
+      "ReqHeaderParser" => {"reqHeader" => "header"},
+      "ParamsParser"    => {"params" => "path"},
+      "CookieParser"    => {"cookie" => "cookie"},
+    }
+
+    # Lines that belong to one route (an inline closure's body, or a named
+    # handler's): a parser call read as the tagged fields of its target's
+    # struct, the generic body marker kept only for a `BodyParser` whose
+    # target does not resolve.
+    private def add_fiber_body_params(lines : Array(String), file : String, eps : Array(Endpoint), index : Noir::GoStructFields::Index)
+      found = [] of Param
+      unresolved = false
+      lines.each do |line|
+        next unless line.includes?("Parser(")
+        body_read = false
+        line.scan(PARSER_CALL) do |m|
+          fields = index.target_fields(lines, m[2], file) || next
+          params = fields.flat_map do |field|
+            PARSER_TAGS[m[1]].compact_map { |tag, type| Noir::GoStructFields.tag_value(field.tag, tag).try { |name| Param.new(name, "", type) } }
+          end
+          found.concat(params)
+          body_read = true if m[1] == "BodyParser" && !params.empty?
+        end
+        unresolved = true if line.includes?(".BodyParser(") && !body_read
+      end
+      lines.each { |line| eps.each { |ep| add_fiber_param_patterns(line, ep, body_marker: unresolved) } }
+      eps.each { |ep| found.each { |param| add_param_to_endpoint(param, ep) } }
+    end
+
+    private def add_fiber_param_patterns(line : String, ep : Endpoint, body_marker : Bool = true)
+      line.scan(ACCESSOR_RE) do |m|
+        # `app.Query("/search", h)` is a registration, not a read.
+        next if m[2].starts_with?("/")
+        type = if m[1].starts_with?("Query")
+                 "query"
+               elsif m[1].starts_with?("Params")
+                 "path"
+               else
+                 "form"
+               end
+        add_param_to_endpoint(Param.new(m[2], "", type), ep)
       end
 
-      # Fiber's body-binding helpers: `c.BodyParser(&v)`
-      # for arbitrary content negotiation, plus the
-      # explicit `c.QueryParser` / `c.ReqHeaderParser`
-      # /`c.CookieParser` /`c.ParamsParser` variants that
-      # parse into a struct. `BodyParser` is the one
-      # that signals a request body is expected; the
-      # others duplicate accessors we already surface.
-      if line.includes?(".BodyParser(")
+      if body_marker && line.includes?(".BodyParser(")
         add_param_to_endpoint(Param.new("body", "", "json"), ep)
       end
 
@@ -150,35 +197,11 @@ module Analyzer::Go
         add_param_to_endpoint(Param.new(match[1], "", "header"), ep)
       end
 
+      # `c.Cookies("session")`, `c.Cookies("session", "none")`.
       if line.includes?("Cookies(") &&
          !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-        match = line.match(/Cookies\(\s*\"(.*)\"\s*\)/)
-        if match
-          ep.params << Param.new(match[1], "", "cookie")
-        end
+        line.scan(/Cookies\(\s*"([^"]*)"/) { |m| add_param_to_endpoint(Param.new(m[1], "", "cookie"), ep) }
       end
-    end
-
-    def get_param(line : String) : Param
-      param_type = "json"
-      if line.includes?("Query")
-        param_type = "query"
-      elsif line.includes?("FormValue")
-        param_type = "form"
-      elsif line.includes?(".Params(") || line.includes?(".ParamsInt(")
-        param_type = "path"
-      end
-
-      # Capture the accessor's first string-literal argument.
-      # Skip route registrations like `app.Query("/search", handler)`.
-      if match = line.match(/\.(?:Query|FormValue|Params|ParamsInt)\s*\(\s*"([^"]*)"/)
-        param_name = match[1]
-        return Param.new("", "", "") if param_name.starts_with?("/")
-
-        return Param.new(param_name, "", param_type)
-      end
-
-      Param.new("", "", "")
     end
   end
 end

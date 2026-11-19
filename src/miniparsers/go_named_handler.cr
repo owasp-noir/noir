@@ -3,6 +3,7 @@ require "../utils/c_comments"
 require "../utils/top_level_split"
 require "./go_callee_extractor"
 require "./go_route_extractor_ts"
+require "./go_struct_fields"
 
 # Named-handler attribution for the Go adapters' line loops.
 #
@@ -72,6 +73,12 @@ class Noir::GoNamedHandler
   NEW_TYPE_RE      = /(?:\A|[\n;{(])[ \t]*(?:var[ \t]+)?([A-Za-z_]\w*)[ \t]*:?=[ \t]*new\([ \t]*(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)[ \t]*\)/
   # `name *T` as a parameter, receiver, struct field or `var`.
   DECLARED_TYPE_RE = /(?:\A|[\n(,]|\bvar)[ \t]*([A-Za-z_]\w*)[ \t]+\*?(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)/
+  # `name := [pkg.]NewT(...)` (or `name, err := ...`): typed by the
+  # constructor's declared result, see `constructor_type`.
+  CONSTRUCTED_RE = /(?:\A|[\n;{(])[ \t]*(?:var[ \t]+)?([A-Za-z_]\w*)(?:[ \t]*,[ \t]*[A-Za-z_]\w*)*[ \t]*:?=[ \t]*(?:([A-Za-z_]\w*)\.)?([A-Za-z_]\w*)[ \t]*\(/
+  # A function's first result when it is a type of its own package: `*T`,
+  # `T`, `(*T, error)`.
+  RESULT_TYPE_RE = /\Afunc\s+[A-Za-z_]\w*\s*\((?:[^()]|\([^()]*\))*\)\s*\(?\s*\*?\s*([A-Za-z_]\w*)\s*[,){]/
 
   # Library middleware whose request read lives in a dependency the scan
   # never sees, with that read as the source line the adapters parse:
@@ -88,16 +95,18 @@ class Noir::GoNamedHandler
   # Where a handler not declared in the route's own file is looked up.
   # `bodies` covers every scanned package (built per directory on first
   # lookup and memoized, so a package is parsed once per analyzer);
-  # `import_dirs` maps a local import path to its directory.
+  # `import_dirs` maps a local import path to its directory; `structs`
+  # types a struct field a handler is selected through.
   record Scope,
     bodies : Noir::GoCalleeExtractor::LazyPackageBodies,
-    import_dirs : Hash(String, String)
+    import_dirs : Hash(String, String),
+    structs : Noir::GoStructFields::Index
 
   # Test files are left out: an external `foo_test` package in the same
   # directory may reuse a handler's name.
   def self.scope(file_contents : Hash(String, String), import_dirs : Hash(String, String) = Hash(String, String).new) : Scope
     sources = file_contents.reject { |path, _| path.ends_with?("_test.go") }
-    Scope.new(Noir::GoCalleeExtractor::LazyPackageBodies.new(sources), import_dirs)
+    Scope.new(Noir::GoCalleeExtractor::LazyPackageBodies.new(sources), import_dirs, Noir::GoStructFields::Index.new(sources, import_dirs))
   end
 
   # A body is keyed by its file and first row, so bodies from several files
@@ -124,6 +133,9 @@ class Noir::GoNamedHandler
   @declared : Hash(String, Set(String))? = nil
   # `name` -> {package, type} for `name := pkg.T{...}` and the like.
   @qualified_types = Hash(String, Set({String, String})).new
+  # `name` -> {package, type} for `name := pkg.NewT(...)`, see
+  # `constructor_type`.
+  @constructed = Hash(String, Set({String, String})).new
   @receivers = Hash(String, Array(Tuple(Noir::GoCalleeExtractor::FunctionBody, String?, String))).new
   # `.Use` / group middleware each route runs behind, see
   # `TreeSitterGoRouteExtractor#route_middleware`.
@@ -185,6 +197,34 @@ class Noir::GoNamedHandler
     functions = Noir::GoCalleeExtractor.collect_function_bodies(content, path)
     methods = Noir::GoCalleeExtractor.collect_method_bodies(content, path)
     route_rows = routes.map(&.line).sort!
+    aliases = Hash(String, String).new
+    aliases_read = false
+    dir = File.dirname(path)
+    # Names a handler argument selects through (`h` in `h.List`): only
+    # their constructor calls are typed.
+    qualifiers = Set(String).new
+    routes.each { |r| r.handler_args.each { |h| h.scan(/(?<![\w.])([A-Za-z_]\w*)\s*\./) { |m| qualifiers << m[1] } } }
+    constructed = Hash(String, Tuple(String, String)?).new
+    # `{name, package, type}` for each `name := [pkg.]NewT(...)` in `text`.
+    constructed_types = ->(text : String) do
+      found = [] of Tuple(String, String, String)
+      text.scan(CONSTRUCTED_RE) do |m|
+        next unless qualifiers.includes?(m[1])
+        package = m[2]? || ""
+        unless package.empty? || aliases_read
+          aliases.merge!(Noir::GoCalleeExtractor.extract_import_aliases(content))
+          aliases_read = true
+        end
+        type = constructed.put_if_absent("#{package}.#{m[3]}") { constructor_type(package, m[3], functions, methods, dir, aliases, scope) }
+        found << {m[1], package, type[1]} if type
+      end
+      found
+    end
+    unless qualifiers.empty?
+      constructed_types.call(content).each do |name, package, type|
+        (@constructed[name] ||= Set(Tuple(String, String)).new) << {package, type}
+      end
+    end
     # A package variable is in scope too; struct fields and locals in other
     # functions are not. Read just the top-level var declarations once.
     Noir::TreeSitter.parse_go(content) do |root|
@@ -195,6 +235,9 @@ class Noir::GoNamedHandler
           declaration.scan(re) do |m|
             (@global_types[m[1]] ||= Set(Tuple(String, String)).new) << {m[2]? || "", m[3]}
           end
+        end
+        constructed_types.call(declaration).each do |name, package, type|
+          (@global_types[name] ||= Set(Tuple(String, String)).new) << {package, type}
         end
       end
     end
@@ -215,15 +258,15 @@ class Noir::GoNamedHandler
           (types[m[1]] ||= Set(Tuple(String, String)).new) << {m[2]? || "", m[3]}
         end
       end
+      constructed_types.call(declarations).each do |name, package, type|
+        (types[name] ||= Set(Tuple(String, String)).new) << {package, type}
+      end
       while first < route_rows.size && route_rows[first] <= last
         @route_types[route_rows[first]] = types
         first += 1
       end
     end
-    aliases = Hash(String, String).new
-    aliases_read = false
     spans = Hash(Int32, Range(Int32, Int32)).new
-    dir = File.dirname(path)
     span_of = ->(fb : Noir::GoCalleeExtractor::FunctionBody) do
       spans[fb.start_row] ||= fb.start_row..(fb.start_row + fb.source.count('\n'))
     end
@@ -274,6 +317,8 @@ class Noir::GoNamedHandler
           scope.try(&.bodies.methods_for(dir)[name]?).try { |candidates| method_for(qualifier, name, candidates, content, "package") } ||
           scope.try { |sc| imported_method(qualifier, name, content, aliases, sc) }
         end
+      else
+        field_method(qualifier.rpartition('.').last, name, dir, scope)
       end
     end
 
@@ -600,6 +645,44 @@ class Noir::GoNamedHandler
     found
   end
 
+  # The type a constructor `package.function` (or a function of this
+  # package) declares as its first result, when that type has methods in
+  # the constructor's package: an interface result has none, so a name it
+  # returns stays untyped. Nil when the function is not in the scan.
+  private def constructor_type(package : String, function : String,
+                               functions : Hash(String, Noir::GoCalleeExtractor::FunctionBody),
+                               methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)),
+                               dir : String, aliases : Hash(String, String), scope : Scope?) : Tuple(String, String)?
+    if package.empty?
+      body = functions[function]? || scope.try(&.bodies.functions_for(dir)[function]?)
+      table = scope.try(&.bodies.methods_for(dir)) || methods
+    else
+      scope || return
+      type_dir = aliases[package]?.try { |import_path| scope.import_dirs[import_path]? } || return
+      body = scope.bodies.functions_for(type_dir)[function]?
+      table = scope.bodies.methods_for(type_dir)
+    end
+    type = body.try(&.source.match(RESULT_TYPE_RE)).try(&.[1]) || return
+    has_methods = table.each_value.any? { |list| list.any? { |fb| fb.source.match(RECEIVER_RE).try(&.[2]) == type } }
+    {package, type} if has_methods
+  end
+
+  # The method `name` on the type of the struct field `field` the package
+  # at `dir` declares (`s.handlers.User.List` -> `User *handler.UserHandler`).
+  # Nil unless exactly one definition matches.
+  private def field_method(field : String, name : String, dir : String, scope : Scope?) : Noir::GoCalleeExtractor::FunctionBody?
+    scope || return
+    found = nil
+    scope.structs.field_types(dir, field).each do |(type_dir, type)|
+      scope.bodies.methods_for(type_dir)[name]?.try &.each do |fb|
+        next unless fb.source.match(RECEIVER_RE).try(&.[2]) == type
+        return if found && found != fb
+        found = fb
+      end
+    end
+    found
+  end
+
   # Type names `name` is declared with in this file: `name := &T{}`,
   # `var name = T{}`, `name := new(T)`, `name *T` (parameter, field or
   # `var`), and a method receiver `(name *T)`. Empty when none is visible.
@@ -611,6 +694,12 @@ class Noir::GoNamedHandler
         content.scan(re) do |m|
           (index[m[1]] ||= Set(String).new) << m[3]
           (@qualified_types[m[1]] ||= Set({String, String}).new) << {m[2], m[3]} if m[2]?
+        end
+      end
+      @constructed.each do |local, types|
+        types.each do |(package, type)|
+          (index[local] ||= Set(String).new) << type
+          (@qualified_types[local] ||= Set({String, String}).new) << {package, type} unless package.empty?
         end
       end
       index

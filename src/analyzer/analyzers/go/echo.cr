@@ -96,6 +96,9 @@ module Analyzer::Go
           public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
         end
 
+        # The lines credited to `last_endpoints` since their route, read as
+        # one body when the next route starts (or the file ends).
+        segment = [] of String
         lines.each_with_index do |line, index|
           # Expanded router-builder bodies are emitted below with their
           # call-site prefix.
@@ -105,6 +108,8 @@ module Analyzer::Go
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
+            add_echo_body_params(segment, path, last_endpoints, struct_index, binders)
+            segment = [] of String
             last_endpoints = [] of Endpoint
             ts_hits.each do |route|
               # Echo's `e.Any` registers a route for every HTTP
@@ -127,8 +132,9 @@ module Analyzer::Go
             end
           end
 
-          last_endpoints.each { |ep| add_echo_param_patterns(line, ep) }
+          segment << line
         end
+        add_echo_body_params(segment, path, last_endpoints, struct_index, binders)
 
         expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add", string_seed: string_seed, literal_join: true) do |line, ep|
           add_echo_param_patterns(line, ep)
@@ -138,9 +144,7 @@ module Analyzer::Go
         # `req`'s struct, the generic body marker kept only when a bind
         # target does not resolve.
         named.each_bound_body do |file, body_lines, eps|
-          fields, unresolved = bind_fields(body_lines, file, struct_index, binders)
-          body_lines.each { |line| eps.each { |ep| add_echo_param_patterns(line, ep, bind_marker: unresolved) } }
-          eps.each { |ep| add_bind_params(fields, ep) }
+          add_echo_body_params(body_lines, file, eps, struct_index, binders)
         end
       end
 
@@ -149,14 +153,25 @@ module Analyzer::Go
       result
     end
 
+    # Lines that belong to one route (an inline closure's body, or a named
+    # handler's): `c.Bind(&req)` read as the fields of `req`'s struct, the
+    # generic body marker kept only when a bind target does not resolve.
+    private def add_echo_body_params(lines : Array(String), file : String, eps : Array(Endpoint),
+                                     index : Noir::GoStructFields::Index, binders : Hash(String, Set(String)))
+      return if eps.empty?
+      fields, unresolved = bind_fields(lines, file, index, binders)
+      lines.each { |line| eps.each { |ep| add_echo_param_patterns(line, ep, bind_marker: unresolved) } }
+      eps.each { |ep| add_bind_params(fields, ep) }
+    end
+
     private def add_echo_param_patterns(line : String, ep : Endpoint, bind_marker : Bool = true)
-      if line.includes?("Param(") || line.includes?("FormValue(")
+      if line.includes?("Param(") || line.includes?("FormValue(") || line.includes?("FormFile(")
         # Every accessor on the line (`f(c.QueryParam("a"), c.QueryParam("b"))`).
         line.scan(ACCESSOR_RE) do |m|
           param = Param.new(m[2].gsub("\"", "").strip, "", ACCESSOR_TYPES[m[1]])
           # `FormValue` is net/http's: the body is parsed only for POST, PUT
           # and PATCH, so on any other method it reads the query string.
-          param.param_type = "query" if param.param_type == "form" && !FORM_BODY_METHODS.includes?(ep.method)
+          param.param_type = "query" if m[1] == "FormValue" && !FORM_BODY_METHODS.includes?(ep.method)
           # A shared helper may read a path variable this route has no slot for.
           if param.param_type != "path" || ep.url.includes?(param.name == "*" ? "*" : ":#{param.name}")
             add_param_to_endpoint(param, ep)
@@ -286,8 +301,8 @@ module Analyzer::Go
     QUERY_BIND_METHODS = %w[GET DELETE HEAD]
     NO_BODY_METHODS    = %w[GET HEAD]
 
-    ACCESSOR_RE    = /\b(QueryParam|FormValue|Param)\s*\(([^()]*)\)/
-    ACCESSOR_TYPES = {"QueryParam" => "query", "FormValue" => "form", "Param" => "path"}
+    ACCESSOR_RE    = /\b(QueryParam|FormValue|FormFile|Param)\s*\(([^()]*)\)/
+    ACCESSOR_TYPES = {"QueryParam" => "query", "FormValue" => "form", "FormFile" => "form", "Param" => "path"}
 
     # The accessor's own argument, so one nested in another call
     # (`c.String(200, c.QueryParam("color"))`) still resolves.
