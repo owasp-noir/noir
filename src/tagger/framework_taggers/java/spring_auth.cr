@@ -376,35 +376,24 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
+  # A class header up to its body, however many lines a Kotlin primary
+  # constructor spreads it over. `AsyncHandlerInterceptor` extends
+  # `HandlerInterceptor` and keeps its `preHandle` contract.
+  INTERCEPTOR_CLASS = /\bclass\s+([A-Za-z0-9_$]+)(?:(?!\bclass\b)[^{;])*?(?:\bimplements\b|\bextends\b|:)(?:(?!\bclass\b)[^{;])*?\b(?:Async)?HandlerInterceptor(?:Adapter)?\b/
+
   private def scan_interceptor_def(content : String, file : String, module_dir : String?)
     clean_content = Noir::CComments.strip(content)
-    lines = clean_content.lines
 
-    lines.each_with_index do |line, idx|
-      class_name = nil
-
-      if match = line.match(/(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+([A-Za-z0-9_$]+)[^{]*(?:implements\s+[^{]*\bHandlerInterceptor\b|extends\s+[^{]*\bHandlerInterceptorAdapter\b)/)
-        class_name = match[1]
-      elsif match = line.match(/(?:class|open\s+class)\s+([A-Za-z0-9_$]+)[^{:]*:\s*[^{]*(?:\bHandlerInterceptor\b|\bHandlerInterceptorAdapter\b)/)
-        class_name = match[1]
-      elsif line.includes?("HandlerInterceptor") || line.includes?("HandlerInterceptorAdapter")
-        combined = lines[[0, idx - 2].max..idx].map(&.strip).join(" ")
-        if match = combined.match(/class\s+([A-Za-z0-9_$]+)[^{:]*(?:implements|extends|:)[^{]*(?:\bHandlerInterceptor\b|\bHandlerInterceptorAdapter\b)/)
-          class_name = match[1]
-        end
-      end
-
-      next unless class_name
-
+    clean_content.scan(INTERCEPTOR_CLASS) do |match|
+      class_name = match[1]
       # The class's own body: a file can declare several interceptors.
-      line_start = clean_content.lines(chomp: false)[0, idx].sum(&.bytesize)
-      next unless open = clean_content.byte_index('{', line_start)
+      next unless open = clean_content.byte_index('{', match.byte_end(0))
       close = Noir::JSLiteralScanner.find_matching_brace_at_byte(clean_content, open) || clean_content.bytesize - 1
       is_auth, open_paths = check_pre_handle_auth(clean_content.byte_slice(open, close - open + 1), clean_content, file)
       @interceptor_defs[class_name] = InterceptorDef.new(
         name: class_name,
         file_path: file,
-        line: idx + 1,
+        line: clean_content.byte_slice(0, match.byte_begin(0)).count('\n') + 1,
         is_auth_guard: is_auth,
         module_dir: module_dir,
         open_paths: open_paths
@@ -771,10 +760,10 @@ class SpringAuthTagger < FrameworkTagger
       return match[1]
     end
 
-    if match = content.match(/\b([A-Za-z0-9_$]+)\s+#{Regex.escape(ident)}\s*\(\s*\)/)
+    if match = content.match(/fun\s+#{Regex.escape(ident)}\s*\(\s*\)\s*:\s*([A-Za-z0-9_$]+)/)
       return match[1]
-    elsif match = content.match(/fun\s+#{Regex.escape(ident)}\s*\(\s*\)\s*:\s*([A-Za-z0-9_$]+)/)
-      return match[1]
+    elsif match = content.match(/\b([A-Za-z0-9_$]+)\s+#{Regex.escape(ident)}\s*\(\s*\)/)
+      return match[1] unless match[1] == "fun"
     end
 
     return ident if ident[0].ascii_uppercase?

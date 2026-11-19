@@ -4982,3 +4982,84 @@ describe "SpringAuthTagger (HandlerInterceptor path constants)" do
     guarded_routes.call(".addPathPatterns(patterns())").should be_empty
   end
 end
+
+# Auth tags of GET /api/items and GET /public/ping when `interceptor` is
+# registered by `registration` inside `addInterceptors` on `/api/**`.
+private def kotlin_interceptor_guards(interceptor : String, registration : String, members = "") : Array(Array(String))
+  config = <<-KT
+    package com.example
+
+    @Configuration
+    class WebConfig : WebMvcConfigurer {
+    #{members}
+        override fun addInterceptors(registry: InterceptorRegistry) {
+            #{registration}.addPathPatterns("/api/**")
+        }
+    }
+    KT
+  controller = <<-KT
+    package com.example
+
+    @RestController
+    class ItemController {
+        @GetMapping("/api/items")
+        fun list(): String = "a"
+
+        @GetMapping("/public/ping")
+        fun ping(): String = "p"
+    }
+    KT
+  endpoints = run_spring_endpoints_map({
+    "src/main/kotlin/com/example/ApiKeyInterceptor.kt" => "package com.example\n\n#{interceptor}",
+    "src/main/kotlin/com/example/WebConfig.kt"         => config,
+    "src/main/kotlin/com/example/ItemController.kt"    => controller,
+  }, {
+    "GET /api/items"   => "src/main/kotlin/com/example/ItemController.kt:5",
+    "GET /public/ping" => "src/main/kotlin/com/example/ItemController.kt:8",
+  })
+  endpoints.values.map { |endpoint| endpoint.tags.select(&.name.==("auth")).map(&.description) }
+end
+
+KOTLIN_SEND_ERROR_PRE_HANDLE = <<-KT
+      override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+          if (request.getHeader("X-Api-Key") != "k") {
+              response.sendError(HttpServletResponse.SC_UNAUTHORIZED)
+              return false
+          }
+          return true
+      }
+  }
+  KT
+
+describe "SpringAuthTagger (Kotlin HandlerInterceptor shapes)" do
+  it "reads an AsyncHandlerInterceptor and a class header whose constructor spans many lines" do
+    async = "class ApiKeyInterceptor : AsyncHandlerInterceptor {\n" + KOTLIN_SEND_ERROR_PRE_HANDLE
+    long_header = <<-KT
+      @Component
+      class ApiKeyInterceptor(
+          private val first: String,
+          private val second: String,
+          private val third: String,
+      ) : HandlerInterceptor {
+
+      KT
+    [async, long_header + KOTLIN_SEND_ERROR_PRE_HANDLE].each do |interceptor|
+      kotlin_interceptor_guards(interceptor, "registry.addInterceptor(ApiKeyInterceptor())").should eq([
+        ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
+      ])
+    end
+  end
+
+  it "resolves an interceptor registered through a Kotlin @Bean factory function" do
+    members = <<-KT
+        @Bean
+        fun apiKeyInterceptor(): ApiKeyInterceptor {
+            return ApiKeyInterceptor()
+        }
+      KT
+    interceptor = "class ApiKeyInterceptor : HandlerInterceptor {\n" + KOTLIN_SEND_ERROR_PRE_HANDLE
+    kotlin_interceptor_guards(interceptor, "registry.addInterceptor(apiKeyInterceptor())", members).should eq([
+      ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
+    ])
+  end
+end
