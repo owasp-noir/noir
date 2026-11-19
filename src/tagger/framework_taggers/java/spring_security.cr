@@ -277,6 +277,8 @@ class SpringSecurityTagger < FrameworkTagger
           next
         end
         break if stripped.empty?
+        # `registry.addMapping(..)` on the next line is a statement of its own.
+        break if !stripped.starts_with?(".") && stripped.includes?(call_name)
         break if stripped.starts_with?("}") || stripped.matches?(/^(override|fun|class|public|private|protected|internal|return)\b/)
         break unless stripped.starts_with?(".") || stripped.includes?("allowedOrigin") || stripped.includes?("allowCredentials")
 

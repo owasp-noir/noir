@@ -426,6 +426,32 @@ describe "SpringSecurityTagger" do
       tag_named(endpoint, "cors").should be_nil
     end
 
+    it "ends a mapping chain at the next addMapping statement" do
+      {"", "        // the partner API is open to every origin\n"}.each do |between|
+        config = "package com.example\n\n@Configuration\nclass WebConfig : WebMvcConfigurer {\n    override fun addCorsMappings(registry: CorsRegistry) {\n" \
+                 "        registry.addMapping(\"/public/**\").allowedOrigins(\"https://www.example.com\")\n#{between}" \
+                 "        registry.addMapping(\"/partner/**\").allowedOriginPatterns(\"*\").allowCredentials(true)\n    }\n}\n"
+        root = File.tempname("spring_cors_split")
+        begin
+          Dir.mkdir_p(root)
+          path = File.join(root, "WebConfig.kt")
+          File.write(path, config)
+          CodeLocator.instance.clear_all
+          CodeLocator.instance.register_path(path)
+          partner = build_endpoint(path, nil, "/partner/items", "GET")
+          open_route = build_endpoint(path, nil, "/public/ping", "GET")
+          options = create_test_options
+          options["base"] = YAML::Any.new(root)
+          SpringSecurityTagger.new(options).perform([partner, open_route])
+
+          tag_named(partner, "cors").should_not be_nil
+          tag_named(open_route, "cors").should be_nil
+        ensure
+          FileUtils.rm_rf(root)
+        end
+      end
+    end
+
     it "reads a mapping chain with a comment line between its calls" do
       config = <<-KOTLIN
         package com.example
