@@ -231,6 +231,8 @@ module Analyzer::Ruby
     alias EngineMountKey = Tuple(String, String)
 
     @controller_data_cache = Hash(String, ControllerData).new
+    # `<app>/app/views/<controller>/<action>` -> its first template file.
+    @view_templates : Hash(String, String)? = nil
     # Per file, its helpers that return `params.require(key)`; see `params_wrappers`.
     @params_wrappers = Hash(String, Set(String)).new
     # Maps a mountable-engine constant (e.g. `DiscoursePoll::Engine`) to the
@@ -264,6 +266,7 @@ module Analyzer::Ruby
       files = all_files.reject { |file| ruby_non_production_path?(file) }
       @known_files = Set(String).new(files)
       @callback_chain = nil
+      @view_templates = nil
       @gemfile_public_roots = nil
       @public_file_candidates = nil
       @constant_lists.clear
@@ -2065,10 +2068,15 @@ module Analyzer::Ruby
         next unless action_allowed?(route_action, only, except)
         next if @disabled_route_verbs.includes?(verb)
         action = to_action || route_action
-        next unless owner = action_owner(path, action)
+        # Rails renders `app/views/<controller>/<action>.*` for an action the
+        # controller does not define.
+        owner = action_owner(path, action)
+        template = owner ? nil : view_template(path, action)
+        next unless owner || template
+        owner ||= extract_controller_data(path)
         on_collection = route_action == "index" || route_action == "create" || route_action == "new"
         params = promote_path_params(action_params(owner, action, verb, path), on_collection ? path_params : member_params)
-        details = Details.new(PathInfo.new(owner.path, owner.action_lines[action]?))
+        details = Details.new(template ? PathInfo.new(template) : PathInfo.new(owner.path, owner.action_lines[action]?))
         url = on_collection ? index_url : member_url
         url = "#{url.rchop('/')}/#{route_action}" if route_action == "new" || route_action == "edit"
         endpoint = Endpoint.new(url, verb, params, details)
@@ -2078,6 +2086,21 @@ module Analyzer::Ruby
       end
 
       endpoints
+    end
+
+    private def view_template(controller_path : String, action : String) : String?
+      return unless controller_path.ends_with?("_controller.rb") && (idx = controller_path.rindex("/app/controllers/"))
+      templates = @view_templates ||= begin
+        found = Hash(String, String).new
+        @known_files.each do |file|
+          next unless file.includes?("/app/views/")
+          base = File.basename(file)
+          next if base.starts_with?('_')
+          found.put_if_absent("#{File.dirname(file)}/#{base.split('.', 2)[0]}") { file }
+        end
+        found
+      end
+      templates["#{controller_path[0, idx]}/app/views/#{controller_path[(idx + "/app/controllers/".size)..].rchop("_controller.rb")}/#{action}"]?
     end
 
     # Scans a controller file once, collecting per-method params (headers/cookies)
