@@ -174,14 +174,14 @@ module Analyzer::CSharp
         controller_prefix = route_prefix(type.attributes)
         type.methods.each do |method|
           next unless method.public? && method.type_params.nil?
-          verbs, action_route, explicit, non_action = action_attributes(method.attributes)
+          verbs, action_route, explicit, non_action, action_name = action_attributes(method.attributes)
           next unless "#{method.return_type} #{method.name}(".matches?(ACTION_RESULT_RE) || explicit
           # `[NonAction]`/`[ChildActionOnly]` and `static` methods, and Web
           # API return types in a file that mixes in Web API controllers.
           next if non_action || method.static? || method.header.matches?(NON_ACTION_SIGNATURE_RE)
           line = method.line + 1
           verbs.each do |http_method, verb_route|
-            url = build_url(controller_prefix, verb_route.presence || action_route, controller_name, method.name)
+            url = build_url(controller_prefix, verb_route.presence || action_route, controller_name, action_name || method.name)
             endpoint = Endpoint.new(url, http_method, Details.new(PathInfo.new(file, line)))
             endpoint.handler = Handler.new(method.name, file, line)
             extract_parameters(method.params, http_method).each { |param| endpoint.params << param }
@@ -202,18 +202,27 @@ module Analyzer::CSharp
     end
 
     VERB_ATTRIBUTES = {"HttpGet" => "GET", "HttpPost" => "POST", "HttpPut" => "PUT", "HttpDelete" => "DELETE", "HttpPatch" => "PATCH"}
+    # `[AcceptVerbs(HttpVerbs.Get | HttpVerbs.Post)]`, `[AcceptVerbs("PUT")]`.
+    VERB_WORD_RE = /\b(Get|Post|Put|Delete|Patch|Head|Options)\b/i
 
     # `{verb, its own route}` per verb attribute (GET when there is none),
-    # the `[Route]` template, whether either is present, and `[NonAction]`.
-    private def action_attributes(attrs : Array(Noir::CSharpDecl::Attribute)) : Tuple(Array(Tuple(String, String)), String, Bool, Bool)
+    # the `[Route]` template, whether either is present, `[NonAction]`, and
+    # the `[ActionName]` the URL uses instead of the method name.
+    private def action_attributes(attrs : Array(Noir::CSharpDecl::Attribute)) : Tuple(Array(Tuple(String, String)), String, Bool, Bool, String?)
       verbs = [] of Tuple(String, String)
       route = ""
       explicit = false
       non_action = false
+      action_name = nil
       attrs.each do |attr|
         if verb = VERB_ATTRIBUTES[attr.name]?
           verbs << {verb, attr.positional.first?.try(&.literal) || ""}
           explicit = true
+        elsif attr.name == "AcceptVerbs"
+          attr.argument_text.try &.scan(VERB_WORD_RE) { |m| verbs << {m[1].upcase, ""} }
+          explicit = true
+        elsif attr.name == "ActionName"
+          action_name = attr.positional.first?.try(&.literal).presence
         elsif attr.name == "Route"
           route = attr.positional.first?.try(&.literal) || route
           explicit = true
@@ -222,7 +231,7 @@ module Analyzer::CSharp
         end
       end
       verbs << {"GET", ""} if verbs.empty?
-      {verbs, route, explicit, non_action}
+      {verbs.uniq, route, explicit, non_action, action_name}
     end
 
     # `[RoutePrefix("x")]`, else a class-level `[Route("x")]`.

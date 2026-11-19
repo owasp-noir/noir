@@ -16,18 +16,20 @@ module Analyzer::CSharp
 
     # `Endpoint<TRequest>`, `Endpoint<TRequest, TResponse>`,
     # `EndpointWithoutRequest`, `EndpointWithoutRequest<TResponse>`,
-    # and the `Ep` short alias all subclass the FastEndpoints
-    # endpoint primitive. Any class matching one of these as a
-    # base is a candidate.
-    BASE_TYPE_REGEX = /:\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*,\s*)*(Endpoint(?:WithoutRequest)?(?:<[^>]*>)?|Ep<[^>]*>)/
+    # the `Ep` short alias and its fluent-generic forms
+    # (`Ep.Req<TRequest>.Res<TResponse>`, `Ep.NoReq.Res<TResponse>`) all
+    # subclass the FastEndpoints endpoint primitive. Any class matching one
+    # of these as a base is a candidate.
+    BASE_TYPE_REGEX = /:\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*,\s*)*(Endpoint(?:WithoutRequest)?(?:<[^>]*>)?|Ep<[^>]*>|Ep\.(?:Req<[^>]*>|NoReq)(?:\.\w+(?:<[^>]*>)?)*)/
 
     # Whole-file gate. One JIT-compiled union beats the two `String#includes?`
     # scans it replaces, and it also refuses files that merely mention the word
     # "Endpoint" without declaring a FastEndpoints class.
-    ENDPOINT_SOURCE_RE = /\bFastEndpoints\b|:\s*(?:[A-Za-z_][\w.]*\s*,\s*)*(?:Endpoint(?:WithoutRequest)?\b|Ep\s*<)/
+    ENDPOINT_SOURCE_RE = /\bFastEndpoints\b|:\s*(?:[A-Za-z_][\w.]*\s*,\s*)*(?:Endpoint(?:WithoutRequest)?\b|Ep\s*<|Ep\.(?:Req|NoReq)\b)/
 
     # `Post("/a", "/b")` registers every literal, not just the first.
-    VERB_CALL_REGEX       = /\b(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*("[^)]*)\)/m
+    # A non-literal argument (`Get(Route)`) is evaluated as a string constant.
+    VERB_CALL_REGEX       = /\b(Get|Post|Put|Patch|Delete|Options|Head)\s*\(\s*([^)]*)\)/m
     GROUP_CALL_REGEX      = /\bGroup\s*<\s*(?:[\w.]+\.)?(\w+)\s*>\s*\(\s*\)/
     PREFIX_OVERRIDE_REGEX = /\bRoutePrefixOverride\s*\(\s*@?"([^"]*)"/
     # `app.UseFastEndpoints(c => c.Endpoints.RoutePrefix = "api")`.
@@ -39,6 +41,12 @@ module Analyzer::CSharp
     VERBS_CALL_REGEX      = /\bVerbs\s*\(\s*([^)]*)\)/m
     ROUTES_CALL_REGEX     = /\bRoutes\s*\(\s*([^)]*)\)/m
     HTTP_VERB_TOKEN_REGEX = /(?:Http\.)?(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)/
+    # "Endpoint configuration with attributes": `[HttpPost("/a", "/b")]` on
+    # an endpoint class with no `Configure()`.
+    VERB_ATTRIBUTES = {
+      "HttpGet" => "GET", "HttpPost" => "POST", "HttpPut" => "PUT", "HttpPatch" => "PATCH",
+      "HttpDelete" => "DELETE", "HttpOptions" => "OPTIONS", "HttpHead" => "HEAD",
+    }
 
     def analyze
       include_callee = callees_needed?
@@ -63,7 +71,7 @@ module Analyzer::CSharp
         unit = Noir::CSharpDeclParser.parse(lexer)
         endpoint_files << {file, lexer, unit}
         endpoint_types(unit).each do |_, base|
-          next if base.starts_with?("EndpointWithoutRequest")
+          next if without_request?(base)
           extract_request_type(base).try { |type_name| wanted << type_name }
         end
       end
@@ -191,13 +199,15 @@ module Analyzer::CSharp
       global_prefix = route_prefixes[base_path]? || ""
       lines = lexer.code_lines
       endpoint_types(unit).each do |type, base|
-        configure = type.methods.find { |method| method.name == "Configure" && method.params.empty? } || next
-        configure_block = lines[configure.line..configure.end_line].join('\n')
-        routes, methods = parse_configure(configure_block)
+        if configure = type.methods.find { |method| method.name == "Configure" && method.params.empty? }
+          configure_block = lines[configure.line..configure.end_line].join('\n')
+          routes, methods = parse_configure(configure_block, file)
+        else
+          configure_block = ""
+          routes, methods = attribute_routes(type, file)
+        end
         next if routes.empty? || methods.empty?
-        # `EndpointWithoutRequest<TResponse>` is response-only — the
-        # generic arg is the response shape, not a request DTO.
-        request_type = base.starts_with?("EndpointWithoutRequest") ? nil : extract_request_type(base)
+        request_type = without_request?(base) ? nil : extract_request_type(base)
         request_params = resolve_request_params(request_types, base_path, request_type, file)
         prefix = PREFIX_OVERRIDE_REGEX.match(configure_block).try(&.[1]) || global_prefix
         group = GROUP_CALL_REGEX.match(configure_block).try { |m| group_prefix(m[1], groups) } || ""
@@ -211,6 +221,37 @@ module Analyzer::CSharp
             @result << endpoint
           end
         end
+      end
+    end
+
+    # `EndpointWithoutRequest<TResponse>` and `Ep.NoReq.Res<TResponse>` are
+    # response-only: the generic arg is the response shape, not a request DTO.
+    private def without_request?(base : String) : Bool
+      base.starts_with?("EndpointWithoutRequest") || base.starts_with?("Ep.NoReq")
+    end
+
+    private def attribute_routes(type : Noir::CSharpDecl::TypeDecl, file : String) : Tuple(Array(String), Array(String))
+      routes = [] of String
+      methods = [] of String
+      type.attributes.each do |attr|
+        verb = VERB_ATTRIBUTES[attr.name]? || next
+        attr.positional.each do |arg|
+          route = arg.literal || csharp_string_value(arg.text, file) || next
+          methods << verb
+          routes << route unless route.empty?
+        end
+      end
+      {routes.uniq, methods.uniq}
+    end
+
+    # The routes among a verb call's arguments: each literal, or the value a
+    # local or constant argument holds. `before` is the `Configure` text up to
+    # the call; class constants are found without it.
+    private def route_arguments(args : String, file : String, before : String) : Array(String)
+      if args.starts_with?('"')
+        args.scan(/"([^"]+)"/).map(&.[1])
+      else
+        split_csharp_parameters(args).compact_map { |arg| csharp_string_value(arg, file, before).presence }
       end
     end
 
@@ -249,26 +290,22 @@ module Analyzer::CSharp
       outer.empty? ? nil : outer
     end
 
-    private def parse_configure(configure_block : String) : Tuple(Array(String), Array(String))
+    private def parse_configure(configure_block : String, file : String) : Tuple(Array(String), Array(String))
       routes = [] of String
       methods = [] of String
 
       # Verb-style: Get("/users/{id}")
       configure_block.scan(VERB_CALL_REGEX) do |match|
         verb = match[1].upcase
-        match[2].scan(/"([^"]+)"/) do |literal|
+        route_arguments(match[2], file, configure_block[0, match.begin]).each do |route|
           methods << verb
-          routes << literal[1]
+          routes << route
         end
       end
 
       # Routes("/a", "/b") additional/alternative paths
       configure_block.scan(ROUTES_CALL_REGEX) do |match|
-        args = match[1]?.to_s
-        args.scan(/"([^"]+)"/) do |literal|
-          path = literal[1]?.to_s
-          routes << path unless path.empty?
-        end
+        routes.concat(route_arguments(match[1]?.to_s.lstrip, file, configure_block[0, match.begin]))
       end
 
       # Verbs(Http.GET, Http.POST, ...) needs separate path declaration
