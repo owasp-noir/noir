@@ -1,0 +1,7 @@
+type RootQuery {
+  users(page: PageInput): [User!]!
+}
+type RootMutation {
+  createUser(name: String!): User
+}
+type User { id: ID! name: String }
