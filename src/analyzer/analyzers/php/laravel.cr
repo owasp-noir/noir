@@ -35,7 +35,8 @@ module Analyzer::Php
     private record RouteGroup, prefix : String, body : String, body_start : Int32, body_end : Int32, controller : String?,
       namespace : String?, middleware : Array(String), uses : Array(String)
 
-    private record ResourceRouteCall, resource : String, statement : String, start_pos : Int32
+    # `chain` is the fluent prelude before the call (`middleware('auth')->`).
+    private record ResourceRouteCall, resource : String, statement : String, start_pos : Int32, chain : String
 
     private record ResourceEndpointTemplate, action : String, path : String, method : String
 
@@ -117,8 +118,9 @@ module Analyzer::Php
       # apps group routes in subdirectories — snipe-it keeps per-resource
       # files in `routes/web/hardware.php`, `routes/web/users.php`, etc.
       # Prefer substring checks over allocating a dirname split array.
-      path.includes?("/routes/") || path.includes?("\\routes\\") ||
-        File.basename(File.dirname(path)) == "routes"
+      # `Routes/` is the nwidart-module (<= v10) and Bagisto package layout.
+      path.includes?("/routes/") || path.includes?("\\routes\\") || path.includes?("/Routes/") ||
+        File.basename(File.dirname(path)).in?("routes", "Routes")
     end
 
     private def analyze_routes_file(path : String) : Array(Endpoint)
@@ -163,32 +165,70 @@ module Analyzer::Php
     # `->withRouting(api: __DIR__.'/../routes/api.php', apiPrefix: 'v2')` in
     # `bootstrap/app.php` (Laravel 11+, `apiPrefix` defaulting to `api`),
     # whose `then:` closure registers further groups the same way.
-    ROUTE_FILE_REF_RE   = /(['"])([^'"\n]*routes\/[^'"\n]*\.php)\1/
+    ROUTE_FILE_REF_RE   = /(['"])([^'"\n]*[Rr]outes\/[^'"\n]*\.php)\1/
     WITH_ROUTING_API_RE = /\bapi\s*:\s*(?:\[[^\]]*\]|[^,)]*)/
     WITH_ROUTING_WEB_RE = /\bweb\s*:\s*(?:\[[^\]]*\]|[^,)]*)/
     API_PREFIX_RE       = /\bapiPrefix\s*:\s*['"]([^'"]*)['"]/
 
     private def route_file_prefixes : Hash(String, String)
       prefixes = {} of String => String
+      # Route files another route file loads (`Route::prefix('v1')->group(base_path('routes/api/v1.php'))`,
+      # `require __DIR__.'/admin.php'` inside a group): loaded file => {includer,
+      # prefix, middleware} relative to the includer, resolved once every
+      # provider has been read.
+      included = {} of String => Tuple(String, String, Array(String))
       php_source_files.each do |path|
         bootstrap = path.ends_with?("/bootstrap/app.php")
+        route_file = !bootstrap && laravel_route_file?(path)
         # A provider need not be named `*Provider.php` (akaunting's is
         # `app/Providers/Route.php`).
-        next unless bootstrap || path.ends_with?("Provider.php") || path.includes?("/Providers/")
+        next unless bootstrap || route_file || path.ends_with?("Provider.php") || path.includes?("/Providers/")
         next if PhpEngine.test_path?(base_relative_path(path))
         begin
           content = read_file_content(path)
-          next unless content.includes?("routes/")
+          if route_file
+            next unless content.includes?(".php")
+            base = composer_project_root(path).presence || laravel_project_root(path) || ""
+            local, names = {} of String => String, {} of String => Array(String)
+            collect_route_wiring(php_code(content), path, base, local, names, sibling_refs: true)
+            includer = Noir::PathScope.expand(path)
+            local.each { |file, prefix| included[file] ||= {includer, prefix, names[file]} unless file == includer }
+            next
+          end
+          next unless content.includes?("routes/") || content.includes?("Routes/")
           base = bootstrap ? File.dirname(File.dirname(path)) : composer_project_root(path)
           collect_route_wiring(php_code(content), path, base, prefixes, @route_file_middleware) unless base.empty?
         rescue e
           logger.debug "Error reading Laravel route wiring #{path}: #{e}"
         end
       end
+      included.each_key do |file|
+        next if prefixes.has_key?(file)
+        prefixes[file], @route_file_middleware[file] = included_route_wiring(file, included, prefixes)
+      end
       prefixes
     end
 
-    private def collect_route_wiring(content : String, source_path : String, base : String, prefixes : Hash(String, String), middleware : Hash(String, Array(String))) : Nil
+    # {prefix, middleware} a route file is loaded under: its provider wiring,
+    # else its includer's plus the groups around the include, else the default.
+    private def included_route_wiring(file : String, included : Hash(String, Tuple(String, String, Array(String))),
+                                      prefixes : Hash(String, String), depth : Int32 = 0) : Tuple(String, Array(String))
+      if prefix = prefixes[file]?
+        return {prefix, @route_file_middleware[file]? || default_route_file_middleware(file)}
+      end
+      if depth < 8 && (edge = included[file]?)
+        includer, prefix, names = edge
+        outer_prefix, outer_names = included_route_wiring(includer, included, prefixes, depth + 1)
+        return {build_full_path(outer_prefix, prefix), outer_names + names}
+      end
+      {default_route_file_prefix(file), default_route_file_middleware(file)}
+    end
+
+    # A route file may also load a sibling by a `__DIR__`-relative path
+    # without `routes/` in it (`require __DIR__.'/admin.php'`): `sibling_refs`.
+    PHP_FILE_REF_RE = /(['"])([^'"\n]*\.php)\1/
+
+    private def collect_route_wiring(content : String, source_path : String, base : String, prefixes : Hash(String, String), middleware : Hash(String, Array(String)), sibling_refs : Bool = false) : Nil
       # `use Illuminate\Support\Facades\Route as Facade;` -> read `Facade::` as `Route::`.
       if aliased = content.match(/\buse\s+\\?Illuminate\\Support\\Facades\\Route\s+as\s+(\w+)\s*;/)
         content = content.gsub(/\b#{aliased[1]}::/, "Route::")
@@ -214,9 +254,11 @@ module Analyzer::Php
       web_spans = content.scan(WITH_ROUTING_WEB_RE).map { |m| m.begin(0)...m.end(0) }
       api_prefix = content.match(API_PREFIX_RE).try(&.[1]) || "api"
 
-      content.scan(ROUTE_FILE_REF_RE) do |ref|
+      content.scan(sibling_refs ? PHP_FILE_REF_RE : ROUTE_FILE_REF_RE) do |ref|
         at = ref.begin(0)
-        relative_to = content[Math.max(0, at - 16)...at].matches?(/__DIR__\s*\.\s*\z/) ? File.dirname(source_path) : base
+        dir_relative = content[Math.max(0, at - 16)...at].matches?(/__DIR__\s*\.\s*\z/)
+        next if sibling_refs && !dir_relative && !ref[2].matches?(/[Rr]outes\//)
+        relative_to = dir_relative ? File.dirname(source_path) : base
         enclosing = groups.select { |(open, close, _, _)| open < at && at < close }
         prefix = enclosing.reduce("") { |acc, group| build_full_path(acc, group[2]) }
         names = enclosing.flat_map(&.[3])
@@ -308,13 +350,14 @@ module Analyzer::Php
     CHAINED_MATCH_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(?:match|addRoute)\s*\(\s*(\[[^\]]+\]|['"][^'"]+['"])\s*,\s*#{PATH_ARG}\s*,/mi
     # `Route::any('/x', …)`: capture 1 is the path; the verbs are implied.
     ANY_REGEX = /Route::any\s*\(\s*#{PATH_ARG}\s*,/mi
-    # `Route::view` / `redirect` / `permanentRedirect`: capture 1 is the kind
-    # and capture 2 the path. Laravel registers a view with `match(['GET',
-    # 'HEAD'])` and a redirect with `any`.
-    STATIC_ROUTE_REGEX = /Route::(view|redirect|permanentRedirect)\s*\(\s*#{PATH_ARG}\s*,/mi
+    # `Route::view` / `redirect` / `permanentRedirect`, and the Inertia and
+    # Livewire 4 page macros `Route::inertia` / `Route::livewire`: capture 1
+    # is the kind and capture 2 the path. Laravel registers a view with
+    # `match(['GET', 'HEAD'])` and a redirect with `any`.
+    STATIC_ROUTE_REGEX = /Route::(view|redirect|permanentRedirect|inertia|livewire)\s*\(\s*#{PATH_ARG}\s*,/mi
     # The static routes behind a fluent prelude. Capture 1 is the prelude,
     # capture 2 the kind, capture 3 the path.
-    CHAINED_STATIC_ROUTE_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(view|redirect|permanentRedirect)\s*\(\s*#{PATH_ARG}\s*,/mi
+    CHAINED_STATIC_ROUTE_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(view|redirect|permanentRedirect|inertia|livewire)\s*\(\s*#{PATH_ARG}\s*,/mi
 
     # Livewire Volt full-page components: `Volt::route('/users', 'users.index')`
     # registers a GET route. Capture 1 is the path.
@@ -441,8 +484,9 @@ module Analyzer::Php
           actions = resource_actions_for_statement(call.statement, default_resource_actions(kind, call.statement))
           parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
           call_line = base_line + offsets.line(call.start_pos) - 1
+          resource_prefix = call.chain.empty? ? prefix : build_full_path(prefix, extract_group_prefix("Route::#{call.chain}", file_path))
           resource_entries(kind, call, lexer, call_line).each do |name, statement, line|
-            templates = resource_route_templates(prefix, name, parameter_overrides, kind, statement.matches?(SHALLOW_RE))
+            templates = resource_route_templates(resource_prefix, name, parameter_overrides, kind, statement.matches?(SHALLOW_RE))
             endpoints.concat(create_resource_endpoints(templates, file_path, line, actions, statement, include_callee, imports, resource_controller_cache, middleware, scoped_arrays(arrays, scopes, call.start_pos), call.start_pos, namespace))
           end
         end
@@ -656,9 +700,10 @@ module Analyzer::Php
       match_end
     end
 
-    # `Route::view` is GET (and HEAD); a redirect is registered with `any`.
+    # `Route::view` (and the page macros) is GET (and HEAD); a redirect is
+    # registered with `any`.
     private def static_route_methods(kind : String) : Array(String)
-      kind.downcase == "view" ? ["GET"] : ANY_ROUTE_HTTP_METHODS
+      kind.downcase.in?("view", "inertia", "livewire") ? ["GET"] : ANY_ROUTE_HTTP_METHODS
     end
 
     # One piece of a `PATH_ARG`: a literal, a variable or a call.
@@ -1158,6 +1203,18 @@ module Analyzer::Php
       # file of the project answers to is not decided.
       return if segments.size == 1 && get_files_by_basename("#{segments[0]}.php").size > 1
 
+      # A module or package class (`Modules\Shop\...`, `Acme\Billing\...`)
+      # lives where a PSR-4 map puts it, outside `app/`: the nearest
+      # `composer.json`, then the scan base's.
+      if segments.size >= 2
+        fqcn = segments.join('\\')
+        {composer_project_root(routes_file_path), php_base_path_for(routes_file_path)}.each do |psr4_root|
+          next if psr4_root.empty?
+          path = app_class_path(fqcn, psr4_root)
+          return path if path && File.exists?(path)
+        end
+      end
+
       candidates = [] of String
       candidates << File.join(root, "app", "#{segments[1..].join("/")}.php") if segments.size >= 2
       candidates << File.join(root, "app", "Http", "Controllers", "#{segments.join("/")}.php")
@@ -1166,8 +1223,7 @@ module Analyzer::Php
     end
 
     private def laravel_project_root(routes_file_path : String) : String?
-      marker = "/routes/"
-      idx = routes_file_path.rindex(marker)
+      idx = [routes_file_path.rindex("/routes/"), routes_file_path.rindex("/Routes/")].compact.max?
       return unless idx
       routes_file_path[0...idx]
     end
@@ -1479,7 +1535,7 @@ module Analyzer::Php
         pos = open + 1 + m.begin(0)
         (last...pos).each { |i| line += 1 if lexer.masked[i] == '\n' }
         last = pos
-        entries << {m[1], "Route::resource('#{m[1]}', #{m[2]})", line}
+        entries << {m[1], "Route::#{call.chain}resource('#{m[1]}', #{m[2]})", line}
       end
       entries
     end
@@ -1526,6 +1582,8 @@ module Analyzer::Php
     RESOURCE_STRING_CONTROLLER_RE = /\A\w+::\w+\s*\(\s*['"][^'"]*['"]\s*,\s*['"]([A-Za-z_\\][\w\\]*)['"]/
 
     private def extract_resource_controller(statement : String, namespace : String?) : String?
+      # The controller is the call's own argument, not a class in its prelude.
+      statement = statement.sub(RESOURCE_PRELUDE_RE, "Route::") if statement.includes?("->")
       if match = statement.match(/,\s*([A-Za-z_\\][\w\\]*)::class\b/)
         return match[1]
       end
@@ -1553,25 +1611,33 @@ module Analyzer::Php
       nil
     end
 
+    # A fluent prelude (`Route::middleware('auth')->prefix('v1')->resource(...)`),
+    # one call per iteration with its arguments balanced two levels deep, so it
+    # cannot run on into a group closure's body. Capture 1 of every pattern
+    # below is the prelude, capture 2 the resource name.
+    RESOURCE_CHAIN = %q(((?:\w+\s*\((?:[^()'"]++|'[^']*'|"[^"]*"|\((?:[^()'"]++|'[^']*'|"[^"]*")*+\))*+\)\s*->\s*)*))
+
     # Hoisted patterns for `extract_resource_route_calls` /
     # `extract_resource_action_filter` — both call sites pass literal
     # names ("resource"/"apiResource", "only"/"except"), and the previous
     # `Regex.new` interpolation recompiled the pattern on every call
     # (per file, and per resource statement respectively).
     RESOURCE_CALL_RES = {
-      "resource"    => Regex.new("Route::resource\\s*\\(\\s*['\"]([^'\"]+)['\"]", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
-      "apiResource" => Regex.new("Route::apiResource\\s*\\(\\s*['\"]([^'\"]+)['\"]", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
+      "resource"    => /Route::#{RESOURCE_CHAIN}resource\s*\(\s*['"]([^'"]+)['"]/im,
+      "apiResource" => /Route::#{RESOURCE_CHAIN}apiResource\s*\(\s*['"]([^'"]+)['"]/im,
       # The plural forms end on the array's opening delimiter, which
       # `resource_entries` walks from.
-      "resources"    => /Route::(resources)\s*\(\s*(?:\[|array\s*\()/i,
-      "apiResources" => /Route::(apiResources)\s*\(\s*(?:\[|array\s*\()/i,
-      "singleton"    => /Route::singleton\s*\(\s*['"]([^'"]+)['"]/i,
-      "apiSingleton" => /Route::apiSingleton\s*\(\s*['"]([^'"]+)['"]/i,
+      "resources"    => /Route::#{RESOURCE_CHAIN}(resources)\s*\(\s*(?:\[|array\s*\()/i,
+      "apiResources" => /Route::#{RESOURCE_CHAIN}(apiResources)\s*\(\s*(?:\[|array\s*\()/i,
+      "singleton"    => /Route::#{RESOURCE_CHAIN}singleton\s*\(\s*['"]([^'"]+)['"]/i,
+      "apiSingleton" => /Route::#{RESOURCE_CHAIN}apiSingleton\s*\(\s*['"]([^'"]+)['"]/i,
     }
     ACTION_FILTER_RES = {
       "only"   => Regex.new("->\\s*only\\s*\\((.*?)\\)", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
       "except" => Regex.new("->\\s*except\\s*\\((.*?)\\)", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
     }
+    # The prelude in front of a resource call, for `extract_resource_controller`.
+    RESOURCE_PRELUDE_RE = /\ARoute::#{RESOURCE_CHAIN}(?=(?:api)?(?:resources?|singleton)\s*\()/i
 
     private def extract_resource_route_calls(offsets : Noir::CharOffsets,
                                              method_name : String,
@@ -1589,7 +1655,7 @@ module Analyzer::Php
         else
           statement_end = lexer.statement_end(start)
           statement = offsets.slice(start, statement_end)
-          calls << ResourceRouteCall.new(route_match[1], statement, start)
+          calls << ResourceRouteCall.new(route_match[2], statement, start, route_match[1])
           pos = statement_end > match_end ? statement_end : match_end
         end
       end
