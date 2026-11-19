@@ -420,8 +420,8 @@ module Analyzer::CSharp
 
       # Selected controllers grouped by file so a file holding several of them
       # is lexed once, not once per class.
-      selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes, Array(Noir::CSharpType)))).new do |hash, key|
-        hash[key] = [] of Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes, Array(Noir::CSharpType))
+      selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes, Array(Noir::CSharpType), Bool))).new do |hash, key|
+        hash[key] = [] of Tuple(Noir::CSharpType, Array(ConventionalRoute), ClassRoutes, Array(Noir::CSharpType), Bool)
       end
       # A base class may live in another project of the solution
       # (`Squidex.Web`'s `ApiController`): names the scope does not declare
@@ -449,7 +449,7 @@ module Analyzer::CSharp
           routes = inherited_class_routes(parts, index, class_routes)
           routes = {prefixed_class_routes(routes[0], @convention_prefixes[scope]?), routes[1]}
           patterns = @closed_scopes.includes?(scope) ? route_patterns : area_patterns(route_patterns, routes[1])
-          selected[file] << {type, patterns, routes, ancestor_types(parts, index)}
+          selected[file] << {type, patterns, routes, ancestor_types(parts, index), attributes.includes?("ApiController")}
         end
       end
 
@@ -457,8 +457,8 @@ module Analyzer::CSharp
       selected.each do |file, controllers|
         lexer = file_lexer(file)
         next unless lexer
-        controllers.each do |type, route_patterns, routes, ancestors|
-          analyze_controller(file, lexer, type, route_patterns, routes, include_callee)
+        controllers.each do |type, route_patterns, routes, ancestors, api_controller|
+          analyze_controller(file, lexer, type, route_patterns, routes, include_callee, api_controller)
           next if ancestors.empty?
           # ASP.NET builds an action from every public method a controller
           # inherits, and a CRUD base (`RestController<T>`) is where most of
@@ -468,7 +468,7 @@ module Analyzer::CSharp
           ancestors.each do |ancestor|
             ancestor_file = @type_files[ancestor]? || next
             ancestor_lexer = ancestor_file == file ? lexer : (lexers[ancestor_file] ||= file_lexer(ancestor_file) || next)
-            analyze_controller(ancestor_file, ancestor_lexer, ancestor, route_patterns, routes, include_callee, owner: type, owner_path: PathInfo.new(file, type.start_line + type.header.count('\n') + 1), skip: declared)
+            analyze_controller(ancestor_file, ancestor_lexer, ancestor, route_patterns, routes, include_callee, api_controller, owner: type, owner_path: PathInfo.new(file, type.start_line + type.header.count('\n') + 1), skip: declared)
             declared = declared | declared_method_names(ancestor_lexer, ancestor)
           end
         end
@@ -779,7 +779,7 @@ module Analyzer::CSharp
 
     private def analyze_controller(file : String, lexer : Noir::CSharpLexer, type : Noir::CSharpType,
                                    route_patterns : Array(ConventionalRoute), class_routes : ClassRoutes,
-                                   include_callee : Bool, owner : Noir::CSharpType? = nil, owner_path : PathInfo? = nil, skip : Set(String)? = nil)
+                                   include_callee : Bool, api_controller : Bool, owner : Noir::CSharpType? = nil, owner_path : PathInfo? = nil, skip : Set(String)? = nil)
       controller_name = (owner || type).name.sub(CONTROLLER_SUFFIX_RE, "")
       # Slice the file's already-lexed views down to this class. `line_offset`
       # puts the reported line back in file coordinates.
@@ -813,7 +813,7 @@ module Analyzer::CSharp
           # collected an empty route — fall back to the base so
           # verb-then-`[Route]` ordering matches `[Route]`-then-verb.
           emit_route = route_attr if emit_route.empty? && !route_attr.empty?
-          parameters = extract_parameters(method.params, emit_verb, file, lines, masked_lines)
+          parameters = extract_parameters(method.params, emit_verb, file, lines, masked_lines, api_controller)
           parameters = merge_params(parameters, body_params, emit_verb)
           routes = controller_routes.flat_map do |controller_route|
             effective_action_route = emit_route
@@ -868,7 +868,7 @@ module Analyzer::CSharp
     }
 
     private def extract_parameters(params : Array(Noir::CSharpDecl::Parameter), http_method : String, file : String,
-                                   lines : Array(String), masked_lines : Array(String)) : Array(Param)
+                                   lines : Array(String), masked_lines : Array(String), api_controller : Bool) : Array(Param)
       parameters = [] of Param
       default_param_type = default_param_type(http_method)
 
@@ -893,7 +893,8 @@ module Analyzer::CSharp
           next if type_token && Common.csharp_service_type?(type_token)
         end
 
-        bound = param_type || default_param_type
+        bound = param_type
+        bound ||= api_controller && explicit_name.nil? ? api_controller_binding(param, file, lines, masked_lines) : default_param_type
         # A model-bound complex type (`LoginInputModel model`) is the members
         # a client sends, not a field named after the argument.
         members = body_type_params("#{param.type} #{param.name}", bound, file, lines, masked_lines) if bound.in?("json", "form") && explicit_name.nil?
@@ -901,6 +902,17 @@ module Analyzer::CSharp
       end
 
       parameters
+    end
+
+    FORM_FILE_TYPE_RE = /\bIFormFile(?:Collection)?\b/
+
+    # What `[ApiController]` infers for a parameter without `[FromX]`: the
+    # body for a complex type, the form for an upload, else the query string
+    # (a parameter named after a route value is matched to it later).
+    private def api_controller_binding(param : Noir::CSharpDecl::Parameter, file : String,
+                                       lines : Array(String), masked_lines : Array(String)) : String
+      return "form" if param.type.matches?(FORM_FILE_TYPE_RE)
+      body_type_params("#{param.type} #{param.name}", "json", file, lines, masked_lines) ? "json" : "query"
     end
 
     private def default_param_type(http_method : String) : String
@@ -1038,11 +1050,12 @@ module Analyzer::CSharp
     # (`{productid}` binds `int productId`): the parameter takes the
     # template's spelling, which is what the client sends. A parameter that
     # spells it exactly takes it alone: a body member `Id` beside `Guid id`
-    # stays a form field.
+    # stays a form field. A JSON body member is never a route value.
     private def align_params_with_route(params : Array(Param), route : String) : Array(Param)
       path_keys = extract_route_placeholders(route)
 
       mapped = params.map do |param|
+        next Param.new(param.name, param.value, param.param_type) if param.param_type == "json"
         key = path_keys.find { |path_key| path_key == param.name } ||
               path_keys.find { |path_key| path_key.compare(param.name, case_insensitive: true) == 0 && params.none? { |other| other.name == path_key } }
         if key
@@ -1053,7 +1066,7 @@ module Analyzer::CSharp
       end
 
       path_keys.each do |key|
-        unless mapped.any? { |param| param.name == key }
+        unless mapped.any? { |param| param.name == key && param.param_type != "json" }
           mapped << Param.new(key, "", "path")
         end
       end
