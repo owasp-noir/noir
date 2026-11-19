@@ -2207,6 +2207,161 @@ describe "DjangoAuthTagger" do
     end
   end
 
+  it "judges a Django mixin imported under another name by the name it was imported as" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_mixin_alias")
+    Dir.mkdir_p(tmpdir)
+    mixins = File.join(tmpdir, "mixins.py")
+    views = File.join(tmpdir, "views.py")
+    File.write(mixins, <<-PY)
+      from django.contrib.auth.mixins import (
+          AccessMixin,
+          LoginRequiredMixin as LoginRequiredMixInBase,
+      )
+      from django.views.generic import View as PlainBase
+
+
+      class LoginRequiredMixin(LoginRequiredMixInBase):
+          pass
+
+
+      class PlainMixin(PlainBase):
+          pass
+      PY
+    File.write(views, <<-PY)
+      from mixins import LoginRequiredMixin, PlainMixin
+
+
+      class AccountView(LoginRequiredMixin, View):
+          def get(self, request):
+              return HttpResponse("ok")
+
+
+      class PublicView(PlainMixin):
+          def get(self, request):
+              return HttpResponse("ok")
+      PY
+    [mixins, views].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      account = Endpoint.new("/account/", "GET", [] of Param, Details.new(PathInfo.new(views, 5)))
+      public_view = Endpoint.new("/public/", "GET", [] of Param, Details.new(PathInfo.new(views, 10)))
+      DjangoAuthTagger.new(noir_options).perform([account, public_view])
+      account.tags.map(&.description).should eq(["Protected by Django LoginRequiredMixin"])
+      public_view.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads MIDDLEWARE assigned from another list in the same settings module" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_mw_alias")
+    begin
+      {"a_svc" => "BASE_MIDDLEWARE = [\"core.middleware.Wall\"]\nMIDDLEWARE = BASE_MIDDLEWARE\n",
+       "b_svc" => "BASE_MIDDLEWARE = [\"core.middleware.Other\"]\nMIDDLEWARE = BASE_MIDDLEWARE\nDISABLED_MIDDLEWARE = [\"core.middleware.Wall\"]\n"}.each do |svc, settings|
+        %w[proj core app].each { |dir| Dir.mkdir_p(File.join(tmpdir, svc, dir)) }
+        File.write(File.join(tmpdir, svc, "proj", "__init__.py"), "")
+        File.write(File.join(tmpdir, svc, "proj", "urls.py"), "urlpatterns = []\n")
+        File.write(File.join(tmpdir, svc, "proj", "settings.py"), "ROOT_URLCONF = \"proj.urls\"\n#{settings}")
+        File.write(File.join(tmpdir, svc, "app", "views.py"), "def index(request):\n    return None\n")
+        File.write(File.join(tmpdir, svc, "core", "middleware.py"), "class Wall:\n    def __call__(self, request):\n        if not request.user.is_authenticated:\n            return HttpResponseRedirect('/login/')\n        return self.get_response(request)\n")
+      end
+      Dir.glob("#{tmpdir}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      a = Endpoint.new("/a/", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "a_svc", "app", "views.py"), 1)))
+      b = Endpoint.new("/b/", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, "b_svc", "app", "views.py"), 1)))
+      DjangoAuthTagger.new(noir_options).perform([a, b])
+      a.tags.map(&.description).should eq(["Protected by Wall (settings.MIDDLEWARE refuses unauthenticated requests outside its exempt paths)"])
+      b.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads every operand of a MIDDLEWARE concatenation, and no list after the statement" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_mw_concat")
+    begin
+      {"a_svc" => "BASE_MIDDLEWARE = [\"core.middleware.Other\"]\nMIDDLEWARE = BASE_MIDDLEWARE + [\"core.middleware.Wall\"]\n",
+       "b_svc" => "BASE_MIDDLEWARE = [\"core.middleware.Wall\"]\nMIDDLEWARE = BASE_MIDDLEWARE + [\n    \"core.middleware.Other\",\n]\n",
+       "c_svc" => "MIDDLEWARE = [\"core.middleware.Other\"]\nMIDDLEWARE = list(MIDDLEWARE) + []\nWALLS = [\"core.middleware.Wall\"]\n"}.each do |svc, settings|
+        %w[proj core app].each { |dir| Dir.mkdir_p(File.join(tmpdir, svc, dir)) }
+        File.write(File.join(tmpdir, svc, "proj", "__init__.py"), "")
+        File.write(File.join(tmpdir, svc, "proj", "urls.py"), "urlpatterns = []\n")
+        File.write(File.join(tmpdir, svc, "proj", "settings.py"), "ROOT_URLCONF = \"proj.urls\"\n#{settings}")
+        File.write(File.join(tmpdir, svc, "app", "views.py"), "def index(request):\n    return None\n")
+        File.write(File.join(tmpdir, svc, "core", "middleware.py"), "class Wall:\n    def __call__(self, request):\n        if not request.user.is_authenticated:\n            return HttpResponseRedirect('/login/')\n        return self.get_response(request)\n")
+      end
+      Dir.glob("#{tmpdir}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(svc : String) { Endpoint.new("/#{svc}/", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, svc, "app", "views.py"), 1))) }
+      a, b, c = at.call("a_svc"), at.call("b_svc"), at.call("c_svc")
+      DjangoAuthTagger.new(noir_options).perform([a, b, c])
+      wall = ["Protected by Wall (settings.MIDDLEWARE refuses unauthenticated requests outside its exempt paths)"]
+      a.tags.map(&.description).should eq(wall)
+      b.tags.map(&.description).should eq(wall)
+      c.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads the lists inside a call wrapping MIDDLEWARE, and a backslash continuation" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_mw_call")
+    begin
+      wall = "\"core.middleware.Wall\""
+      {"a_svc" => "MIDDLEWARE = list(filter(None, [\n    #{wall},\n]))\n",
+       "b_svc" => "MIDDLEWARE = tuple([#{wall}])\n",
+       "c_svc" => "MIDDLEWARE = env.list(\"MIDDLEWARE\", default=[#{wall}])\n",
+       "d_svc" => "MIDDLEWARE = \\\n    [#{wall}]\n"}.each do |svc, settings|
+        %w[proj core app].each { |dir| Dir.mkdir_p(File.join(tmpdir, svc, dir)) }
+        File.write(File.join(tmpdir, svc, "proj", "__init__.py"), "")
+        File.write(File.join(tmpdir, svc, "proj", "urls.py"), "urlpatterns = []\n")
+        File.write(File.join(tmpdir, svc, "proj", "settings.py"), "ROOT_URLCONF = \"proj.urls\"\n#{settings}")
+        File.write(File.join(tmpdir, svc, "app", "views.py"), "def index(request):\n    return None\n")
+        File.write(File.join(tmpdir, svc, "core", "middleware.py"), "class Wall:\n    def __call__(self, request):\n        if not request.user.is_authenticated:\n            return HttpResponseRedirect('/login/')\n        return self.get_response(request)\n")
+      end
+      Dir.glob("#{tmpdir}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = %w[a_svc b_svc c_svc d_svc].map { |svc| Endpoint.new("/#{svc}/", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, svc, "app", "views.py"), 1))) }
+      DjangoAuthTagger.new(noir_options).perform(endpoints)
+      endpoints.each do |endpoint|
+        endpoint.tags.map(&.description).should eq(["Protected by Wall (settings.MIDDLEWARE refuses unauthenticated requests outside its exempt paths)"])
+      end
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+
+    tmpdir = File.tempname("django_mw_call_builtin")
+    begin
+      Dir.mkdir_p(File.join(tmpdir, "proj"))
+      settings = File.join(tmpdir, "proj", "settings.py")
+      views = File.join(tmpdir, "proj", "views.py")
+      File.write(settings, "MIDDLEWARE = tuple([\n    \"django.contrib.auth.middleware.LoginRequiredMiddleware\",\n])\n")
+      File.write(views, "def index(request):\n    return None\n")
+      [settings, views].each { |path| CodeLocator.instance.register_path(path) }
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      index = Endpoint.new("/", "GET", [] of Param, Details.new(PathInfo.new(views, 1)))
+      DjangoAuthTagger.new(noir_options).perform([index])
+      index.tags.map(&.description).should eq(["Protected by Django LoginRequiredMiddleware"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "judges a permission helper only when it is the whole verdict, and same-named classes only when they agree" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_drf_helper_scope")
@@ -2277,6 +2432,192 @@ describe "DjangoAuthTagger" do
       gate.tags.should be_empty
       recipe_read.tags.should be_empty
       recipe_write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads request.user.is_anonymous as true for an anonymous caller in has_permission" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_drf_is_anonymous")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    File.write(views, <<-PY)
+      class MemberPermission(BasePermission):
+          def has_permission(self, request, view):
+              if request.user.is_anonymous:
+                  return False
+
+              if request.method in SAFE_METHODS:
+                  return Member.objects.filter(member=request.user).exists()
+
+              return Member.objects.filter(member=request.user, role=20).exists()
+
+      class GuestReadPermission(BasePermission):
+          def has_permission(self, request, view):
+              if request.user.is_anonymous:
+                  return request.method in SAFE_METHODS
+              return Member.objects.filter(member=request.user).exists()
+
+      class ItemViewSet(viewsets.ViewSet):
+          permission_classes = [MemberPermission]
+
+      class NoteViewSet(viewsets.ViewSet):
+          permission_classes = [GuestReadPermission]
+      PY
+    CodeLocator.instance.register_path(views)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(method : String, line : Int32) { Endpoint.new("/#{line}/#{method}", method, [] of Param, Details.new(PathInfo.new(views, line))) }
+      item_read, item_write, note_read, note_write = at.call("GET", 17), at.call("POST", 17), at.call("GET", 20), at.call("POST", 20)
+      DjangoAuthTagger.new(noir_options).perform([item_read, item_write, note_read, note_write])
+      item_read.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      item_write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+      note_read.tags.should be_empty
+      note_write.tags.map(&.description).should eq(["Protected by DRF permission_classes"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads a dispatch gated by a view flag from the class attribute and the as_view() arguments" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_dispatch_flag")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    urls = File.join(tmpdir, "urls.py")
+    File.write(views, <<-PY)
+      class PageView(TemplateView):
+          login_required = False
+
+          def dispatch(self, request, *args, **kwargs):
+              if self.login_required and not request.user.is_authenticated:
+                  return redirect_to_login(request.path)
+              return super().dispatch(request, *args, **kwargs)
+
+      class PrivatePageView(PageView):
+          login_required = True
+      PY
+    File.write(urls, <<-PY)
+      urlpatterns = [
+          path("open/", PageView.as_view()),
+          path("closed/", PageView.as_view(login_required=True)),
+          path("private/", PrivatePageView.as_view()),
+          path("reopened/", PrivatePageView.as_view(login_required=False)),
+      ]
+      PY
+    [views, urls].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(view_line : Int32, url_line : Int32) do
+        details = Details.new(PathInfo.new(views, view_line))
+        details.add_path(PathInfo.new(urls, url_line))
+        Endpoint.new("/#{url_line}", "GET", [] of Param, details)
+      end
+      open, closed, private_page, reopened = at.call(1, 2), at.call(1, 3), at.call(9, 4), at.call(9, 5)
+      DjangoAuthTagger.new(noir_options).perform([open, closed, private_page, reopened])
+      open.tags.should be_empty
+      closed.tags.map(&.description).should eq(["Protected by PageView.dispatch"])
+      private_page.tags.map(&.description).should eq(["Protected by PageView.dispatch"])
+      reopened.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "tags the admin site mount, which serves only active staff" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_admin_site")
+    Dir.mkdir_p(tmpdir)
+    urls = File.join(tmpdir, "urls.py")
+    File.write(urls, <<-PY)
+      urlpatterns = [
+          path("admin/", admin.site.urls),
+          re_path(r"^api/", router.urls),
+      ]
+      PY
+    CodeLocator.instance.register_path(urls)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      admin_index = Endpoint.new("/admin/", "GET", [] of Param, Details.new(PathInfo.new(urls, 2)))
+      api = Endpoint.new("/api/", "GET", [] of Param, Details.new(PathInfo.new(urls, 3)))
+      DjangoAuthTagger.new(noir_options).perform([admin_index, api])
+      admin_index.tags.map(&.description).should eq(["Protected by Django admin site"])
+      api.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "keeps a dispatch flag unknown when URLconf entries pass it different values" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_dispatch_flag_twice")
+    Dir.mkdir_p(tmpdir)
+    views = File.join(tmpdir, "views.py")
+    urls_a = File.join(tmpdir, "urls_a.py")
+    urls_b = File.join(tmpdir, "urls_b.py")
+    File.write(views, <<-PY)
+      class PageView(TemplateView):
+          login_required = False
+
+          def dispatch(self, request, *args, **kwargs):
+              if self.login_required and not request.user.is_authenticated:
+                  return redirect_to_login(request.path)
+              return super().dispatch(request, *args, **kwargs)
+      PY
+    File.write(urls_a, "urlpatterns = [\n    path(\"page/\", PageView.as_view(login_required=True)),\n]\n")
+    File.write(urls_b, "urlpatterns = [\n    path(\"page/\", PageView.as_view()),\n]\n")
+    [views, urls_a, urls_b].each { |path| CodeLocator.instance.register_path(path) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      details = Details.new(PathInfo.new(views, 1))
+      details.add_path(PathInfo.new(urls_a, 2))
+      details.add_path(PathInfo.new(urls_b, 2))
+      page = Endpoint.new("/page/", "GET", [] of Param, details)
+      DjangoAuthTagger.new(noir_options).perform([page])
+      page.tags.map(&.description).should eq(["Protected by PageView.dispatch"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads the admin site only from the view argument of the entry serving the endpoint" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_admin_entry")
+    Dir.mkdir_p(tmpdir)
+    urls = File.join(tmpdir, "urls.py")
+    File.write(urls, <<-PY)
+      urlpatterns = [
+          path("admin/", admin.site.urls), path("pub/", views.home),
+          path("about/", views.about, name="admin.site.urls"),
+          path("inc-admin/", include(admin.site.urls)),
+          re_path(r"^old-admin/", admin.site.urls),
+          path("home/", views.home),  # admin.site.urls
+      ]
+      PY
+    CodeLocator.instance.register_path(urls)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(url : String, line : Int32) { Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(urls, line))) }
+      admin_index, prefixed, pub, about, inc, old, home = at.call("/admin/", 2), at.call("/api/v1/admin/", 2), at.call("/pub/", 2), at.call("/about/", 3), at.call("/inc-admin/", 4), at.call("/old-admin/", 5), at.call("/home/", 6)
+      DjangoAuthTagger.new(noir_options).perform([admin_index, prefixed, pub, about, inc, old, home])
+      [admin_index, prefixed, inc, old].each { |endpoint| endpoint.tags.map(&.description).should eq(["Protected by Django admin site"]) }
+      [pub, about, home].each(&.tags.should(be_empty))
     ensure
       FileUtils.rm_rf(tmpdir)
       CodeLocator.instance.clear_all

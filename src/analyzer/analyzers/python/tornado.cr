@@ -541,6 +541,7 @@ module Analyzer::Python
           end
           endpoint = Endpoint.new(route_path, "GET", params)
           endpoint.protocol = "ws"
+          endpoint.handler = handler_at(lines, line_index, file_path)
 
           if codeblock = parse_code_block(lines[line_index..])
             push_callees_from(
@@ -572,6 +573,7 @@ module Analyzer::Python
               add_unique_param(params, param)
             end
             endpoint = Endpoint.new(route_path, http_method.upcase, params)
+            endpoint.handler = handler_at(lines, line_index, file_path)
 
             # Attach 1-hop callees from this method's body. Each
             # handler method (`def get` / `async def post` / ...) maps

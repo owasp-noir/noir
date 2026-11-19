@@ -76,7 +76,7 @@ class DjangoAuthTagger < FrameworkTagger
     @drf_default_permissions = [] of String
     @permission_classes = {} of String => Array(PermissionClass)
     @method_def_res = {} of String => Regex
-    @dispatch_guards = {} of {String, Int32, String} => String | Symbol?
+    @dispatch_guards = {} of {String, Int32, String, Hash(String, String)} => String | Symbol?
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -116,7 +116,7 @@ class DjangoAuthTagger < FrameworkTagger
       code = content.lines.map(&.sub(/#.*/, "")).join("\n")
       register_django_root(path, code) if has_urlconf
       scan_middleware(path, code) if has_middleware_list && code.matches?(MIDDLEWARE_ASSIGNMENT)
-      if has_middleware && bracketed_values_after(code, MIDDLEWARE_ASSIGNMENT).any?(&.includes?(LOGIN_REQUIRED_MIDDLEWARE))
+      if has_middleware && middleware_values(code).any?(&.[1].includes?(LOGIN_REQUIRED_MIDDLEWARE))
         @login_required_middleware = true
       end
       if has_drf_default && (perms = bracketed_after(code, /DEFAULT_PERMISSION_CLASSES['"]\s*:/))
@@ -185,19 +185,6 @@ class DjangoAuthTagger < FrameworkTagger
     nil
   end
 
-  # The `[...]` / `(...)` value following every match of `key`.
-  private def bracketed_values_after(text : String, key : Regex) : Array(String)
-    values = [] of String
-    pos = 0
-    while match = text.match(key, pos)
-      pos = match.end
-      if value = bracketed_after(text, key, match.begin)
-        values << value
-      end
-    end
-    values
-  end
-
   # The `[...]` / `(...)` value following `key`, across lines.
   private def bracketed_after(text : String, key : Regex, from : Int32 = 0) : String?
     match = text.match(key, from)
@@ -230,6 +217,13 @@ class DjangoAuthTagger < FrameworkTagger
   private def check_view_guards(endpoint : Endpoint)
     contexts = read_source_context(endpoint)
     return if contexts.empty?
+    urlconf = urlconf_entries(contexts, endpoint.url)
+    # `AdminSite.admin_view` sends a caller who is not active staff to the
+    # admin login; the index is what the mount itself serves.
+    if !urlconf.empty? && urlconf.all? { |entry| urlconf_args(entry)[1]?.try(&.matches?(/\A(?:include\s*\(\s*)?admin\.site\.urls\b/)) }
+      endpoint.add_tag(Tag.new("auth", "Protected by Django admin site", "django_auth"))
+      return
+    end
     # A view served by a base class's method lists the view class itself
     # among its code paths (its `class` line): that class's MRO, not the
     # base's, decides what its `dispatch` and permissions do.
@@ -263,7 +257,7 @@ class DjangoAuthTagger < FrameworkTagger
         class_line = class_ctx.line || line
 
         # Check enclosing class for mixins
-        description = check_enclosing_class_mixins(class_ctx.lines, class_line, class_ctx.path, endpoint.method)
+        description = check_enclosing_class_mixins(class_ctx.lines, class_line, class_ctx.path, endpoint.method, urlconf)
         if description
           endpoint.add_tag(Tag.new("auth", description, "django_auth"))
           return
@@ -283,6 +277,62 @@ class DjangoAuthTagger < FrameworkTagger
         end
       end
     end
+  end
+
+  URLCONF_CALL = /(?<![\w.])(?<!def )(?:re_path|path|url)\s*(?=\()/
+
+  # The `path(...)` / `re_path(...)` / `url(...)` call each code path points
+  # at, through its closing parenthesis: of the entries starting on that
+  # line, the one whose route `url` ends with (the longest), or the only one.
+  private def urlconf_entries(contexts : Array(SourceContext), url : String) : Array(String)
+    contexts.compact_map do |ctx|
+      line = ctx.line || next
+      next unless line >= 1 && line <= ctx.lines.size
+      text = ctx.lines[line - 1, 20].map { |raw| Analyzer::Python::Helper.strip_python_comment(raw) }.join('\n')
+      head = text.index('\n') || text.size
+      entries = [] of String
+      pos = 0
+      while (call = text.match(URLCONF_CALL, pos)) && call.begin < head && (entry = bracketed_after(text, URLCONF_CALL, call.begin))
+        entries << entry
+        pos = call.end + entry.size
+      end
+      next entries.first? if entries.size < 2
+      routed = entries.compact_map do |candidate|
+        route = urlconf_args(candidate).first?.try { |literal| route_text(literal) }
+        {route, candidate} if route && url.ends_with?(route)
+      end
+      routed.max_by?(&.[0].size).try(&.[1])
+    end
+  end
+
+  # The positional arguments of a URLconf call: route, then view.
+  private def urlconf_args(entry : String) : Array(String)
+    Noir::TopLevelSplit.split(entry[1...-1], ',', Noir::TopLevelSplit::Rules::PYTHON).map(&.strip).reject do |arg|
+      arg.empty? || arg.matches?(/\A\w+\s*=(?!=)/)
+    end
+  end
+
+  # A route string literal without its regex anchors: `r"^admin/"` -> `admin/`.
+  private def route_text(literal : String) : String?
+    literal.match(/\A[rRuU]?(['"])(.*)\1\z/).try(&.[2].lchop('^').rchop('$'))
+  end
+
+  # The `name=value` arguments `ClassName.as_view(...)` passes in the
+  # entries that build the view. A name the entries pass different values
+  # for (or only some pass) holds "", a value not read.
+  private def as_view_kwargs(urlconf : Array(String), class_name : String) : Hash(String, String)
+    call = /\b#{Regex.escape(class_name)}\s*\.\s*as_view\s*(?=\()/
+    passed = urlconf.compact_map { |entry| bracketed_after(entry, call) }.map do |args|
+      Noir::TopLevelSplit.split(args[1...-1], ',', Noir::TopLevelSplit::Rules::PYTHON).compact_map do |arg|
+        arg.strip.match(/\A(\w+)\s*=(?!=)\s*(.+)\z/m).try { |m| {m[1], m[2].strip} }
+      end.to_h
+    end
+    kwargs = {} of String => String
+    passed.flat_map(&.keys).uniq!.each do |name|
+      values = passed.map(&.[name]?).uniq!
+      kwargs[name] = values.size == 1 ? values.first || "" : ""
+    end
+    kwargs
   end
 
   private def check_decorators(lines : Array(String), endpoint_line : Int32, path : String) : String?
@@ -505,7 +555,8 @@ class DjangoAuthTagger < FrameworkTagger
     body_guard(file, lines, def_idx + 1, method, 1).try { |own| "#{own} (via #{def_name})" }
   end
 
-  private def check_enclosing_class_mixins(lines : Array(String), endpoint_line : Int32, path : String, method : String) : String?
+  private def check_enclosing_class_mixins(lines : Array(String), endpoint_line : Int32, path : String, method : String,
+                                           urlconf : Array(String)) : String?
     idx = enclosing_class(lines, endpoint_line).try(&.[0]) || return
     # `@method_decorator(..., name=...)` above the class decorates the
     # handler it names (or all of them, via `dispatch`).
@@ -518,8 +569,9 @@ class DjangoAuthTagger < FrameworkTagger
     end
     # Its bases, wherever the header wraps.
     header = class_header(lines, idx)
-    key = {path, idx, method.upcase}
-    verdict = @dispatch_guards.has_key?(key) ? @dispatch_guards[key] : (@dispatch_guards[key] = dispatch_guard(path, lines, idx, method.upcase))
+    kwargs = as_view_kwargs(urlconf, header.match(/\bclass\s+(\w+)/).try(&.[1]) || "")
+    key = {path, idx, method.upcase, kwargs}
+    verdict = @dispatch_guards.has_key?(key) ? @dispatch_guards[key] : (@dispatch_guards[key] = dispatch_guard(path, lines, idx, method.upcase, kwargs))
     return "Protected by #{verdict}" if verdict.is_a?(String)
     # The walk saw where the request is served without these mixins.
     return if verdict == :stop
@@ -651,9 +703,18 @@ class DjangoAuthTagger < FrameworkTagger
   # found nothing either way. A base the scan does not hold is judged by
   # its name (`MIXIN_PATTERNS`), unless a class overrides
   # `handle_no_permission` with one that does not refuse.
-  private def dispatch_guard(path : String, lines : Array(String), class_idx : Int32, method : String) : String | Symbol?
+  private def dispatch_guard(path : String, lines : Array(String), class_idx : Int32, method : String,
+                             kwargs : Hash(String, String)) : String | Symbol?
     mro = class_mro(path, lines, class_idx)
     soft = soft_no_permission?(mro)
+    # The view's attributes as `dispatch` reads them off `self`: the first
+    # class in the MRO to set one, unless `as_view(name=...)` overrides it.
+    attrs = kwargs.dup
+    mro.each do |klass|
+      file = klass.path || next
+      class_lines = read_file_lines(file) || next
+      class_attributes(class_lines, klass.idx).each { |name, value| attrs[name] = value unless attrs.has_key?(name) }
+    end
     mro.each do |klass|
       unless file = klass.path
         if pattern = MIXIN_PATTERNS.find { |mixin| klass.name.matches?(mixin) }
@@ -664,7 +725,7 @@ class DjangoAuthTagger < FrameworkTagger
       end
       class_lines = read_file_lines(file) || next
       body = method_body(class_lines, klass.idx, "dispatch") || next
-      if setting = dispatch_refusal(body, file, class_lines, klass.idx, method, soft)
+      if setting = dispatch_refusal(body, file, class_lines, klass.idx, method, soft, attrs)
         return setting.empty? ? "#{klass.name}.dispatch" : "#{klass.name}.dispatch (settings.#{setting} decides; a setting can make it public)"
       end
       return :stop unless body.matches?(/\bsuper\s*\(/)
@@ -703,12 +764,25 @@ class DjangoAuthTagger < FrameworkTagger
       if (site = class_site(path, base)) && (base_lines = read_file_lines(site[0]))
         class_mro(site[0], base_lines, site[1], depth + 1)
       else
-        [MroClass.new(base.rpartition('.')[2], nil, -1)]
+        [MroClass.new(imported_as(path, base.rpartition('.')[2]), nil, -1)]
       end
     end
     heads = bases.map(&.first)
     mro = [own] + (c3_merge(bases + [heads]) || bases.flatten.uniq!)
     @mro_cache[key] = mro
+  end
+
+  # The name a library class bound to `name` in `path` was imported as:
+  # `from django.contrib.auth.mixins import LoginRequiredMixin as Base`.
+  private def imported_as(path : String, name : String) : String
+    source = read_file(path) || return name
+    alias_re = /\b(\w+)\s+as\s+#{Regex.escape(name)}\b/
+    source.scan(/^[ \t]*from[ \t]+[\w.]+[ \t]+import[ \t]+(\([^)]*\)|[^\n]*)/m) do |statement|
+      if found = statement[1].match(alias_re)
+        return found[1]
+      end
+    end
+    name
   end
 
   private def c3_merge(seqs : Array(Array(MroClass))) : Array(MroClass)?
@@ -727,7 +801,7 @@ class DjangoAuthTagger < FrameworkTagger
   # `if` holds for an anonymous caller of `method` and its block refuses;
   # nil when none does.
   private def dispatch_refusal(body : String, path : String, lines : Array(String), class_idx : Int32,
-                               method : String, soft : Bool) : String?
+                               method : String, soft : Bool, attrs : Hash(String, String)) : String?
     code = body.lines.map { |line| Analyzer::Python::Helper.strip_python_comment(line).rstrip }
     code.each_with_index do |line, k|
       m = line.strip.match(/\A(?:if|elif)\s+(.+?):(.*)\z/) || next
@@ -741,7 +815,7 @@ class DjangoAuthTagger < FrameworkTagger
       refuses = (!soft && text.matches?(NO_PERMISSION)) || text.matches?(DJANGO_REFUSAL) || text.matches?(FORBIDDEN) ||
                 text.matches?(UNAUTHENTICATED) || text.matches?(LOGIN_REDIRECT)
       next unless refuses
-      if setting = anonymous_condition(m[1], method, path, lines, class_idx)
+      if setting = anonymous_condition(m[1], method, path, lines, class_idx, attrs)
         return setting
       end
     end
@@ -758,7 +832,8 @@ class DjangoAuthTagger < FrameworkTagger
   # does: a negated identity test (`not request.user.is_authenticated`,
   # `not self.has_permission()`), `is_anonymous`, a verb test naming
   # `method`, or a setting; a positive identity test fails for anonymous.
-  private def anonymous_condition(cond : String, method : String, path : String, lines : Array(String), class_idx : Int32) : String?
+  private def anonymous_condition(cond : String, method : String, path : String, lines : Array(String), class_idx : Int32,
+                                  attrs : Hash(String, String)) : String?
     # Grouping parentheses are not parsed; a verb tuple is no grouping.
     return if cond.gsub(/\bin\s*\([^()]*\)/, "in _").matches?(/(?:\A|[\s!])\(/)
     cond.split(/\s+or\s+/).each do |disjunct|
@@ -775,6 +850,8 @@ class DjangoAuthTagger < FrameworkTagger
           anonymous = true
         elsif conjunct.matches?(POSITIVE_IDENTITY) || conjunct.matches?(/\bself\.\w+\s*\(/)
           false
+        elsif (flag = conjunct.match(/\A(not\s+)?self\.(\w+)\z/)) && !(value = literal_truth(attrs[flag[2]]?)).nil?
+          value != !flag[1]?.nil?
         elsif verb = conjunct.match(METHOD_CONDITION)
           verbs = verb[2].scan(/['"](\w+)['"]/).map(&.[1].upcase)
           next false if verbs.empty?
@@ -791,6 +868,14 @@ class DjangoAuthTagger < FrameworkTagger
       return setting if holds && anonymous
     end
     nil
+  end
+
+  # The truth of a literal attribute value; nil for anything else.
+  private def literal_truth(value : String?) : Bool?
+    case value
+    when "True"                                         then true
+    when "False", "None", "0", "[]", "()", "''", "\"\"" then false
+    end
   end
 
   private def chain_method_body(path : String, lines : Array(String), class_idx : Int32, name : String, depth : Int32) : String?
@@ -1352,6 +1437,7 @@ class DjangoAuthTagger < FrameworkTagger
       return (verb[1] == "==" || verb[1] == "in") == hit ? MwTri::T : MwTri::F
     end
     return MwTri::F if expr.matches?(/\A[\w.]*\buser\.(?:is_authenticated|is_staff|is_superuser|is_active)\z/)
+    return MwTri::T if expr.matches?(/\A[\w.]*\buser\.is_anonymous\z/)
     return MwTri::T if expr == "True"
     return MwTri::F if expr.in?("False", "None")
     # An anonymous request carries no `request.auth`.

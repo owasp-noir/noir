@@ -104,9 +104,8 @@ module DjangoMiddlewareGuard
   private def scan_middleware(settings_path : String, code : String)
     collect_lists(code, @settings_lists)
     root = python_import_root(settings_path)
-    code.scan(/^([ \t]*)MIDDLEWARE[ \t]*\+?=/m) do |assignment|
-      value = bracketed_after(code, /MIDDLEWARE[ \t]*\+?=/, assignment.begin) || next
-      conditional = !assignment[1].empty?
+    middleware_values(code).each do |indent, value|
+      conditional = !indent.empty?
       value.scan(/['"]([A-Za-z_][\w.]*\.[A-Za-z_]\w*)['"]/) do |entry|
         dotted = entry[1]
         next if dotted.starts_with?("django.")
@@ -119,6 +118,43 @@ module DjangoMiddlewareGuard
         end
       end
     end
+  end
+
+  # Each `MIDDLEWARE = ...` / `+= ...` statement's indent and the lists it
+  # assigns: every operand of a `+` concatenation that is a literal list, or
+  # a bare name holding one in the same file (`BASE_MIDDLEWARE + [...]`), or
+  # the literal lists among a call's own arguments (`tuple([...])`,
+  # `env.list(..., default=[...])`). Another module's name, and a call
+  # holding no literal list (`list(MIDDLEWARE)`), are not read.
+  private def middleware_values(code : String) : Array({String, String})
+    values = [] of {String, String}
+    code.scan(/^([ \t]*)MIDDLEWARE[ \t]*\+?=[ \t]*/m) do |assignment|
+      rhs = ""
+      code[assignment.end..].each_line(chomp: true) do |line|
+        rhs = rhs.empty? ? line : "#{rhs}\n#{line}"
+        break if mw_mask(rhs)[1] == 0 && !line.rstrip.ends_with?('\\')
+      end
+      rhs = rhs.gsub(/\\[ \t]*\n/, " ")
+      lists = Noir::TopLevelSplit.split(rhs, '+', Noir::TopLevelSplit::Rules::PYTHON).compact_map do |operand|
+        operand = operand.strip
+        if operand.starts_with?('[') || operand.starts_with?('(')
+          operand
+        elsif operand.matches?(/\A[A-Za-z_]\w*\z/) && operand != "MIDDLEWARE"
+          bracketed_after(code, /^[ \t]*#{operand}[ \t]*=[ \t]*(?=[\[(])/m)
+        elsif call = operand.match(/\A[A-Za-z_][\w.]*\s*(?=\()/)
+          args = operand[call.end..]
+          found = [] of String
+          pos = 0
+          while (open = args.index('[', pos)) && (list = bracketed_after(args, /(?=\[)/, open))
+            found << list
+            pos = open + list.size
+          end
+          found.join(" + ") unless found.empty?
+        end
+      end
+      values << {assignment[1], lists.join(" + ")} unless lists.empty?
+    end
+    values
   end
 
   private def middleware_class(dotted : String, root : String, conditional : Bool) : MwClass?

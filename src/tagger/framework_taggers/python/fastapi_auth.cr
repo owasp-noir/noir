@@ -130,6 +130,7 @@ class FastAPIAuthTagger < FrameworkTagger
     @includes_by_site = nil
     @include_scopes.clear
     @http_middlewares.clear
+    authz_candidates = [] of {String, String}
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
       next unless content
@@ -154,27 +155,51 @@ class FastAPIAuthTagger < FrameworkTagger
           end
         end
       end
-      index_authz_dependencies(path, content) if content.matches?(AUTHZ_FIELD)
+      authz_candidates << {path, content} if content.matches?(AUTHZ_FIELD) || content.matches?(FORBIDDEN)
     end
+    # After the alias index: judging a caller dependency reads it.
+    authz_candidates.each { |path, content| index_authz_dependencies(path, content) }
     super
   end
 
-  # Top-level `def`s whose body checks a role / ownership field, per file
-  # and (for the unresolved-import fallback) by bare name.
+  # Top-level `def`s whose body checks a role / ownership field, or
+  # refuses with 403 on a property of the caller it is handed, per file and
+  # (for the unresolved-import fallback) by bare name.
   private def index_authz_dependencies(path : String, content : String)
     name : String? = nil
+    header = ""
     body = [] of String
     (content.lines << "").each do |line|
       if !line.blank? && line[0].ascii_whitespace?
         body << line if name
         next
       end
-      if (current = name) && body.any?(&.matches?(AUTHZ_FIELD))
+      if (current = name) && (body.any?(&.matches?(AUTHZ_FIELD)) || caller_property_refusal?([header] + body, path))
         @authz_dependencies << current
         (@authz_defs[path] ||= Set(String).new) << current
       end
       body.clear
+      header = line
       name = line.match(PYTHON_DEF).try(&.[1])
+    end
+  end
+
+  # Whether a dependency `block` raises 403 under a condition on a property
+  # of the caller one of its parameters injects (`if not user.admin:` with
+  # `user = Depends(get_current_user)`): the caller is already identified,
+  # so the refusal judges what that caller may do. `if user is None` tests
+  # only that a caller is there.
+  private def caller_property_refusal?(block : Array(String), file : String) : Bool
+    return false unless block.any?(&.matches?(FORBIDDEN))
+    text = block.join('\n')
+    signature_end = text.index(/\)\s*(?:->[^\n:]*)?:\s*$/m) || return false
+    callers = handler_caller_names(text[0, signature_end + 1], file)
+    return false if callers.empty?
+    reads = callers.map { |caller| /(?<![\w.])#{Regex.escape(caller)}\s*\.\s*[A-Za-z_]|[A-Za-z_]\w*\s*\(\s*#{Regex.escape(caller)}\b/ }
+    refusal_sites(block, file, FORBIDDEN).any? do |idx, inline|
+      conditions = governing_conditions(block, idx).map(&.[0])
+      conditions << inline if inline
+      conditions.any? { |cond| reads.any? { |read| cond.matches?(read) } }
     end
   end
 
@@ -199,7 +224,7 @@ class FastAPIAuthTagger < FrameworkTagger
         scopes.concat(include_dependencies(path_info.path, receiver))
       end
       scopes.concat(class_dependencies(lines, line_num - 1, path_info.path))
-      scopes.concat(scopes.flat_map { |text, file| dependency_variables(text, file) })
+      scopes.concat(scopes.flat_map { |text, file| dependency_variables(text, file, file == path_info.path ? {lines, line_num - 1} : nil) })
 
       description = nil
       authz = nil
@@ -218,6 +243,10 @@ class FastAPIAuthTagger < FrameworkTagger
     end
     if guard = http_middleware_guard(endpoint)
       endpoint.add_tag(Tag.new("auth", guard, "fastapi_auth"))
+      return
+    end
+    if call = handler_guard_call(endpoint)
+      endpoint.add_tag(Tag.new("auth", "Protected by FastAPI handler call to #{call}", "fastapi_auth"))
       return
     end
     if soft = @soft_auth
@@ -271,7 +300,99 @@ class FastAPIAuthTagger < FrameworkTagger
   # Whether a `def` body refuses the caller: a 401/403 raise of its own,
   # or a dependency it declares that refuses (`dependency_refuses_in?`).
   private def body_refuses?(body : String, file : String, depth : Int32, env : Env = Env.new) : Bool
-    refusing_raise?(body, file) || dependency_refuses_in?(body, file, depth, env)
+    refusing_raise?(body, file) || dependency_refuses_in?(body, file, depth, env) ||
+      !leading_guard_call(body.lines, file, depth).nil?
+  end
+
+  # The leading guard call of the function the route dispatches to: the
+  # handler the analyzer resolved (`add_api_route(path, handler)` names it),
+  # else the `def` under the route decorator at the code path.
+  private def handler_guard_call(endpoint : Endpoint) : String?
+    if (handler = endpoint.handler) && (file = handler.path) && (line = handler.line)
+      lines = read_file_lines(file) || return
+      return unless 0 < line <= lines.size
+      return leading_guard_call(lines[line - 1, 400], file, 0)
+    end
+    endpoint.details.code_paths.each do |path_info|
+      lines = read_file_lines(path_info.path) || next
+      start = (path_info.line || next) - 1
+      next unless 0 <= start < lines.size && lines[start].lstrip.starts_with?('@')
+      if call = leading_guard_call(lines[start, 400], path_info.path, 0)
+        return call
+      end
+    end
+    nil
+  end
+
+  LEADING_CALL   = /\A(?:[A-Za-z_]\w*\s*(?::[^=]+)?=(?!=)\s*)?(?:await\s+)?([A-Za-z_][\w.]*)\s*\(/
+  BODY_STATEMENT = /\A(?:async\s+)?def\s/
+
+  # The function the `def` opening `block` calls before anything else can
+  # answer, when its definition refuses the caller: a handler or dependency
+  # that opens with `require_token(authorization)` aborts the request as a
+  # `Depends(require_token)` would. Only the body's own top-level simple
+  # statements before its first `return`, `raise`, `yield` or block count.
+  private def leading_guard_call(block : Array(String), file : String, depth : Int32) : String?
+    return if depth > 4
+    def_idx = block.index(&.lstrip.matches?(BODY_STATEMENT)) || return
+    def_indent = block[def_idx].size - block[def_idx].lstrip.size
+    idx = def_idx
+    open = 0
+    while idx < block.size
+      code = Analyzer::Python::Helper.strip_python_comment(block[idx]).rstrip
+      open += bracket_delta(code)
+      idx += 1
+      break if open <= 0 && code.ends_with?(':')
+    end
+    body = block[idx..].join('\n').gsub(PythonGuardDefinitions::DOCSTRING, "\"\"").lines
+    level = nil
+    body.each do |raw|
+      code = Analyzer::Python::Helper.strip_python_comment(raw).rstrip
+      next if code.blank?
+      indent = code.size - code.lstrip.size
+      break if indent <= def_indent
+      level ||= indent
+      next if indent > level
+      statement = code.strip
+      break if statement.ends_with?(':') || statement.matches?(/\A(?:return|raise|yield)\b/)
+      callee = statement.match(LEADING_CALL).try(&.[1]) || next
+      next if callee.in?("Depends", "Security")
+      return callee if caller_refusing_call?(callee, file, depth + 1)
+    end
+    nil
+  end
+
+  # Name components that say a value is who the caller is or what it sent
+  # to prove it.
+  CREDENTIAL_WORDS = %w[token tokens credential credentials authorization bearer jwt apikey password secret signature session cookie cookies header headers user principal subject identity]
+
+  # Whether `def callee` turns the caller away: a 401/403 it raises under a
+  # condition on a credential or identity (`if authorization != expected`,
+  # a local split from one), or a guard call it opens with in turn. A 403
+  # on a setting (`if not settings.FEATURE`) or on the resource it loaded
+  # (`if item.hidden`) refuses for another reason.
+  private def caller_refusing_call?(callee : String, file : String, depth : Int32) : Bool
+    site = callable_site(file, callee) || return false
+    block = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/) || return false
+    lines = block.lines
+    locals = Hash(String, String).new
+    lines.each do |line|
+      assign = line.match(/^\s+([A-Za-z_][\w\s,]*?)\s*=(?!=)\s*(.+)$/) || next
+      assign[1].split(',').each { |name| locals[name.strip] ||= assign[2] unless name.strip.empty? }
+    end
+    refused = refusal_sites(lines, site[0], REFUSAL_MARKER).any? do |idx, inline|
+      conditions = governing_conditions(lines, idx).map(&.[0]).reject("except")
+      conditions << inline if inline
+      conditions.any? { |cond| credential_condition?(cond, locals) }
+    end
+    refused || !leading_guard_call(lines, site[0], depth).nil?
+  end
+
+  private def credential_condition?(cond : String, locals : Hash(String, String), expand : Bool = true) : Bool
+    cond.gsub(PythonGuardDefinitions::STRING_LITERAL, "''").scan(/(?<![\w.])[A-Za-z_][\w.]*/).any? do |m|
+      m[0].split('.').any? { |part| part.matches?(/api_?key/i) || part.scan(NAME_COMPONENT).any? { |c| CREDENTIAL_WORDS.includes?(c[0].downcase) } } ||
+        (expand && locals[m[0]]?.try { |expr| credential_condition?(expr, locals, false) }) || false
+    end
   end
 
   # Whether a dependency `body` declares refuses: a `Depends(...)` of a
@@ -1429,7 +1550,11 @@ class FastAPIAuthTagger < FrameworkTagger
   # The assignment each bare name in a `dependencies=[...]` list is bound
   # to (`internal = Depends(require_internal)`; `dependencies=[internal]`),
   # with the file that declares it.
-  private def dependency_variables(text : String, path : String) : Array({String, String})
+  #
+  # A route declared inside an app factory also reads a name the factory
+  # binds (`internal = Depends(require_internal)` above the route), given
+  # the route's `lines` and line index as `route`.
+  private def dependency_variables(text : String, path : String, route : {Array(String), Int32}? = nil) : Array({String, String})
     found = [] of {String, String}
     text.scan(DEPENDENCIES_LIST) do |list|
       Noir::TopLevelSplit.split(list[1], ',', SPLIT_RULES).each do |item|
@@ -1441,8 +1566,15 @@ class FastAPIAuthTagger < FrameworkTagger
                elsif (symbol = python_imported_symbols(path)[module_name]?) && symbol[1].empty?
                  python_definition_site(symbol[0], leaf)
                end
+        depends_re = /^#{Regex.escape(site ? site[1] : leaf)}\s*(?::[^=\n]+)?=\s*(?:Depends|Security)\s*\(/
+        if site.nil? && module_name.empty? && route && route[0][route[1]].starts_with?(/\s/)
+          if idx = local_assignment(route[0], route[1], leaf, depends_re)
+            found << {joined_statement(route[0], idx).strip, path}
+          end
+          next
+        end
         next unless site
-        statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=\s*(?:Depends|Security)\s*\(/) || next
+        statement = definition_block(site[0], depends_re) || next
         found << {statement, site[0]}
       end
     end
