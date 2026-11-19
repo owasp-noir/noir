@@ -1742,11 +1742,22 @@ module Analyzer::Python
       type
     end
 
+    # Memoised per file: a module with many routes resolves the same model
+    # once per route, and each resolution scans the whole module. Copies are
+    # handed out because a param's tag list is shared between copies.
+    @model_params_memo = Hash(Tuple(::String, ::String, ::String, ::String, ::String), Array(Param)).new
+
     private def model_params_for(model : ::String, param_name : ::String, source : ::String,
                                  path : ::String, base_path : ::String, location : ::String = "json") : Array(Param)
-      return [] of Param unless resolved = resolve_model_reference(model, source, path, base_path)
-      class_name, class_source, class_path = resolved
-      find_base_model_params(class_source, class_name, param_name, path: class_path, base_path: base_path, location: location)
+      fields = @model_params_memo[{model, param_name, path, base_path, location}] ||= begin
+        if resolved = resolve_model_reference(model, source, path, base_path)
+          class_name, class_source, class_path = resolved
+          find_base_model_params(class_source, class_name, param_name, path: class_path, base_path: base_path, location: location)
+        else
+          [] of Param
+        end
+      end
+      fields.map(&.detached_copy)
     end
 
     QUALIFIED_NAME_RE = /^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})+$/
@@ -1871,8 +1882,18 @@ module Analyzer::Python
       params
     end
 
+    # Memoised like `model_params_for`; the route only matters through the
+    # path parameter names, which are left out of the result.
+    @dependency_params_memo = Hash(Tuple(::String, ::String, ::String, Int32, Array(::String)), Array(Param)).new
+
     private def dependency_callee_params(callee : ::String, route_path : ::String, source : ::String,
                                          path : ::String, base_path : ::String, depth : Int32) : Array(Param)
+      key = {callee, path, base_path, depth, fastapi_path_param_names(route_path)}
+      (@dependency_params_memo[key] ||= uncached_dependency_callee_params(callee, route_path, source, path, base_path, depth)).map(&.detached_copy)
+    end
+
+    private def uncached_dependency_callee_params(callee : ::String, route_path : ::String, source : ::String,
+                                                  path : ::String, base_path : ::String, depth : Int32) : Array(Param)
       module_name, _, name = callee.rpartition('.')
       site = if module_name.empty?
                model_site(name, source, path, base_path, function: true)
