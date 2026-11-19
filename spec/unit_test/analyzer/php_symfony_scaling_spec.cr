@@ -28,7 +28,7 @@ private def symfony_scan_time(count : Int32, yaml : Bool) : Time::Span
   CodeLocator.instance.register_file(routes, File.read(routes)) if yaml
   target = yaml ? routes : controller
   endpoints = [] of Endpoint
-  elapsed = Time.measure { endpoints = Analyzer::Php::Symfony.new(create_test_options).analyze_file(target) }
+  elapsed = measure_without_gc { endpoints = Analyzer::Php::Symfony.new(create_test_options).analyze_file(target) }
   endpoints.size.should eq(count)
   last = endpoints.find!(&.url.==("/r#{count - 1}/{id}"))
   last.params.map(&.name).should eq(["id", "q#{count - 1}"])

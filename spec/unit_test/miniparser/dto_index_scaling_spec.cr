@@ -24,7 +24,7 @@ private def index_package(n : Int32, kotlin : Bool) : {Time::Span, Array(String)
   end
 
   fields = [] of String
-  elapsed = Time.measure do
+  elapsed = measure_without_gc do
     if kotlin
       builder = Noir::TreeSitterKotlinDtoIndex.new
       controllers.each_with_index do |(path, content), i|

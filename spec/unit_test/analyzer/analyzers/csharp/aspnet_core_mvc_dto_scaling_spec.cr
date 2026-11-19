@@ -34,7 +34,7 @@ describe "ASP.NET Core MVC body DTO lookup scaling" do
         options = create_test_options
         options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
         endpoints = [] of Endpoint
-        elapsed = Time.measure { endpoints = Analyzer::CSharp::AspNetCoreMvc.new(options).analyze }
+        elapsed = measure_without_gc { endpoints = Analyzer::CSharp::AspNetCoreMvc.new(options).analyze }
         endpoints.size.should eq(count)
         last = endpoints.find! { |e| e.url == "/api/items/a#{count - 1}" }
         last.params.map(&.name).should eq(["name#{count - 1}"])
