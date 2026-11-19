@@ -37,16 +37,21 @@ module Analyzer::Javascript
     API_EXTENSIONS  = [".ts", ".js", ".mjs", ".tsx", ".jsx"]
     EXTENSIONS      = PAGE_EXTENSIONS + API_EXTENSIONS
 
+    CONFIG_BASENAMES = ["astro.config.mjs", "astro.config.js", "astro.config.ts", "astro.config.mts", "astro.config.cjs"]
+
+    # `base: '/docs'` in the Astro config, literal strings only.
+    BASE_RE = /\bbase\s*:\s*(['"`])(\/[^'"`$]*)\1/
+
+    @config_bases = {} of String => String
+
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
       # `src/pages/` is also Next.js's pages router, so in a monorepo only
       # files under an Astro project root count. No root found waves
       # everything through, as for SvelteKit and Nitro.
-      project_roots = discover_js_project_roots(
-        ["\"astro\""],
-        ["astro.config.mjs", "astro.config.js", "astro.config.ts", "astro.config.mts", "astro.config.cjs"]
-      )
+      project_roots = discover_js_project_roots(["\"astro\""], CONFIG_BASENAMES)
+      @config_bases = config_base_paths(CONFIG_BASENAMES, BASE_RE)
 
       parallel_file_scan(EXTENSIONS) do |path|
         next unless path_under_project_roots?(path, project_roots)
@@ -81,13 +86,13 @@ module Analyzer::Javascript
     end
 
     private def analyze_page(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
-      url = url_for(relative)
+      url = with_config_base(url_for(relative), path, @config_bases)
       endpoint = file_route_endpoint(url, "GET", path)
       mutex.synchronize { result << endpoint }
     end
 
     private def analyze_api_route(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
-      url = url_for(relative)
+      url = with_config_base(url_for(relative), path, @config_bases)
 
       # Comments blanked in place (line numbers kept), so a commented-out
       # export is not a route.
@@ -98,10 +103,11 @@ module Analyzer::Javascript
         return
       end
 
-      methods = detect_api_methods(content)
+      methods = detect_api_methods(content, "ALL")
       mutex.synchronize do
         methods.each do |verb|
-          endpoint = file_route_endpoint(url, verb, path, api_method_line(content, path, verb) || 1)
+          line = api_method_line(content, path, verb) || api_method_line(content, path, "ALL") || 1
+          endpoint = file_route_endpoint(url, verb, path, line)
           attach_exported_callees(endpoint, content, path, verb) if callees_needed?
           result << endpoint
         end

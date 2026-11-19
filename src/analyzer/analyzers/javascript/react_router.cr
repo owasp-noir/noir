@@ -27,10 +27,14 @@ module Analyzer::Javascript
     PACKAGE_MARKERS  = ["@react-router/dev"]
     CONFIG_BASENAMES = ["react-router.config.ts", "react-router.config.js", "react-router.config.mjs", "react-router.config.cjs"]
 
+    # `basename: "/my-app"` in the React Router config, literal strings only.
+    BASENAME_RE = /\bbasename\s*:\s*(['"`])(\/[^'"`$]*)\1/
+
     def analyze
       result = [] of Endpoint
       include_callee = callees_needed?
       apps = react_router_apps
+      bases = config_base_paths(CONFIG_BASENAMES, BASENAME_RE)
 
       # Expanded path → path as scanned, so a config's `routes/user.tsx`
       # lands on the same path string every other endpoint reports.
@@ -60,7 +64,7 @@ module Analyzer::Javascript
           declared ||= !config.routes.empty?
 
           config.routes.each do |route|
-            url = config_url(route.path)
+            url = with_config_base(config_url(route.path), config_path, bases)
             if module_path = modules[File.expand_path(route.file, app_dir)]?
               endpoints = module_endpoints(url, module_path, include_callee)
               result.concat(endpoints) if endpoints
@@ -81,7 +85,7 @@ module Analyzer::Javascript
         next unless path_under_project_roots?(path, roots)
         next unless name = auto_route_name(path, auto_dirs) || flat_route_name(path, flat_dirs)
 
-        endpoints = module_endpoints(url_for(name), path, include_callee)
+        endpoints = module_endpoints(with_config_base(url_for(name), path, bases), path, include_callee)
         mutex.synchronize { result.concat(endpoints) } if endpoints
       end
 

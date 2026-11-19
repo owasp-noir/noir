@@ -1,0 +1,1 @@
+{ "name": "sails-web-app", "private": true, "dependencies": { "sails": "^1.5.0", "sails-hook-orm": "^4.0.0" } }

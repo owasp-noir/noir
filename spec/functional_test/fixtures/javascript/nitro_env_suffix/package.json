@@ -1,0 +1,1 @@
+{ "name": "misc-nitro", "private": true, "dependencies": { "nitropack": "^2.10.0" } }

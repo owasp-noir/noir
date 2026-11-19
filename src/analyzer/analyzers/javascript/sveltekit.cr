@@ -36,9 +36,10 @@ module Analyzer::Javascript
     PAGE_EXTENSIONS = [".svelte", ".svx", ".md"]
     API_EXTENSIONS  = [".ts", ".js", ".mjs"]
     EXTENSIONS      = PAGE_EXTENSIONS + API_EXTENSIONS
-    # `+page.svelte` and the variant forms `+page@desktop.svelte` (same URL).
-    # `+page.server.ts` / `+page.js` are not components.
-    PAGE_COMPONENT_RE = /\A\+page(?:@[^.]+)?\.(?:svelte|svx|md)\z/
+    # `+page.svelte` and the layout-reset forms `+page@desktop.svelte` and
+    # `+page@.svelte` (same URL). `+page.server.ts` / `+page.js` are not
+    # components.
+    PAGE_COMPONENT_RE = /\A\+page(?:@[^.]*)?\.(?:svelte|svx|md)\z/
 
     CONFIG_BASENAMES = ["svelte.config.js", "svelte.config.ts", "svelte.config.mjs", "svelte.config.cjs"]
 
@@ -76,15 +77,17 @@ module Analyzer::Javascript
         leaf = File.basename(relative)
         next if private_segment_in?(relative)
 
-        if page_file?(leaf)
-          analyze_page(path, url_for(relative, base), result, mutex)
-        elsif page_server_file?(leaf)
-          analyze_page_server(path, url_for(relative, base), result, mutex)
-          analyze_page_module(path, url_for(relative, base), result, mutex, page_dirs)
-        elsif page_load_file?(leaf)
-          analyze_page_module(path, url_for(relative, base), result, mutex, page_dirs)
-        elsif server_file?(leaf)
-          analyze_api_route(path, url_for(relative, base), result, mutex, include_callee)
+        urls_for(relative, base).each do |url|
+          if page_file?(leaf)
+            analyze_page(path, url, result, mutex)
+          elsif page_server_file?(leaf)
+            analyze_page_server(path, url, result, mutex)
+            analyze_page_module(path, url, result, mutex, page_dirs)
+          elsif page_load_file?(leaf)
+            analyze_page_module(path, url, result, mutex, page_dirs)
+          elsif server_file?(leaf)
+            analyze_api_route(path, url, result, mutex, include_callee)
+          end
         end
       end
 
@@ -136,11 +139,20 @@ module Analyzer::Javascript
     # sibling reports it.
     private def analyze_page_module(path : String, url : String, result : Array(Endpoint), mutex : Mutex, page_dirs : Set(String))
       return if page_dirs.includes?(File.dirname(Noir::PathScope.expand(path)))
-      analyze_page(path, url, result, mutex)
+      content = begin
+        Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
+      rescue e
+        logger.debug "Error reading #{path}: #{e.message}"
+        return
+      end
+      line = content.match(LOAD_DECL_RE).try { |m| line_for_match(content, m) } || 1
+      analyze_page(path, url, result, mutex, line)
     end
 
-    private def analyze_page(path : String, url : String, result : Array(Endpoint), mutex : Mutex)
-      endpoint = file_route_endpoint(url, "GET", path)
+    LOAD_DECL_RE = /export\s+(?:const|let|var|(?:async\s+)?function)\s+load\b/
+
+    private def analyze_page(path : String, url : String, result : Array(Endpoint), mutex : Mutex, line : Int32 = 1)
+      endpoint = file_route_endpoint(url, "GET", path, line)
       mutex.synchronize { result << endpoint }
     end
 
@@ -191,9 +203,10 @@ module Analyzer::Javascript
         return
       end
 
-      methods = detect_api_methods(content)
+      methods = detect_api_methods(content, "fallback")
       endpoints = methods.map do |verb|
-        endpoint = file_route_endpoint(url, verb, path, api_method_line(content, path, verb) || 1)
+        line = api_method_line(content, path, verb) || api_method_line(content, path, "fallback") || 1
+        endpoint = file_route_endpoint(url, verb, path, line)
         attach_callees(endpoint, path, content, verb) if include_callee
         endpoint
       end
@@ -203,12 +216,33 @@ module Analyzer::Javascript
       end
     end
 
+    OPTIONAL_SEGMENT_RE = /\A\[\[\w+(?:=\w+)?\]\]\z/
+    HEX_ESCAPE_RE       = /\[([xu])\+([0-9a-fA-F]+)\]/
+    MAX_URL_VARIANTS    = 16
+
     # Drops the `+page.*` / `+server.*` leaf; the root route of a based app
-    # is the bare base (`/greenhouse`, not `/greenhouse/`).
-    private def url_for(relative : String, base : String) : String
-      url = file_route_url(relative.split('/')[0...-1])
-      return url if base.empty?
-      url == "/" ? base : base + url
+    # is the bare base (`/greenhouse`, not `/greenhouse/`). Each optional
+    # `[[name]]` segment serves the URL with and without it, up to
+    # MAX_URL_VARIANTS (past that, the remaining ones are kept as written).
+    private def urls_for(relative : String, base : String) : Array(String)
+      variants = [[] of String]
+      relative.split('/')[0...-1].each do |segment|
+        with_segment = variants.map { |segments| segments + [segment] }
+        optional = segment.matches?(OPTIONAL_SEGMENT_RE) && variants.size < MAX_URL_VARIANTS
+        variants = optional ? variants + with_segment : with_segment
+      end
+      variants.map do |segments|
+        # `[x+2e]` / `[u+0040]` escape a character the filesystem or the
+        # route syntax would otherwise reject; decoded after param mapping.
+        url = file_route_url(segments).gsub(HEX_ESCAPE_RE) { |whole, m| decode_escape(m[2]) || whole }
+        next url if base.empty?
+        url == "/" ? base : base + url
+      end.uniq!
+    end
+
+    private def decode_escape(hex : String) : String?
+      code = hex.to_i?(16) || return
+      code.chr.to_s if code <= Char::MAX_CODEPOINT && !(0xD800..0xDFFF).includes?(code)
     end
 
     private def attach_callees(endpoint : Endpoint, path : String, content : String, verb : String)

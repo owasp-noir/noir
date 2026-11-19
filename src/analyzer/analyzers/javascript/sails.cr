@@ -212,7 +212,17 @@ module Analyzer::Javascript
     # Blueprint (convention-based) routes
     # ---------------------------------------------------------------------
 
+    # `config/blueprints.js` turning a blueprint kind off. Only an explicit
+    # `false` is read: without the file, or silent on a key, routes are
+    # emitted as before.
+    BLUEPRINT_ACTIONS_OFF_RE = /\bactions\s*:\s*false\b/
+    BLUEPRINT_REST_OFF_RE    = /\brest\s*:\s*false\b/
+
     private def analyze_blueprints(root : String, result : Array(Endpoint))
+      config = blueprints_config(root)
+      actions = !config.matches?(BLUEPRINT_ACTIONS_OFF_RE)
+      rest = !config.matches?(BLUEPRINT_REST_OFF_RE)
+      return unless actions || rest
       identities = {} of String => String
       controllers_prefix = "#{root}/api/controllers"
       models_prefix = "#{root}/api/models"
@@ -240,8 +250,9 @@ module Analyzer::Javascript
           next
         end
 
-        emit_action_shadow_route(file, rel, result)
+        emit_action_shadow_route(file, rel, result) if actions
       end
+      return unless rest
 
       get_files_by_prefix(models_prefix).each do |file|
         next unless js_source_file?(file)
@@ -288,6 +299,13 @@ module Analyzer::Javascript
         details = Details.new(PathInfo.new(file))
         result << Endpoint.new(url, method, details)
       end
+    end
+
+    private def blueprints_config(root : String) : String
+      file = get_files_by_basename("blueprints.js").find { |path| path == "#{root}/config/blueprints.js" } || return ""
+      Noir::JSRouteExtractor.strip_js_comments(read_file_content(file))
+    rescue IO::Error
+      ""
     end
 
     private def js_source_file?(file : String) : Bool

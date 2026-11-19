@@ -99,7 +99,7 @@ module Analyzer::Javascript
       end
 
       # Remove file extension
-      relative_path = relative_path.gsub(/\.(js|ts|mjs|mts)$/, "")
+      relative_path = relative_path.gsub(/\.(js|ts|mjs|mts)$/, "").sub(NITRO_ENV_SUFFIX_RE, "")
 
       # Check for HTTP method-specific files (e.g., users.get.ts)
       http_methods = ["get", "post", "put", "delete", "patch", "head", "options"]
@@ -137,10 +137,11 @@ module Analyzer::Javascript
         content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
         h3_params = h3_event_params(content)
         callees = include_callee ? Noir::JSCalleeExtractor.callees_for_default_event_handler(content, path) : [] of Noir::JSCalleeExtractor::Entry
+        line = default_export_line(content)
 
         methods.each do |method|
           endpoint = Endpoint.new(url, method)
-          details = Details.new(PathInfo.new(path, 1))
+          details = Details.new(PathInfo.new(path, line))
           endpoint.details = details
 
           # Extract path parameters from URL

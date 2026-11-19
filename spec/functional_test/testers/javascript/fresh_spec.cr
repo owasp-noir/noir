@@ -21,7 +21,14 @@ expected_endpoints = [
   Endpoint.new("/{slug}", "GET", [Param.new("slug", "", "path")]),
 ]
 
-FunctionalTester.new("fixtures/javascript/fresh/", {
+tester = FunctionalTester.new("fixtures/javascript/fresh/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "reports each handler member's line", tags: "functional" do
+  user = ->(method : String) { tester.endpoints.find! { |endpoint| endpoint.url == "/users/{id}" && endpoint.method == method } }
+  user.call("GET").details.code_paths.first.line.should eq(4)
+  user.call("DELETE").details.code_paths.first.line.should eq(10)
+end

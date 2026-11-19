@@ -150,16 +150,23 @@ module Analyzer::Javascript
 
     # Compiled once per verb — interpolated regex literals would otherwise
     # be rebuilt (full PCRE2 compile) for every method on every file.
-    EXPORT_FUNCTION_RES = FILE_ROUTE_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
-    EXPORT_CONST_RES    = FILE_ROUTE_METHODS.map { |m| {m, /export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/} }.to_h
-    EXPORT_BRACE_RES    = FILE_ROUTE_METHODS.map { |m| {m, /export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/} }.to_h
+    # Exports that answer every method without its own export: Astro's
+    # `ALL`, SvelteKit's `fallback`.
+    CATCH_ALL_EXPORTS = ["ALL", "fallback"]
+
+    EXPORT_FUNCTION_RES = (FILE_ROUTE_METHODS + CATCH_ALL_EXPORTS).map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
+    EXPORT_CONST_RES    = (FILE_ROUTE_METHODS + CATCH_ALL_EXPORTS).map { |m| {m, /export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/} }.to_h
+    EXPORT_BRACE_RES    = (FILE_ROUTE_METHODS + CATCH_ALL_EXPORTS).map { |m| {m, /export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/} }.to_h
 
     # Look for explicit verb exports first
     # (`export const GET = ...` / `export async function POST() {}`),
-    # then fall back to the cross-method catch-all set.
-    protected def detect_api_methods(content : String) : Array(String)
+    # then fall back to the cross-method catch-all set. An exported
+    # `catch_all` adds the fallback verbs that have no export of their own.
+    protected def detect_api_methods(content : String, catch_all : String? = nil) : Array(String)
       explicit = explicit_api_methods(content)
-      explicit.empty? ? FALLBACK_API_METHODS : explicit
+      return FALLBACK_API_METHODS if explicit.empty?
+      return explicit unless catch_all && exports_handler?(content, catch_all)
+      explicit + (FALLBACK_API_METHODS - explicit)
     end
 
     # `export async function GET(...)`, `export function GET(...)`,
@@ -167,16 +174,60 @@ module Analyzer::Javascript
     # (the trailing TypeScript type annotation is optional), and
     # the `export { GET }` re-export form.
     protected def explicit_api_methods(content : String) : Array(String)
-      FILE_ROUTE_METHODS.select do |m|
-        content.matches?(EXPORT_FUNCTION_RES[m]) ||
-          content.matches?(EXPORT_CONST_RES[m]) ||
-          content.matches?(EXPORT_BRACE_RES[m])
-      end
+      FILE_ROUTE_METHODS.select { |m| exports_handler?(content, m) }
+    end
+
+    private def exports_handler?(content : String, name : String) : Bool
+      content.matches?(EXPORT_FUNCTION_RES[name]) ||
+        content.matches?(EXPORT_CONST_RES[name]) ||
+        content.matches?(EXPORT_BRACE_RES[name])
     end
 
     # A route module's page component (SolidStart, Qwik City). Line-anchored
     # without consuming earlier lines, so `line_for_match` lands on it.
     DEFAULT_EXPORT_RE = /^[ \t]*export\s+default\b/m
+
+    # Nitro's environment suffix on a route file (`debug.get.dev.ts`): the
+    # route is only registered in that environment and the suffix is no URL.
+    NITRO_ENV_SUFFIX_RE = /\.(?:dev|prod|prerender)\z/
+
+    # Expanded directory of every config file named in `basenames` → the
+    # literal base path `re` captures as group 2 ("" without one, so a nested
+    # app does not inherit its parent's).
+    protected def config_base_paths(basenames : Array(String), re : Regex) : Hash(String, String)
+      bases = {} of String => String
+      basenames.each do |basename|
+        get_files_by_basename(basename).each do |file|
+          content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(file))
+          dir = File.dirname(Noir::PathScope.expand(file))
+          bases[dir] = content.match(re).try(&.[2].rstrip('/')) || bases[dir]? || ""
+        rescue IO::Error
+          next
+        end
+      end
+      bases
+    end
+
+    # The base of the closest config directory above `path`, prepended to
+    # `url`; the root route of a based app is the bare base.
+    protected def with_config_base(url : String, path : String, bases : Hash(String, String)) : String
+      return url if bases.values.all?(&.empty?)
+      dir = File.dirname(Noir::PathScope.expand(path))
+      loop do
+        if base = bases[dir]?
+          return url if base.empty?
+          return url == "/" ? base : base + url
+        end
+        parent = File.dirname(dir)
+        return url if parent == dir
+        dir = parent
+      end
+    end
+
+    # Line of the module's `export default`, or 1 without one.
+    protected def default_export_line(content : String) : Int32
+      content.match(DEFAULT_EXPORT_RE).try { |m| line_for_match(content, m) } || 1
+    end
 
     # Route-directory segments → URL for the `src/routes/` conventions
     # (SvelteKit, SolidStart, Qwik City): `(group)` segments are hidden and
@@ -297,17 +348,20 @@ module Analyzer::Javascript
     end
 
     # Request inputs an h3 event handler (Nuxt server routes, Nitro) reads
-    # off `event`: `getQuery`, `readBody`, `getHeader(s)`, `getCookie` and
+    # off `event`: `getQuery`, `readBody`, `readFormData`, `getHeader(s)`,
+    # `event.headers`, `getCookie`, `parseCookies`, `getRequestURL` and
     # `getRouterParam`. Pass comment-stripped source.
     protected def h3_event_params(sanitized : String) : Array(Param)
       params = [] of Param
       # Extract query parameters from getQuery or useQuery
-      # Pattern 1: Direct access - getQuery(event).param
-      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)\.(\w+)/) do |m|
-        params << Param.new(m[1], "", "query")
+      # Pattern 1: Direct access - getQuery(event).param. The arguments are
+      # matched paren-balanced, so a validator argument's own `.min(1)` is
+      # not read as a field of the result.
+      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?=\s*[,)])(?<args>(?:[^()]++|\((?&args)\))*)\)\.(?<name>\w+)/) do |m|
+        params << Param.new(m["name"], "", "query")
       end
-      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        params << Param.new(m[1], "", "query")
+      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?=\s*[,)])(?<args>(?:[^()]++|\((?&args)\))*)\)\s*\[\s*['"](?<name>[^'"]+)['"]\s*\]/) do |m|
+        params << Param.new(m["name"], "", "query")
       end
       sanitized.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
         extract_destructure_params(m[1]).each do |param_name|
@@ -318,15 +372,19 @@ module Analyzer::Javascript
       # Pattern 2: Variable assignment - const query = getQuery(event); query.param
       sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |var_match|
         query_var = var_match[1]
-        sanitized.scan(cached_regex("h3:query_dot:#{query_var}") { /#{Regex.escape(query_var)}\.(\w+)/ }) do |m|
+        # Not after a dot: `db.query.users` is no read of a `query` local.
+        sanitized.scan(cached_regex("h3:query_dot:#{query_var}") { /(?<![\w$.])#{Regex.escape(query_var)}\.(\w+)/ }) do |m|
           param_name = m[1]
           # Skip common non-parameter properties like 'toString', 'valueOf', etc.
           next if ["toString", "valueOf", "constructor"].includes?(param_name)
           params << Param.new(param_name, "", "query")
         end
-        sanitized.scan(cached_regex("h3:query_bracket:#{query_var}") { /#{Regex.escape(query_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
+        sanitized.scan(cached_regex("h3:query_bracket:#{query_var}") { /(?<![\w$.])#{Regex.escape(query_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
           params << Param.new(m[1], "", "query")
         end
+      end
+      sanitized.scan(/getRequestURL\s*\(\s*event\s*\)\s*\.\s*searchParams\s*\.\s*(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]/) do |m|
+        params << Param.new(m[1], "", "query")
       end
 
       # Extract body parameters from readBody
@@ -337,17 +395,25 @@ module Analyzer::Javascript
             params << Param.new(param_name, "", "body")
           end
         end
-        body_vars = ["body", "data"]
+        # Only locals bound to the body: a `data` from a database call is not one.
+        body_vars = [] of String
         sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:readBody|readValidatedBody)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
           body_vars << m[1] unless body_vars.includes?(m[1])
         end
         body_vars.each do |body_var|
-          sanitized.scan(cached_regex("h3:var_dot:#{body_var}") { /\b#{Regex.escape(body_var)}\.(\w+)/ }) do |m|
+          sanitized.scan(cached_regex("h3:var_dot:#{body_var}") { /(?<![\w$.])#{Regex.escape(body_var)}\.(\w+)/ }) do |m|
             params << Param.new(m[1], "", "body")
           end
-          sanitized.scan(cached_regex("h3:var_bracket:#{body_var}") { /\b#{Regex.escape(body_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
+          sanitized.scan(cached_regex("h3:var_bracket:#{body_var}") { /(?<![\w$.])#{Regex.escape(body_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
             params << Param.new(m[1], "", "body")
           end
+        end
+      end
+
+      # `const form = await readFormData(event); form.get("title")`
+      sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?readFormData\s*\(\s*event\s*\)/) do |m|
+        sanitized.scan(cached_regex("h3:form_get:#{m[1]}") { /(?<![\w$.])#{Regex.escape(m[1])}\.(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]/ }) do |mm|
+          params << Param.new(mm[1], "", "form")
         end
       end
 
@@ -355,15 +421,21 @@ module Analyzer::Javascript
       sanitized.scan(/(?:getHeader|getRequestHeader)\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
         params << Param.new(m[1], "", "header")
       end
-      sanitized.scan(/getHeaders\s*\(\s*event\s*\)\.(\w+)/) do |m|
+      sanitized.scan(/\bevent\.headers\.(?:get|has)\s*\(\s*['"]([^'"]+)['"]/) do |m|
         params << Param.new(m[1], "", "header")
       end
-      sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*getHeaders\s*\(\s*event\s*\)/) do |m|
+      sanitized.scan(/\bevent\.node\.req\.headers(?:\s*\[\s*['"]([^'"]+)['"]\s*\]|\.(\w+))/) do |m|
+        params << Param.new(m[1]? || m[2], "", "header")
+      end
+      sanitized.scan(/(?:getHeaders|getRequestHeaders)\s*\(\s*event\s*\)\.(\w+)/) do |m|
+        params << Param.new(m[1], "", "header")
+      end
+      sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:getHeaders|getRequestHeaders)\s*\(\s*event\s*\)/) do |m|
         headers_var = m[1]
-        sanitized.scan(cached_regex("h3:var_dot:#{headers_var}") { /\b#{Regex.escape(headers_var)}\.(\w+)/ }) do |mm|
+        sanitized.scan(cached_regex("h3:var_dot:#{headers_var}") { /(?<![\w$.])#{Regex.escape(headers_var)}\.(\w+)/ }) do |mm|
           params << Param.new(mm[1], "", "header")
         end
-        sanitized.scan(cached_regex("h3:var_bracket:#{headers_var}") { /\b#{Regex.escape(headers_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |mm|
+        sanitized.scan(cached_regex("h3:var_bracket:#{headers_var}") { /(?<![\w$.])#{Regex.escape(headers_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |mm|
           params << Param.new(mm[1], "", "header")
         end
       end
@@ -371,6 +443,18 @@ module Analyzer::Javascript
       # Extract cookie parameters from getCookie
       sanitized.scan(/getCookie\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
         params << Param.new(m[1], "", "cookie")
+      end
+      sanitized.scan(/parseCookies\s*\(\s*event\s*\)\.(\w+)/) do |m|
+        params << Param.new(m[1], "", "cookie")
+      end
+      sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*parseCookies\s*\(\s*event\s*\)/) do |m|
+        cookies_var = m[1]
+        sanitized.scan(cached_regex("h3:var_dot:#{cookies_var}") { /(?<![\w$.])#{Regex.escape(cookies_var)}\.(\w+)/ }) do |mm|
+          params << Param.new(mm[1], "", "cookie")
+        end
+        sanitized.scan(cached_regex("h3:var_bracket:#{cookies_var}") { /(?<![\w$.])#{Regex.escape(cookies_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |mm|
+          params << Param.new(mm[1], "", "cookie")
+        end
       end
       sanitized.scan(/getRouterParam\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
         params << Param.new(m[1], "", "path")

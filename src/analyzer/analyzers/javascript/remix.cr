@@ -168,7 +168,7 @@ module Analyzer::Javascript
       action_callees = include_callee && has_action ? Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "action") : nil
 
       verbs.map do |verb|
-        endpoint_line = verb == "GET" ? (loader_line || 1) : (action_line || 1)
+        endpoint_line = verb == "GET" ? (loader_line || default_export_line(content)) : (action_line || 1)
         endpoint = file_route_endpoint(url, verb, path, endpoint_line)
         if include_callee
           callees = verb == "GET" ? loader_callees : action_callees

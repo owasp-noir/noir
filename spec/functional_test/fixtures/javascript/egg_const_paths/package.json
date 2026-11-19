@@ -1,0 +1,1 @@
+{ "name": "misc-egg", "private": true, "dependencies": { "egg": "^3.17.0" }, "devDependencies": { "egg-bin": "^6.0.0" } }
