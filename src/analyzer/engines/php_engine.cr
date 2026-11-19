@@ -185,6 +185,16 @@ module Analyzer::Php
       namespace ? "#{namespace}\\#{ref}" : ref
     end
 
+    SUPERGLOBAL_READ_RE  = /\$_(GET|POST|REQUEST|SERVER|COOKIE|FILES)\s*\[\s*['"]([^'"]+)['"]\s*\]/
+    FILTER_INPUT_READ_RE = /filter_input\s*\(\s*INPUT_(GET|POST|REQUEST|SERVER|COOKIE)\s*,\s*['"]([^'"]+)['"]/
+
+    # Each `$_GET['x']` / `filter_input(INPUT_GET, 'x')` read in `code`, as
+    # the superglobal's name without `$_` (`GET`, `SERVER`, ...) and the key.
+    protected def each_superglobal_read(code : String, & : String, String ->) : Nil
+      code.scan(SUPERGLOBAL_READ_RE) { |m| yield m[1], m[2] }
+      code.scan(FILTER_INPUT_READ_RE) { |m| yield m[1], m[2] }
+    end
+
     # Route-group bodies nested deeper than this are not followed: each level
     # is one recursion, and a hostile depth overflows the stack.
     ROUTE_GROUP_MAX_DEPTH = 32

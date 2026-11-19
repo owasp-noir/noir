@@ -255,14 +255,8 @@ module Analyzer::Php
         # a wrapped `filter_input(` / `INPUT_GET,` / `'q'` / `)` read.
         Noir::CallFold.fold(php_code(content).lines) { |l| l }.each do |line|
           if line.matches?(ALLOW_PATTERNS_RE)
-            superglobal_matches = line.scan(/\$_(GET|POST|REQUEST|SERVER|COOKIE|FILES)\s*\[\s*['"]([^'"]+)['"]\s*\]/)
-            superglobal_matches.each do |match|
-              apply_param_reference(match[1], match[2], params_query, params_body, methods)
-            end
-
-            filter_input_matches = line.scan(/filter_input\s*\(\s*INPUT_(GET|POST|REQUEST|SERVER|COOKIE)\s*,\s*['"]([^'"]+)['"]/)
-            filter_input_matches.each do |match|
-              apply_param_reference(match[1], match[2], params_query, params_body, methods)
+            each_superglobal_read(line) do |source, name|
+              apply_param_reference(source, name, params_query, params_body, methods)
             end
           end
         rescue

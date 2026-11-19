@@ -74,20 +74,53 @@ module Analyzer::Php
       hooks = content.includes?("wp_ajax_") || content.includes?("admin_post_")
       return endpoints unless rest || hooks
 
-      content = php_code(content)
-      offsets = Noir::CharOffsets.new(content)
-      endpoints.concat(analyze_rest_routes(content, path, offsets)) if rest
-      endpoints.concat(analyze_action_hooks(content, path, offsets)) if hooks
+      src = index_source(php_code(content))
+      endpoints.concat(analyze_rest_routes(src, path)) if rest
+      endpoints.concat(analyze_action_hooks(src, path)) if hooks
 
       endpoints
     end
 
+    private record ClassScope, name : String, range : Range(Int32, Int32), strings : Hash(String, String)
+    # `start` is the `function` keyword, `open`/`close` the body braces.
+    private record FunctionDecl, name : String, params : String, start : Int32, open : Int32, close : Int32
+    # One file's classes, functions and `define()` constants, indexed once so
+    # per-route lookups do not rescan the file.
+    private record Source, content : String, offsets : Noir::CharOffsets, lexer : Noir::PhpLexer,
+      classes : Array(ClassScope), functions : Array(FunctionDecl), constants : Hash(String, String)
+
+    FUNCTION_DECL_RE = /\bfunction\b\s*&?\s*(\w*)\s*\(([^{;]*?)\)[^{;]*\{/
+    DEFINE_RE        = /\bdefine\s*\(\s*['"](\w+)['"]\s*,\s*(?:'([^'\\]*)'|"([^"\\$]*)")\s*\)/
+    CONST_RE         = /\bconst\s+(?:\??[\w\\]+\s+)?(\w+)\s*=\s*(?:'([^'\\]*)'|"([^"\\$]*)")\s*;/
+
+    private def index_source(content : String) : Source
+      offsets = Noir::CharOffsets.new(content)
+      lexer = Noir::PhpLexer.new(content)
+      classes = class_scopes(content, lexer, offsets)
+      functions = [] of FunctionDecl
+      content.scan(FUNCTION_DECL_RE) do |m|
+        start = offsets.begin(m)
+        next unless lexer.in_code?(start)
+        open = offsets.end(m) - 1
+        close = lexer.matching_delimiter(open) || next
+        functions << FunctionDecl.new(m[1], m[2], start, open, close)
+      end
+      constants = {} of String => String
+      content.scan(DEFINE_RE) { |m| constants[m[1]] ||= m[2]? || m[3] }
+      content.scan(CONST_RE) do |m|
+        start = offsets.begin(m)
+        constants[m[1]] ||= m[2]? || m[3] if classes.none?(&.range.includes?(start))
+      end
+      Source.new(content, offsets, lexer, classes, functions, constants)
+    end
+
     # -- REST API --------------------------------------------------------
 
-    private def analyze_rest_routes(content : String, path : String, offsets : Noir::CharOffsets) : Array(Endpoint)
+    private def analyze_rest_routes(src : Source, path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
+      content = src.content
+      offsets = src.offsets
 
-      classes = class_scopes(content)
       offset = 0
       while call_start = content.index("register_rest_route", offset)
         paren_open = content.index('(', call_start)
@@ -99,26 +132,27 @@ module Analyzer::Php
           args = content[(paren_open + 1)...paren_close]
 
           parts = split_top_level_args(args)
-          klass = classes.find(&.[0].includes?(call_start))
-          properties = klass.try(&.[1]) || NO_PROPERTIES
-          # The namespace/route are the first two *positional* args, each
-          # string literals, `$this->prop` (a WP_REST_Controller's
-          # `protected $namespace = '...'`) or a `.` concatenation of those.
+          klass = src.classes.find(&.range.includes?(call_start))
+          # The namespace/route are the first two *positional* args, each a
+          # string expression `resolve_string_expr` can evaluate.
           # Anything else can't be resolved statically — skip rather than emit
           # a bogus URL such as /wp-json/books/{id}/GET (which is what naively
           # scanning for the first two literals anywhere would produce).
-          namespace = parts[0]?.try { |arg| resolve_string_expr(arg, properties) }
-          route = parts[1]?.try { |arg| resolve_string_expr(arg, properties) }
+          namespace = parts[0]?.try { |arg| resolve_string_expr(arg, src, klass, call_start) }
+          route = parts[1]?.try { |arg| resolve_string_expr(arg, src, klass, call_start) }
           if namespace && route
             full_path = build_rest_path(namespace, route)
             path_params = extract_wp_path_params(full_path)
             details = Details.new(PathInfo.new(path, offsets.line(call_start)))
 
-            rest_handlers(parts[2]? || "", content, klass.try(&.[0]), classes).each do |method, (arg_names, guard)|
+            rest_handlers(parts[2]? || "", src, klass).each do |method, (arg_names, typed, guard)|
               params = path_params.dup
               type = method == "GET" || method == "DELETE" ? "query" : "form"
               arg_names.each do |name|
                 params << Param.new(name, "", type) unless params.any? { |param| param.name == name }
+              end
+              typed.each do |param|
+                params << param unless params.any? { |known| known.name == param.name }
               end
               endpoint = Endpoint.new(full_path, method, params, details.dup)
               guard.try { |(kind, name)| endpoint.add_tag(Tag.new(kind, "Protected by #{name}", TAGGER)) }
@@ -138,31 +172,70 @@ module Analyzer::Php
     # `{tag name, guard name}` of a route's `permission_callback`.
     alias Guard = Tuple(String, String)
 
-    # The verbs a route's third argument registers, each with the `'args'`
-    # names its handler declares and the guard its `permission_callback`
-    # imposes. That argument is one handler array or an array of them, one
-    # per verb group.
-    private def rest_handlers(handlers_arg : String, content : String, klass : Range(Int32, Int32)?,
-                              classes : Array(Tuple(Range(Int32, Int32), Hash(String, String)))) : Hash(String, Tuple(Array(String), Guard?))
+    # The verbs a route's third argument registers, each with the value
+    # params its handler declares (`'args'`) or its callback reads, the header
+    # and file params the callback reads, and the guard its
+    # `permission_callback` imposes. That argument is one handler array or an
+    # array of them, one per verb group.
+    private def rest_handlers(handlers_arg : String, src : Source, klass : ClassScope?) : Hash(String, Tuple(Array(String), Array(Param), Guard?))
       handlers = [handlers_arg]
       if body = php_array_body(handlers_arg)
         elements = split_top_level_args(body).map(&.strip).reject(&.empty?)
         handlers = elements if !elements.empty? && elements.all? { |element| php_array_body(element) }
       end
 
-      result = {} of String => Tuple(Array(String), Guard?)
+      result = {} of String => Tuple(Array(String), Array(Param), Guard?)
       handlers.each do |handler|
         methods = extract_rest_methods(handler)
         methods = ["GET"] if methods.empty?
         names = rest_arg_names(handler)
-        guard = permission_guard(handler, content, klass, classes)
+        typed = [] of Param
+        if (value = array_value(handler, CALLBACK_KEY_RE)) && (callback = callable_code(value, src, klass))
+          code, request_var = callback
+          code.scan(GET_PARAM_RE) { |m| names << m[1] }
+          code.scan(/\$#{request_var}\s*\[\s*['"]([^'"]+)['"]\s*\]/) { |m| names << m[1] } if request_var
+          code.scan(GET_HEADER_RE) { |m| typed << Param.new(m[1], "", "header") }
+          code.scan(FILE_PARAMS_RE) { |m| typed << Param.new(m[1], "", "file") }
+        end
+        guard = permission_guard(handler, src, klass)
         methods.each do |method|
           # A verb two handler groups register is guarded only when both are.
           known = result[method]?
-          result[method] = known ? {known[0] + names, known[1] && guard} : {names, guard}
+          result[method] = known ? {known[0] + names, known[1] + typed, known[2] && guard} : {names, typed, guard}
         end
       end
       result
+    end
+
+    CALLBACK_KEY_RE = /\A['"]callback['"]\s*=>\s*/
+    GET_PARAM_RE    = /->\s*get_param\s*\(\s*['"]([^'"]+)['"]/
+    GET_HEADER_RE   = /->\s*get_header\s*\(\s*['"]([^'"]+)['"]/
+    FILE_PARAMS_RE  = /->\s*get_file_params\s*\(\s*\)\s*\[\s*['"]([^'"]+)['"]/
+    FIRST_PARAM_RE  = /\A(?:static\s+)?(?:function|fn)\s*&?\s*\(\s*[^$)]*\$(\w+)/
+
+    # The value of `'key' => value` in a handler array literal.
+    private def array_value(handler : String, key_re : Regex) : String?
+      body = php_array_body(handler) || return
+      split_top_level_args(body).each do |element|
+        element = element.strip
+        if m = element.match(key_re)
+          return element[m.end(0)..].strip
+        end
+      end
+    end
+
+    # The code a callable runs, with the name of its first parameter: a
+    # closure's own text, or the body of the method of `klass` (else the free
+    # function) it names. Nil for `__return_true` or a callable the file does
+    # not show.
+    private def callable_code(value : String, src : Source, klass : ClassScope?) : Tuple(String, String?)?
+      if value.matches?(/\A(?:static\s+)?(?:function|fn)\b/)
+        {value, value.match(FIRST_PARAM_RE).try(&.[1])}
+      elsif name = (value.match(CALLABLE_ARRAY_RE) || value.match(CALLABLE_STRING_RE)).try(&.[1])
+        return if name == "__return_true"
+        decl = find_function(src, name, klass) || return
+        {src.offsets.slice(decl.open + 1, decl.close), decl.params.match(/\$(\w+)/).try(&.[1])}
+      end
     end
 
     PERMISSION_KEY_RE = /\A['"]permission_callback['"]\s*=>\s*/
@@ -186,25 +259,9 @@ module Analyzer::Php
     # class, or a function of the file outside any class. `__return_true`,
     # a callback the file does not show, or one that checks neither
     # decisively, is no guard.
-    private def permission_guard(handler : String, content : String, klass : Range(Int32, Int32)?,
-                                 classes : Array(Tuple(Range(Int32, Int32), Hash(String, String)))) : Guard?
-      body = php_array_body(handler) || return
-      value = nil
-      split_top_level_args(body).each do |element|
-        element = element.strip
-        if m = element.match(PERMISSION_KEY_RE)
-          value = element[m.end(0)..].strip
-          break
-        end
-      end
-      return unless value
-      code = if value.matches?(/\A(?:static\s+)?(?:function|fn)\b/)
-               value
-             elsif name = (value.match(CALLABLE_ARRAY_RE) || value.match(CALLABLE_STRING_RE)).try(&.[1])
-               return if name == "__return_true"
-               function_body(content, name, klass, classes)
-             end
-      return unless code
+    private def permission_guard(handler : String, src : Source, klass : ClassScope?) : Guard?
+      value = array_value(handler, PERMISSION_KEY_RE) || return
+      code = callable_code(value, src, klass).try(&.[0]) || return
       if m = code.match(CAPABILITY_CHECK_RE)
         {"authz", "WordPress permission_callback #{m[1]? ? "current_user_can('#{m[1]}')" : "capability check"}"}
       elsif code.matches?(LOGIN_CHECK_RE)
@@ -212,21 +269,14 @@ module Analyzer::Php
       end
     end
 
-    # The body of `function name(...) { ... }`: inside `klass` (a method of
-    # the route's class), else a free function, outside every class.
-    private def function_body(content : String, name : String, klass : Range(Int32, Int32)?,
-                              classes : Array(Tuple(Range(Int32, Int32), Hash(String, String)))) : String?
-      decl = /\bfunction\s+#{Regex.escape(name)}\s*\([^{;]*\{/m
-      content.scan(decl) do |m|
-        inside = klass ? klass.includes?(m.begin(0)) : classes.none?(&.[0].includes?(m.begin(0)))
-        next unless inside
-        close = find_matching_php_close_brace(content, m.end(0) - 1) || return
-        return content[m.end(0)...close]
+    # `function name(...) { ... }`: inside `klass` (a method of the route's
+    # class), else a free function, outside every class.
+    private def find_function(src : Source, name : String, klass : ClassScope?) : FunctionDecl?
+      found = src.functions.find do |decl|
+        decl.name == name && (klass ? klass.range.includes?(decl.start) : src.classes.none?(&.range.includes?(decl.start)))
       end
-      if klass
-        # A plain function the route's class names as a string callback.
-        function_body(content, name, nil, classes)
-      end
+      # A plain function the route's class names as a string callback.
+      found || (klass && find_function(src, name, nil))
     end
 
     REST_ARGS_KEY_RE = /\A['"]args['"]\s*=>\s*/
@@ -260,53 +310,106 @@ module Analyzer::Php
     # `$this->namespace = 'wp/v2';`, as a constructor sets it.
     THIS_ASSIGN_RE = /\$this\s*->\s*(\w+)\s*=\s*(?:'([^'\\]*)'|"([^"\\$]*)")\s*;/
     CLASS_DECL_RE  = /(?<![:\w$>])(?<!new\s)\bclass\s+(\w+)(?:\s+extends\s+\\?(?:[\w\\]+\\)?(\w+))?[^{;]*\{/
-    NO_PROPERTIES  = {} of String => String
 
     # `{body range, string properties}` of each class in the file, for
     # resolving `$this->namespace` against the class the call sits in. A
     # property is declared (`protected $namespace = 'myplugin/v2';`) or
     # assigned in a method (`$this->namespace = 'wp/v2';`, which wins), in
     # the class or a parent class of the same file. One inherited from a
-    # class in another file, or a trait, is not seen.
-    private def class_scopes(content : String) : Array(Tuple(Range(Int32, Int32), Hash(String, String)))
-      lexer = Noir::PhpLexer.new(content)
+    # class in another file, or a trait, is not seen. Class constants are
+    # kept under `::NAME`, which no property name can collide with.
+    private def class_scopes(content : String, lexer : Noir::PhpLexer, offsets : Noir::CharOffsets) : Array(ClassScope)
       found = [] of Tuple(String, String?, Range(Int32, Int32), Hash(String, String))
       content.scan(CLASS_DECL_RE) do |m|
-        next unless lexer.in_code?(m.begin(0))
-        open = m.end(0) - 1
+        next unless lexer.in_code?(offsets.begin(m))
+        open = offsets.end(m) - 1
         close = lexer.matching_delimiter(open) || next
-        body = content[open...close]
+        body = offsets.slice(open, close)
         properties = {} of String => String
         assigned = {} of String => String
         body.scan(STRING_PROPERTY_RE) { |prop| properties[prop[1]] ||= prop[2]? || prop[3] }
         body.scan(THIS_ASSIGN_RE) { |prop| assigned[prop[1]] ||= prop[2]? || prop[3] }
+        body.scan(CONST_RE) { |prop| properties["::#{prop[1]}"] ||= prop[2]? || prop[3] }
         found << {m[1], m[2]?, open..close, properties.merge(assigned)}
       end
       by_name = found.to_h { |(name, parent, _, props)| {name, {parent, props}} }
-      found.map do |(_, parent, range, props)|
+      found.map do |(name, parent, range, props)|
         seen = Set(String).new
         while parent && seen.add?(parent) && (inherited = by_name[parent]?)
           props = inherited[1].merge(props)
           parent = inherited[0]
         end
-        {range, props}
+        ClassScope.new(name, range, props)
       end
     end
 
-    # The value of a string literal, `$this->prop`, or a `.` concatenation of
-    # them; nil when any piece is something else.
-    private def resolve_string_expr(arg : String, properties : Hash(String, String)) : String?
+    CLASS_CONST_REF_RE = /\A\\?([\w\\]+)::(\w+)\z/
+    INTERPOLATION_RE   = /(?<!\\)(?:\{\$this->(\w+)\}|\$this->(\w+)|\{\$(\w+)\}|\$\{(\w+)\}|\$(\w+))/
+    # Hops through `$a = $b . 'x';` assignments before giving up.
+    MAX_VAR_HOPS = 3
+
+    # The value of a `.` concatenation of string literals (a double-quoted
+    # one interpolated), `$this->prop`, class constants, `define()`/`const`
+    # constants of the file, and local variables assigned once in the
+    # function around `pos`; nil when any piece is something else.
+    private def resolve_string_expr(arg : String, src : Source, klass : ClassScope?, pos : Int32, hops : Int32 = 0) : String?
       String.build do |io|
         Noir::TopLevelSplit.split(arg, '.', SPLIT_ARGS_RULES).each do |piece|
-          if literal = literal_arg(piece)
-            io << literal
-          elsif (prop = piece.strip.match(/\A\$this->(\w+)\z/)) && (value = properties[prop[1]]?)
-            io << value
-          else
-            return
-          end
+          io << (resolve_string_piece(piece.strip, src, klass, pos, hops) || return)
         end
       end
+    end
+
+    private def resolve_string_piece(piece : String, src : Source, klass : ClassScope?, pos : Int32, hops : Int32) : String?
+      if m = piece.match(/\A'((?:[^'\\]|\\.)*)'\z/)
+        m[1]
+      elsif m = piece.match(/\A"((?:[^"\\]|\\.)*)"\z/)
+        interpolate(m[1], src, klass, pos, hops)
+      elsif m = piece.match(/\A\$this->(\w+)\z/)
+        klass.try(&.strings[m[1]]?)
+      elsif m = piece.match(/\A\$(\w+)\z/)
+        local_string(m[1], src, klass, pos, hops)
+      elsif m = piece.match(CLASS_CONST_REF_RE)
+        owner = m[1] == "self" || m[1] == "static" ? klass : src.classes.find(&.name.==(m[1].split('\\').last))
+        owner.try(&.strings["::#{m[2]}"]?)
+      elsif piece.matches?(/\A[A-Za-z_]\w*\z/)
+        src.constants[piece]?
+      end
+    end
+
+    # A double-quoted string's `{$this->prop}` / `$this->prop` / `{$var}` /
+    # `${var}` / `$var` pieces expanded; nil when one is unknown.
+    private def interpolate(text : String, src : Source, klass : ClassScope?, pos : Int32, hops : Int32) : String?
+      return text unless text.includes?('$')
+      String.build do |io|
+        last = 0
+        text.scan(INTERPOLATION_RE) do |m|
+          io << text[last...m.begin(0)]
+          value = if prop = m[1]? || m[2]?
+                    klass.try(&.strings[prop]?)
+                  else
+                    local_string(m[3]? || m[4]? || m[5], src, klass, pos, hops)
+                  end
+          io << (value || return)
+          last = m.end(0)
+        end
+        io << text[last..]
+      end
+    end
+
+    # The string value of `$name` when the function around `pos` (the file,
+    # outside any function) assigns it exactly once; any second or compound
+    # assignment leaves it unresolved.
+    private def local_string(name : String, src : Source, klass : ClassScope?, pos : Int32, hops : Int32) : String?
+      return if hops >= MAX_VAR_HOPS
+      scope = src.functions.select { |decl| decl.open < pos && pos < decl.close }.max_by?(&.open)
+      body = scope ? src.offsets.slice(scope.open + 1, scope.close) : src.content
+      value = nil
+      body.scan(/(?<![\w$])\$#{name}\s*([.+\-*\/?]*)=(?![=>])\s*([^;]*);/) do |m|
+        return if value || !m[1].empty?
+        value = m[2]
+      end
+      value.try { |expr| resolve_string_expr(expr, src, klass, pos, hops + 1) }
     end
 
     # `/wp-json/` + namespace + route, collapsing duplicate slashes.
@@ -353,18 +456,21 @@ module Analyzer::Php
 
     # -- Admin AJAX / admin-post ----------------------------------------
 
-    private def analyze_action_hooks(content : String, path : String, offsets : Noir::CharOffsets) : Array(Endpoint)
+    private def analyze_action_hooks(src : Source, path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       seen = Set(String).new
+      offsets = src.offsets
 
       # The dispatcher runs `wp_ajax_<action>` / `admin_post_<action>` for a
       # logged-in user only; the `nopriv_` hook is what serves anyone else.
-      content.scan(HOOK_RE) do |match|
+      src.content.scan(HOOK_RE) do |match|
         action = match[2]
         next if action.empty?
 
         url = hook_url(match[1], action)
-        details = Details.new(PathInfo.new(path, offsets.line(offsets.begin(match))))
+        call_start = offsets.begin(match)
+        details = Details.new(PathInfo.new(path, offsets.line(call_start)))
+        code = hook_callback_code(src, call_start)
 
         DISPATCH_METHODS.each do |method|
           dedup_key = "#{method} #{url}"
@@ -372,6 +478,11 @@ module Analyzer::Php
           seen.add(dedup_key)
 
           params = [Param.new("action", action, "query")]
+          if code
+            hook_params(code, method).each do |param|
+              params << param unless params.any? { |known| known.name == param.name }
+            end
+          end
           endpoint = Endpoint.new(url, method, params, details.dup)
           unless @public_hook_urls.includes?(url)
             endpoint.add_tag(Tag.new("auth", "Protected by WordPress #{match[1].downcase} hook (logged-in users only)", TAGGER))
@@ -381,6 +492,39 @@ module Analyzer::Php
       end
 
       endpoints
+    end
+
+    NONCE_ARG_RE = /\bcheck_(?:ajax|admin)_referer\s*\(\s*['"][^'"]*['"]\s*,\s*['"]([^'"]+)['"]/
+
+    # The code of the callback (second argument) of the `add_action(` call
+    # at `call_start`.
+    private def hook_callback_code(src : Source, call_start : Int32) : String?
+      open = src.offsets.index('(', call_start) || return
+      close = src.lexer.matching_delimiter(open) || return
+      value = split_top_level_args(src.offsets.slice(open + 1, close))[1]?.try(&.strip) || return
+      callable_code(value, src, src.classes.find(&.range.includes?(call_start))).try(&.[0])
+    end
+
+    # Request input a hook callback reads. The dispatcher takes GET and POST
+    # alike, so `$_REQUEST` follows the endpoint's verb.
+    private def hook_params(code : String, method : String) : Array(Param)
+      params = [] of Param
+      each_superglobal_read(code) do |source, name|
+        type = case source
+               when "GET"     then "query"
+               when "POST"    then "form"
+               when "REQUEST" then method == "GET" ? "query" : "form"
+               when "COOKIE"  then "cookie"
+               when "FILES"   then "file"
+               else
+                 next unless name.starts_with?("HTTP_")
+                 name = name.lchop("HTTP_").tr("_", "-")
+                 "header"
+               end
+        params << Param.new(name, "", type)
+      end
+      code.scan(NONCE_ARG_RE) { |m| params << Param.new(m[1], "", method == "GET" ? "query" : "form") }
+      params
     end
 
     private def hook_url(hook_prefix : String, action : String) : String
@@ -518,20 +662,6 @@ module Analyzer::Php
         params << Param.new(name, "", "path")
       end
       params
-    end
-
-    # A lone single/double-quoted string literal (the entire argument),
-    # or nil if the argument is anything else (variable, call, concat,
-    # array). Anchored so `$x . '/v1'` and `[...]` are rejected.
-    private def literal_arg(arg : String) : String?
-      s = arg.strip
-      if m = s.match(/\A'((?:[^'\\]|\\.)*)'\z/)
-        return m[1]
-      end
-      if m = s.match(/\A"((?:[^"\\]|\\.)*)"\z/)
-        return m[1]
-      end
-      nil
     end
 
     # `Rules::SHARED_DEPTH_RAW` with a trailing empty dropped and, like
