@@ -136,6 +136,44 @@ describe "PerlAuthTagger" do
     end
   end
 
+  it "counts sign-in redirects and refusals conditioned on the caller read" do
+    dir = File.tempname("noir_perl_conditioned")
+    Dir.mkdir_p(dir)
+    app = File.join(dir, "App.pm")
+    File.write(app, <<-PL)
+      use Dancer2;
+      get '/a' => sub {
+          return redirect uri_for('/signin') unless logged_in_user;
+      };
+      get '/b' => sub {
+          halt('go away') unless logged_in_user;
+      };
+      get '/c' => sub {
+          die "not authorized" unless user_has_role('admin');
+      };
+      get '/d' => sub {
+          return unless logged_in_user;
+      };
+      get '/e' => sub ($c) {
+          return $c->reply->not_found unless $c->is_user_authenticated;
+      };
+      get '/f' => sub ($c) {
+          $c->detach('/error') unless $c->check_user_roles('admin');
+      };
+      get '/g' => sub {
+          pass unless logged_in_user;
+      };
+      PL
+
+    begin
+      guarded = {2, 5, 8, 11, 14, 17}.map { |line| perl_auth_tag_for(app, line, create_test_options) }
+      guarded.each { |endpoint| endpoint.tags.map(&.name).should eq(["auth"]) }
+      perl_auth_tag_for(app, 20, create_test_options).tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   it "applies a Mojolicious full-app `under` bridge to the routes built on it" do
     dir = File.tempname("noir_perl_bridge")
     Dir.mkdir_p(File.join(dir, "lib/MyApp/Controller"))

@@ -46,7 +46,13 @@ class PerlAuthTagger < FrameworkTagger
   ]
 
   # A 401/403, a forbidden/denied page, or a redirect to the login page.
-  REFUSAL = /(?<![\w.])40[13](?![\d.])|\bforbidden\b|\bdenied\b|\bunauthori[sz]ed\b|\bredirect\w*\b[^;]*\blog_?in\b/i
+  REFUSAL = /(?<![\w.])40[13](?![\d.])|\bforbidden\b|\bdenied\b|\bunauthori[sz]ed\b|\bredirect\w*\b[^;]*\b(?:log[_-]?in|sign[_-]?in)\b/i
+
+  # A statement that stops the request, conditioned on what follows its
+  # `unless` / `if`: `halt(...) unless logged_in_user`, `return unless ...`,
+  # `$c->detach('/error') unless $c->check_user_roles('admin')`.
+  # `pass unless ...` hands the request on and is not one.
+  CONDITIONED_REFUSAL = /\A\s*(?:return\s+)?(?:\$\w+\s*->\s*(?:\w+\s*->\s*)*)?(?:halt|detach|die|croak|not_found|redirect\w*|send_error|status|forward)\b[^;]*?\b(?:unless|if)\b(.*)|\A\s*return\s*(?:0|undef)?\s*\b(?:unless|if)\b(.*)/
 
   # Keywords that make a `hook before` / Catalyst `sub auto` block an
   # application-wide guard covering every route in the file.
@@ -123,13 +129,19 @@ class PerlAuthTagger < FrameworkTagger
         return desc if line.matches?(pattern)
       end
     end
-    return unless body.any?(&.matches?(REFUSAL))
+    return unless body.any? { |line| line.matches?(REFUSAL) || refusal_conditioned_on_read?(line) }
     body.each do |line|
       READING_BODY_PATTERNS.each do |pattern, desc|
         return desc if line.matches?(pattern)
       end
     end
     nil
+  end
+
+  private def refusal_conditioned_on_read?(line : String) : Bool
+    return false unless m = line.match(CONDITIONED_REFUSAL)
+    condition = m[1]? || m[2]? || ""
+    READING_BODY_PATTERNS.any? { |pattern, _| condition.matches?(pattern) }
   end
 
   # Mojolicious::Lite `under sub { ... }`: every route declared after it
