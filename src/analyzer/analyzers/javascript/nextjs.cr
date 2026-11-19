@@ -73,12 +73,13 @@ module Analyzer::Javascript
 
     # Config directory => its `basePath`, which prefixes every route below it.
     @next_base_paths = {} of String => String
+    @project_roots = [] of String
 
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
       include_callee = callees_needed?
-      project_roots = discover_js_project_roots(["\"next\""], CONFIG_BASENAMES)
+      project_roots = @project_roots = discover_js_project_roots(["\"next\""], CONFIG_BASENAMES)
       @next_base_paths = collect_base_paths
 
       parallel_file_scan(EXTENSIONS) do |path|
@@ -168,12 +169,23 @@ module Analyzer::Javascript
       base_relative_path(path).includes?("/pages/api/")
     end
 
-    private def analyze_pages_router_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
-      scoped = base_relative_path(path)
-      idx = scoped.index("/pages/api/")
-      return if idx.nil?
+    # `path` below `router_dir` (`app`, `pages/api`), which sits at the top
+    # of the closest Next.js project or in its `src/`: a project directory
+    # itself named `app` is not the router. Nil when no project root is that
+    # shape, and the caller falls back to the first marker in the path.
+    private def project_router_relative(path : String, router_dir : String) : String?
+      expanded = Noir::PathScope.expand(path)
+      root = @project_roots.select { |r| Noir::PathScope.under_normalized_root?(expanded, r) }.max_by?(&.size) || return
+      relative = Noir::PathScope.base_relative(expanded, root)
+      relative.lchop?("/#{router_dir}/") || relative.lchop?("/src/#{router_dir}/")
+    end
 
-      relative = scoped[(idx + "/pages/api/".size)..-1]
+    private def analyze_pages_router_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
+      relative = project_router_relative(path, "pages/api") || begin
+        scoped = base_relative_path(path)
+        idx = scoped.index("/pages/api/") || return
+        scoped[(idx + "/pages/api/".size)..-1]
+      end
       relative = strip_extension(relative, EXTENSIONS)
 
       # Skip private folders/files (leading underscore)
@@ -228,11 +240,11 @@ module Analyzer::Javascript
     end
 
     private def analyze_app_router_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
-      scoped = base_relative_path(path)
-      idx = scoped.index("/app/")
-      return if idx.nil?
-
-      relative = scoped[(idx + "/app/".size)..-1]
+      relative = project_router_relative(path, "app") || begin
+        scoped = base_relative_path(path)
+        idx = scoped.index("/app/") || return
+        scoped[(idx + "/app/".size)..-1]
+      end
       # Drop /route.ext
       EXTENSIONS.each do |ext|
         if relative.ends_with?("/route#{ext}")
