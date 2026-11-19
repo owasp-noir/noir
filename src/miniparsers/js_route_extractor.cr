@@ -2080,7 +2080,8 @@ module Noir
         # interpolated regex literal would recompile (full PCRE2 compile)
         # once per endpoint.
         direct_call_pattern = @@direct_call_res.fetch(method_alternation) do
-          @@direct_call_res[method_alternation] = /(?:\.\s*(?:#{method_alternation})|\[\s*['"](?:#{method_alternation})['"]\s*\])\s*\(/i
+          # `app.get<{ Querystring: Q }>(…)`: a paren-free type-argument list may sit before `(`.
+          @@direct_call_res[method_alternation] = /(?:\.\s*(?:#{method_alternation})|\[\s*['"](?:#{method_alternation})['"]\s*\])\s*(?:<[^()]*?>\s*)?\(/i
         end
         if direct_match = search_window.match(direct_call_pattern)
           candidate_idx = start_byte + direct_match.byte_begin(0)
