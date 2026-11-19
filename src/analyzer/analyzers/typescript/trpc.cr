@@ -27,7 +27,7 @@ module Analyzer::Typescript
     record TRPCRouterEntry,
       key : String,
       line : Int32,
-      kind : Symbol, # :identifier, :nested_router, :procedure
+      kind : Symbol, # :identifier, :spread, :nested_router, :procedure
       ident : String,
       nested_entries : Array(TRPCRouterEntry),
       proc : TRPCProcedureData?
@@ -61,6 +61,7 @@ module Analyzer::Typescript
 
     record TRPCFileFacts,
       routers : Array(Router),
+      records : Array(Router),
       procedures : Array(Procedure),
       mount : Mount?,
       url_prefix : String?,
@@ -73,6 +74,10 @@ module Analyzer::Typescript
     # procedure's auth is read from the definitions its builder stacks.
     @builder_defs = Hash(String, String).new
     @named_procedures = Hash(String, Array(Procedure)).new
+    # Plain-object sub-routers (`export const postRouter = { ... } satisfies
+    # TRPCRouterRecord`) and `export default router(...)`, by name ("default"
+    # for the latter). Reached only through a router entry, never roots.
+    @records = Hash(String, Array(Router)).new
 
     @@memo = Hash(UInt64, TRPCFileFacts).new
     @@memo_mutex = Mutex.new
@@ -109,7 +114,7 @@ module Analyzer::Typescript
         mount = next_mount(path, raw, base_path)
         content = Noir::JSRouteExtractor.strip_js_comments(raw)
         defs = extract_builder_defs(content, path)
-        none = {[] of Router, [] of Procedure, base_path, nil.as(String?), mount, defs}
+        none = {[] of Router, [] of Router, [] of Procedure, base_path, nil.as(String?), mount, defs}
         next none unless trpc_candidate?(raw)
         next none if Noir::JSRouteExtractor.test_stub_only?(path, raw, include_client_frameworks: false)
         next none unless trpc_candidate?(content)
@@ -117,14 +122,15 @@ module Analyzer::Typescript
         facts = trpc_file_facts(path, content, base_path, include_callee)
         all_defs = defs.dup
         all_defs.merge!(facts.builder_defs)
-        {facts.routers, facts.procedures, base_path, facts.url_prefix, mount || facts.mount, all_defs}
+        {facts.routers, facts.records, facts.procedures, base_path, facts.url_prefix, mount || facts.mount, all_defs}
       rescue e
         logger.debug "Error analyzing tRPC file #{path}: #{e.message}"
         nil
       end
 
-      per_file.each do |collected, collected_procs, base_path, found, mount, defs|
+      per_file.each do |collected, collected_records, collected_procs, base_path, found, mount, defs|
         collected.each { |r| routers[router_key(r)] = r }
+        collected_records.each { |r| (@records[r.name] ||= [] of Router) << r }
         all_routers.concat(collected)
         collected_procs.each do |p|
           procedures[router_key(p.base_path, p.name)] = p
@@ -160,7 +166,7 @@ module Analyzer::Typescript
       used_as_child = Set(RouterKey).new
       routers.each_value do |router|
         router.entries.each do |entry|
-          if entry.kind == :identifier
+          if entry.kind.in?(:identifier, :spread)
             child_key = router_key(router.base_path, entry.ident)
             used_as_child.add(child_key) if routers.has_key?(child_key)
           end
@@ -209,6 +215,18 @@ module Analyzer::Typescript
       specifier, exported = Noir::JSHandlerResolver.imports_of(read_file_content(router_file), router_file)[ident]? || return
       @named_procedures[exported || ident]?.try &.select { |p| p.base_path == base_path }
         .max_by? { |p| specifier_score(specifier, router_file, p.proc.file) }
+    end
+
+    # The record `ident` names in `file`: its own declaration, or the one its
+    # import specifier points at. A default import must match by path, since
+    # every default-exported router shares the name.
+    private def record_for(ident : String, file : String, base_path : String) : Router?
+      imported = Noir::JSHandlerResolver.imports_of(read_file_content(file), file)[ident]?
+      return @records[ident]?.try(&.find { |r| r.file == file && r.base_path == base_path }) unless imported
+      specifier, exported = imported
+      candidates = @records[exported || "default"]?.try(&.select { |r| r.base_path == base_path }) || return
+      best = candidates.max_by? { |r| specifier_score(specifier, file, r.file) } || return
+      best if specifier_score(specifier, file, best.file) > 0 || (exported && candidates.size == 1)
     end
 
     # Trailing path segments `specifier` (as imported by `importer`) shares
@@ -328,8 +346,8 @@ module Analyzer::Typescript
                                procedures_by_name : Hash(String, Procedure),
                                url_prefix : String,
                                result : Array(Endpoint),
-                               visited : Set(RouterKey))
-      current_key = router_key(router)
+                               visited : Set(RouterKey),
+                               current_key : RouterKey = router_key(router))
       return if visited.includes?(current_key)
       visited.add(current_key)
 
@@ -363,6 +381,17 @@ module Analyzer::Typescript
           if proc = imported_procedure(ident, file, base_path) || procedures[router_key(base_path, ident)]? || procedures_by_name[ident]?
             emit_procedure_data(proc.proc, "#{base}/#{child_prefix}", result)
             next
+          end
+
+          if rec = record_for(ident, file, base_path)
+            flatten_router(rec, child_prefix, routers, procedures, procedures_by_name, url_prefix, result, visited, {rec.file, "record:#{rec.name}"})
+          end
+        when :spread
+          # `...searchProcs`: the spread record's procedures sit at this level.
+          if child = routers[router_key(base_path, entry.ident)]?
+            flatten_router(child, prefix_dotted, routers, procedures, procedures_by_name, url_prefix, result, visited)
+          elsif rec = record_for(entry.ident, file, base_path)
+            flatten_router(rec, prefix_dotted, routers, procedures, procedures_by_name, url_prefix, result, visited, {rec.file, "record:#{rec.name}"})
           end
         when :nested_router
           flatten_entries(entry.nested_entries, child_prefix, base_path, file, entry.line,
@@ -482,6 +511,7 @@ module Analyzer::Typescript
 
     private def extract_trpc_facts(path : String, source : String, base_path : String, include_callees : Bool) : TRPCFileFacts
       routers = [] of Router
+      records = [] of Router
       procedures = [] of Procedure
       builder_defs = Hash(String, String).new
       mount = next_mount(path, source, base_path)
@@ -533,6 +563,16 @@ module Analyzer::Typescript
                 procedures << Procedure.new(base_path, name, proc_data)
               end
             end
+          when "export_statement"
+            default_value = Noir::TreeSitter.field(node, "value").try { |value| Noir::TreeSitter.unwrap_expression(value) }
+            if default_value && router_call_node?(default_value, source)
+              arg0 = Noir::TreeSitter.field(default_value, "arguments").try { |args| Noir::TreeSitter.first_named_arg(args) }
+              arg0_u = arg0.try { |arg| Noir::TreeSitter.unwrap_expression(arg) }
+              if arg0_u && Noir::TreeSitter.node_type(arg0_u) == "object"
+                entries = extract_router_entries(arg0_u, source, path, base_path, include_callees)
+                records << Router.new(base_path, "default", entries, path, Noir::TreeSitter.node_start_row(node) + 1)
+              end
+            end
           when "function_declaration"
             if fn_name = Noir::TreeSitter.field(node, "name")
               fn_text = Noir::TreeSitter.node_text(node, source)
@@ -544,16 +584,23 @@ module Analyzer::Typescript
           end
         end
 
+        object_entries = object_decls.transform_values do |(obj_node, _)|
+          extract_router_entries(obj_node, source, path, base_path, include_callees)
+        end
+        object_entries.each do |o_name, entries|
+          records << Router.new(base_path, o_name, entries, path, object_decls[o_name][1]) unless entries.empty?
+        end
+
         pending_router_args.each do |r_name, target_ident, r_line|
-          if obj_info = object_decls[target_ident]?
-            entries = extract_router_entries(obj_info[0], source, path, base_path, include_callees)
-            line = obj_info[1] > 0 ? obj_info[1] : r_line
+          if entries = object_entries[target_ident]?
+            obj_line = object_decls[target_ident][1]
+            line = obj_line > 0 ? obj_line : r_line
             routers << Router.new(base_path, r_name, entries, path, line)
           end
         end
       end
 
-      TRPCFileFacts.new(routers, procedures, mount, url_prefix, builder_defs)
+      TRPCFileFacts.new(routers, records, procedures, mount, url_prefix, builder_defs)
     end
 
     private def extract_router_entries(obj_node : LibTreeSitter::TSNode, source : String,
@@ -598,6 +645,12 @@ module Analyzer::Typescript
           name = Noir::TreeSitter.node_text(child, source)
           line = Noir::TreeSitter.node_start_row(child) + 1
           entries << TRPCRouterEntry.new(name, line, :identifier, name, [] of TRPCRouterEntry, nil)
+        when "spread_element"
+          arg = Noir::TreeSitter.first_named_child(child).try { |node| Noir::TreeSitter.unwrap_expression(node) }
+          if arg && Noir::TreeSitter.node_type(arg) == "identifier"
+            line = Noir::TreeSitter.node_start_row(child) + 1
+            entries << TRPCRouterEntry.new("", line, :spread, Noir::TreeSitter.node_text(arg, source), [] of TRPCRouterEntry, nil)
+          end
         end
       end
 
