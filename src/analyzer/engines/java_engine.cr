@@ -1479,7 +1479,7 @@ module Analyzer::Java
     private def with_jackson_defaults(index : Hash(String, Array(F)), path : String) : Hash(String, Array(F)) forall F
       strategy, unwrap, gson = jackson_defaults(path)
       # Only a renamed field (`boolean isFoo` -> `foo`) cares, so skip the walk otherwise.
-      gson ||= index.any? { |_, fields| fields.any? { |field| field.field_name != field.name } } && gson_converter?(path)
+      gson ||= gson_converter?(path) && index.any? { |_, fields| fields.any? { |field| field.field_name != field.name } }
       return index unless strategy || unwrap || gson
       index.to_h do |cls, fields|
         # Own fields come first; a subclass without its own root inherits

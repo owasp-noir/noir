@@ -1587,6 +1587,13 @@ module Noir
     # cross-file inheritance merge below.
     @@shared_super_cache = Hash(String, Hash(String, String)).new
     @@shared_cache_mutex = Mutex.new
+    # `{fields, supers, origin}` merged over a package's files, or over the
+    # files of one on-demand import.
+    alias Layer = {Index, Hash(String, String), Hash(String, String)}
+    @@package_layers = Hash(String, Layer).new
+    # Set once any extracted class has a `@JsonUnwrapped` field: until then
+    # `flatten_unwrapped!` has nothing to do and skips its walk of the index.
+    @@any_unwrap = false
 
     # Filesystem-derived memos must not survive into a second scan in the
     # same process (library use, watch mode, a CI daemon scanning one
@@ -1605,6 +1612,8 @@ module Noir
       @@shared_cache_mutex.synchronize do
         @@shared_cache.clear
         @@shared_super_cache.clear
+        @@package_layers.clear
+        @@any_unwrap = false
       end
     end
 
@@ -1630,15 +1639,6 @@ module Noir
     # parse independently — but sibling parses go through the
     # process-wide cache so concurrent analyzers don't double-up.
     def build_for_with_root(path : String, content : String, root : LibTreeSitter::TSNode) : Index
-      result = Index.new
-      # `supers[class] = superclass simple name`, `origin[class] = the
-      # file that defined it`. The latter lets the inheritance pass
-      # resolve a superclass through the *subclass's* imports — Owner
-      # imports `model.Person`, even though the controller that pulled
-      # Owner in never mentions the `model` package.
-      supers = Hash(String, String).new
-      origin = Hash(String, String).new
-
       package_name = TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
       imports = TreeSitterJavaParameterExtractor.extract_imports_from(root, content)
 
@@ -1650,14 +1650,45 @@ module Noir
       @@shared_cache_mutex.synchronize do
         @@shared_cache[path] ||= current_fields
         @@shared_super_cache[path] ||= current_supers
+        @@any_unwrap ||= unwrap_field?(current_fields)
       end
 
-      Noir::ImportGraph.related_files(path, package_name, imports, "java") do |file|
-        fields, file_supers = load_file(file)
-        absorb!(result, supers, origin, fields, file_supers, file)
+      # `supers[class] = superclass simple name`, `origin[class] = the
+      # file that defined it`. The latter lets the inheritance pass
+      # resolve a superclass through the *subclass's* imports — Owner
+      # imports `model.Person`, even though the controller that pulled
+      # Owner in never mentions the `model` package.
+      #
+      # The same first-wins merge over the same files as walking
+      # `related_files` (the file itself, its package, its imports), with the
+      # package and each on-demand import merged once instead of once per
+      # controller.
+      result, supers, origin = package_layer(File.dirname(path))
+      Noir::ImportGraph.visit_file(path, Set(String).new) do |own|
+        own_fields, own_supers = load_file(own)
+        own_fields.each do |name, fs|
+          result[name] = fs
+          origin[name] = own
+        end
+        own_supers.each do |name, sup|
+          supers[name] = sup
+          origin[name] = own
+        end
+      end
+      imports.each do |imp|
+        if imp.wildcard?
+          absorb_layer!(result, supers, origin, import_layer(path, package_name, imp))
+        else
+          Noir::ImportGraph.import_files(path, package_name, [imp], "java") do |file|
+            fields, file_supers = load_file(file)
+            absorb!(result, supers, origin, fields, file_supers, file)
+          end
+        end
       end
 
-      pull_superclass_files!(result, supers, origin) unless supers.empty?
+      pull_superclass_files!(result, supers, origin, File.dirname(path)) unless supers.empty?
+      # ponytail: the passes below still walk every visible class once per
+      # controller; memoise them per layer if a deep DTO hierarchy shows up.
       flatten_unwrapped!(result, origin)
       resolve_inheritance!(result, supers)
       result
@@ -1672,6 +1703,7 @@ module Noir
     # affix isn't a literal, or that unwraps into itself is dropped: its own
     # name is never a key on the wire.
     private def flatten_unwrapped!(result : Index, origin : Hash(String, String))
+      return unless @@shared_cache_mutex.synchronize { @@any_unwrap }
       scopes = Hash(String, {String, Array(Noir::ImportGraph::ImportRef)}).new
       result.keys.each do |cls|
         next unless result[cls].any?(&.unwrap)
@@ -1714,6 +1746,10 @@ module Noir
 
     MAX_UNWRAP_DEPTH = 8
 
+    private def unwrap_field?(fields : Index) : Bool
+      fields.each_value.any? { |fs| fs.any?(&.unwrap) }
+    end
+
     private def unwrap_target(field : TreeSitterJavaParameterExtractor::FieldInfo) : String
       name = field.type_name.split('<', 2).first.strip
       name.rpartition('.').last
@@ -1742,6 +1778,53 @@ module Noir
       candidates.find { |f| File.dirname(f) == dir } || (candidates.first if candidates.size == 1)
     end
 
+    # A copy of the package-wide merge, built on first use per directory.
+    private def package_layer(dir : String) : Layer
+      layer = merged_layer(dir) do |visit|
+        Noir::ImportGraph.package_files(dir, "java") { |file| visit.call(file) }
+      end
+      {layer[0].dup, layer[1].dup, layer[2].dup}
+    end
+
+    # The merge of the files one on-demand import resolves to, shared by
+    # every file that resolves it from the same source root.
+    private def import_layer(path : String, package_name : String, import : Noir::ImportGraph::ImportRef) : Layer
+      key = "#{Noir::ImportGraph.source_root_for(path, package_name)}\0#{import.path}"
+      merged_layer(key) do |visit|
+        Noir::ImportGraph.import_files(path, package_name, [import], "java") { |file| visit.call(file) }
+      end
+    end
+
+    private def merged_layer(key : String, & : (String -> Nil) -> Nil) : Layer
+      if layer = @@shared_cache_mutex.synchronize { @@package_layers[key]? }
+        return layer
+      end
+      fields = Index.new
+      supers = Hash(String, String).new
+      origin = Hash(String, String).new
+      yield ->(file : String) do
+        file_fields, file_supers = load_file(file)
+        absorb!(fields, supers, origin, file_fields, file_supers, file)
+        nil
+      end
+      @@shared_cache_mutex.synchronize { @@package_layers[key] ||= {fields, supers, origin} }
+    end
+
+    # `absorb!` of every file of `layer` in turn: a name already in `result`
+    # already has an `origin`, so the layer's first file for a name is the one
+    # that file-by-file merging would record.
+    private def absorb_layer!(result : Index, supers : Hash(String, String), origin : Hash(String, String), layer : Layer)
+      layer[0].each do |name, fs|
+        next if result.has_key?(name)
+        result[name] = fs
+        origin[name] ||= layer[2][name]
+      end
+      layer[1].each do |name, sup|
+        supers[name] ||= sup
+        origin[name] ||= layer[2][name]
+      end
+    end
+
     # Pull a file's `{fields, supertypes}` from the shared cache,
     # parsing it once on a miss. Both maps are populated together so a
     # DTO file is never parsed twice.
@@ -1766,6 +1849,7 @@ module Noir
       @@shared_cache_mutex.synchronize do
         @@shared_cache[file] ||= fields
         @@shared_super_cache[file] ||= supertypes
+        @@any_unwrap ||= unwrap_field?(fields)
         {@@shared_cache[file], @@shared_super_cache[file]}
       end
     rescue IO::Error
@@ -1810,7 +1894,8 @@ module Noir
 
     private def pull_superclass_files!(result : Index,
                                        supers : Hash(String, String),
-                                       origin : Hash(String, String))
+                                       origin : Hash(String, String),
+                                       package_dir : String)
       attempted = Set(String).new
       pending = supers.keys.to_a
       iterations = 0
@@ -1830,7 +1915,7 @@ module Noir
         file = origin[cls]?
         next unless file
 
-        pending.concat(load_superclass_files(result, supers, origin, file))
+        pending.concat(load_superclass_files(result, supers, origin, file, package_dir))
       end
     end
 
@@ -1840,11 +1925,12 @@ module Noir
     private def load_superclass_files(result : Index,
                                       supers : Hash(String, String),
                                       origin : Hash(String, String),
-                                      subclass_file : String) : Array(String)
+                                      subclass_file : String,
+                                      package_dir : String) : Array(String)
       added = [] of String
       package_name, imports = file_package_imports(subclass_file)
 
-      Noir::ImportGraph.related_files(subclass_file, package_name, imports, "java") do |file|
+      absorb_new = ->(file : String) do
         fields, file_supers = load_file(file)
         fields.each do |name, fs|
           unless result.has_key?(name)
@@ -1860,6 +1946,13 @@ module Noir
             added << name
           end
         end
+      end
+      # Every class of `package_dir` is already in `result` and `supers`
+      # (`package_layer`), so only the subclass file's imports can add one.
+      if File.dirname(subclass_file) == package_dir
+        Noir::ImportGraph.import_files(subclass_file, package_name, imports, "java") { |file| absorb_new.call(file) }
+      else
+        Noir::ImportGraph.related_files(subclass_file, package_name, imports, "java") { |file| absorb_new.call(file) }
       end
 
       added
