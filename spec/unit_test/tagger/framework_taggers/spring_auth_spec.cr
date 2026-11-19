@@ -1681,6 +1681,58 @@ describe "SpringAuthTagger (HandlerInterceptor)" do
     endpoints["GET /api/b"].tags.select(&.name.==("auth")).should be_empty
   end
 
+  it "judges a static JSON or YAML file by the module serving it, not by every module" do
+    interceptor = <<-JAVA
+      package com.example.a;
+      public class InterceptorA implements HandlerInterceptor {
+          public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object h) throws Exception {
+              res.sendError(401);
+              return false;
+          }
+      }
+      JAVA
+    config = <<-JAVA
+      package com.example.a;
+      @Configuration
+      public class ConfigA implements WebMvcConfigurer {
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new InterceptorA());
+          }
+      }
+      JAVA
+    files = {
+      "pom.xml"                                                 => "<project><artifactId>root</artifactId></project>",
+      "service-a/pom.xml"                                       => spring_module_pom("service-a", [] of String),
+      "service-a/src/main/java/com/example/a/InterceptorA.java" => interceptor,
+      "service-a/src/main/java/com/example/a/ConfigA.java"      => config,
+      "service-a/src/main/resources/static/app.json"            => "{}",
+      "service-b/pom.xml"                                       => spring_module_pom("service-b", [] of String),
+      "service-b/src/main/resources/static/app.json"            => "{}",
+      "service-b/src/main/resources/static/conf.yml"            => "a: 1",
+    }
+    CodeLocator.instance.clear_all
+    root = File.tempname("spring_static_module")
+    files.each do |relative, source|
+      path = File.join(root, relative)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, source)
+      CodeLocator.instance.register_path(path)
+    end
+    options = create_test_options
+    options["base"] = YAML::Any.new(root)
+    endpoints = ["service-a/src/main/resources/static/app.json", "service-b/src/main/resources/static/app.json", "service-b/src/main/resources/static/conf.yml"].map do |file|
+      details = Details.new(PathInfo.new(File.join(root, file)))
+      details.technology = "java_spring"
+      Endpoint.new("/#{File.basename(file)}", "GET", [] of Param, details)
+    end
+    SpringAuthTagger.new(options).perform(endpoints)
+    FileUtils.rm_rf(root)
+
+    endpoints.map(&.tags.select(&.name.==("auth")).map(&.description)).should eq([
+      ["Protected by Spring HandlerInterceptor InterceptorA"], [] of String, [] of String,
+    ])
+  end
+
   it "reads a 401/403 status or auth exception as the refusal, not a bare return false" do
     interceptors = <<-JAVA
       package com.example.web;

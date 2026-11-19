@@ -15,6 +15,8 @@ require "../../../analyzer/engines/java_engine"
 module SpringModuleScope
   BUILD_FILE       = /\A(?:pom\.xml|build\.gradle(?:\.kts)?)\z/
   BOOT_APP_MARKERS = {"@SpringBootApplication", "@SpringBootConfiguration", "SpringApplication.run", "runApplication<"}
+  # Boot's default static locations and the WAR root.
+  STATIC_RESOURCE_DIR = %r{/src/main/(?:webapp/|resources/(?:static|public|resources|META-INF/resources)/)}
 
   # Build units holding a Boot entry point; the including tagger fills it
   # from its pre-scan through `note_boot_app`.
@@ -39,11 +41,13 @@ module SpringModuleScope
   # The build units of the endpoint's sources. A build file is no evidence
   # of the serving module: a framework-provided route (`/actuator`) points
   # at the parent pom that declares the dependency every child app inherits.
-  # A Boot app's own build file is: that app serves the route.
+  # A Boot app's own build file is: that app serves the route. So is a
+  # JSON / YAML / XML file in its static locations; such a file elsewhere
+  # may be an API spec describing another app.
   private def endpoint_modules(endpoint : Endpoint) : Array(String)
     endpoint.details.code_paths.compact_map do |path_info|
       path = path_info.path
-      next if MediaFilter.spec_document?(path)
+      next if MediaFilter.spec_document?(path) && !path.matches?(STATIC_RESOURCE_DIR)
       module_dir = build_module(path)
       next if File.basename(path).matches?(BUILD_FILE) && !@boot_apps.includes?(module_dir)
       module_dir
