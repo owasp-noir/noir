@@ -1003,7 +1003,7 @@ class GoAuthTagger < FrameworkTagger
     body = @bodies.functions_for(File.dirname(file))[name]? || return
     source = Noir::CComments.strip(body.source, quotes: %("'`))
     m = source.match(FACTORY_RETURN) || return
-    return unless file_imports(body.file_path).includes?(m[1]) && !@dirs_by_base.has_key?(m[1])
+    return if @dirs_by_base.has_key?(m[1]) || !file_imports(body.file_path).includes?(m[1])
     {source.partition("return")[2].strip.rchop('}').strip, body.file_path}
   end
 
