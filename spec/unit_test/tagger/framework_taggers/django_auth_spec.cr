@@ -2593,4 +2593,34 @@ describe "DjangoAuthTagger" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "reads the admin site only from the view argument of the entry serving the endpoint" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_admin_entry")
+    Dir.mkdir_p(tmpdir)
+    urls = File.join(tmpdir, "urls.py")
+    File.write(urls, <<-PY)
+      urlpatterns = [
+          path("admin/", admin.site.urls), path("pub/", views.home),
+          path("about/", views.about, name="admin.site.urls"),
+          path("inc-admin/", include(admin.site.urls)),
+          re_path(r"^old-admin/", admin.site.urls),
+          path("home/", views.home),  # admin.site.urls
+      ]
+      PY
+    CodeLocator.instance.register_path(urls)
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(url : String, line : Int32) { Endpoint.new(url, "GET", [] of Param, Details.new(PathInfo.new(urls, line))) }
+      admin_index, prefixed, pub, about, inc, old, home = at.call("/admin/", 2), at.call("/api/v1/admin/", 2), at.call("/pub/", 2), at.call("/about/", 3), at.call("/inc-admin/", 4), at.call("/old-admin/", 5), at.call("/home/", 6)
+      DjangoAuthTagger.new(noir_options).perform([admin_index, prefixed, pub, about, inc, old, home])
+      [admin_index, prefixed, inc, old].each { |endpoint| endpoint.tags.map(&.description).should eq(["Protected by Django admin site"]) }
+      [pub, about, home].each(&.tags.should(be_empty))
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
 end

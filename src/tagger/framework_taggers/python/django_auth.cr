@@ -217,10 +217,10 @@ class DjangoAuthTagger < FrameworkTagger
   private def check_view_guards(endpoint : Endpoint)
     contexts = read_source_context(endpoint)
     return if contexts.empty?
-    urlconf = urlconf_entries(contexts)
+    urlconf = urlconf_entries(contexts, endpoint.url)
     # `AdminSite.admin_view` sends a caller who is not active staff to the
     # admin login; the index is what the mount itself serves.
-    if !urlconf.empty? && urlconf.all?(&.matches?(/\badmin\.site\.urls\b/))
+    if !urlconf.empty? && urlconf.all? { |entry| urlconf_args(entry)[1]?.try(&.matches?(/\A(?:include\s*\(\s*)?admin\.site\.urls\b/)) }
       endpoint.add_tag(Tag.new("auth", "Protected by Django admin site", "django_auth"))
       return
     end
@@ -279,17 +279,42 @@ class DjangoAuthTagger < FrameworkTagger
     end
   end
 
-  URLCONF_ENTRY = /\A\s*(?:re_path|path|url)\s*(?=\()/
+  URLCONF_CALL = /(?<![\w.])(?<!def )(?:re_path|path|url)\s*(?=\()/
 
-  # The `path(...)` / `re_path(...)` / `url(...)` call each code path that
-  # points at a URLconf entry starts, through its closing parenthesis.
-  private def urlconf_entries(contexts : Array(SourceContext)) : Array(String)
+  # The `path(...)` / `re_path(...)` / `url(...)` call each code path points
+  # at, through its closing parenthesis: of the entries starting on that
+  # line, the one whose route `url` ends with (the longest), or the only one.
+  private def urlconf_entries(contexts : Array(SourceContext), url : String) : Array(String)
     contexts.compact_map do |ctx|
       line = ctx.line || next
-      next unless line >= 1 && line <= ctx.lines.size && ctx.lines[line - 1].matches?(URLCONF_ENTRY)
+      next unless line >= 1 && line <= ctx.lines.size
       text = ctx.lines[line - 1, 20].map { |raw| Analyzer::Python::Helper.strip_python_comment(raw) }.join('\n')
-      bracketed_after(text, URLCONF_ENTRY)
+      head = text.index('\n') || text.size
+      entries = [] of String
+      pos = 0
+      while (call = text.match(URLCONF_CALL, pos)) && call.begin < head && (entry = bracketed_after(text, URLCONF_CALL, call.begin))
+        entries << entry
+        pos = call.end + entry.size
+      end
+      next entries.first? if entries.size < 2
+      routed = entries.compact_map do |candidate|
+        route = urlconf_args(candidate).first?.try { |literal| route_text(literal) }
+        {route, candidate} if route && url.ends_with?(route)
+      end
+      routed.max_by?(&.[0].size).try(&.[1])
     end
+  end
+
+  # The positional arguments of a URLconf call: route, then view.
+  private def urlconf_args(entry : String) : Array(String)
+    Noir::TopLevelSplit.split(entry[1...-1], ',', Noir::TopLevelSplit::Rules::PYTHON).map(&.strip).reject do |arg|
+      arg.empty? || arg.matches?(/\A\w+\s*=(?!=)/)
+    end
+  end
+
+  # A route string literal without its regex anchors: `r"^admin/"` -> `admin/`.
+  private def route_text(literal : String) : String?
+    literal.match(/\A[rRuU]?(['"])(.*)\1\z/).try(&.[2].lchop('^').rchop('$'))
   end
 
   # The `name=value` arguments `ClassName.as_view(...)` passes in the
