@@ -112,9 +112,12 @@ module Analyzer::Ruby
     # Full form capturing both Child and Super for the inheritance graph.
     GRAPE_CLASS_EDGE   = /^\s*class\s+([A-Z][\w:]*)\s*<\s*([:\w][\w:]*)/
     GRAPE_PREFIX_DECL  = /^\s*prefix\s+['":]([\w\/]+)['"]?/
-    GRAPE_VERSION_DECL = /^\s*version\s+(.+)\busing:\s*:path\b/
+    GRAPE_VERSION_DECL = /^\s*version\s+(['":\[%].*)$/
     # `mount Child` / `mount Child => "/path"` (capture 2: the mount path).
     GRAPE_MOUNT_DECL = /^\s*mount\s+([:\w][\w:]*)(?:\s*=>\s*['"]([^'"]*)['"])?/
+    # `version 'v1'` is path versioning unless `using:` names another
+    # strategy. The argument must be a literal, so `version = x` is not one.
+    GRAPE_VERSION_NOT_PATH = /\busing(?::|\s*=>)\s*['":]?(?!path\b)\w/
 
     # Build the transitive closure of Grape classes and the mount-inherited
     # prefix per class. Names are reduced to their final `::` segment so
@@ -174,8 +177,8 @@ module Analyzer::Ruby
             if raw_line.includes?("prefix") && (m = raw_line.match(GRAPE_PREFIX_DECL))
               prefix = m[1]
               own_base[cls] = grape_join_segments(prefix, version)
-            elsif raw_line.includes?("version") && (m = raw_line.match(GRAPE_VERSION_DECL))
-              version = parse_first_grape_version(m[1])
+            elsif raw_line.includes?("version") && (v = grape_path_version(raw_line))
+              version = v
               own_base[cls] = grape_join_segments(prefix, version)
             elsif raw_line.includes?("mount") && (m = raw_line.match(GRAPE_MOUNT_DECL))
               mounted_child = grape_simple_class_name(m[1])
@@ -373,8 +376,8 @@ module Analyzer::Ruby
           next
         end
 
-        if m = stripped.match(/^version\s+(.+)\busing:\s*:path\b/)
-          version_prefix = parse_first_grape_version(m[1])
+        if stripped.starts_with?("version") && (v = grape_path_version(stripped))
+          version_prefix = v
           next
         end
 
@@ -649,6 +652,12 @@ module Analyzer::Ruby
       # re-add it as a separate `query` param. The declared type wins.
       return if param.param_type == "query" && endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == "json" }
       endpoint.push_param(param)
+    end
+
+    private def grape_path_version(line : String) : String?
+      return unless m = line.match(GRAPE_VERSION_DECL)
+      return if m[1].matches?(GRAPE_VERSION_NOT_PATH)
+      parse_first_grape_version(m[1])
     end
 
     private def parse_first_grape_version(args : String) : String
