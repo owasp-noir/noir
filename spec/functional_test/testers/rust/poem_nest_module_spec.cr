@@ -1,7 +1,8 @@
 require "../../func_spec.cr"
 
 # `.nest("/admin", admin::routes())` names admin.rs's `routes`, not the
-# same-named fn in main.rs, so main.rs's own routes stay unprefixed.
+# same-named fn in main.rs, so main.rs's own routes stay unprefixed and
+# admin.rs's carry `/admin`.
 # `twice()` is nested under two prefixes and keeps its bare path; inline
 # nests compose outermost first.
 expected_endpoints = [
@@ -9,7 +10,7 @@ expected_endpoints = [
   Endpoint.new("/after", "GET"),
   Endpoint.new("/api/inline", "GET"),
   Endpoint.new("/api/deep/d", "GET"),
-  Endpoint.new("/panel", "GET"),
+  Endpoint.new("/admin/panel", "GET"),
   Endpoint.new("/t", "GET"),
 ]
 

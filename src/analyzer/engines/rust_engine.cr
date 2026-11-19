@@ -570,6 +570,24 @@ module Analyzer::Rust
       let_declaration_before(node, name, source).try { |d| Noir::TreeSitter.field(d, "value") }
     end
 
+    # The identifier a receiver chain starts from: `api.at("/x").get(h)` -> "api".
+    protected def base_identifier(node : LibTreeSitter::TSNode, source : String) : String?
+      cursor = node
+      256.times do
+        case Noir::TreeSitter.node_type(cursor)
+        when "identifier"
+          return Noir::TreeSitter.node_text(cursor, source)
+        when "field_expression", "call_expression"
+          inner = Noir::TreeSitter.field(cursor, Noir::TreeSitter.node_type(cursor) == "call_expression" ? "function" : "value")
+          return unless inner
+          cursor = inner
+        else
+          return
+        end
+      end
+      nil
+    end
+
     # The full text of a `string_literal`, concatenating every
     # `string_content` and `escape_sequence` child.
     #
