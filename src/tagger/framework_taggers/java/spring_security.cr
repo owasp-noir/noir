@@ -463,19 +463,26 @@ class SpringSecurityTagger < FrameworkTagger
   # signature up to the body brace) or `@Validated` on the controller class.
   private def check_input_validation(path : String, lines : Array(String), method_idx : Int32, endpoint : Endpoint) : String?
     depth = 0
+    declared = false
     (method_idx..[method_idx + 30, lines.size - 1].min).each do |idx|
       break if idx > method_idx && spring_mapping_annotation?(lines[idx])
-      # The signature ends at the first `{` (body) or Kotlin `=` (expression
-      # body) outside parentheses. A path variable `"/{id}"`, an annotation
-      # array `consumes = {..}` or `value = ".."` sits inside a string or
-      # the annotation's parentheses.
-      code = lines[idx].gsub(/"(?:[^"\\]|\\.)*"/, "\"\"").sub(/\/\/.*/, "")
+      # The signature ends at the first `{` (body), Kotlin `=` (expression
+      # body) or `;` (no body) outside parentheses. A path variable
+      # `"/{id}"`, an annotation array `consumes = {..}` or `value = ".."`
+      # sits inside a literal or the annotation's parentheses.
+      code = lines[idx].gsub(/"(?:[^"\\]|\\.)*"/, "\"\"").gsub(/'(?:[^'\\]|\\.)'/, "' '").gsub(/\/\*.*?(?:\*\/|\z)/, " ").sub(/\/\/.*/, "")
+      code = "" if code.lstrip.starts_with?('*')
+      # Another declaration: whatever this one is, it ended above.
+      if code.matches?(/\bfun\b/)
+        break if declared
+        declared = true
+      end
       stop = code.size
       code.each_char_with_index do |char, i|
         case char
         when '(' then depth += 1
         when ')' then depth -= 1
-        when '{', '='
+        when '{', '=', ';'
           if depth <= 0
             stop = i
             break

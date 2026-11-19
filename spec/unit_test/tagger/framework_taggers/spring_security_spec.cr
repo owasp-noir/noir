@@ -299,6 +299,13 @@ describe "SpringSecurityTagger" do
                 "g"
 
             fun check(@Valid body: OrderDto) = body
+
+            @PostMapping("/orders/split")
+            fun split(@RequestParam sep: Char = '(', /* ( */ @RequestBody body: OrderDto): String {
+                return "s"
+            }
+
+            fun helper(@Valid body: OrderDto) = body
         }
         KOTLIN
 
@@ -312,12 +319,13 @@ describe "SpringSecurityTagger" do
         CodeLocator.instance.register_path(java_path)
         CodeLocator.instance.register_path(kotlin_path)
         endpoints = {
-          build_endpoint(java_path, 5, "/items/{id}", "PUT")    => true,
-          build_endpoint(java_path, 10, "/items", "POST")       => true,
-          build_endpoint(java_path, 17, "/plain/{id}", "PUT")   => false,
-          build_endpoint(java_path, 23, "/next", "POST")        => true,
-          build_endpoint(kotlin_path, 5, "/orders/{id}", "PUT") => true,
-          build_endpoint(kotlin_path, 8, "/orders/{id}", "GET") => false,
+          build_endpoint(java_path, 5, "/items/{id}", "PUT")       => true,
+          build_endpoint(java_path, 10, "/items", "POST")          => true,
+          build_endpoint(java_path, 17, "/plain/{id}", "PUT")      => false,
+          build_endpoint(java_path, 23, "/next", "POST")           => true,
+          build_endpoint(kotlin_path, 5, "/orders/{id}", "PUT")    => true,
+          build_endpoint(kotlin_path, 8, "/orders/{id}", "GET")    => false,
+          build_endpoint(kotlin_path, 14, "/orders/split", "POST") => false,
         }
 
         SpringSecurityTagger.new(global_options).perform(endpoints.keys)
