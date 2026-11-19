@@ -1,0 +1,11 @@
+service: orders
+provider:
+  name: aws
+  runtime: nodejs20.x
+  stage: ${opt:stage, 'dev'}
+functions:
+  - ${file(./functions/orders.yml)}
+  - health:
+      handler: src/health.ping
+      events:
+        - http: GET health
