@@ -5032,6 +5032,36 @@ KOTLIN_SEND_ERROR_PRE_HANDLE = <<-KT
   KT
 
 describe "SpringAuthTagger (Kotlin HandlerInterceptor shapes)" do
+  it "reads a Kotlin throw of an auth exception, which has no `new`, as a refusal" do
+    interceptor = <<-KT
+      class ApiKeyInterceptor : HandlerInterceptor {
+          override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+              if (request.getHeader("X-Api-Key") != "k") {
+                  throw UnauthorizedException("missing key")
+              }
+              return true
+          }
+      }
+      KT
+    kotlin_interceptor_guards(interceptor, "registry.addInterceptor(ApiKeyInterceptor())").should eq([
+      ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
+    ])
+  end
+
+  it "does not read a Kotlin throw of a non-auth exception as a refusal" do
+    interceptor = <<-KT
+      class ApiKeyInterceptor : HandlerInterceptor {
+          override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+              if (request.getHeader("X-Trace") == null) {
+                  throw IllegalStateException("no trace")
+              }
+              return true
+          }
+      }
+      KT
+    kotlin_interceptor_guards(interceptor, "registry.addInterceptor(ApiKeyInterceptor())").should eq([[] of String, [] of String])
+  end
+
   it "reads an AsyncHandlerInterceptor and a class header whose constructor spans many lines" do
     async = "class ApiKeyInterceptor : AsyncHandlerInterceptor {\n" + KOTLIN_SEND_ERROR_PRE_HANDLE
     long_header = <<-KT

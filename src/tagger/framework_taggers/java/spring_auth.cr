@@ -84,7 +84,7 @@ class SpringAuthTagger < FrameworkTagger
   # What a `preHandle` that turns the caller away does: a 401/403 status or
   # an auth exception. `return false` alone is not read: a rate limiter or
   # maintenance switch returns false too.
-  INTERCEPTOR_REJECTION_RE = /(?:setStatus\s*\(\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|sendError\s*\(\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|\bstatus\s*=\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|throw\s+new\s+(?:\w*(?:Auth(?!or)|AccessDenied|Unauthorized|Forbidden|Security)\w*|ResponseStatusException\s*\(\s*HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b)/i
+  INTERCEPTOR_REJECTION_RE = /(?:setStatus\s*\(\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|sendError\s*\(\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|\bstatus\s*=\s*(?:40[13]|(?:HttpServletResponse\.)?SC_(?:UNAUTHORIZED|FORBIDDEN)|HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b|throw\s+(?:new\s+|(?=(?-i:[A-Z])[\w$]*\s*\())(?:\w*(?:Auth(?!or)|AccessDenied|Unauthorized|Forbidden|Security)\w*|ResponseStatusException\s*\(\s*HttpStatus\.(?:UNAUTHORIZED|FORBIDDEN))\b)/i
 
   # Security config URL rules. `access { ... }` is a protected rule too;
   # `permitAll()` is intentionally tracked so a more-specific public matcher
