@@ -26,7 +26,7 @@ module Noir
     GUARDIAN_MINT  = /\bGuardian\.encode_and_sign!?\b/
     STRONG_REFUSAL = /(?<![\w.])40[13](?![\d.])|:unauthorized\b|:forbidden\b/
     WEAK_REFUSAL   = /(?<![\w.])404(?![\d.])|:not_found\b/
-    LOGIN_PATH     = /["'][^"'\n]*\/(?:[\w-]+\/)*(?:log[_-]?in|sign[_-]?in)\b|Routes\.\w*(?:session|login)\w*_path\b/i
+    LOGIN_PATH     = /["'][^"'\n]*\/(?:[\w-]+\/)*(?:log[_-]?in|sign[_-]?in)\b|(?:Routes|Helpers)\.\w*(?:session|log_?in|sign_?in)\w*_path\b/i
     HALT           = /\bhalt\b/
     # Plug's own `Plug.BasicAuth.basic_auth/2` answers 401 and halts.
     BASIC_AUTH = /\bPlug\.BasicAuth\.basic_auth\s*\(|(?<!def )(?<!defp )\bbasic_auth\s*\(\s*conn\b/
@@ -50,6 +50,7 @@ module Noir
       @clause_cache = Hash({String, String}, Array(String)).new
       @alias_cache = Hash(String, Hash(String, String)).new
       @import_cache = Hash(String, Array(String)).new
+      @scope_cache = Hash(String, Array(String)).new
       @verdicts = Hash({String, String}, Bool?).new
     end
 
@@ -137,6 +138,7 @@ module Noir
               indent = line.size - stripped.size
               buf = String::Builder.new
               buf << line << '\n'
+              closed = false
               j = i + 1
               while j < mod.last
                 nxt = lines[j]
@@ -144,7 +146,8 @@ module Noir
                 unless nstripped.empty?
                   nindent = nxt.size - nstripped.size
                   if nindent <= indent
-                    buf << nxt << '\n' if nstripped.starts_with?("end")
+                    closed = nstripped.starts_with?("end")
+                    buf << nxt << '\n' if closed
                     break
                   end
                   buf << nxt << '\n' unless nstripped.starts_with?('#')
@@ -152,7 +155,9 @@ module Noir
                 j += 1
               end
               bodies << buf.to_s
-              i = j
+              # A `, do:` clause ends at the next statement, which may be the
+              # next clause's head: resume on it rather than past it.
+              i = closed ? j : j - 1
             end
             i += 1
           end
@@ -205,11 +210,12 @@ module Noir
       modules[ref]?
     end
 
-    # `alias A.B.C`, `alias A.B.C, as: X`, `alias A.B.{C, D}` in a file.
+    # `alias A.B.C`, `alias A.B.C, as: X`, `alias A.B.{C, D}` in a file or
+    # in what its `use` statements inject.
     private def aliases(path : String) : Hash(String, String)
       @alias_cache[path] ||= begin
         map = {} of String => String
-        (@reader.call(path) || [] of String).each do |line|
+        scope_lines(path).each do |line|
           stripped = line.strip
           next unless stripped.starts_with?("alias ")
           if m = stripped.match(/\Aalias\s+([A-Z][\w.]*)\.\{([^}]*)\}/)
@@ -225,9 +231,30 @@ module Noir
       end
     end
 
+    # A file's lines followed by the `quote` bodies its `use AppWeb, :kind`
+    # statements expand (`AppWeb.controller/0`), whose `alias` and `import`
+    # lines apply to the file as if written there.
+    private def scope_lines(path : String) : Array(String)
+      @scope_cache[path] ||= begin
+        lines = @reader.call(path) || [] of String
+        injected = lines.flat_map do |line|
+          next [] of String unless (m = line.strip.match(/\Ause\s+([A-Z][\w.]*)\s*,\s*:(\w+)\b/)) && (mod = modules[m[1]]?)
+          clauses(mod, m[2]).flat_map(&.lines)
+        end
+        lines + injected
+      end
+    end
+
+    # `import A.B` and `import A.{B, C}`.
     private def imports(path : String) : Array(String)
-      @import_cache[path] ||= (@reader.call(path) || [] of String).compact_map do |line|
-        line.strip.match(/\Aimport\s+([A-Z][\w.]*)/).try(&.[1])
+      @import_cache[path] ||= scope_lines(path).flat_map do |line|
+        if m = line.strip.match(/\Aimport\s+([A-Z][\w.]*)\.\{([^}]*)\}/)
+          m[2].split(',').map(&.strip).reject(&.empty?).map { |part| "#{m[1]}.#{part}" }
+        elsif m = line.strip.match(/\Aimport\s+([A-Z][\w.]*\w)/)
+          [m[1]]
+        else
+          [] of String
+        end
       end
     end
 
