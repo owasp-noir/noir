@@ -451,24 +451,31 @@ module Noir
     # child) joined with the mount path. Only a child declared once in the
     # whole function, closures included (`:=`, `=`, `var`, parameters), and
     # mounted once, on such a parent, is taken; anything else keeps the
-    # routes as they were read.
+    # routes as they were read. A parent may be redeclared inside a closure
+    # (`r.Route("/x", func(r chi.Router) {...})`) when the mount is a
+    # statement of the function body itself, out of that closure's reach.
     private def local_mounts(function : LibTreeSitter::TSNode, body : LibTreeSitter::TSNode, source : String,
                              local_groups : Hash(String, String),
                              string_values : Hash(String, String)) : Hash(String, String)
       result = Hash(String, String).new
       return result unless Noir::TreeSitter.node_text(body, source).includes?(".Mount(")
       declarations = Hash(String, Int32).new(0)
+      # Parameters and body-level bindings only, closures left out.
+      own_declarations = Hash(String, Int32).new(0)
       top_level = Set(String).new
       params = Set(String).new
       built = Set(String).new
-      mounts = [] of {String, String, String}
+      mounts = [] of {String, String, String, Bool}
       count = ->(names : LibTreeSitter::TSNode?, top : Bool) do
         if names
           Noir::TreeSitter.each_named_child(names) do |id|
             next unless Noir::TreeSitter.node_type(id) == "identifier"
             name = Noir::TreeSitter.node_text(id, source)
             declarations[name] += 1
-            top_level << name if top
+            if top
+              top_level << name
+              own_declarations[name] += 1
+            end
           end
         end
         nil
@@ -476,7 +483,9 @@ module Noir
       Noir::TreeSitter.field(function, "parameters").try do |list|
         Noir::TreeSitter.each_named_child(list) do |decl|
           Noir::TreeSitter.each_named_child(decl) do |id|
-            params << Noir::TreeSitter.node_text(id, source) if Noir::TreeSitter.node_type(id) == "identifier"
+            next unless Noir::TreeSitter.node_type(id) == "identifier"
+            params << Noir::TreeSitter.node_text(id, source)
+            own_declarations[Noir::TreeSitter.node_text(id, source)] += 1
           end
           count.call(decl, false)
         end
@@ -484,6 +493,7 @@ module Noir
       body_start = LibTreeSitter.ts_node_start_byte(body)
       Noir::TreeSitter.walk(body) do |node|
         up = Noir::TreeSitter.parent(node)
+        up = Noir::TreeSitter.parent(up) if up && Noir::TreeSitter.node_type(up) == "expression_statement"
         up = Noir::TreeSitter.parent(up) if up && Noir::TreeSitter.node_type(up) == "statement_list"
         top = !up.nil? && LibTreeSitter.ts_node_start_byte(up) == body_start
         case Noir::TreeSitter.node_type(node)
@@ -519,24 +529,24 @@ module Noir
             end
           end
           if (name = child) && (prefix = path) && (prefix.lchop(UNREAD_PREFIX).empty? || prefix.lchop(UNREAD_PREFIX).starts_with?('/'))
-            mounts << {name, Noir::TreeSitter.node_text(operand, source), prefix.rstrip('/')}
+            mounts << {name, Noir::TreeSitter.node_text(operand, source), prefix.rstrip('/'), top}
           end
         end
       end
       function_level = (params | top_level).select { |name| declarations[name] == 1 }.to_set
-      mounts.select! do |(child, _, _)|
-        built.includes?(child) && declarations[child] == 1 && mounts.count { |(other, _, _)| other == child } == 1
+      mounts.select! do |(child, _, _, _)|
+        built.includes?(child) && declarations[child] == 1 && mounts.count { |(other, _, _, _)| other == child } == 1
       end
       children = mounts.map(&.[0]).to_set
       # Parents first: a mounted parent resolves before its children.
       8.times do
         progressed = false
-        mounts.each do |(child, parent, path)|
+        mounts.each do |(child, parent, path, top)|
           next if result.has_key?(child)
           if children.includes?(parent)
             next unless result.has_key?(parent)
           else
-            next unless function_level.includes?(parent)
+            next unless function_level.includes?(parent) || (top && own_declarations[parent] == 1)
           end
           result[child] = "#{result[parent]? || local_groups[parent]? || ""}#{path}"
           progressed = true
