@@ -115,6 +115,8 @@ module Analyzer::Ruby
     GRAPE_VERSION_DECL = /^\s*version\s+(['":\[%].*)$/
     # `mount Child` / `mount Child => "/path"` (capture 2: the mount path).
     GRAPE_MOUNT_DECL = /^\s*mount\s+([:\w][\w:]*)(?:\s*=>\s*['"]([^'"]*)['"])?/
+    # A Rails routes file's `mount API::Base, at: "/api"` / `=> "/api"`.
+    RAILS_MOUNT_DECL = /^\s*mount\s*\(?\s*(?:::)?([A-Z][\w:]*)\s*(?:,\s*at:\s*|=>\s*)['"]([^'"]*)['"]/
     # `version 'v1'` is path versioning unless `using:` names another
     # strategy. The argument must be a literal, so `version = x` is not one.
     GRAPE_VERSION_NOT_PATH = /\busing(?::|\s*=>)\s*['":]?(?!path\b)\w/
@@ -129,6 +131,8 @@ module Analyzer::Ruby
       mounts = {} of String => Array({String, String}) # mounter class -> {mounted class, mount path}
       mounted = Set(String).new                        # classes mounted by someone
       concerns = {} of String => String                # concern module -> its file
+      rails_mounts = {} of String => String            # full constant -> Rails mount path
+      full_names = {} of String => Set(String)         # class -> full constants it is defined as
 
       all_files.each do |path|
         next unless path.ends_with?(".rb")
@@ -146,6 +150,13 @@ module Analyzer::Ruby
         if content.includes?("ActiveSupport::Concern") && content.includes?("included do") && content.matches?(GRAPE_CONCERN_ROUTE)
           grape_concern_name(content).try { |name| concerns.put_if_absent(name) { path } }
         end
+        if rails_router_source?(content)
+          content.each_line do |raw_line|
+            next unless raw_line.includes?("mount") && (m = raw_line.match(RAILS_MOUNT_DECL))
+            rails_mounts.put_if_absent(m[1]) { m[2] }
+          end
+          next
+        end
         next unless content.includes?("class ") && content.includes?("<")
 
         # Edges are collected for every `class X < Y`, but the
@@ -158,7 +169,16 @@ module Analyzer::Ruby
         primary : String? = nil
         prefix = ""
         version = ""
+        modules = [] of {Int32, String}
         content.each_line do |raw_line|
+          if raw_line.includes?("module ") && (mm = raw_line.match(GRAPE_MODULE_DEF))
+            indent = raw_line.size - raw_line.lstrip.size
+            while (top = modules.last?) && top[0] >= indent
+              modules.pop
+            end
+            modules << {indent, mm[1].lchop("::")}
+            next
+          end
           # Cheap substring gates keep the per-line regex work off the
           # (vast) majority of lines in non-trivial repos — without them the
           # whole-tree pre-pass dominated Grape scan time on GitLab-scale
@@ -166,6 +186,11 @@ module Analyzer::Ruby
           if raw_line.includes?("class ")
             next unless m = raw_line.match(GRAPE_CLASS_EDGE)
             child = grape_simple_class_name(m[1])
+            indent = raw_line.size - raw_line.lstrip.size
+            while (top = modules.last?) && top[0] >= indent
+              modules.pop
+            end
+            (full_names[child] ||= Set(String).new) << (modules.map(&.[1]) << m[1].lchop("::")).join("::")
             super_full = m[2]
             if super_full.includes?("Grape::API")
               grape << child
@@ -215,7 +240,12 @@ module Analyzer::Ruby
       inherited = Hash(String, String).new("")
       roots = grape.select { |c| !mounted.includes?(c) }
       visited = Set(String).new
-      queue = roots.map { |r| {r, "", ""} }
+      # A root mounted from Rails routes starts under that mount path; the
+      # full constant must match, since the index keys on the last segment.
+      queue = roots.map do |r|
+        at = full_names[r]?.try { |fulls| rails_mounts[fulls.first]? if fulls.size == 1 }
+        {r, at || "", ""}
+      end
       until queue.empty?
         cls, mount_path, prefix = queue.shift
         next unless visited.add?(cls)
