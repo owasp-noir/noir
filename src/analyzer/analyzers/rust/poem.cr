@@ -19,7 +19,7 @@ module Analyzer::Rust
     # `RustEngine#crate_dependencies` — without this every Rust analyzer
     # sees every `.rs` file in the scan.
     protected def crate_dependencies : Array(String)
-      ["poem"]
+      ["poem", "poem-openapi"]
     end
 
     # `{file, fn line} => prefixes` for a fn of one file nested by another
