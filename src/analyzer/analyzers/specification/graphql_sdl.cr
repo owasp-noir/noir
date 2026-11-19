@@ -14,10 +14,13 @@ module Analyzer::Specification
     analyzer_for "graphql_sdl"
 
     def analyze
+      # A schema split across files is read as one per directory: grouping a
+      # whole monorepo would cross-wire unrelated schemas.
+      schemas = {} of String => Array(Tuple(String, String))
       each_spec_file(Noir::LocatorKeys::GRAPHQL_SDL) do |sdl_file|
-        content = read_file_content(sdl_file)
-        GraphqlSdlParser.parse(content, sdl_file).each { |ep| @result << ep }
+        (schemas[File.dirname(sdl_file)] ||= [] of Tuple(String, String)) << {sdl_file, read_file_content(sdl_file)}
       end
+      schemas.each_value { |sources| GraphqlSdlParser.parse_schema(sources).each { |ep| @result << ep } }
 
       @result
     end

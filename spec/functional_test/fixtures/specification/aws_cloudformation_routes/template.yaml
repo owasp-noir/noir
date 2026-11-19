@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Resources:
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties: {Name: rest}
+  RootGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !GetAtt RestApi.RootResourceId
+      HttpMethod: GET
+      AuthorizationType: NONE
+  Users:
+    Type: AWS::ApiGateway::Resource
+    Properties: {RestApiId: !Ref RestApi, ParentId: !GetAtt RestApi.RootResourceId, PathPart: users}
+  UsersGet:
+    Type: AWS::ApiGateway::Method
+    Properties: {RestApiId: !Ref RestApi, ResourceId: !Ref Users, HttpMethod: GET, AuthorizationType: NONE}
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties: {Name: http, ProtocolType: HTTP}
+  ItemsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: {ApiId: !Ref HttpApi, RouteKey: "GET /items/{id}"}
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: {ApiId: !Ref HttpApi, RouteKey: "$default"}
+  SamApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      DefinitionBody:
+        openapi: 3.0.1
+        info: {title: inline, version: "1"}
+        paths:
+          /inline-openapi:
+            post:
+              x-amazon-apigateway-integration: {type: aws_proxy, httpMethod: POST, uri: arn:aws:apigateway:us-east-1:lambda:path/x}
+          /inline-any:
+            x-amazon-apigateway-any-method:
+              x-amazon-apigateway-integration: {type: mock}

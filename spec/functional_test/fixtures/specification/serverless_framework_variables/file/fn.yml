@@ -1,0 +1,5 @@
+functions:
+  listUsers:
+    handler: src/users.list
+    events:
+      - http: GET users

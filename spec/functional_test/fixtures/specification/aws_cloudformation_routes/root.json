@@ -1,0 +1,15 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "JsonApi": {"Type": "AWS::ApiGateway::RestApi", "Properties": {"Name": "json"}},
+    "JsonRootPost": {
+      "Type": "AWS::ApiGateway::Method",
+      "Properties": {
+        "RestApiId": {"Ref": "JsonApi"},
+        "ResourceId": {"Fn::GetAtt": ["JsonApi", "RootResourceId"]},
+        "HttpMethod": "POST",
+        "AuthorizationType": "NONE"
+      }
+    }
+  }
+}

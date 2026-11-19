@@ -16,6 +16,8 @@ module Analyzer::Specification
     private def process_doc(data : YAML::Any, details : Details)
       if data_h = data.as_h?
         process_services(data_h[YAML::Any.new("services")]?, details)
+        # decK also takes routes at the top level, naming their service.
+        data_h[YAML::Any.new("routes")]?.try(&.as_a?).try &.each { |route| emit_route(route, details, "") }
         process_kic(data_h, details)
 
         if items = data_h[YAML::Any.new("items")]?.try(&.as_a?)
@@ -50,28 +52,31 @@ module Analyzer::Specification
       when "KongIngress"
         if spec_h = data_h[YAML::Any.new("spec")]?.try(&.as_h?)
           if route = spec_h[YAML::Any.new("route")]?
-            emit_route(route, details, upstream_from(spec_h))
+            emit_route(route, details, upstream_from(spec_h), catch_all: false)
           end
         end
       end
     end
 
-    private def emit_route(route_node : YAML::Any, details : Details, upstream : String)
+    private def emit_route(route_node : YAML::Any, details : Details, upstream : String, catch_all : Bool = true)
       route_h = route_node.as_h?
       return unless route_h
 
-      emit_route_hash(route_h, details, upstream)
+      emit_route_hash(route_h, details, upstream, catch_all)
     end
 
-    private def emit_route_hash(route_h : Hash(YAML::Any, YAML::Any), details : Details, upstream : String)
+    # `catch_all`: a decK route matched by host or method alone takes every
+    # path. A KIC `KongIngress` route only overrides the Ingress's paths.
+    private def emit_route_hash(route_h : Hash(YAML::Any, YAML::Any), details : Details, upstream : String, catch_all : Bool = false)
       paths = array_of_strings(route_h[YAML::Any.new("paths")]?)
-      return if paths.empty?
-
       # Kong routes without an explicit `methods` filter match all methods.
       # Noir represents that behavior with the synthetic `ANY` method label.
       methods = array_of_strings(route_h[YAML::Any.new("methods")]?).map(&.upcase)
-      methods = ["ANY"] if methods.empty?
       hosts = array_of_strings(route_h[YAML::Any.new("hosts")]?)
+      paths = ["/"] if catch_all && !route_h.has_key?(YAML::Any.new("paths")) && !(hosts.empty? && methods.empty?)
+      return if paths.empty?
+
+      methods = ["ANY"] if methods.empty?
 
       paths.each do |path|
         # We currently model Kong route path mode as regex (`~...`) vs non-regex.

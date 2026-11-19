@@ -1,0 +1,22 @@
+app.example.com {
+	tls /etc/caddy/cert.pem /etc/caddy/key.pem
+	root /srv/www
+	reverse_proxy /api/* localhost:9001
+	php_fastcgi /blog/* unix//run/php/php-fpm.sock
+	@ws path /ws /socket/*
+	reverse_proxy @ws localhost:9002
+	@admin {
+		path /admin/*
+		method GET POST
+	}
+	reverse_proxy @admin localhost:9003
+	file_server /assets/* {
+		root /srv/assets
+	}
+	handle /app/* {
+		reverse_proxy /app/v2/* localhost:9004
+	}
+	handle_path /strip/* {
+		reverse_proxy /inner/* localhost:9005
+	}
+}

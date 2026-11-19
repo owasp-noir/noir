@@ -1,0 +1,5 @@
+service: users
+provider:
+  name: aws
+  stage: ${sls:stage}
+functions: ${file(./fn.yml):functions}

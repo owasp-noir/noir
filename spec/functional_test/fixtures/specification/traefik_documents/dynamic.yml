@@ -1,0 +1,10 @@
+http:
+  routers:
+    api:
+      rule: "Host(`a.example.com`) && PathRegexp(`^/api/(v1|v2)/items`)"
+      service: api
+    legacy:
+      rule: "Path(`/legacy/{name:(foo|bar)}`)"
+      service: api
+  services:
+    api: {loadBalancer: {servers: [{url: "http://10.0.0.1"}]}}

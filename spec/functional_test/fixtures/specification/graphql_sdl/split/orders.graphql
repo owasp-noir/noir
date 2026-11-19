@@ -1,0 +1,4 @@
+extend type Query {
+  orders(page: PageInput): [Order]
+}
+type Order { id: ID! }

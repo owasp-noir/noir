@@ -26,6 +26,14 @@ describe "Detect Nginx config" do
     instance.detect("sites-enabled/api.conf", src).should be_true
   end
 
+  it "detects extension-less sites-available vhosts and .j2 templates" do
+    instance.detect("deploy/nginx/sites-available/myapp", src).should be_true
+    instance.detect("deploy/nginx/sites-enabled/myapp", src).should be_true
+    instance.detect("roles/web/templates/vhost.conf.j2", src).should be_true
+    instance.detect("deploy/nginx/sites-available/README", "Enable a site with ln -s.\n").should be_false
+    instance.detect("deploy/nginx/myapp", src).should be_false
+  end
+
   it "detects nginx include fragments without server blocks" do
     instance.detect("h5bp/location/security_file_access.conf", <<-CONF).should be_true
       location ~* /\\.(?!well-known\\/) {

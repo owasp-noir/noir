@@ -48,3 +48,24 @@ FunctionalTester.new("fixtures/specification/graphql_sdl/extend_federation/", {
     Param.new("quantity", "", "json"),
   ]),
 ]).perform_tests
+
+# One schema split across a directory: `schema.graphql` names the custom
+# roots and declares `PageInput`; the root types and the fields that take it
+# live in the other files. `orders.graphql` has no `schema` block of its own
+# and keeps its `extend type Query`.
+FunctionalTester.new("fixtures/specification/graphql_sdl/split/", {
+  :techs     => 1,
+  :endpoints => 3,
+}, [
+  Endpoint.new("/graphql#Query.users", "POST", [
+    Param.new("page.first", "", "json"),
+    Param.new("page.after", "", "json"),
+  ]),
+  Endpoint.new("/graphql#Mutation.createUser", "POST", [
+    Param.new("name", "", "json"),
+  ]),
+  Endpoint.new("/graphql#Query.orders", "POST", [
+    Param.new("page.first", "", "json"),
+    Param.new("page.after", "", "json"),
+  ]),
+]).perform_tests

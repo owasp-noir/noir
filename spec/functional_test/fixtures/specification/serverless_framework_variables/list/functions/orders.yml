@@ -1,0 +1,6 @@
+listOrders:
+  handler: src/orders.list
+  events:
+    - http:
+        path: orders
+        method: get

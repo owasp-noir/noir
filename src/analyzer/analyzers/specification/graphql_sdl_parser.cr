@@ -20,6 +20,8 @@ module Analyzer::Specification
       "Subscription" => "subscription",
     }
 
+    DEFAULT_ROOT_NAMES = {"Query" => "Query", "Mutation" => "Mutation", "Subscription" => "Subscription"}
+
     private struct InputField
       getter name : String
       getter type : String
@@ -39,8 +41,32 @@ module Analyzer::Specification
       sanitized = strip_comments(content)
       root_names = parse_schema_block(sanitized)
       input_types = parse_input_object_types(sanitized)
-      visit_type_blocks(sanitized, file_path, root_names, default_path, tag_source,
+      visit_type_blocks(sanitized, file_path, root_names.to_a, default_path, tag_source,
         line_offset, input_types, endpoints)
+      endpoints
+    end
+
+    # Several SDL files of one schema (`sources`: path, content). A root type
+    # one file's `schema` block names, and an input type any file declares,
+    # apply to every file; a file's own `schema` block and inputs come first.
+    def parse_schema(sources : Array(Tuple(String, String)),
+                     tag_source : String = "graphql_sdl_analyzer") : Array(Endpoint)
+      files = sources.map do |(path, content)|
+        sanitized = strip_comments(content)
+        {path, sanitized, parse_schema_block(sanitized), parse_input_object_types(sanitized)}
+      end
+      shared_roots = files.find { |file| file[2] != DEFAULT_ROOT_NAMES }.try(&.[2])
+      shared_inputs = files.reduce({} of String => Array(InputField)) { |acc, file| acc.merge(file[3]) }
+
+      endpoints = [] of Endpoint
+      files.each do |(path, sanitized, root_names, input_types)|
+        roots = root_names.to_a
+        if shared_roots && root_names == DEFAULT_ROOT_NAMES
+          shared_roots.each { |kind, name| roots << {kind, name} unless name == kind }
+        end
+        visit_type_blocks(sanitized, path, roots, DEFAULT_GRAPHQL_PATH, tag_source,
+          0, input_types.empty? ? shared_inputs : shared_inputs.merge(input_types), endpoints)
+      end
       endpoints
     end
 
@@ -63,7 +89,7 @@ module Analyzer::Specification
 
     # Returns the mapping of root operation type → root name (custom or default).
     private def parse_schema_block(content : String) : Hash(String, String)
-      mapping = {"Query" => "Query", "Mutation" => "Mutation", "Subscription" => "Subscription"}
+      mapping = DEFAULT_ROOT_NAMES.dup
 
       if match = content.match(/\bschema\b\s*(?:@[\w]+(?:\([^)]*\))?\s*)*\{/m)
         brace_pos = content.index('{', match.begin(0) || 0)
@@ -89,12 +115,12 @@ module Analyzer::Specification
     end
 
     private def visit_type_blocks(sanitized : String, file_path : String,
-                                  root_names : Hash(String, String),
+                                  roots : Array(Tuple(String, String)),
                                   default_path : String, tag_source : String,
                                   line_offset : Int32,
                                   input_types : Hash(String, Array(InputField)),
                                   endpoints : Array(Endpoint))
-      root_alternation = root_names.values.uniq!.map { |n| Regex.escape(n) }.join("|")
+      root_alternation = roots.map(&.[1]).uniq!.map { |n| Regex.escape(n) }.join("|")
       pattern = Regex.new("\\b(?:extend\\s+)?type\\s+(#{root_alternation})\\b(?:\\s+implements\\s+[^{]+)?\\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\\([^)]*\\))?\\s*)*\\{")
 
       # Cluster entry point: materialize the char array once for every
@@ -104,7 +130,7 @@ module Analyzer::Specification
 
       sanitized.scan(pattern) do |match|
         type_name = match[1]
-        root_op_name = root_names.find { |_, custom| custom == type_name }
+        root_op_name = roots.find { |root| root[1] == type_name }
         next if root_op_name.nil?
         root_kind = root_op_name[0]
 

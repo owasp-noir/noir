@@ -6,32 +6,38 @@ module Analyzer::Specification
 
     METHOD_ANY = "ANY"
 
+    # `${opt:stage, 'dev'}` deploys to its literal fallback unless the CLI
+    # names another stage; a variable without one (`${sls:stage}`) names no
+    # stage the scan can know, so no prefix is better than a made-up one.
+    STAGE_FALLBACK_RE = /\A\$\{.*,\s*['"]([^'"]*)['"]\s*\}+\z/
+    # `${file(./functions.yml)}`, optionally `:key` into that file.
+    FILE_REF_RE = /\A\$\{file\(([^)]+)\)(?::([\w.-]+))?\}\z/
+
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC) do |path, details|
         content = read_file_content(path)
         if path.ends_with?(".json")
           process_doc(parse_json_lenient(content), details)
         else
-          process_doc(YAML.parse(content), details)
+          process_doc(YAML.parse(content), details, path)
         end
       end
 
       @result
     end
 
-    private def process_doc(data : YAML::Any, details : Details)
+    private def process_doc(data : YAML::Any, details : Details, path : String)
       root = data.as_h?
       return unless root
 
-      stage = string_value(root[YAML::Any.new("provider")]?, "stage")
-      functions = root[YAML::Any.new("functions")]?.try(&.as_h?)
-      return unless functions
-
-      functions.each_value do |fn_node|
-        fn_h = fn_node.as_h?
-        next unless fn_h
-        events = fn_h[YAML::Any.new("events")]?.try(&.as_a?) || [] of YAML::Any
-        events.each { |event| process_event(event, details, stage) }
+      stage = resolve_stage(string_value(root[YAML::Any.new("provider")]?, "stage"))
+      function_maps(root[YAML::Any.new("functions")]?, path).each do |functions|
+        functions.each_value do |fn_node|
+          fn_h = fn_node.as_h?
+          next unless fn_h
+          events = fn_h[YAML::Any.new("events")]?.try(&.as_a?) || [] of YAML::Any
+          events.each { |event| process_event(event, details, stage) }
+        end
       end
     end
 
@@ -39,15 +45,40 @@ module Analyzer::Specification
       root = data.as_h?
       return unless root
 
-      stage = root["provider"]?.try(&.as_h?).try(&.["stage"]?).try(&.as_s?) || ""
-      functions = root["functions"]?.try(&.as_h?)
-      return unless functions
+      stage = resolve_stage(root["provider"]?.try(&.as_h?).try(&.["stage"]?).try(&.as_s?) || "")
+      node = root["functions"]?
+      function_maps = node.try(&.as_a?).try(&.compact_map(&.as_h?)) || [node.try(&.as_h?)].compact
 
-      functions.each_value do |fn_node|
-        fn_h = fn_node.as_h?
-        next unless fn_h
-        events = fn_h["events"]?.try(&.as_a?) || [] of JSON::Any
-        events.each { |event| process_event(event, details, stage) }
+      function_maps.each do |functions|
+        functions.each_value do |fn_node|
+          fn_h = fn_node.as_h?
+          next unless fn_h
+          events = fn_h["events"]?.try(&.as_a?) || [] of JSON::Any
+          events.each { |event| process_event(event, details, stage) }
+        end
+      end
+    end
+
+    private def resolve_stage(stage : String) : String
+      return stage unless stage.includes?("${")
+      stage.match(STAGE_FALLBACK_RE).try(&.[1]) || ""
+    end
+
+    # `functions` as a mapping, a list of mappings, or `${file(...)}` (the
+    # whole value or a list item). A referenced file's own `${file()}` items
+    # are not followed.
+    private def function_maps(node : YAML::Any?, path : String, follow : Bool = true) : Array(Hash(YAML::Any, YAML::Any))
+      if h = node.try(&.as_h?)
+        [h]
+      elsif items = node.try(&.as_a?)
+        items.flat_map { |item| function_maps(item, path, follow) }
+      elsif follow && (m = node.try(&.as_s?).try(&.match(FILE_REF_RE)))
+        target = external_yaml_doc(path, m[1].strip.strip("'\""))
+        value = target.try(&.root)
+        m[2]?.try(&.split('.').each { |key| value = value.try(&.as_h?).try(&.[YAML::Any.new(key)]?) })
+        function_maps(value, path, false)
+      else
+        [] of Hash(YAML::Any, YAML::Any)
       end
     end
 
