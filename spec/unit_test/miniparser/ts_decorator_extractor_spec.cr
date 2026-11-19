@@ -31,4 +31,21 @@ describe Noir::TsDecoratorExtractor do
       TS
     Noir::TsDecoratorExtractor.extract(source, "c.controller.ts").first.methods.map(&.name).should eq(["a", "b"])
   end
+
+  it "records a plain-name superclass, generic or not" do
+    source = <<-TS
+      @Controller('users')
+      export class UsersController extends BaseController<User> {}
+
+      @Controller('mixed')
+      export class MixedController extends withAudit(Base) {}
+
+      abstract class Base {
+        @Get('ping')
+        ping() {}
+      }
+      TS
+    classes = Noir::TsDecoratorExtractor.extract(source, "users.controller.ts")
+    classes.map(&.superclass).should eq(["BaseController", nil, nil])
+  end
 end

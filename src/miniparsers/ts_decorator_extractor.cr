@@ -29,9 +29,10 @@ module Noir::TsDecoratorExtractor
     end
   end
 
-  # A class with a decorator of its own or a decorated method.
+  # A class with a decorator of its own or a decorated method. `superclass`
+  # is the `extends` target when it is a plain name.
   record ClassDecl, name : String, decorators : Array(Decorator), methods : Array(Method),
-    row : Int32, end_row : Int32 do
+    row : Int32, end_row : Int32, superclass : String? = nil do
     def start_row : Int32
       decorators.first?.try(&.row) || row
     end
@@ -85,7 +86,19 @@ module Noir::TsDecoratorExtractor
     end
 
     name = Noir::TreeSitter.field(node, "name").try { |n| Noir::TreeSitter.node_text(n, source) } || ""
-    ClassDecl.new(name, decorators, methods, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))
+    ClassDecl.new(name, decorators, methods, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node), superclass(node, source))
+  end
+
+  private def self.superclass(node : LibTreeSitter::TSNode, source : String) : String?
+    Noir::TreeSitter.each_named_child(node) do |heritage|
+      next unless Noir::TreeSitter.node_type(heritage) == "class_heritage"
+      Noir::TreeSitter.each_named_child(heritage) do |clause|
+        next unless Noir::TreeSitter.node_type(clause) == "extends_clause"
+        value = Noir::TreeSitter.field(clause, "value") || return
+        return Noir::TreeSitter.node_text(value, source) if Noir::TreeSitter.node_type(value) == "identifier"
+      end
+    end
+    nil
   end
 
   private def self.read_method(node : LibTreeSitter::TSNode, source : String, decorators : Array(Decorator)) : Method
