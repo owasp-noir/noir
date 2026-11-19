@@ -35,3 +35,23 @@ public class LegacyController : Controller
     [Route(MissingRoutes.Index)]
     public IActionResult Index() => View();
 }
+
+// A controller route the scan can read only in part (`PayjoinClient` and
+// `ExternalRoutes` come from a package): it keeps its readable parts, the
+// rest becomes a placeholder, tagged. It is never the site root.
+[Route("{cryptoCode}/" + PayjoinClient.BIP21EndpointKey)]
+public class PayJoinEndpointController : ControllerBase
+{
+    [HttpPost("")]
+    public IActionResult Submit(string cryptoCode) => Ok();
+}
+
+[Route(ExternalRoutes.Base)]
+public class ExternalController : ControllerBase
+{
+    [HttpGet("status")]
+    public IActionResult Status() => Ok();
+
+    [HttpGet("/external/ping")]
+    public IActionResult Ping() => Ok();
+}

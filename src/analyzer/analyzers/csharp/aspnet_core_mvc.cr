@@ -235,15 +235,15 @@ module Analyzer::CSharp
     # `~/x`) stays as it is; `[Route("")]`, kept as `/`, is the prefix itself.
     # ponytail: only controllers with their own `[Route]` take the prefix; a
     # convention that also roots route-less controllers is not modelled.
-    private def prefixed_class_routes(routes : Array(String), prefix : String?) : Array(String)
+    private def prefixed_class_routes(routes : Array(ClassRoute), prefix : String?) : Array(ClassRoute)
       return routes unless prefix
-      routes.map do |route|
+      routes.map do |route, unread|
         if route == "/"
-          prefix
+          {prefix, unread}
         elsif route.starts_with?('/') || route.starts_with?("~/")
-          route
+          {route, unread}
         else
-          "#{prefix}/#{route}"
+          {"#{prefix}/#{route}", unread}
         end
       end
     end
@@ -623,7 +623,10 @@ module Analyzer::CSharp
     end
 
     # The `[Route]` templates and `[Area]` name a controller class declares.
-    alias ClassRoutes = Tuple(Array(String), String?)
+    # A template is `{template, unread}`: `unread` when it is a constant the
+    # analyzer can only read in part (see `partial_route_template`).
+    alias ClassRoute = Tuple(String, Bool)
+    alias ClassRoutes = Tuple(Array(ClassRoute), String?)
 
     # The project's own route attributes (`[V3ApiController("series")]`,
     # `[RestGetById]`), read from their definitions.
@@ -667,27 +670,40 @@ module Analyzer::CSharp
     # actions at `/` and, being the class's own, replaces an inherited
     # `[Route("[controller]")]`, so it is kept as `/`. `[Route(Constants.
     # PrefixApi)]`: a constant the scan declares is read; one it cannot read
-    # contributes no route.
+    # is still the controller's route, kept with placeholders.
     private def class_header_routes(lexer : Noir::CSharpLexer, type : Noir::CSharpType, file : String) : ClassRoutes
-      routes = [] of String
-      custom = [] of String
+      routes = [] of ClassRoute
+      custom = [] of ClassRoute
       area = nil
       scope = route_scope_for(file, @project_roots)
       type.decl.attributes.each do |attr|
         case attr.name
         when "Route"
           arg = template_arg(attr) || next
-          template = route_template(arg, file)
-          routes << (template.empty? ? "/" : template) if template
+          if template = route_template(arg, file)
+            routes << {template.empty? ? "/" : template, false}
+          else
+            routes << {partial_route_template(arg.text, file), true}
+          end
         when "Area"
           area ||= attr.argument("areaName").try { |arg| csharp_string_value(arg.text, file) }
         else
           found = custom_route(attr, scope) || next
           template = found.template
-          custom << (template.empty? ? "/" : template) if found.verb.nil? && template
+          custom << {template.empty? ? "/" : template, false} if found.verb.nil? && template
         end
       end
       {routes + custom, area.presence}
+    end
+
+    # `"{cryptoCode}/" + PayjoinClient.BIP21EndpointKey` with the constant
+    # outside the scan: each readable operand of the concatenation, each
+    # unreadable one a `{BIP21EndpointKey}` placeholder named after it.
+    private def partial_route_template(expr : String, file : String) : String
+      operands = concatenation_operands(expr.strip) || [expr]
+      operands.join do |operand|
+        csharp_string_value(operand, file) || "{#{operand.strip.match(/\A[\w.]*?(\w+)\z/).try(&.[1]) || "route"}}"
+      end
     end
 
     # `[Route]` and `[Area]` are `Inherited = true`: a controller without its
@@ -696,7 +712,7 @@ module Analyzer::CSharp
                                        index : Hash(String, Array(Noir::CSharpType)),
                                        class_routes : Hash(Noir::CSharpType, ClassRoutes),
                                        visited = Set(String).new) : ClassRoutes
-      routes = parts.flat_map { |part| class_routes[part]?.try(&.[0]) || [] of String }.uniq!
+      routes = parts.flat_map { |part| class_routes[part]?.try(&.[0]) || [] of ClassRoute }.uniq!
       area = parts.compact_map { |part| class_routes[part]?.try(&.[1]) }.first?
       return {routes, area} if !routes.empty? && area
       return {routes, area} unless visited.add?(parts.first.name)
@@ -824,7 +840,7 @@ module Analyzer::CSharp
       attribute_scope = route_scope_for(file, @project_roots)
       # One route per controller `[Route]`; none falls back to conventional routing.
       controller_routes, area = class_routes
-      controller_routes = [""] if controller_routes.empty?
+      controller_routes = [{"", false}] if controller_routes.empty?
 
       type.decl.methods.each do |method|
         # An open generic method is never an action.
@@ -845,7 +861,7 @@ module Analyzer::CSharp
         selectors.each do |emit_verb, emit_route, unresolved|
           parameters = extract_parameters(method.params, emit_verb, file, lines, masked_lines, api_controller)
           parameters = merge_params(parameters, body_params, emit_verb)
-          routes = controller_routes.flat_map do |controller_route|
+          routes = controller_routes.flat_map do |controller_route, unread_class_route|
             effective_action_route = emit_route || ""
             # An empty template of the action's own (`[Route("")]`) is the
             # controller route, or the site root without one.
@@ -854,10 +870,12 @@ module Analyzer::CSharp
             elsif !controller_route.empty? && controller_route == effective_action_route
               effective_action_route = ""
             end
+            overrides = effective_action_route.starts_with?('/') || effective_action_route.starts_with?("~/")
             resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns, area)
-          end.uniq!
+              .map { |route| {route, unread_class_route && !overrides} }
+          end.uniq!(&.[0])
 
-          routes.each do |route|
+          routes.each do |route, unread_class_route|
             details = Details.new(PathInfo.new(file, method.line + 1))
             endpoint = Endpoint.new(route, emit_verb, details)
             endpoint.handler = handler
@@ -870,7 +888,7 @@ module Analyzer::CSharp
               endpoint.params << param
             end
 
-            endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if unresolved
+            endpoint.add_tag(Tag.new("unresolved-route", UNRESOLVED_ROUTE_DESCRIPTION, TAGGER)) if unresolved || unread_class_route
             attach_csharp_callees(endpoint, body_block, file, line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
             @result << endpoint
           end
