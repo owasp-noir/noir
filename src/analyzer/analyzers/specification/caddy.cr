@@ -15,6 +15,11 @@ module Analyzer::Specification
     PATH_RE          = /^path\s+(.+)/
     HANDLE_REF_RE    = /^(?:handle(?:_path)?|route)\s+(@[A-Za-z_]\w*)\s*\{?/
     SITE_BLOCK_RE    = /^([A-Za-z0-9_.:\/@*?-]+(?:\s*,\s*[A-Za-z0-9_.:\/@*?-]+)*)\s*\{$/
+    # `reverse_proxy /api/* localhost:9001`: any directive's first argument
+    # may be its matcher token.
+    DIRECTIVE_RE = /^([a-z_][a-z0-9_]*)\s+(\S+)(\s+\S)?/
+    # Directives whose first argument is a file or a name, never a matcher.
+    NON_MATCHER_DIRECTIVES = %w[import tls bind log fs handle_errors]
 
     def analyze
       each_spec_file_with_details(Noir::LocatorKeys::CADDY_SPEC) do |path, details|
@@ -40,17 +45,26 @@ module Analyzer::Specification
       current_matcher : String? = nil
       depth = 0
       matcher_depth = -1
+      # Depths whose lines are directives of a site or of a `handle` /
+      # `route` block. A directive's own sub-block (`file_server { root
+      # /srv }`) holds sub-directives, not matchers.
+      routing_depths = [] of Int32
 
       lines.each_with_index do |raw, idx|
         line = strip_comment(raw).strip
         next if line.empty?
         line_no = idx + 1
+        while (top = routing_depths.last?) && depth < top
+          routing_depths.pop
+        end
+        routing = routing_depths.last? == depth
 
         # Site address line is only meaningful at the file root.
         if depth == 0
           if sm = SITE_BLOCK_RE.match(line)
             site_hosts = sm[1].split(/\s*,\s*/).reject(&.empty?)
             depth += brace_delta(line)
+            routing_depths << depth if depth > 0
             next
           end
         end
@@ -58,21 +72,20 @@ module Analyzer::Specification
         if m = NAMED_MATCH_OPEN.match(line)
           name = m[1]
           matchers[name] ||= NamedMatcher.new
-          current_matcher = name
-          matcher_depth = depth + 1
+          rest = line[m.end..].strip
+          if rest.empty? || rest == "{"
+            current_matcher = name
+            matcher_depth = depth + 1
+          else
+            # `@ws path /ws /socket/*`: the one-line form.
+            add_matcher_condition(matchers[name], rest.lchop('{').rchop('}').strip)
+          end
           depth += brace_delta(line)
           next
         end
 
         if active_matcher = current_matcher
-          if mm = METHOD_RE.match(line)
-            mm[1].split(/\s+/).reject(&.empty?).each { |x| matchers[active_matcher].methods << x.upcase }
-            depth += brace_delta(line)
-            current_matcher = nil if depth < matcher_depth
-            next
-          end
-          if pm = PATH_RE.match(line)
-            pm[1].split(/\s+/).reject(&.empty?).each { |x| matchers[active_matcher].paths << x }
+          if add_matcher_condition(matchers[active_matcher], line)
             depth += brace_delta(line)
             current_matcher = nil if depth < matcher_depth
             next
@@ -80,14 +93,9 @@ module Analyzer::Specification
         end
 
         if m = HANDLE_REF_RE.match(line)
-          matcher = matchers[m[1]]?
-          if matcher && !matcher.paths.empty?
-            methods = matcher.methods.empty? ? [METHOD_ANY] : matcher.methods
-            matcher.paths.each do |p|
-              methods.each { |method| emit_endpoint(p, method, "handle", site_hosts, source_path, line_no) }
-            end
-          end
+          emit_matcher_ref(matchers[m[1]]?, "handle", site_hosts, source_path, line_no)
           depth += brace_delta(line)
+          routing_depths << depth if routing && !line.starts_with?("handle_path") && brace_delta(line) > 0
           next
         end
 
@@ -95,12 +103,16 @@ module Analyzer::Specification
           kind = m[1]? == "_path" ? "handle_path" : "handle"
           emit_endpoint(m[2], METHOD_ANY, kind, site_hosts, source_path, line_no) if path_matcher?(m[2])
           depth += brace_delta(line)
+          # `handle_path` strips its prefix, so a matcher inside it is not the
+          # request path.
+          routing_depths << depth if routing && kind == "handle" && brace_delta(line) > 0
           next
         end
 
         if m = ROUTE_OPEN_RE.match(line)
           emit_endpoint(m[1], METHOD_ANY, "route", site_hosts, source_path, line_no) if path_matcher?(m[1])
           depth += brace_delta(line)
+          routing_depths << depth if routing && brace_delta(line) > 0
           next
         end
 
@@ -123,12 +135,42 @@ module Analyzer::Specification
           next
         end
 
+        if routing && (m = DIRECTIVE_RE.match(line)) && !NON_MATCHER_DIRECTIVES.includes?(m[1])
+          token = m[2]
+          if token.starts_with?('@')
+            emit_matcher_ref(matchers[token]?, m[1], site_hosts, source_path, line_no)
+          elsif token.starts_with?('/') && m[3]?
+            # A lone `/path` argument (`root /srv`) is the directive's value.
+            emit_endpoint(token, METHOD_ANY, m[1], site_hosts, source_path, line_no)
+          end
+        end
+
         depth += brace_delta(line)
         current_matcher = nil if current_matcher && depth < matcher_depth
         if depth <= 0
           depth = 0
           site_hosts = [] of String
         end
+      end
+    end
+
+    # `method GET POST` / `path /a /b/*` inside a named matcher.
+    private def add_matcher_condition(matcher : NamedMatcher, text : String) : Bool
+      if mm = METHOD_RE.match(text)
+        mm[1].split(/\s+/).reject(&.empty?).each { |x| matcher.methods << x.upcase }
+      elsif pm = PATH_RE.match(text)
+        pm[1].split(/\s+/).reject(&.empty?).each { |x| matcher.paths << x }
+      else
+        return false
+      end
+      true
+    end
+
+    private def emit_matcher_ref(matcher : NamedMatcher?, origin : String, hosts : Array(String), source_path : String, line : Int32)
+      return unless matcher
+      methods = matcher.methods.empty? ? [METHOD_ANY] : matcher.methods
+      matcher.paths.each do |p|
+        methods.each { |method| emit_endpoint(p, method, origin, hosts, source_path, line) }
       end
     end
 
