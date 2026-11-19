@@ -66,6 +66,8 @@ class CrystalAuthTagger < FrameworkTagger
   KEMAL_HANDLER_IDENTITY = /request\.headers\[\s*"authorization"|request\.cookies\b|\.session\.|current_user|basic_auth/i
   KEMAL_HANDLER_REFUSAL  = /status_code\s*(?:=|:)\s*40[13]\b|\bhalt\b[^\n]*\b40[13]\b|redirect[^\n]*(?:log_?in|sign_?in)/i
 
+  TEST_PATH = %r{(?:\A|/)spec/|_spec\.cr\z}
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @kemal_handlers = [] of KemalHandler
@@ -101,11 +103,12 @@ class CrystalAuthTagger < FrameworkTagger
   end
 
   private def scan_kemal_handlers : Array(KemalHandler)
-    files = collect_files_by_extension(".cr")
+    files = collect_files_by_extension(".cr").reject { |file| base_relative_path(file).matches?(TEST_PATH) }
     installed = Hash(String, Array(String?)).new
     files.each do |file|
       next unless (content = read_file(file)) && content.includes?("add_handler")
-      content.scan(/\badd_handler\s*\(?\s*(\w+)\.new\b/) do |m|
+      content.each_line do |line|
+        next unless m = line.match(/\A\s*add_handler\s*\(?\s*(\w+)\.new\b/)
         (installed[m[1]] ||= [] of String?) << nearest_project_root(file, SHARD_MANIFEST)
       end
     end

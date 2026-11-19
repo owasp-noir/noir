@@ -317,6 +317,56 @@ describe "CrystalAuthTagger" do
     FileUtils.rm_rf(tmpdir) if tmpdir
   end
 
+  it "ignores add_handler lines in comments and spec files" do
+    tmpdir = File.tempname("kemal_handler_scope")
+    Dir.mkdir_p(File.join(tmpdir, "spec"))
+    handlers = File.join(tmpdir, "handlers.cr")
+    app = File.join(tmpdir, "app.cr")
+    app_spec = File.join(tmpdir, "spec", "app_spec.cr")
+    File.write(File.join(tmpdir, "shard.yml"), "name: app\n")
+    File.write(handlers, <<-CR)
+      class CommentedOut < Kemal::Handler
+        only ["/commented"]
+
+        def call(env)
+          return call_next env unless only_match? env
+          return call_next env if env.request.headers["Authorization"]?
+          env.response.status_code = 401
+        end
+      end
+
+      class SpecOnly < Kemal::Handler
+        only ["/speconly"]
+
+        def call(env)
+          return call_next env unless only_match? env
+          return call_next env if env.request.headers["Authorization"]?
+          env.response.status_code = 401
+        end
+      end
+      CR
+    File.write(app, <<-CR)
+      # add_handler CommentedOut.new
+      get "/commented" do
+      end
+      CR
+    File.write(app_spec, "add_handler SpecOnly.new\n")
+
+    [handlers, app, app_spec].each { |file| CodeLocator.instance.register_path(file) }
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    endpoints = ["/commented", "/speconly"].map do |url|
+      details = Details.new(PathInfo.new(app, 2))
+      details.technology = "crystal_kemal"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+
+    CrystalAuthTagger.new(noir_options).perform(endpoints)
+    endpoints.each(&.tags.should(be_empty))
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
+  end
+
   it "returns correct target_techs" do
     CrystalAuthTagger.target_techs.should contain("crystal_kemal")
     CrystalAuthTagger.target_techs.should contain("crystal_amber")
