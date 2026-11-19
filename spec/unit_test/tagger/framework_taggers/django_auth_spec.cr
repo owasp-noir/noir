@@ -2284,7 +2284,7 @@ describe "DjangoAuthTagger" do
     end
   end
 
-  it "reads every operand of a MIDDLEWARE concatenation, and no call result" do
+  it "reads every operand of a MIDDLEWARE concatenation, and no list after the statement" do
     CodeLocator.instance.clear_all
     tmpdir = File.tempname("django_mw_concat")
     begin
@@ -2308,6 +2308,54 @@ describe "DjangoAuthTagger" do
       a.tags.map(&.description).should eq(wall)
       b.tags.map(&.description).should eq(wall)
       c.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "reads the lists inside a call wrapping MIDDLEWARE, and a backslash continuation" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("django_mw_call")
+    begin
+      wall = "\"core.middleware.Wall\""
+      {"a_svc" => "MIDDLEWARE = list(filter(None, [\n    #{wall},\n]))\n",
+       "b_svc" => "MIDDLEWARE = tuple([#{wall}])\n",
+       "c_svc" => "MIDDLEWARE = env.list(\"MIDDLEWARE\", default=[#{wall}])\n",
+       "d_svc" => "MIDDLEWARE = \\\n    [#{wall}]\n"}.each do |svc, settings|
+        %w[proj core app].each { |dir| Dir.mkdir_p(File.join(tmpdir, svc, dir)) }
+        File.write(File.join(tmpdir, svc, "proj", "__init__.py"), "")
+        File.write(File.join(tmpdir, svc, "proj", "urls.py"), "urlpatterns = []\n")
+        File.write(File.join(tmpdir, svc, "proj", "settings.py"), "ROOT_URLCONF = \"proj.urls\"\n#{settings}")
+        File.write(File.join(tmpdir, svc, "app", "views.py"), "def index(request):\n    return None\n")
+        File.write(File.join(tmpdir, svc, "core", "middleware.py"), "class Wall:\n    def __call__(self, request):\n        if not request.user.is_authenticated:\n            return HttpResponseRedirect('/login/')\n        return self.get_response(request)\n")
+      end
+      Dir.glob("#{tmpdir}/**/*.py").each { |path| CodeLocator.instance.register_path(path) }
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = %w[a_svc b_svc c_svc d_svc].map { |svc| Endpoint.new("/#{svc}/", "GET", [] of Param, Details.new(PathInfo.new(File.join(tmpdir, svc, "app", "views.py"), 1))) }
+      DjangoAuthTagger.new(noir_options).perform(endpoints)
+      endpoints.each do |endpoint|
+        endpoint.tags.map(&.description).should eq(["Protected by Wall (settings.MIDDLEWARE refuses unauthenticated requests outside its exempt paths)"])
+      end
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+
+    tmpdir = File.tempname("django_mw_call_builtin")
+    begin
+      Dir.mkdir_p(File.join(tmpdir, "proj"))
+      settings = File.join(tmpdir, "proj", "settings.py")
+      views = File.join(tmpdir, "proj", "views.py")
+      File.write(settings, "MIDDLEWARE = tuple([\n    \"django.contrib.auth.middleware.LoginRequiredMiddleware\",\n])\n")
+      File.write(views, "def index(request):\n    return None\n")
+      [settings, views].each { |path| CodeLocator.instance.register_path(path) }
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      index = Endpoint.new("/", "GET", [] of Param, Details.new(PathInfo.new(views, 1)))
+      DjangoAuthTagger.new(noir_options).perform([index])
+      index.tags.map(&.description).should eq(["Protected by Django LoginRequiredMiddleware"])
     ensure
       FileUtils.rm_rf(tmpdir)
       CodeLocator.instance.clear_all
