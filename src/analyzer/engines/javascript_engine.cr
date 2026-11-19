@@ -182,6 +182,39 @@ module Analyzer::Javascript
     # route is only registered in that environment and the suffix is no URL.
     NITRO_ENV_SUFFIX_RE = /\.(?:dev|prod|prerender)\z/
 
+    # Expanded directory of every config file named in `basenames` → the
+    # literal base path `re` captures as group 2 ("" without one, so a nested
+    # app does not inherit its parent's).
+    protected def config_base_paths(basenames : Array(String), re : Regex) : Hash(String, String)
+      bases = {} of String => String
+      basenames.each do |basename|
+        get_files_by_basename(basename).each do |file|
+          content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(file))
+          dir = File.dirname(Noir::PathScope.expand(file))
+          bases[dir] = content.match(re).try(&.[2].rstrip('/')) || bases[dir]? || ""
+        rescue IO::Error
+          next
+        end
+      end
+      bases
+    end
+
+    # The base of the closest config directory above `path`, prepended to
+    # `url`; the root route of a based app is the bare base.
+    protected def with_config_base(url : String, path : String, bases : Hash(String, String)) : String
+      return url if bases.values.all?(&.empty?)
+      dir = File.dirname(Noir::PathScope.expand(path))
+      loop do
+        if base = bases[dir]?
+          return url if base.empty?
+          return url == "/" ? base : base + url
+        end
+        parent = File.dirname(dir)
+        return url if parent == dir
+        dir = parent
+      end
+    end
+
     # Line of the module's `export default`, or 1 without one.
     protected def default_export_line(content : String) : Int32
       content.match(DEFAULT_EXPORT_RE).try { |m| line_for_match(content, m) } || 1
