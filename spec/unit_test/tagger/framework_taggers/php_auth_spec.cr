@@ -346,4 +346,106 @@ describe "PhpAuthTagger (expanded targets)" do
       FileUtils.rm_rf(tmpdir)
     end
   end
+
+  it "requires identity on CakePHP actions once AuthenticationComponent is loaded, except the unauthenticated ones" do
+    tmpdir = File.tempname("php_cake_authn")
+    controllers = File.join(tmpdir, "src", "Controller")
+    Dir.mkdir_p(File.join(controllers, "Admin"))
+    Dir.mkdir_p(File.join(tmpdir, "config"))
+    routes = File.join(tmpdir, "config", "routes.php")
+    File.write(routes, <<-PHP)
+      <?php
+      use Cake\\Routing\\RouteBuilder;
+      return function (RouteBuilder $routes): void {
+          $routes->scope('/', function (RouteBuilder $builder): void {
+              $builder->connect('/login', ['controller' => 'Users', 'action' => 'login']);
+              $builder->connect('/articles', ['controller' => 'Articles', 'action' => 'index']);
+              $builder->connect('/articles/add', ['controller' => 'Articles', 'action' => 'add']);
+              $builder->connect('/articles/{id}', 'Articles::view');
+              $builder->connect('/admin/stats', ['prefix' => 'Admin', 'controller' => 'Stats', 'action' => 'index']);
+              $builder->connect('/health', ['controller' => 'Health', 'action' => 'index']);
+          });
+      };
+      PHP
+    File.write(File.join(controllers, "AppController.php"), <<-PHP)
+      <?php
+      namespace App\\Controller;
+      use Cake\\Controller\\Controller;
+      class AppController extends Controller
+      {
+          public function initialize(): void
+          {
+              parent::initialize();
+              $this->loadComponent('Authentication.Authentication');
+          }
+      }
+      PHP
+    File.write(File.join(controllers, "UsersController.php"), <<-PHP)
+      <?php
+      namespace App\\Controller;
+      class UsersController extends AppController
+      {
+          public function beforeFilter(\\Cake\\Event\\EventInterface $event)
+          {
+              parent::beforeFilter($event);
+              $this->Authentication->addUnauthenticatedActions(['login', 'add']);
+          }
+          public function login()
+          {
+              $result = $this->Authentication->getResult();
+          }
+      }
+      PHP
+    File.write(File.join(controllers, "ArticlesController.php"), <<-PHP)
+      <?php
+      namespace App\\Controller;
+      class ArticlesController extends AppController
+      {
+          public function beforeFilter(\\Cake\\Event\\EventInterface $event)
+          {
+              parent::beforeFilter($event);
+              $this->Authentication->allowUnauthenticated(['index']);
+          }
+          public function index() {}
+          public function add() {}
+          public function view($id) {}
+      }
+      PHP
+    File.write(File.join(controllers, "Admin", "StatsController.php"), <<-PHP)
+      <?php
+      namespace App\\Controller\\Admin;
+      use App\\Controller\\AppController;
+      class StatsController extends AppController
+      {
+          public function index() {}
+      }
+      PHP
+    File.write(File.join(controllers, "HealthController.php"), <<-PHP)
+      <?php
+      namespace App\\Controller;
+      use Cake\\Controller\\Controller;
+      class HealthController extends Controller
+      {
+          public function index() {}
+      }
+      PHP
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      at = ->(line : Int32) do
+        details = Details.new(PathInfo.new(routes, line))
+        details.technology = "php_cakephp"
+        Endpoint.new("/#{line}", "GET", [] of Param, details)
+      end
+      endpoints = {login: 5, index: 6, add: 7, view: 8, admin: 9, health: 10}.to_h.transform_values { |line| at.call(line) }
+
+      PhpAuthTagger.new(noir_options).perform(endpoints.values)
+
+      endpoints.select { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys.should eq([:add, :view, :admin])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
+
 end

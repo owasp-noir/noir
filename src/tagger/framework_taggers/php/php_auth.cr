@@ -171,6 +171,11 @@ class PhpAuthTagger < FrameworkTagger
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
+      if endpoint.details.technology == "php_cakephp" && (description = cakephp_guard(path_info.path, lines, line_idx))
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
+        return
+      end
+
       # A route that calls `->withoutMiddleware('auth')` is outside the auth
       # middleware its group (or the group-opening line above it) applies.
       unless check_patterns_near_line(lines, line_idx, LARAVEL_WITHOUT_AUTH, 10)
@@ -209,6 +214,63 @@ class PhpAuthTagger < FrameworkTagger
         return
       end
     end
+  end
+
+  # CakePHP's AuthenticationComponent requires an identity on every action of
+  # a controller that loads it (directly or through a base class such as
+  # `AppController`), except the actions passed to `allowUnauthenticated` /
+  # `addUnauthenticatedActions`. CakePHP routes name their target in an
+  # options array (`['prefix' => 'Admin', 'controller' => 'Users', 'action'
+  # => 'view']`) or a `'Admin/Users::view'` string.
+  CAKE_AUTHN_COMPONENT = /->\s*loadComponent\s*\(\s*['"](?:Authentication\.)?Authentication['"]/
+  CAKE_UNAUTHENTICATED = /->\s*(?:allowUnauthenticated|addUnauthenticatedActions)\s*\(\s*\[([^\]]*)\]/
+  CAKE_TARGET_STRING   = /['"](?:\w+(?:\/\w+)*\.)?((?:\w+\/)*)(\w+)::(\w+)['"]/
+  CAKE_EXTENDS         = /\bclass\s+\w+\s+extends\s+\\?(?:\w+\\)*(\w+)/
+
+  # ponytail: the unauthenticated lists of the whole class chain are unioned,
+  # though `allowUnauthenticated` replaces the list; a base class can only
+  # widen what is exempt, never narrow it.
+  private def cakephp_guard(path : String, lines : Array(String), line_idx : Int32) : String?
+    statement = lines[line_idx..statement_end(lines, line_idx, 5)].join(' ')
+    if target = statement.match(CAKE_TARGET_STRING)
+      prefix, controller, action = target[1].rchop('/'), target[2], target[3]
+    else
+      controller = statement.match(/['"]controller['"]\s*=>\s*['"]([\w\/]+)['"]/).try(&.[1]) || return
+      action = statement.match(/['"]action['"]\s*=>\s*['"](\w+)['"]/).try(&.[1])
+      prefix = statement.match(/['"]prefix['"]\s*=>\s*['"]([\w\/]+)['"]/).try(&.[1]) || ""
+    end
+    # `config/routes.php` of the app or of a plugin: its `src/Controller`.
+    root = File.dirname(File.dirname(path))
+    file = File.join([root, "src", "Controller", prefix, "#{controller}Controller.php"].reject(&.empty?))
+    exempt = Set(String).new
+    loaded = false
+    5.times do
+      content = read_file(file) || break
+      loaded ||= content.matches?(CAKE_AUTHN_COMPONENT)
+      content.scan(CAKE_UNAUTHENTICATED) { |list| list[1].scan(/['"](\w+)['"]/) { |name| exempt << name[1] } }
+      parent = content.match(CAKE_EXTENDS).try(&.[1]) || break
+      file = cakephp_class_file(file, root, parent) || break
+    end
+    return unless loaded
+    return if action ? exempt.includes?(action) : !exempt.empty?
+    "CakePHP AuthenticationComponent (identity required)"
+  end
+
+  # The base class's file: beside the controller, else the nearest
+  # `src/Controller/<Name>.php` up from it (a plugin's controllers extend the
+  # app's `AppController`).
+  private def cakephp_class_file(from : String, root : String, name : String) : String?
+    sibling = File.join(File.dirname(from), "#{name}.php")
+    return sibling if read_file(sibling)
+    dir = root
+    4.times do
+      candidate = File.join(dir, "src", "Controller", "#{name}.php")
+      return candidate if candidate != from && read_file(candidate)
+      parent = File.dirname(dir)
+      break if parent == dir
+      dir = parent
+    end
+    nil
   end
 
   private def check_patterns_near_line(lines : Array(String), line_idx : Int32,
