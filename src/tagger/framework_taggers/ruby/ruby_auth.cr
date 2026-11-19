@@ -1514,8 +1514,8 @@ class RubyAuthTagger < FrameworkTagger
       match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS) ||
         mounted_guard(mount_path, mount_lines, mount_idx, url, depth + 1)
     end
-    return if guards.empty? || guards.any?(Nil)
-    found = guards.first.not_nil!
+    return if guards.any?(Nil)
+    return unless found = guards.first?
     found.ends_with?(MOUNTED) ? found : "#{found}#{MOUNTED}"
   end
 
