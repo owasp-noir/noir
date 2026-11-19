@@ -31,6 +31,12 @@ See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/.github/CONTR
 
 ## Development Setup
 
+### GitHub Codespaces
+
+To skip the local setup, open the repository in a codespace: on GitHub, **Code → Codespaces → Create codespace on main**, or go to [codespaces.new/owasp-noir/noir](https://codespaces.new/owasp-noir/noir). The dev container has Crystal, the build dependencies and `just`, and runs `shards install` for you. When it opens, `just build` and `just test` work as they are.
+
+It asks for a 4-core machine. The first build needs about 10 GB of memory and the test build about 13 GB, and the default 2-core, 8 GB machine has no swap, so the compiler is killed there. Expect roughly two minutes for the first build and five for the first test run.
+
 ### Installing Crystal
 
 Noir is built with Crystal (`~> 1.19` in `shard.yml`; CI tests on 1.21 and 1.22). Install it for your platform. The first build also compiles the vendored Tree-sitter grammars, so you need a C compiler too.

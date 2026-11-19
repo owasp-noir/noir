@@ -31,6 +31,12 @@ sort_by = "weight"
 
 ## 개발 환경 설정
 
+### GitHub Codespaces
+
+로컬 설치를 건너뛰려면 저장소를 codespace로 여세요. GitHub에서 **Code → Codespaces → Create codespace on main**을 누르거나 [codespaces.new/owasp-noir/noir](https://codespaces.new/owasp-noir/noir)로 가면 됩니다. dev container에 Crystal과 빌드 의존성, `just`가 들어 있고 `shards install`도 자동으로 실행됩니다. 열리면 `just build`와 `just test`가 그대로 동작합니다.
+
+4코어 머신을 요구합니다. 첫 빌드에 메모리가 약 10GB, 테스트 빌드에 약 13GB 필요한데, 기본 2코어 8GB 머신에는 스왑이 없어서 컴파일러가 강제 종료됩니다. 첫 빌드는 2분쯤, 첫 테스트 실행은 5분쯤 걸립니다.
+
 ### Crystal 설치
 
 Noir는 Crystal로 작성되었습니다(`shard.yml` 기준 `~> 1.19`, CI는 1.21과 1.22에서 테스트). 플랫폼에 맞게 설치하세요. 첫 빌드 때 내장된 Tree-sitter 문법도 함께 컴파일하므로 C 컴파일러도 필요합니다.
