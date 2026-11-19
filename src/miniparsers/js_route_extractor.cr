@@ -120,7 +120,7 @@ module Noir
         content = strip_js_comments(content)
         # `${BASE_URL}/items` or `BASE_URL + '/items'`, `BASE_URL` imported
         # from `./config`.
-        constants = content.includes?("${") || content.includes?('+') ? file_string_constants(file_path, content) : nil
+        constants = content.includes?("${") || content.includes?('+') || content.matches?(MEMBER_PATH_ARG_RE, options: Noir::TextFile::MATCH_OPTIONS) ? file_string_constants(file_path, content) : nil
         mount_constants = resolve_mount_prefixes ? (constants || file_string_constants(file_path, content)) : nil
         mount_middleware = resolve_mount_prefixes ? ->(expression : String) { mount_middleware?(expression, content, file_path) } : nil
         parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants, mount_constants: mount_constants, resolve_mount_prefixes: resolve_mount_prefixes, mount_middleware: mount_middleware, on_routes: on_routes)
@@ -491,6 +491,9 @@ module Noir
     # `FLEXIBLE_ROUTE_CALL_PATTERN` already matches with zero or one
     # whitespace character — so the pre-pass could never change the
     # result, and each miss cost 22 Rabin-Karp walks of the whole file.
+    # `app.get(ROUTES.users, …)`: a path read off an object constant.
+    MEMBER_PATH_ARG_RE = /\.\s*(?:get|post|put|delete|del|patch|options|head|all|query)\s*\(\s*[A-Za-z_$][\w$]*\s*\.\s*[A-Za-z_$]/i
+
     def self.route_call_candidate?(content : String) : Bool
       content.matches?(BRACKET_ROUTE_CALL_PATTERN, options: Noir::TextFile::MATCH_OPTIONS) ||
         content.matches?(FLEXIBLE_ROUTE_CALL_PATTERN, options: Noir::TextFile::MATCH_OPTIONS)
@@ -1849,15 +1852,16 @@ module Noir
     NAMED_RELATIVE_IMPORT_RE = /\bimport\s*(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*['"](\.[^'"]*)['"]|\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\s*\(\s*['"](\.[^'"]*)['"]\s*\)/
 
     # `const routes = Object.freeze({ prefix, verification: `${prefix}/verification` })`.
-    OBJECT_CONST_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w.]+\s*)?=\s*(?:Object\.freeze\s*\(\s*)?\{/
+    # A string `enum Routes { Users = '/users' }` too.
+    OBJECT_CONST_RE = /\b(?:(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[\w.]+\s*)?=\s*(?:Object\.freeze\s*\(\s*)?|enum\s+([A-Za-z_$][\w$]*)\s*)\{/
     # One property: `key: 'lit'`, `key: `${a}/b``, or the shorthand `key`.
-    OBJECT_CONST_ENTRY_RE  = /\A\s*([A-Za-z_$][\w$]*)\s*(?::\s*(?:'([^'\n]*)'|"([^"\n]*)"|`([^`]*)`))?\s*\z/
+    OBJECT_CONST_ENTRY_RE  = /\A\s*([A-Za-z_$][\w$]*)\s*(?:[:=]\s*(?:'([^'\n]*)'|"([^"\n]*)"|`([^`]*)`))?\s*\z/
     MAX_OBJECT_CONST_BYTES = 4096
 
     def self.string_constants(content : String) : Hash(String, String)
       constants = Hash(String, String).new
       content.scan(STRING_CONST_RE) { |m| constants[m[1]] = m[2]? || m[3]? || m[4] }
-      object_string_constants(content, constants) if content.includes?("${") || content.includes?("freeze")
+      object_string_constants(content, constants)
       constants
     end
 
@@ -1880,7 +1884,7 @@ module Noir
                   else
                     e[2]? || e[3]? || constants[e[1]]?
                   end
-          constants["#{m[1]}.#{e[1]}"] = value if value && !value.includes?("${")
+          constants["#{m[1]? || m[2]}.#{e[1]}"] = value if value && !value.includes?("${")
         end
       end
     end

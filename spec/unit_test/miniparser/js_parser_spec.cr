@@ -634,6 +634,26 @@ describe Noir::JSParser do
     end
   end
 
+  describe "member paths" do
+    it "reads object-constant members and string class fields" do
+      constants = {"ROUTES.users" => "/users"}
+      code = <<-JS
+        app.get(ROUTES.users, (req, res) => {});
+        app.get(ROUTES.unknown, (req, res) => {});
+        class UserRoute {
+          public path = '/accounts';
+          constructor() {
+            this.router.get(`${this.path}`, h);
+            this.router.delete(this.path + '/:id', h);
+          }
+        }
+        JS
+      Noir::JSParser.new(code, constants: constants).parse_routes.map { |r| {r.method, r.path} }.sort!.should eq([
+        {"DELETE", "/accounts/:id"}, {"GET", "/accounts"}, {"GET", "/users"},
+      ])
+    end
+  end
+
   describe "use() with several routers" do
     it "mounts every known router of the call" do
       code = <<-JS

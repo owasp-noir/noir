@@ -675,7 +675,7 @@ module Noir
         paths = extract_array_paths(start_idx)
       elsif token.type == :string
         paths << PathEntry.new(token.value, false)
-      elsif token.type == :template_literal || token.type == :identifier
+      elsif token.type == :template_literal || token.type == :identifier || (token.value == "this" && @tokens[start_idx + 1]?.try(&.type) == :dot)
         path = resolve_dynamic_path(start_idx)
         paths << PathEntry.new(path, false) if path
       elsif token.type == :regex
@@ -1981,6 +1981,7 @@ module Noir
 
     # Extract constant assignments from the tokens
     private def extract_constants
+      fields = {} of String => String?
       idx = 0
       while idx < @tokens.size - 4
         # Look for const/let/var variableName = 'value' patterns
@@ -1998,8 +1999,33 @@ module Noir
           end
           @constants[var_name] = var_value
         end
+        # A string class field, `public path = '/users'` (or `path: string =`,
+        # `this.path = '/users'`), read as `this.path`.
+        if @tokens[idx].type == :identifier && (field = string_field_value(idx))
+          key = "this.#{@tokens[idx].value}"
+          fields[key] = fields.has_key?(key) && fields[key] != field ? nil : field
+        end
         idx += 1
       end
+      # A field two classes of the file give different values stays unread.
+      fields.each { |field_key, value| @constants[field_key] = value if value }
+    end
+
+    CLASS_FIELD_MODIFIERS = Set{"public", "private", "protected", "readonly", "static"}
+
+    private def string_field_value(idx : Int32) : String?
+      previous = idx >= 1 ? @tokens[idx - 1] : nil
+      member = previous && (CLASS_FIELD_MODIFIERS.includes?(previous.value) ||
+                            (previous.type == :dot && idx >= 2 && @tokens[idx - 2].value == "this"))
+      return unless member
+      value_idx = idx + 1
+      value_idx += 2 if @tokens[value_idx]?.try(&.type) == :colon && @tokens[value_idx + 1]?.try(&.type) == :identifier
+      return unless @tokens[value_idx]?.try(&.type) == :assign
+      value = @tokens[value_idx + 1]? || return
+      return if value.type != :string && (value.type != :template_literal || value.value.includes?("${"))
+      # `a = 'x' + b` is no constant.
+      return if @tokens[value_idx + 2]?.try(&.type) == :plus
+      value.value
     end
 
     # Resolve dynamic path construction (template literals and concatenation)
@@ -2023,7 +2049,13 @@ module Noir
 
       # Parse concatenation chain: var1 + var2 + '/path' + var3
       while idx < @tokens.size
-        if @tokens[idx].type == :identifier
+        if (@tokens[idx].type == :identifier || @tokens[idx].value == "this") &&
+           (member_end = member_chain_end(idx)) > idx + 1 &&
+           (member = @constants[member_name(idx, member_end)]?)
+          # `ROUTES.users`, `this.path`: a member of an object constant.
+          result += member
+          idx = member_end - 1
+        elsif @tokens[idx].type == :identifier
           var_name = @tokens[idx].value
           if @constants.has_key?(var_name)
             result += @constants[var_name]
@@ -2057,6 +2089,10 @@ module Noir
       end
 
       result.empty? ? nil : result
+    end
+
+    private def member_name(start_idx : Int32, end_idx : Int32) : String
+      (start_idx...end_idx).step(2).join('.') { |idx| @tokens[idx].value }
     end
 
     # Iterates over paths with their prefixes, yielding (path_entry, prefixed_path) for each combination.
