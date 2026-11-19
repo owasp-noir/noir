@@ -476,8 +476,15 @@ module Analyzer::Python
       # ROUTES live in a different file (`api/v1/x.py`). `path_api_instances`
       # is per-file, so the route file never saw the host-computed prefix
       # and every `@ns.route` surfaced without `/api/v1`. This GLOBAL map
-      # (namespace var name -> fully-resolved prefix) bridges the two files.
-      namespace_prefixes : Hash(ScopedNameKey, ::String) do
+      # ({declaring file, namespace var name} -> fully-resolved prefix)
+      # bridges the two files.
+      namespace_prefixes : Hash(ScopedNameKey, ::String),
+      # flask-restful / flask-restx `name = Api(host, prefix=...)`:
+      # {file, name, host or nil, own prefix}.
+      api_hosts : Array(Tuple(::String, ::String, ::String?, ::String)),
+      # `api.add_namespace(ns, path=...)`: {Api file, Api name, local
+      # namespace name, declaring file, declared name, mount path or nil}.
+      namespace_mounts : Array(Tuple(::String, ::String, ::String, ::String, ::String, ::String?)) do
       def self.empty : BlueprintScanState
         new(
           app_instances: Hash(ScopedNameKey, ::String).new,
@@ -486,6 +493,8 @@ module Analyzer::Python
           register_blueprint: Hash(::String, Hash(::String, Array(::String))).new,
           cross_file_mounts: [] of Tuple(::String, ::String, ::String, ::String, ::String?),
           namespace_prefixes: Hash(ScopedNameKey, ::String).new,
+          api_hosts: [] of Tuple(::String, ::String, ::String?, ::String),
+          namespace_mounts: [] of Tuple(::String, ::String, ::String, ::String, ::String, ::String?),
         )
       end
     end

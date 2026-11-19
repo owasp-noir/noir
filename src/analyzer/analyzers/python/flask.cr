@@ -48,6 +48,10 @@ module Analyzer::Python
     # recompiled; `ADD_RESOURCE_SUBSTRING` is the cheap per-line guard.
     ADD_RESOURCE_RE         = /(#{PYTHON_VAR_NAME_REGEX})\s*\.\s*add_resource\s*\((.+)\)/m
     ADD_RESOURCE_SUBSTRINGS = [".add_resource("]
+    FLASK_REST_IMPORT_RE    = /\bflask_(?:restx|restful)\b/
+    # `name = Api(host, ...)` / `name = Api(prefix=...)` on a space-stripped
+    # line; the host is captured when the first argument is a bare name.
+    API_ASSIGN_RE = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.|flask_restful\.)?\w*Api\((?:(?:app=)?(#{DOT_NATION})(?=[,)]))?/
     # `def add_x(self, resource, ...)` head of an Api-subclass method that
     # may wrap `add_resource` (e.g. redash's `add_org_resource`).
     RESOURCE_REGISTRAR_DEF_RE = /^(\s*)(?:async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*self\s*,\s*resource\b/
@@ -69,12 +73,12 @@ module Analyzer::Python
     # whose constructor keeps the Api's app/blueprint argument.
     private def api_from_instance_regex(instance_name : ::String) : Regex
       @api_from_instance_regex_cache[instance_name] ||=
-        /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?\w*Api\((app=)?#{instance_name}[,)]/
+        /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.|flask_restful\.)?\w*Api\((app=)?#{instance_name}[,)]/
     end
 
     private def add_namespace_call_regex(api_instance_name : ::String) : Regex
       @add_namespace_call_regex_cache[api_instance_name] ||=
-        /(#{api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
+        /(?<![\w.])(#{api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
     end
 
     def analyze
@@ -102,6 +106,7 @@ module Analyzer::Python
       end
 
       resolve_blueprint_prefixes(state)
+      resolve_api_prefixes(state)
       emit_flask_appbuilder_endpoints(fab)
       emit_route_endpoints(state)
       emit_class_view_endpoints(state)
@@ -270,6 +275,13 @@ module Analyzer::Python
         # the same (coalesced) Api(...) call; anchor on `(`/`,` so
         # Blueprint's `url_prefix=` can't be mistaken for it.
         api_kwarg_prefix = api_line.match(/[,(]prefix=[rf]?['"]([^'"]*)['"]/).try(&.[1]) || ""
+        if (assign = api_line.match(API_ASSIGN_RE)) && fs.source.matches?(FLASK_REST_IMPORT_RE)
+          # Re-read once every blueprint registration is known; until then
+          # an Api built without a known host (`Api(prefix=...)` bound later
+          # with `init_app`) serves under its own prefix.
+          state.api_hosts << {fs.path, assign[1], assign[2]?, api_kwarg_prefix}
+          fs.api_instances[assign[1]] ||= api_kwarg_prefix unless assign[2]?.try { |host| fs.api_instances.has_key?(host) || state.app_instances.has_key?({fs.base_path, host}) || state.blueprint_prefixes.has_key?({fs.base_path, host}) }
+        end
 
         # Api from flask instance
         state.app_instances.each do |key, _prefix|
@@ -327,10 +339,14 @@ module Analyzer::Python
                            else
                              extract_namespace_prefix(parser, add_namespace_match[2], _prefix)
                            end
-                fs.api_instances[gv.name] = resolved
-                # Bridge to the namespace's route-definition file,
-                # which has no view onto this host file's prefixes.
-                state.namespace_prefixes[{fs.base_path, gv.name}] = resolved
+                # Every module names its namespace `api` or `ns`: only one
+                # declared here is this file's name, else it would replace
+                # the Api instance's own prefix.
+                fs.api_instances[gv.name] = resolved if gv.path == fs.path
+                # Bridge to the namespace's route-definition file, resolved
+                # once the Api's own prefix is final.
+                state.namespace_mounts << {fs.path, _api_instance_name, add_namespace_match[2], gv.path, gv.name,
+                                           extract_add_namespace_path(ns_line, _api_instance_name, add_namespace_match[2])}
               end
             end
           end
@@ -831,6 +847,33 @@ module Analyzer::Python
       resolve_family_blueprint_prefixes(state)
     end
 
+    # An Api built on a blueprint serves under the blueprint's final prefix
+    # (its `register_blueprint(url_prefix=)` one) joined with its own
+    # `prefix=`; then each `add_namespace` joins the Api's prefix.
+    private def resolve_api_prefixes(state : BlueprintScanState) : Nil
+      state.api_hosts.each do |path, api_name, host, own_prefix|
+        next unless host
+        api_instances = state.path_api_instances[path]? || next
+        declaration = api_instances.has_key?(host) ? {path, host} : imported_declaration(path, host)
+        next unless declaration
+        host_prefix = state.path_api_instances[declaration[0]]?.try(&.[declaration[1]]?) || next
+        prefixes = route_prefixes(state.register_blueprint, declaration[0], declaration[1], host_prefix).map { |prefix| join_flask_paths(prefix, own_prefix) }
+        api_instances[api_name] = prefixes.first
+        prefixes.each { |prefix| add_registered_prefix(state.register_blueprint, path, api_name, prefix) } if prefixes.size > 1
+      end
+      state.namespace_mounts.each do |path, api_name, local_name, ns_path, ns_name, mount_path|
+        api_prefix = state.path_api_instances[path]?.try(&.[api_name]?) || next
+        resolved = if mount_path
+                     joined = File.join(api_prefix, mount_path)
+                     joined.starts_with?("/") ? joined : "/#{joined}"
+                   else
+                     extract_namespace_prefix(get_parser(path), local_name, api_prefix)
+                   end
+        state.namespace_prefixes[{ns_path, ns_name}] = resolved
+        state.path_api_instances[path][ns_name] = resolved if ns_path == path
+      end
+    end
+
     # Emit endpoints for the `@<router>.route(...)`-style decorators
     # collected into `@routes` during the file walk.
     private def emit_route_endpoints(state : BlueprintScanState) : Nil
@@ -841,8 +884,8 @@ module Analyzer::Python
           lines = fetch_file_lines(path)
           expect_params, class_def_index = extract_params_from_decorator(path, lines, line_index)
           api_instances = state.path_api_instances[path]
-          route_base_path = python_base_path_for(path)
-          namespace_prefix = state.namespace_prefixes[{route_base_path, router_name}]?
+          namespace_prefix = state.namespace_prefixes[{path, router_name}]? ||
+                             imported_declaration(path, router_name).try { |declaration| state.namespace_prefixes[declaration]? }
           prefixes = nil
           if api_instances.has_key?(router_name)
             prefix = api_instances[router_name]
