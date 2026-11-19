@@ -273,10 +273,10 @@ module Analyzer::Javascript
         content = Noir::JSRouteExtractor.strip_js_comments(content)
         imports = nil.as(NamedTuple(require_map: Hash(String, String), function_map: Hash(String, String), var_to_function: Hash(String, String))?)
 
-        each_plugin_mount(content) do |plugin, prefix, origin, direct|
+        each_plugin_mount(content, file) do |plugin, prefix, origin, direct|
           # Fastify: a register without a prefix still serves the child under
           # the parent's own prefix, so it is an edge of the tree too.
-          next unless mount_prefix?(prefix) || (prefix.empty? && @framework == :fastify)
+          next unless mount_prefix?(prefix.lchop(Noir::JSMountPrefix::UNREAD)) || prefix == Noir::JSMountPrefix::UNREAD.to_s || (prefix.empty? && @framework == :fastify)
 
           plugin = plugin.strip
           if direct
@@ -341,7 +341,7 @@ module Analyzer::Javascript
     end
 
     # Yields each cross-file mount site as {child expression, prefix}.
-    private def each_plugin_mount(content : String, &)
+    private def each_plugin_mount(content : String, file : String, &)
       if @framework == :fastify
         # `register(async (v1) => { v1.register(users) }, { prefix: '/api/v1' })`:
         # a register inside an inline plugin's body inherits that plugin's
@@ -359,13 +359,17 @@ module Analyzer::Javascript
           plugin = first_top_level_argument(args)
           options = args[plugin.size..]
           prefix_match = options.match(REGISTER_PREFIX_RE)
-          # `{ prefix: someVariable }` is a prefix this scan cannot read.
-          next if !prefix_match && options.matches?(REGISTER_PREFIX_KEY_RE)
-          # Fastify adds the leading slash itself: `{ prefix: 'api/v1' }`.
           prefix = prefix_match.try { |pm| pm[1]? || pm[2] } || ""
-          prefix = "/#{prefix}" unless prefix.empty? || prefix.starts_with?('/')
+          # `{ prefix: API_PREFIX }`, `{ prefix: `${API_PREFIX}/users` }`: read
+          # like an Express mount path; one still unread keeps the marker.
+          if !prefix_match && options.matches?(REGISTER_PREFIX_KEY_RE)
+            expression = register_prefix_expression(options) || next
+            prefix = Noir::JSMountPrefix.read(expression, Noir::JSRouteExtractor.file_string_constants(file, content), content)
+          end
+          # Fastify adds the leading slash itself: `{ prefix: 'api/v1' }`.
+          prefix = "/#{prefix}" unless prefix.empty? || prefix.lchop(Noir::JSMountPrefix::UNREAD).starts_with?('/') || prefix == Noir::JSMountPrefix::UNREAD.to_s
           enclosing = enclosing_prefix.call(args_start)
-          prefix = Noir::URLPath.join(enclosing, prefix) unless enclosing.empty?
+          prefix = Noir::JSMountPrefix.join(enclosing, prefix) unless enclosing.empty?
           if plugin.matches?(INLINE_PLUGIN_RE)
             inline_plugins << {args_start, scanned.end_pos, prefix} unless prefix.empty?
             next
@@ -398,6 +402,19 @@ module Analyzer::Javascript
         content.scan(APPLY_ROUTES_RE) { |m| yield m[1], m[2]? || m[3], m.byte_begin(0), false }
         content.scan(RESTIFY_ADD_RE) { |m| yield m[3], m[1]? || m[2], m.byte_begin(0), false }
       end
+    end
+
+    # The value expression of the `prefix` key of a register call's options
+    # (the text after its plugin argument).
+    private def register_prefix_expression(options : String) : String?
+      open = options.index('{') || return
+      close = Noir::JSLiteralScanner.find_matching_brace(options, open) || return
+      Noir::TopLevelSplit.split(options[(open + 1)...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).each do |entry|
+        if m = entry.match(/\A\s*['"]?prefix['"]?\s*:\s*(.+)\z/m)
+          return m[1].strip
+        end
+      end
+      nil
     end
 
     # `{ plugin: <x>, routes: { prefix } }` items (the prefix may also sit
@@ -433,7 +450,7 @@ module Analyzer::Javascript
         next if excluded && excluded.any? { |from, to| from <= edge.origin <= to }
         target = edge.target
         next if on_path.includes?(target)
-        combined = edge.prefix.empty? ? parent : Noir::URLPath.join(parent, edge.prefix)
+        combined = edge.prefix.empty? ? parent : Noir::JSMountPrefix.join(parent, edge.prefix)
         # "" too: a plugin also registered unprefixed at the root keeps its
         # root URL next to the prefixes it inherits elsewhere. Pushed before
         # the memo: two named exports of one file are two keys.
@@ -778,21 +795,40 @@ module Analyzer::Javascript
 
       return unless router_var || router_file_direct
 
-      if caller == "app"
-        # Top-level mount
-        store_top_level_mount(locator, router_var, router_file_direct, prefix, main_file,
-          require_map, function_map, var_to_function, var_prefix)
-      else
-        # Nested mount - try to resolve parent prefixes
-        processed = store_nested_mount(locator, router_var, router_file_direct, prefix, caller, main_file,
-          require_map, function_map, var_to_function, var_prefix)
+      # `app.use('/p', usersRouter, postsRouter)` / `app.use('/p', [a, b])`:
+      # every imported router of the call is mounted.
+      routers = [router_var]
+      routers.concat(other_imported_routers(args, router_var, require_map, function_map)) if router_var && !router_file_direct
+      routers.each do |mounted|
+        if caller == "app"
+          # Top-level mount
+          store_top_level_mount(locator, mounted, router_file_direct, prefix, main_file,
+            require_map, function_map, var_to_function, var_prefix)
+        else
+          # Nested mount - try to resolve parent prefixes
+          processed = store_nested_mount(locator, mounted, router_file_direct, prefix, caller, main_file,
+            require_map, function_map, var_to_function, var_prefix)
 
-        # Defer if parent prefix not yet known
-        unless processed
-          deferred_key = router_file_direct || router_var || ""
-          global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
+          # Defer if parent prefix not yet known
+          unless processed
+            deferred_key = router_file_direct || mounted || ""
+            global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
+          end
         end
       end
+    end
+
+    # The identifiers of a `.use(...)` call other than `chosen` that are
+    # imported from a file declaring routes.
+    private def other_imported_routers(args : String, chosen : String, require_map : Hash(String, String), function_map : Hash(String, String)) : Array(String)
+      routers = [] of String
+      args.gsub(/'[^']*'|"[^"]*"|`[^`]*`/, "").scan(/(?<![.\w$])([A-Za-z_$][\w$]*)(?![\w$]|\s*[(.\[])/) do |m|
+        name = m[1]
+        next if name == chosen || routers.includes?(name)
+        file = require_map[name]? || function_map[name]?
+        routers << name if file && file_has_routes?(file)
+      end
+      routers
     end
 
     # `const api = Router()\n  .use(items)` and `export default

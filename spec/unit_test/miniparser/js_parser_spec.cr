@@ -579,6 +579,95 @@ describe Noir::JSParser do
     end
   end
 
+  describe "method chains" do
+    line_of = ->(code : String, pos : Int32) { code[0, pos].count('\n') + 1 }
+
+    it "applies the receiver's prefix to every link, once, on its own line" do
+      code = <<-JS
+        const router = new Router({ prefix: '/api' });
+        router
+          .get('/users', (ctx) => {})
+          .post('/users', (ctx) => {})
+          .del('/users/:id', (ctx) => {});
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+      routes.map { |r| {r.method, r.path, line_of.call(code, r.start_pos)} }.should eq([
+        {"GET", "/api/users", 2},
+        {"POST", "/api/users", 4},
+        {"DEL", "/api/users/:id", 5},
+      ])
+    end
+
+    it "reads every link in an Express file" do
+      code = <<-JS
+        const express = require('express');
+        const router = express.Router();
+        router.get('/a', (req, res) => {}).post('/b', (req, res) => {}).delete('/c', h);
+        JS
+      Noir::JSParser.new(code).parse_routes.map { |r| {r.method, r.path} }.sort!.should eq([
+        {"DELETE", "/c"}, {"GET", "/a"}, {"POST", "/b"},
+      ])
+    end
+
+    it "mounts a chained .route() and keeps basePath on the assigned instance" do
+      code = <<-JS
+        const books = new Hono().get('/', (c) => c.json(1));
+        const app = new Hono().basePath('/api').get('/health', (c) => c.text('ok')).route('/books', books);
+        const root = new Hono();
+        root.get('/ping', (c) => c.text('pong'));
+        const v2 = root.basePath('/v2');
+        v2.get('/users', (c) => c.json([]));
+        JS
+      Noir::JSParser.new(code).parse_routes.map { |r| {r.method, r.path} }.sort!.should eq([
+        {"GET", "/api/books/"}, {"GET", "/api/health"}, {"GET", "/ping"}, {"GET", "/v2/users"},
+      ])
+    end
+
+    it "gives a path-less link the path of the verb link before it" do
+      code = <<-JS
+        app.get('/endpoint', (c) => c.text('a')).post((c) => c.text('b')).delete(handler);
+        request(app).get('/x', (err, res) => {}).post(done);
+        JS
+      Noir::JSParser.new(code).parse_routes.map { |r| {r.method, r.path} }.sort!.should eq([
+        {"DELETE", "/endpoint"}, {"GET", "/endpoint"}, {"POST", "/endpoint"},
+      ])
+    end
+  end
+
+  describe "member paths" do
+    it "reads object-constant members and string class fields" do
+      constants = {"ROUTES.users" => "/users"}
+      code = <<-JS
+        app.get(ROUTES.users, (req, res) => {});
+        app.get(ROUTES.unknown, (req, res) => {});
+        class UserRoute {
+          public path = '/accounts';
+          constructor() {
+            this.router.get(`${this.path}`, h);
+            this.router.delete(this.path + '/:id', h);
+          }
+        }
+        JS
+      Noir::JSParser.new(code, constants: constants).parse_routes.map { |r| {r.method, r.path} }.sort!.should eq([
+        {"DELETE", "/accounts/:id"}, {"GET", "/accounts"}, {"GET", "/users"},
+      ])
+    end
+  end
+
+  describe "use() with several routers" do
+    it "mounts every known router of the call" do
+      code = <<-JS
+        const a = express.Router();
+        const b = express.Router();
+        a.get('/a', h);
+        b.get('/b', h);
+        app.use('/p', a, b);
+        app.use('/q', [a, b]);
+        JS
+      Noir::JSParser.new(code).parse_routes.map(&.path).sort!.should eq(["/p/a", "/p/b", "/q/a", "/q/b"])
+    end
+  end
+
   describe "JSRoutePattern" do
     it "stores method and path" do
       pattern = Noir::JSRoutePattern.new("GET", "/users")

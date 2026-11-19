@@ -21,10 +21,10 @@ expected_endpoints = [
   Endpoint.new("/y/b", "GET"),
 
   # Test Case 3: Multiple neutral identifiers
-  # app.use('/z', filter, processor, handler) - processor has routes
+  # app.use('/z', filter, processor, handler) - processor and handler both
+  # have routes, and Express mounts every callback of the call at /z
   Endpoint.new("/z/c", "GET"),
-  # handler also has routes but wasn't the mounted router for /z prefix
-  Endpoint.new("/d", "GET"),
+  Endpoint.new("/z/d", "GET"),
 
   # Test Case 4: Same-file with neutral names
   # parent.use('/child', guard, child) - child is the router

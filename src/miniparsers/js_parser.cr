@@ -257,14 +257,17 @@ module Noir
       @explicit_router_vars.clear
       identify_router_variables(router_variables)
       identify_named_route_receivers(router_variables)
-      scan_router_constructor_prefixes(router_prefixes, router_variables)
+      scan_router_constructor_prefixes(router_prefixes, router_variables, router_parents)
 
       # First pass: scan for router.use("/prefix", ..., routerVariable) patterns
       # Handles middleware chains like app.use('/api', auth, router)
       idx = 0
       while idx < @tokens.size - 5
-        # Pattern: identifier.use('/prefix', ...)
-        if (@tokens[idx].type == :identifier) &&
+        # Pattern: identifier.use('/prefix', ...), or a chain link
+        # `new Hono().basePath('/api').route('/books', books)`.
+        if (@tokens[idx].type == :identifier ||
+           (@tokens[idx].type == :rparen && @tokens[idx + 1].type == :dot &&
+           @tokens[idx + 2].value.in?("use", "register", "route") && !chain_owner(idx + 1).try(&.[0]).to_s.empty?)) &&
            (idx + 1 < @tokens.size) && (@tokens[idx + 1].type == :dot) &&
            (idx + 2 < @tokens.size) && (@tokens[idx + 2].value == "use" || @tokens[idx + 2].value == "register" || @tokens[idx + 2].value == "route") &&
            (idx + 3 < @tokens.size) && (@tokens[idx + 3].type == :lparen) &&
@@ -273,7 +276,7 @@ module Noir
            @tokens[idx + 4].type == :template_literal ||
            @tokens[idx + 4].type == :identifier ||
            @tokens[idx + 4].type == :lbracket)
-          parent_router = @tokens[idx].value
+          parent_router = @tokens[idx].type == :rparen ? chain_owner(idx + 1).try(&.[0]).to_s : @tokens[idx].value
           prefixes = route_path_entries_from_args(idx + 4).map(&.path)
           if @resolve_mount_prefixes && @tokens[idx + 2].value == "use" && next_top_level_arg_index(idx + 4)
             args = JSLiteralScanner.extract_paren_content(@source, @tokens[idx + 3].position + 2)
@@ -309,10 +312,12 @@ module Noir
             scan_idx += 1
           end
 
-          # Find the best router candidate using heuristics
-          router_identifier = find_router_candidate(candidates, router_variables)
+          # Every known router of `use('/p', a, b)` / `use('/p', [a, b])`
+          # is mounted; otherwise the best candidate by heuristics.
+          known = candidates.select { |candidate| router_variables.includes?(candidate) }.uniq!
+          routers = known.size > 1 ? known : [find_router_candidate(candidates, router_variables)].compact
 
-          if router_identifier
+          routers.each do |router_identifier|
             prefixes.each do |prefix|
               router_prefixes[router_identifier] << prefix unless router_prefixes[router_identifier].includes?(prefix)
             end
@@ -491,7 +496,8 @@ module Noir
     #   const router = new Router({ prefix: '/api/v1' })
     # Seed those prefixes before the generic route scan so later
     # `router.get(...)` calls emit their full paths.
-    private def scan_router_constructor_prefixes(router_prefixes : Hash(String, Array(String)), router_variables : Set(String))
+    private def scan_router_constructor_prefixes(router_prefixes : Hash(String, Array(String)), router_variables : Set(String),
+                                                 router_parents : Hash(String, Array(String)))
       idx = 0
       while idx < @tokens.size - 6
         if @tokens[idx].type == :identifier &&
@@ -558,6 +564,13 @@ module Noir
            (@tokens[idx + 2].value == "prefix" || @tokens[idx + 2].value == "basePath") &&
            @tokens[idx + 3].type == :lparen
           router_var = @tokens[idx].value
+          # `const api = app.basePath('/api')` returns a new instance under
+          # `app` and leaves `app` itself unprefixed.
+          if @tokens[idx + 2].value == "basePath" && idx >= 2 && @tokens[idx - 1].value == "=" && @tokens[idx - 2].type == :identifier
+            derived = @tokens[idx - 2].value
+            router_parents[derived] << router_var unless router_parents[derived].includes?(router_var)
+            router_var = derived
+          end
           route_path_entries_from_args(idx + 4).each do |prefix_entry|
             prefix = prefix_entry.path
             router_prefixes[router_var] << prefix unless router_prefixes[router_var].includes?(prefix)
@@ -662,7 +675,7 @@ module Noir
         paths = extract_array_paths(start_idx)
       elsif token.type == :string
         paths << PathEntry.new(token.value, false)
-      elsif token.type == :template_literal || token.type == :identifier
+      elsif token.type == :template_literal || token.type == :identifier || (token.value == "this" && @tokens[start_idx + 1]?.try(&.type) == :dot)
         path = resolve_dynamic_path(start_idx)
         paths << PathEntry.new(path, false) if path
       elsif token.type == :regex
@@ -1001,6 +1014,97 @@ module Noir
       nil
     end
 
+    # ponytail: bounded backward walk; an unbalanced `)` costs at most this many tokens.
+    MAX_PAREN_WALK = 50_000
+
+    private def matching_lparen(rparen_idx : Int32) : Int32?
+      depth = 0
+      idx = rparen_idx
+      stop = Math.max(0, rparen_idx - MAX_PAREN_WALK)
+      while idx >= stop
+        case @tokens[idx].type
+        when :rparen
+          depth += 1
+        when :lparen
+          depth -= 1
+          return idx if depth == 0
+        end
+        idx -= 1
+      end
+      nil
+    end
+
+    # Methods that return their own receiver, so a chain of them keeps
+    # registering on it (`router.use(mw).get(...)`).
+    CHAIN_SELF_METHODS = Set{"use", "route", "register", "on", "param", "prefix"}
+
+    @chain_owners = {} of Int32 => Tuple(String, Int32)?
+
+    # For the `.` of a link `).name(` of a method chain: the variable the
+    # link registers on and the token the chain starts at. That is the
+    # receiver of the chain's first call (`router.get(...).post(...)`), or,
+    # when the chain starts by building an instance (`new Hono()`,
+    # `express.Router()`, `app.basePath('/api')`), the variable it is
+    # assigned to ("" for none).
+    private def chain_owner(dot_idx : Int32) : Tuple(String, Int32)?
+      visited = [] of Int32
+      owner = nil
+      dot = dot_idx
+      steps = 0
+      while steps < 1000
+        steps += 1
+        if @chain_owners.has_key?(dot)
+          owner = @chain_owners[dot]
+          break
+        end
+        visited << dot
+        break unless dot > 0 && @tokens[dot - 1].type == :rparen
+        open = matching_lparen(dot - 1)
+        break unless open && open > 0
+        name_idx = open - 1
+        name = @tokens[name_idx]
+        if name_idx >= 2 && @tokens[name_idx - 1].type == :dot
+          receiver = @tokens[name_idx - 2]
+          if receiver.type == :rparen
+            dot = name_idx - 1
+            next
+          end
+          if (receiver.type == :identifier || receiver.value == "this") && (http_method?(name) || CHAIN_SELF_METHODS.includes?(name.value))
+            owner = {receiver.value, name_idx - 2}
+            break
+          end
+        end
+        break unless name.type == :identifier || name.type == :http_method
+        start = name_idx
+        while start >= 2 && @tokens[start - 1].type == :dot && @tokens[start - 2].type == :identifier
+          start -= 2
+        end
+        start -= 1 if start >= 1 && @tokens[start - 1].value == "new"
+        assigned = start >= 2 && @tokens[start - 1].value == "=" && @tokens[start - 2].type == :identifier
+        owner = {assigned ? @tokens[start - 2].value : "", start}
+        break
+      end
+      visited.each { |visited_dot| @chain_owners[visited_dot] = owner }
+      owner
+    end
+
+    # The paths of the nearest earlier verb link with a path in the chain
+    # whose link `.` sits at `dot_idx`, when that link is a route.
+    private def chained_link_paths(dot_idx : Int32, receiver : String) : Array(PathEntry)
+      dot = dot_idx
+      100.times do
+        break unless dot > 0 && @tokens[dot - 1].type == :rparen
+        open = matching_lparen(dot - 1)
+        break unless open && open >= 2 && @tokens[open - 2].type == :dot && http_method?(@tokens[open - 1])
+        paths = route_path_entries_from_args(open + 1, receiver: receiver)
+        unless paths.empty?
+          return route_handler_arg?(open) ? paths : [] of PathEntry
+        end
+        dot = open - 2
+      end
+      [] of PathEntry
+    end
+
     # Pre-scan tokens to identify router variables
     # Routers are identified by:
     # 1. Assignment from express.Router(): const router = express.Router()
@@ -1229,6 +1333,9 @@ module Noir
 
     private def parse_route_pattern : Array(JSRoutePattern)
       # Parse 'app.get("/path", ...' or 'router.get("/path", ...' patterns
+      # A `).post(` chain link has no named receiver for the framework
+      # parsers below to read.
+      return parse_generic_route if @framework != :unknown && @position > 0 && check(:dot) && @tokens[@position - 1].type == :rparen
       case @framework
       when :express
         parse_express_route
@@ -1592,30 +1699,49 @@ module Noir
          idx < @tokens.size - 2 &&
          @tokens[idx].type == :dot &&
          http_method?(@tokens[idx + 1])
+        # `router.get(...)` on a named receiver is `fast_scan_routes`' own.
+        return results if @tokens[idx - 1].type == :identifier
         method = @tokens[idx + 1].value.upcase
+        # A link of a method chain: `router.get(...).post(...)`.
+        link = @tokens[idx - 1].type == :rparen
 
         # Look for the path string in parentheses
         path_idx = idx + 2
         if path_idx < @tokens.size &&
            @tokens[path_idx].type == :lparen &&
-           path_idx + 1 < @tokens.size &&
-           route_handler_arg?(path_idx)
-          router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
-          return results if http_client_receiver?(router_var, idx - 1, path_idx)
+           path_idx + 1 < @tokens.size
+          handler = route_handler_arg?(path_idx)
+          first_arg_end = next_top_level_arg_index(path_idx + 1).try(&.- 1) || skip_matching_paren(path_idx)
+          # Hono's `app.get('/x', h).post(h)`: a link whose first argument
+          # is a handler serves the path of the verb link before it.
+          pathless = link && first_arg_end && handler_shaped_arg?(path_idx + 1, first_arg_end)
+          return results unless handler || pathless
+          router_var = ""
+          recv_idx = idx - 1
+          if link && (owner = chain_owner(idx))
+            router_var, recv_idx = owner
+          end
+          return results if http_client_receiver?(router_var.empty? ? @tokens[recv_idx].value : router_var, recv_idx, path_idx)
           if @tokens[idx - 1].value == "this"
             # `return this.get(url, {}, headers(ctx))` hands its result on
             # and passes no handler, so it is an API client's call even in a
             # file that imports a server framework.
-            handler = this_handler_arg?(idx - 1, path_idx)
-            return results if handler == false || (handler.nil? && (!@this_receiver_ok || value_context?(idx - 2)))
+            this_handler = this_handler_arg?(idx - 1, path_idx)
+            return results if this_handler == false || (this_handler.nil? && (!@this_receiver_ok || value_context?(idx - 2)))
           end
           path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var), receiver: router_var)
+          if pathless && path_entries.empty?
+            path_entries = chained_link_paths(idx, router_var)
+          elsif !handler
+            return results
+          end
           @position = path_idx + 2 unless path_entries.empty?
+          # A chain link reports its own verb, as `route('/x').get()` links do.
+          start_pos = link ? @tokens[idx + 1].position : @tokens[idx].position
 
           path_entries.each do |path_entry|
             base_path = path_entry.path
             raw_path = path_entry.path
-            start_pos = @tokens[idx].position
 
             # Get all prefixes (supports multi-mount)
             prefixes_to_apply = [""] # Default: no prefix
@@ -1855,6 +1981,7 @@ module Noir
 
     # Extract constant assignments from the tokens
     private def extract_constants
+      fields = {} of String => String?
       idx = 0
       while idx < @tokens.size - 4
         # Look for const/let/var variableName = 'value' patterns
@@ -1872,8 +1999,33 @@ module Noir
           end
           @constants[var_name] = var_value
         end
+        # A string class field, `public path = '/users'` (or `path: string =`,
+        # `this.path = '/users'`), read as `this.path`.
+        if @tokens[idx].type == :identifier && (field = string_field_value(idx))
+          key = "this.#{@tokens[idx].value}"
+          fields[key] = fields.has_key?(key) && fields[key] != field ? nil : field
+        end
         idx += 1
       end
+      # A field two classes of the file give different values stays unread.
+      fields.each { |field_key, value| @constants[field_key] = value if value }
+    end
+
+    CLASS_FIELD_MODIFIERS = Set{"public", "private", "protected", "readonly", "static"}
+
+    private def string_field_value(idx : Int32) : String?
+      previous = idx >= 1 ? @tokens[idx - 1] : nil
+      member = previous && (CLASS_FIELD_MODIFIERS.includes?(previous.value) ||
+                            (previous.type == :dot && idx >= 2 && @tokens[idx - 2].value == "this"))
+      return unless member
+      value_idx = idx + 1
+      value_idx += 2 if @tokens[value_idx]?.try(&.type) == :colon && @tokens[value_idx + 1]?.try(&.type) == :identifier
+      return unless @tokens[value_idx]?.try(&.type) == :assign
+      value = @tokens[value_idx + 1]? || return
+      return if value.type != :string && (value.type != :template_literal || value.value.includes?("${"))
+      # `a = 'x' + b` is no constant.
+      return if @tokens[value_idx + 2]?.try(&.type) == :plus
+      value.value
     end
 
     # Resolve dynamic path construction (template literals and concatenation)
@@ -1897,7 +2049,13 @@ module Noir
 
       # Parse concatenation chain: var1 + var2 + '/path' + var3
       while idx < @tokens.size
-        if @tokens[idx].type == :identifier
+        if (@tokens[idx].type == :identifier || @tokens[idx].value == "this") &&
+           (member_end = member_chain_end(idx)) > idx + 1 &&
+           (member = @constants[member_name(idx, member_end)]?)
+          # `ROUTES.users`, `this.path`: a member of an object constant.
+          result += member
+          idx = member_end - 1
+        elsif @tokens[idx].type == :identifier
           var_name = @tokens[idx].value
           if @constants.has_key?(var_name)
             result += @constants[var_name]
@@ -1931,6 +2089,10 @@ module Noir
       end
 
       result.empty? ? nil : result
+    end
+
+    private def member_name(start_idx : Int32, end_idx : Int32) : String
+      (start_idx...end_idx).step(2).join('.') { |idx| @tokens[idx].value }
     end
 
     # Iterates over paths with their prefixes, yielding (path_entry, prefixed_path) for each combination.
