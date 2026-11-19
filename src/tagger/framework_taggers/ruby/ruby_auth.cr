@@ -59,7 +59,7 @@ class RubyAuthTagger < FrameworkTagger
   # Grape patterns (before blocks, http_basic, helpers)
   GRAPE_AUTH_PATTERNS = [
     {/before\s+do.*authenticate/, "Grape before authenticate"},
-    {/before\s*\{\s*authenticate!/, "Grape authenticate!"},
+    {/before\s*\{\s*authenticate\w*!/, "Grape authenticate!"},
     {/before\s*\{\s*require_auth/, "Grape require_auth"},
     {/http_basic\s+do/, "Grape http_basic auth"},
     {/helpers\s+do.*authenticate/, "Grape helpers authenticate"},
@@ -295,14 +295,27 @@ class RubyAuthTagger < FrameworkTagger
       if authn_desc.nil? && authz_desc.nil? && (policy = body[:anonymous])
         endpoint.add_tag(Tag.new("anonymous", "Pundit #{policy} admits anonymous callers", "ruby_auth"))
       end
-      return if authn_desc || authz_desc || body[:anonymous] || skipped || opted_out || dispatch
+      tech = endpoint.details.technology
+      # A Grape/Sinatra route's Pundit call authenticates no one: its scope is still read.
+      return if authn_desc || (authz_desc && tech == "ruby_rails") || body[:anonymous] || skipped || opted_out || dispatch
+
+      if tech == "ruby_rails" && (block = devise_route_block(path, lines, line_idx))
+        endpoint.add_tag(Tag.new("auth", "Protected by Devise `#{block}` routes block", "ruby_auth"))
+        return
+      end
 
       # Sinatra/Rack patterns first, then Grape (before blocks, http_basic,
       # etc.), both over the same route scope.
-      scope = route_scope(path, lines, line_idx, endpoint.url)
+      scope = route_scope(path, lines, line_idx, endpoint.url, tech == "ruby_grape")
       description = match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS)
+      description ||= mounted_guard(path, lines, line_idx, endpoint.url, 0) if tech == "ruby_grape"
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
+        return
+      end
+
+      if tech == "ruby_hanami" && (guard = hanami_app_guard(path, lines, line_idx))
+        endpoint.add_tag(Tag.new("auth", "Protected by #{guard} (the app's controller.prepare)", "ruby_auth"))
         return
       end
 
@@ -1437,9 +1450,14 @@ class RubyAuthTagger < FrameworkTagger
   # own `protected!` call.
   # ponytail: filters declared below the route are not seen; Sinatra applies
   # them anyway — scan forward too if that shape turns up.
-  private def route_scope(path : String, lines : Array(String), route_line : Int32, url : String) : Array(String)
+  #
+  # A bare call that runs unconditionally in a `before do` block, or at the
+  # top of the route body (`own_body`, Grape's documented `get do;
+  # authenticate!; ...`), reads as the one-line `before { authenticate! }`.
+  private def route_scope(path : String, lines : Array(String), route_line : Int32, url : String, own_body : Bool = false) : Array(String)
     index = scope_lines(path, lines)
     scope = ruby_block_lines(index, route_line)
+    unconditional_calls(index, route_line).each { |call| scope << "before { #{call} }" } if own_body
     indent = line_indent(lines[route_line])
     idx = route_line - 1
     while idx >= 0 && index.skip?(idx)
@@ -1456,15 +1474,169 @@ class RubyAuthTagger < FrameworkTagger
       if filter_covers?(stripped, url)
         block = ruby_block_lines(index, idx)
         scope.concat(block)
-        # `before do` / `authenticate!` / `end` reads as the one-line
-        # `before { authenticate! }`, but only when that first statement is
-        # an unconditional bare call (not `if x` / `authenticate! if x`).
-        scope << "before { #{block[1]} }" if block.size > 1 && block[0].matches?(/^before\s+do\s*$/) && block[1].matches?(/\A\w+[!?]?\z/)
+        unconditional_calls(index, idx).each { |call| scope << "before { #{call} }" } if block[0].matches?(/^before\s+do\s*$/)
       end
       idx = index.prev_level[idx]
       idx = index.filter_up[idx] if idx >= 0
     end
     scope
+  end
+
+  # The bare calls (`authenticate!`, not `if x` / `authenticate! if x`) at
+  # the top level of the block opened at `idx`, up to an early `return` /
+  # `next` that would skip the rest.
+  private def unconditional_calls(index : ScopeLines, idx : Int32) : Array(String)
+    calls = [] of String
+    depth : Int32? = nil
+    ((idx + 1)...index.stripped.size).each do |j|
+      next if index.skip?(j)
+      break if index.indent[j] <= index.indent[idx]
+      depth ||= index.indent[j]
+      next unless index.indent[j] == depth
+      statement = index.stripped[j]
+      break if statement.matches?(/\A(?:return|next)\b/)
+      calls << statement if statement.matches?(/\A\w+[!?]?\z/)
+    end
+    calls
+  end
+
+  # Grape: a mounted API inherits the `before` filters of the API that
+  # mounts it, wherever they sit around the `mount` (Grape README). A class
+  # mounted from several APIs is guarded only when each of them guards it.
+  # ponytail: filters above the `mount` line only.
+  private def mounted_guard(path : String, lines : Array(String), line_idx : Int32, url : String, depth : Int32) : String?
+    return if depth > 3
+    return unless name = grape_class_name(path, lines, line_idx)
+    sites = grape_mounts.select { |_, _, target| target == name }
+    guards = sites.map do |mount_path, mount_idx, _|
+      next unless mount_lines = read_file_lines(mount_path)
+      scope = route_scope(mount_path, mount_lines, mount_idx, url)
+      match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS) ||
+        mounted_guard(mount_path, mount_lines, mount_idx, url, depth + 1)
+    end
+    return if guards.any?(Nil)
+    return unless found = guards.first?
+    found.ends_with?(MOUNTED) ? found : "#{found}#{MOUNTED}"
+  end
+
+  MOUNTED = " (inherited from the API that mounts it)"
+
+  # The full name of the class around `line_idx` (a `Grape::API` or an app
+  # base class built on one).
+  private def grape_class_name(path : String, lines : Array(String), line_idx : Int32) : String?
+    innermost = lexical_nesting(path, lines, line_idx).first?
+    innermost[0] if innermost && innermost[1]
+  end
+
+  CLASS_HEADER = /\A\s*class\s+((?:::)?[A-Z][\w:]*)/
+
+  # The full names of the `module` / `class` headers around `idx`, innermost
+  # first, each with whether it is a class: Ruby's lexical scope there.
+  private def lexical_nesting(path : String, lines : Array(String), idx : Int32) : Array({String, Bool})
+    index = scope_lines(path, lines)
+    headers = [] of {String, Bool}
+    while (idx = index.prev_shallower[idx]) >= 0
+      if m = index.stripped[idx].match(/\A(class|module)\s+((?:::)?[A-Z][\w:]*)/)
+        headers.unshift({m[2], m[1] == "class"})
+      end
+    end
+    nesting = [] of {String, Bool}
+    headers.each do |name, klass|
+      outer = nesting.last?
+      full = name.starts_with?("::") || outer.nil? ? name.lchop("::") : "#{outer[0]}::#{name}"
+      nesting << {full, klass}
+    end
+    nesting.reverse
+  end
+
+  @grape_mounts : Array({String, Int32, String})? = nil
+
+  # Every `mount Some::Api` in the scan: its file, row and the class its
+  # constant names, resolved the way Ruby does from the mount's lexical
+  # scope (`mount Users` in `Admin::Root` is `Admin::Root::Users`, else
+  # `Admin::Users`, else `Users`). A mount of a class the scan does not
+  # define is dropped.
+  private def grape_mounts : Array({String, Int32, String})
+    @grape_mounts ||= begin
+      class_rows = Hash(String, Array({String, Int32})).new
+      mounts = [] of {String, Int32, String}
+      collect_files_by_extension(".rb").each do |file|
+        read_file_lines(file).try &.each_with_index do |line, row|
+          if m = line.match(CLASS_HEADER)
+            (class_rows[m[1].split("::").last] ||= [] of {String, Int32}) << {file, row}
+          elsif m = line.match(/\A\s*mount\s+\(?((?:::)?[A-Z][\w:]*)/)
+            mounts << {file, row, m[1]}
+          end
+        end
+      end
+      defined = ->(candidate : String) do
+        (class_rows[candidate.split("::").last]? || [] of {String, Int32}).any? do |file, row|
+          read_file_lines(file).try { |lines| defined_class_name(file, lines, row) == candidate } || false
+        end
+      end
+      mounts.compact_map do |file, row, const|
+        next unless lines = read_file_lines(file)
+        name = const.lchop("::")
+        scopes = const.starts_with?("::") ? [] of String : lexical_nesting(file, lines, row).map(&.[0])
+        (scopes.map { |scope| "#{scope}::#{name}" } + [name]).find { |candidate| defined.call(candidate) }.try { |target| {file, row, target} }
+      end
+    end
+  end
+
+  # The full name of the class the `class` header at `row` defines.
+  private def defined_class_name(path : String, lines : Array(String), row : Int32) : String?
+    return unless m = lines[row].match(CLASS_HEADER)
+    return m[1].lchop("::") if m[1].starts_with?("::")
+    outer = lexical_nesting(path, lines, row).first?
+    outer ? "#{outer[0]}::#{m[1]}" : m[1]
+  end
+
+  # Devise's routes helpers: `authenticate :user do` runs
+  # `warden.authenticate!` before the routes inside, and `authenticated
+  # :user do` is a constraint no anonymous request matches.
+  DEVISE_ROUTE_BLOCK = /\A(authenticated?)\b(?![?!:=])[^#]*\bdo\b/
+
+  # The Devise helper whose block encloses the route at `route_line` of a
+  # `config/routes` file; nil when there is none.
+  private def devise_route_block(path : String, lines : Array(String), route_line : Int32) : String?
+    return unless path.includes?("/config/routes")
+    index = scope_lines(path, lines)
+    idx = route_line
+    while (idx = index.prev_shallower[idx]) >= 0
+      if m = index.stripped[idx].match(DEVISE_ROUTE_BLOCK)
+        return m[1]
+      end
+    end
+  end
+
+  # Hanami 1 evaluates an app's `controller.prepare do ... end` (in
+  # `apps/<app>/application.rb`) in every action of that app, so a `before
+  # :authenticate!` there guards each route its `config/routes.rb` draws.
+  # An action opts out by overriding the callback method with a body that
+  # refuses no one (the Hanami 1 guide's `def authenticate!; end`).
+  private def hanami_app_guard(path : String, lines : Array(String), line_idx : Int32) : String?
+    return unless path.ends_with?("/config/routes.rb")
+    app_dir = Path[path].parent.parent
+    app = (app_dir / "application.rb").to_s
+    return unless app_lines = read_file_lines(app)
+    return unless start = app_lines.index(&.matches?(/\A\s*controller\.prepare\s+do\b/))
+    block = ruby_block_lines(scope_lines(app, app_lines), start).reject(&.starts_with?('#'))
+    return unless desc = match_scope(block, HANAMI_AUTHN_PATTERNS)
+    callback = block.join('\n')[/\bbefore\s+:(\w+[!?]?)/, 1]?
+    route = lines[line_idx].match(/\bto:\s*['"]([\w\/]+)#(\w+)['"]/)
+    if callback && route && (action_lines = read_file_lines((app_dir / "controllers" / route[1] / "#{route[2]}.rb").to_s))
+      return if overrides_without_refusal?(action_lines, callback)
+    end
+    desc
+  end
+
+  # Whether `lines` define `def name` with a body no line of which refuses.
+  private def overrides_without_refusal?(lines : Array(String), name : String) : Bool
+    return false unless def_idx = lines.index(&.matches?(/\A\s*def\s+#{Regex.escape(name)}(?![\w!?])/))
+    indent = line_indent(lines[def_idx])
+    lines[(def_idx + 1)..].take_while { |source| source.strip.empty? || line_indent(source) > indent }
+      .map { |source| code_only(source.strip) }.reject { |text| text.empty? || text.starts_with?('#') }
+      .none?(&.matches?(CALLBACK_REJECTS))
   end
 
   private def match_scope(scope : Array(String), patterns) : String?

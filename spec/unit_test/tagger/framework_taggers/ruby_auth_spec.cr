@@ -1297,6 +1297,248 @@ describe "RubyAuthTagger (Grape route scope)" do
       FileUtils.rm_rf(dir)
     end
   end
+
+  it "reads an authenticate*! statement of the route body or a before block, and a filter of the API that mounts it" do
+    CodeLocator.instance.clear_all
+    dir = File.tempname("noir_grape_body_mount")
+    Dir.mkdir_p(dir)
+    root = File.join(dir, "root.rb")
+    File.write(root, <<-RB)
+      module V1
+        class Root < Grape::API
+          helpers do
+            def authenticate!
+              error!("401 Unauthorized", 401) unless current_user
+            end
+          end
+
+          get :status do
+            { ok: true }
+          end
+
+          get :timeline do
+            authenticate!
+            current_user.items
+          end
+
+          get :feed do
+            authenticate! if params[:private]
+            Item.all
+          end
+
+          resource :pages do
+            before do
+              load_site
+              authenticate_account!
+            end
+            get do
+              Page.all
+            end
+          end
+
+          mount V1::Public
+          namespace :account do
+            before { authenticate! }
+            mount V1::Items
+          end
+        end
+      end
+      RB
+    items = File.join(dir, "items.rb")
+    File.write(items, "module V1\n  class Items < Grape::API\n    resource :items do\n      get do\n        Item.all\n      end\n    end\n  end\nend\n")
+    open = File.join(dir, "public.rb")
+    File.write(open, "module V1\n  class Public < Grape::API\n    get :ping do\n      \"pong\"\n    end\n  end\nend\n")
+    admin = File.join(dir, "admin.rb")
+    File.write(admin, "class Admin < Grape::API\n  get :report do\n    authenticate!\n    authorize Report, :index?\n    Report.all\n  end\nend\n")
+    [root, items, open, admin].each { |file| CodeLocator.instance.register_path(file) }
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(file : String, url : String, line : Int32) do
+        details = Details.new(PathInfo.new(file, line))
+        details.technology = "ruby_grape"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      status = at.call(root, "/status", 9)
+      timeline = at.call(root, "/timeline", 13)
+      feed = at.call(root, "/feed", 18)
+      pages = at.call(root, "/pages", 28)
+      listed = at.call(items, "/account/items", 4)
+      ping = at.call(open, "/ping", 3)
+      report = at.call(admin, "/report", 2)
+      RubyAuthTagger.new(noir_options).perform([status, timeline, feed, pages, listed, ping, report])
+
+      status.tags.should be_empty
+      timeline.tags.map(&.name).should eq(["auth"])
+      feed.tags.should be_empty
+      pages.tags.map(&.name).should eq(["auth"])
+      listed.tags.map(&.name).should eq(["auth"])
+      listed.tags.first.description.should contain("mounts")
+      ping.tags.should be_empty
+      # A Pundit call in the body does not hide the route's authentication.
+      report.tags.map(&.name).sort!.should eq(["auth", "authz"])
+    ensure
+      FileUtils.rm_rf(dir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "credits a mounting API's filter only when every mount site of the class, resolved by its lexical scope, guards it" do
+    CodeLocator.instance.clear_all
+    dir = File.tempname("noir_grape_mount_sites")
+    files = {
+      "private_api.rb" => "class PrivateApi < Grape::API\n  before { authenticate! }\n  mount Shared::Items\nend\n",
+      "public_api.rb"  => "class PublicApi < Grape::API\n  mount Shared::Items\nend\n",
+      "items.rb"       => "module Shared\n  class Items < Grape::API\n    get :items do\n      Item.all\n    end\n  end\nend\n",
+      "admin_root.rb"  => "module Admin\n  class Root < Grape::API\n    before { authenticate_admin! }\n    mount Users\n  end\nend\n",
+      "admin_users.rb" => "module Admin\n  class Users < Grape::API\n    get :admin_users do\n      User.all\n    end\n  end\nend\n",
+      "open_root.rb"   => "module Open\n  class Root < Grape::API\n    mount Users\n  end\nend\n",
+      "open_users.rb"  => "module Open\n  class Users < Grape::API\n    get :open_users do\n      User.visible\n    end\n  end\nend\n",
+      "base_api.rb"    => "class BaseApi < Grape::API\n  format :json\nend\n",
+      "orders.rb"      => "class Orders < BaseApi\n  get :orders do\n    Order.all\n  end\nend\n",
+      "root.rb"        => "class Root < Grape::API\n  before { authenticate! }\n  mount Orders\nend\n",
+    }
+    begin
+      Dir.mkdir_p(dir)
+      files.each do |name, body|
+        File.write(File.join(dir, name), body)
+        CodeLocator.instance.register_path(File.join(dir, name))
+      end
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(file : String, url : String, line : Int32) do
+        details = Details.new(PathInfo.new(File.join(dir, file), line))
+        details.technology = "ruby_grape"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      items = at.call("items.rb", "/items", 3)
+      admin_users = at.call("admin_users.rb", "/admin_users", 3)
+      open_users = at.call("open_users.rb", "/open_users", 3)
+      orders = at.call("orders.rb", "/orders", 2)
+      RubyAuthTagger.new(noir_options).perform([items, admin_users, open_users, orders])
+
+      # Mounted from a guarded and an open API: reachable without the guard.
+      items.tags.should be_empty
+      admin_users.tags.map(&.name).should eq(["auth"])
+      # `mount Users` inside `Open::Root` is `Open::Users`, not `Admin::Users`.
+      open_users.tags.should be_empty
+      # A class built on an app base class is mounted all the same.
+      orders.tags.map(&.name).should eq(["auth"])
+    ensure
+      FileUtils.rm_rf(dir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
+  it "does not read a Sinatra route body's helper call by its name" do
+    dir = File.tempname("noir_sinatra_body")
+    Dir.mkdir_p(dir)
+    app = File.join(dir, "app.rb")
+    File.write(app, "require \"sinatra\"\n\nget \"/apikey\" do\n  authenticate_api_key!\n  \"ok\"\nend\n")
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      details = Details.new(PathInfo.new(app, 3))
+      details.technology = "ruby_sinatra"
+      endpoint = Endpoint.new("/apikey", "GET", [] of Param, details)
+      RubyAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+end
+
+describe "RubyAuthTagger (Hanami controller.prepare)" do
+  it "tags an app's routes when its controller.prepare registers an authenticate callback, not a commented or overridden one" do
+    CodeLocator.instance.clear_all
+    dir = File.tempname("noir_hanami_prepare")
+    prepare = ->(callback : String) { "module App\n  class Application < Hanami::Application\n    configure do\n      controller.prepare do\n        include Authentication\n        #{callback}\n      end\n    end\n  end\nend\n" }
+    files = {
+      "apps/admin/application.rb"              => prepare.call("before :authenticate_admin!"),
+      "apps/admin/config/routes.rb"            => "get '/users', to: 'users#index'\nget '/login', to: 'sessions#new'\n",
+      "apps/admin/controllers/users/index.rb"  => "module Admin\n  module Controllers\n    module Users\n      class Index\n        include Admin::Action\n        def call(params)\n        end\n      end\n    end\n  end\nend\n",
+      "apps/admin/controllers/sessions/new.rb" => "module Admin\n  module Controllers\n    module Sessions\n      class New\n        include Admin::Action\n        def call(params)\n        end\n\n        private\n\n        def authenticate_admin!\n          # the login page stays public\n        end\n      end\n    end\n  end\nend\n",
+      "apps/web/application.rb"                => prepare.call("# before :authenticate!"),
+      "apps/web/config/routes.rb"              => "get '/about', to: 'static#about'\n",
+    }
+    begin
+      files.each do |rel, body|
+        Dir.mkdir_p(File.dirname(File.join(dir, rel)))
+        File.write(File.join(dir, rel), body)
+        CodeLocator.instance.register_path(File.join(dir, rel))
+      end
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(app : String, url : String, line : Int32) do
+        details = Details.new(PathInfo.new(File.join(dir, "apps", app, "config", "routes.rb"), line))
+        details.technology = "ruby_hanami"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      users = at.call("admin", "/users", 1)
+      login = at.call("admin", "/login", 2)
+      about = at.call("web", "/about", 1)
+      RubyAuthTagger.new(noir_options).perform([users, login, about])
+
+      users.tags.map(&.name).should eq(["auth"])
+      # An action opts out by overriding the callback with an empty body.
+      login.tags.should be_empty
+      about.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+      CodeLocator.instance.clear_all
+    end
+  end
+end
+
+describe "RubyAuthTagger (Devise route blocks)" do
+  it "tags a route inside authenticate / authenticated, not unauthenticated or devise_scope" do
+    dir = File.tempname("noir_devise_routes")
+    Dir.mkdir_p(File.join(dir, "config"))
+    routes = File.join(dir, "config", "routes.rb")
+    File.write(routes, <<-RB)
+      Rails.application.routes.draw do
+        authenticated :user, ->(u) { u.admin? } do
+          mount Sidekiq::Web => "/jobs"
+        end
+        authenticate :user do
+          mount Blazer::Engine, at: "/blazer"
+        end
+        unauthenticated do
+          mount Landing::Engine, at: "/landing"
+        end
+        devise_scope :user do
+          get "/session/check", to: redirect("/")
+        end
+        mount PgHero::Engine, at: "/pghero"
+      end
+      RB
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      at = ->(url : String, line : Int32) do
+        details = Details.new(PathInfo.new(routes, line))
+        details.technology = "ruby_rails"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      jobs = at.call("/jobs", 3)
+      blazer = at.call("/blazer", 6)
+      landing = at.call("/landing", 9)
+      check = at.call("/session/check", 12)
+      pghero = at.call("/pghero", 14)
+      RubyAuthTagger.new(noir_options).perform([jobs, blazer, landing, check, pghero])
+
+      jobs.tags.map(&.name).should eq(["auth"])
+      blazer.tags.map(&.name).should eq(["auth"])
+      landing.tags.should be_empty
+      check.tags.should be_empty
+      pghero.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
 end
 
 describe "RubyAuthTagger (routed controller chain)" do
