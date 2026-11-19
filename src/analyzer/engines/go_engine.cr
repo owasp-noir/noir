@@ -1264,6 +1264,19 @@ module Analyzer::Go
       end
     end
 
+    STDLIB_BODY_READ = /json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode|(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/
+
+    # The `*http.Request` reads on a line credited to `endpoint` (see
+    # `GoRequestParamExtractor.line_params`), and the generic body marker
+    # for a body read when no decoded field reached the endpoint.
+    def add_request_line_params(line : String, endpoint : Endpoint)
+      return if endpoint.url.empty?
+      Noir::GoRequestParamExtractor.line_params(line, endpoint.method).each { |param| add_param_to_endpoint(param, endpoint) }
+      if line.matches?(STDLIB_BODY_READ) && endpoint.params.none? { |param| param.param_type == "json" }
+        add_param_to_endpoint(Param.new("body", "", "json"), endpoint)
+      end
+    end
+
     # A handler shared by `/short` and `/short/:word` reads `word` on both,
     # so both get the path parameter; the route without the slot has none.
     # Only that shape is dropped: a sibling route of the same handler that

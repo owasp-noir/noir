@@ -63,6 +63,7 @@ module Analyzer::Go
          Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content)}
       end
       named_scope = named_handler_scope(file_contents)
+      resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)
@@ -91,6 +92,10 @@ module Analyzer::Go
         external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
         external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+        # Every mux handler is a stdlib one: read it as net/http's are.
+        params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows,
+          ts_routes.to_h { |r| {r.line, r.verb} }, named_scope.bodies.functions_for(dir), named_scope.bodies.methods_for(dir),
+          resolver: resolver, path: path)
 
         # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
         statics.each do |sp|
@@ -122,6 +127,10 @@ module Analyzer::Go
                 end
                 new_endpoint.handler = named.handler_for(route)
                 new_endpoint.resolution = named.resolution_for(route)
+                params_by_route[route.line]?.try &.each { |param| add_param_to_endpoint(param, new_endpoint) }
+                named.handler_body(route).try do |body|
+                  Noir::GoRequestParamExtractor.params_for_body(body, verb, resolver).each { |param| add_param_to_endpoint(param, new_endpoint) }
+                end
                 result << new_endpoint
                 named.bind(route, new_endpoint)
                 last_endpoint = new_endpoint
@@ -145,84 +154,10 @@ module Analyzer::Go
       result
     end
 
+    # `mux.Vars(r)["id"]`, then the stdlib request reads.
     private def add_mux_param_patterns(line : String, ep : Endpoint)
-      # Handle parameter extraction patterns in Go (order matters - check more specific patterns first)
-      if line.includes?("Vars(")
-        add_param_to_endpoint(get_param(line, "Vars"), ep)
-      elsif line.includes?("Query().Get(")
-        add_param_to_endpoint(get_param(line, "Query"), ep)
-      elsif line.includes?("PostFormValue(")
-        add_param_to_endpoint(get_param(line, "PostFormValue", ep), ep)
-      elsif line.includes?("FormValue(")
-        add_param_to_endpoint(get_param(line, "FormValue", ep), ep)
-      elsif line.includes?("Cookie(")
-        add_param_to_endpoint(get_param(line, "Cookie"), ep)
-      end
-      Noir::GoRequestParamExtractor.header_params(line).each { |header| add_param_to_endpoint(header, ep) }
-
-      # Stdlib-style body reads. Gorilla/mux apps almost
-      # always use `json.NewDecoder(r.Body).Decode(&v)`
-      # or `io.ReadAll(r.Body)` (the modern replacement
-      # for `ioutil.ReadAll`) to parse request bodies —
-      # neither was previously surfaced.
-      if !ep.url.empty? &&
-         (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
-         line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
-        body_param = Param.new("body", "", "json")
-        ep.params << body_param unless ep.params.includes?(body_param)
-      end
-    end
-
-    def get_param(line : String, pattern : String, endpoint : Endpoint? = nil) : Param
-      param_name = ""
-      param_type = ""
-
-      # Special handling for different patterns
-      case pattern
-      when "Vars"
-        # Handle mux.Vars(r)["id"] pattern
-        if match = line.match(/Vars\([^)]+\)\s*\[\s*[\"']([^\"']+)[\"']\s*\]/)
-          param_name = match[1]
-          param_type = "path"
-        end
-      when "Query"
-        # Handle r.URL.Query().Get("name") pattern
-        if match = line.match(/Query\(\)\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "query"
-        end
-      when "PostFormValue"
-        # Handle r.PostFormValue("username") pattern
-        if match = line.match(/PostFormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "form"
-        end
-      when "FormValue"
-        # Handle r.FormValue("password") pattern
-        if match = line.match(/FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = form_value_param_type(endpoint)
-        end
-      when "Cookie"
-        # Handle r.Cookie("auth_token") pattern
-        if match = line.match(/Cookie\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "cookie"
-        end
-      end
-
-      Param.new(param_name, "", param_type)
-    end
-
-    private def form_value_param_type(endpoint : Endpoint?) : String
-      return "query" unless endpoint
-
-      case endpoint.method
-      when "GET", "HEAD", ""
-        "query"
-      else
-        "form"
-      end
+      line.scan(/Vars\([^)]+\)\s*\[\s*["']([^"']+)["']\s*\]/) { |m| add_param_to_endpoint(Param.new(m[1], "", "path"), ep) }
+      add_request_line_params(line, ep)
     end
   end
 end

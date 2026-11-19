@@ -107,7 +107,7 @@ module Noir::GoRequestParamExtractor
   # The `*http.Request` parameters of the function whose source starts
   # `source`; nil when it takes none.
   private def request_params(source : String) : Set(String)?
-    list = source.match(HELPER_PARAMS).try(&.[1]) || return
+    list = (source.match(HELPER_PARAMS) || source.match(LITERAL_PARAMS)).try(&.[1]) || return
     names = list.scan(REQUEST_PARAM).map(&.[1]).to_set
     names.empty? ? nil : names
   end
@@ -213,7 +213,11 @@ module Noir::GoRequestParamExtractor
     case Noir::TreeSitter.node_type(handler_arg)
     when "func_literal"
       if body = Noir::TreeSitter.field(handler_arg, "body")
-        collect_params_in_body(body, source, http_method, external_functions, external_methods, cache, visiting, sink, 0, ctx)
+        # The closure's own declarations, not the first of the file's.
+        text = Noir::TreeSitter.node_text(handler_arg, source)
+        literal_ctx = ctx.copy_with(lines: text.lines, requests: request_params(text),
+          queries: text.scan(QUERY_ALIAS).map(&.[1]).to_set)
+        collect_params_in_body(body, source, http_method, external_functions, external_methods, cache, visiting, sink, 0, literal_ctx)
       end
     when "identifier"
       name = Noir::TreeSitter.node_text(handler_arg, source)
@@ -403,6 +407,8 @@ module Noir::GoRequestParamExtractor
   end
 
   HELPER_PARAMS = /\Afunc\s*(?:\([^)]*\)\s*)?\w+\s*(?:\[.*?\]\s*)?\(([^)]*)\)/
+  # A function literal's parameter list: `func(w http.ResponseWriter, r *http.Request)`.
+  LITERAL_PARAMS = /\Afunc\s*\(([^)]*)\)/
 
   # The helper's parameters bound to the string each argument of `call`
   # stands for: a literal, or a name bound in the caller.
@@ -452,6 +458,24 @@ module Noir::GoRequestParamExtractor
       params << Param.new("body", "", "json")
     end
 
+    params.concat(accessor_params(call_text, http_method, ctx))
+    dedupe_params(params)
+  end
+
+  # The `*http.Request` accessor reads on one source line (the query string,
+  # the form, headers, cookies, `PathValue`), every one of them, for a route
+  # answering `http_method`. For the adapters' line loops over a handler
+  # whose definition is not walked.
+  def line_params(line : String, http_method : String) : Array(Param)
+    return [] of Param unless line.matches?(ACCESSOR_GATE)
+    dedupe_params(accessor_params(line, http_method, nil))
+  end
+
+  # A word every read `accessor_params` matches contains.
+  ACCESSOR_GATE = /Query|Form|Header|Cookie|PathValue/
+
+  private def accessor_params(call_text : String, http_method : String, ctx : Context?) : Array(Param)
+    params = [] of Param
     append_regex_param(params, call_text, /\.URL\s*\.\s*Query\s*\(\s*\)\s*\.\s*(?:Get|Has)\s*\(\s*["`]([^"`]+)["`]/, "query")
     ctx.try &.queries.each do |name|
       call_text.scan(/(?<![\w.])#{Regex.escape(name)}\s*(?:\[\s*"([^"]+)"\s*\]|\.\s*(?:Get|Has)\s*\(\s*"([^"]+)"\s*\))/) do |m|
@@ -468,8 +492,7 @@ module Noir::GoRequestParamExtractor
     params.concat(request_header_params(call_text, ctx.try(&.requests)))
     append_regex_param(params, call_text, /\.Cookie\s*\(\s*["`]([^"`]+)["`]/, "cookie")
     append_regex_param(params, call_text, /\.PathValue\s*\(\s*["`]([^"`]+)["`]/, "path")
-
-    dedupe_params(params)
+    params
   end
 
   # `header_params`, keeping only reads off one of `requests` (or a
@@ -516,9 +539,7 @@ module Noir::GoRequestParamExtractor
   end
 
   private def append_regex_param(params : Array(Param), call_text : String, regex : Regex, param_type : String)
-    if match = call_text.match(regex)
-      params << Param.new(match[1], "", param_type)
-    end
+    call_text.scan(regex) { |match| params << Param.new(match[1], "", param_type) }
   end
 
   private def helper_function_body_for_call(call : LibTreeSitter::TSNode,

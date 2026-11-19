@@ -27,6 +27,8 @@ module Analyzer::Go
     @external_string_seed = Hash(String, String).new
     # Where a named handler is looked up, shared with the Mount expansion.
     @named_scope : Noir::GoNamedHandler::Scope? = nil
+    # Reads a stdlib handler's definition, shared with the Mount expansion.
+    @resolver : Noir::GoRequestParamExtractor::Resolver? = nil
     # Per-directory `{route helper name => declaring file}`, see
     # `external_route_helper`.
     @router_helper_files = Hash(String, Hash(String, String)).new
@@ -194,6 +196,8 @@ module Analyzer::Go
 
       named_scope = Noir::GoNamedHandler.scope(file_contents_cache, @import_dirs)
       @named_scope = named_scope
+      resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents_cache, @import_dirs)
+      @resolver = resolver
 
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
@@ -249,6 +253,10 @@ module Analyzer::Go
         external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, dir)
         external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+        # Every chi handler is a stdlib one: read it as net/http's are.
+        params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows,
+          ts_routes.to_h { |r| {r.line, r.verb} }, named_scope.bodies.functions_for(dir), named_scope.bodies.methods_for(dir),
+          resolver: resolver, path: path)
 
         mount_scopes = mount_scopes_for(content, dir)
         state = ChiRouteState.new
@@ -332,6 +340,8 @@ module Analyzer::Go
                 end
                 endpoint.handler = named.handler_for(route)
                 endpoint.resolution = named.resolution_for(route)
+                params_by_route[route.line]?.try &.each { |param| add_param_to_endpoint(param, endpoint) }
+                add_handler_body_params(named, route, endpoint)
                 free_pass << endpoint
                 named.bind(route, endpoint)
                 last_endpoint = endpoint
@@ -373,79 +383,23 @@ module Analyzer::Go
       extract_handler_params(line, last_endpoint)
     end
 
+    # `chi.URLParam(r, "id")` and go-chi/render's body binders, then the
+    # stdlib request reads.
     private def extract_handler_params(line : String, last_endpoint : Endpoint)
       return if last_endpoint.url.empty?
-
-      # Parameter extraction patterns (order matters - check more specific patterns first)
-      pattern = if line.includes?("chi.URLParam(")
-                  "URLParam"
-                elsif line.includes?("Query().Get(")
-                  "Query"
-                elsif line.includes?("PostFormValue(")
-                  "PostFormValue"
-                elsif line.includes?("FormValue(")
-                  "FormValue"
-                elsif line.includes?("Cookie(")
-                  "Cookie"
-                end
-
-      if pattern
-        param = get_param(line, pattern)
-        last_endpoint.params << param unless param.name.empty?
-      end
-      Noir::GoRequestParamExtractor.header_params(line).each { |header| last_endpoint.params << header }
-
-      # Body-binding helpers that consume `r.Body` directly. Chi
-      # apps commonly pair the stdlib `json.NewDecoder(r.Body).Decode`
-      # idiom with go-chi/render's `render.DecodeJSON` / `render.Bind`.
-      # All three indicate the handler reads a request body.
-      if line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
-         line.includes?("render.DecodeJSON(") ||
-         line.includes?("render.Bind(")
-        body_param = Param.new("body", "", "json")
-        last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
+      line.scan(/chi\.URLParam\([^,]+,\s*["']([^"']+)["']\s*\)/) { |m| add_param_to_endpoint(Param.new(m[1], "", "path"), last_endpoint) }
+      add_request_line_params(line, last_endpoint)
+      if (line.includes?("render.DecodeJSON(") || line.includes?("render.Bind(")) && last_endpoint.params.none? { |param| param.param_type == "json" }
+        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
       end
     end
 
-    def get_param(line : String, pattern : String) : Param
-      param_name = ""
-      param_type = ""
-
-      # Special handling for different patterns
-      case pattern
-      when "URLParam"
-        # Handle chi.URLParam(r, "id") pattern
-        if match = line.match(/chi\.URLParam\([^,]+,\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "path"
-        end
-      when "Query"
-        # Handle r.URL.Query().Get("name") pattern
-        if match = line.match(/Query\(\)\s*\.\s*Get\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "query"
-        end
-      when "PostFormValue"
-        # Handle r.PostFormValue("username") pattern
-        if match = line.match(/PostFormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "form"
-        end
-      when "FormValue"
-        # Handle r.FormValue("password") pattern
-        if match = line.match(/FormValue\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "form"
-        end
-      when "Cookie"
-        # Handle r.Cookie("auth_token") pattern
-        if match = line.match(/Cookie\s*\(\s*[\"']([^\"']+)[\"']\s*\)/)
-          param_name = match[1]
-          param_type = "cookie"
-        end
+    # The params the definition a route's handler resolves to reads.
+    private def add_handler_body_params(named : Noir::GoNamedHandler, route : Noir::TreeSitterGoRouteExtractor::Route, endpoint : Endpoint)
+      resolver = @resolver || return
+      named.handler_body(route).try do |body|
+        Noir::GoRequestParamExtractor.params_for_body(body, endpoint.method, resolver).each { |param| add_param_to_endpoint(param, endpoint) }
       end
-
-      Param.new(param_name, "", param_type)
     end
 
     # Parses a `.Mount("/prefix", target())` line into its mount prefix
@@ -760,6 +714,7 @@ module Analyzer::Go
               # The mount prefix joined on by the caller does not read the
               # path's own leading operand, so the mark stays.
               endpoint.resolution = named.resolution_for(route)
+              add_handler_body_params(named, route, endpoint)
               file_endpoints << endpoint
             end
           end
