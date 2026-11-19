@@ -115,6 +115,73 @@ describe "PerlAuthTagger" do
     end
   end
 
+  it "applies a Mojolicious full-app `under` bridge to the routes built on it" do
+    dir = File.tempname("noir_perl_bridge")
+    Dir.mkdir_p(File.join(dir, "lib/MyApp/Controller"))
+    app = File.join(dir, "lib/MyApp.pm")
+    File.write(app, <<-PL)
+      package MyApp;
+      use Mojo::Base 'Mojolicious', -signatures;
+      sub startup ($self) {
+          my $r = $self->routes;
+          my $logged_in = $r->under('/')->to('session#ensure_user');
+          my $maybe = $r->under('/')->to('session#maybe_user');
+          my $api = $r->any('/api');
+          my $api_admin
+            = $api->under('/')->to(controller => 'Auth', action => 'admin_only');
+          $r->get('/login')->to('session#login');
+          $logged_in->get('/account')->to('account#show');
+          my $settings = $logged_in->any('/settings');
+          $settings->get('/')->to('settings#index');
+          $maybe->get('/feed')->to('feed#index');
+          $api_admin->post('/users')->to('user#create');
+      }
+      1;
+      PL
+    File.write(File.join(dir, "lib/MyApp/Controller/Session.pm"), <<-PL)
+      package MyApp::Controller::Session;
+      sub ensure_user ($self) { $self->current_user ? 1 : $self->_redirect_login }
+      sub maybe_user ($self) {
+          $self->stash(user => $self->current_user);
+          return 1;
+      }
+      sub _redirect_login ($self) {
+          $self->redirect_to('login');
+          return undef;
+      }
+      1;
+      PL
+    File.write(File.join(dir, "lib/MyApp/Controller/Auth.pm"), <<-PL)
+      package MyApp::Controller::Auth;
+      sub admin_only ($self) {
+          return 1 if $self->_is_admin;
+          $self->render(json => {error => 'Forbidden'}, status => 403);
+          return 0;
+      }
+      sub _is_admin ($self) {
+          my $user = $self->current_user or return 0;
+          return $user->is_admin;
+      }
+      1;
+      PL
+
+    begin
+      CodeLocator.instance.clear_all
+      Dir.glob("#{dir}/**/*.pm").each { |file| CodeLocator.instance.register_path(file) }
+      options = create_test_options
+      options["base"] = YAML::Any.new(dir)
+      login, account, settings, feed, users = {10, 11, 13, 14, 15}.map { |line| perl_auth_tag_for(app, line, options, "perl_mojolicious") }
+      login.tags.should be_empty
+      account.tags.map(&.description).should eq(["Protected by Mojolicious under session#ensure_user"])
+      settings.tags.map(&.description).should eq(["Protected by Mojolicious under session#ensure_user"])
+      feed.tags.should be_empty
+      users.tags.map(&.description).should eq(["Protected by Mojolicious under Auth#admin_only"])
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   it "applies a Mojolicious::Lite `under` guard to the routes after it, not before" do
     dir = File.tempname("noir_perl_under")
     Dir.mkdir_p(dir)

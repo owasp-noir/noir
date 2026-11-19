@@ -54,6 +54,11 @@ class PerlAuthTagger < FrameworkTagger
 
   GLOBAL_GUARD_BLOCK_START = /\bhook\s+before\b|\bbefore\s*=>\s*sub\b|\bsub\s+auto\b|\bsub\s+begin\b/
 
+  def initialize(options : Hash(String, YAML::Any))
+    super
+    @bridge_verdicts = Hash({String, String}, Bool).new
+  end
+
   def self.target_techs : Array(String)
     ["perl_dancer2", "perl_mojolicious", "perl_catalyst"]
   end
@@ -70,6 +75,7 @@ class PerlAuthTagger < FrameworkTagger
       description = check_route_wrapper(lines, idx) ||
                     check_handler_body(lines, idx) ||
                     check_lite_under(lines, idx) ||
+                    check_mojo_bridge(lines, idx) ||
                     check_global_guard(lines)
       next if description.nil?
 
@@ -136,6 +142,92 @@ class PerlAuthTagger < FrameworkTagger
       return check_handler_body(lines, i) if lines[i].matches?(/^\s*under\b/)
     end
     nil
+  end
+
+  # A Mojolicious full app's bridge: `my $auth = $r->under('/')->to('session#check')`
+  # and then `$auth->get(...)`, possibly through more `->any(...)` children
+  # or an `->under(...)` on the route line itself. Every route below a
+  # bridge dispatches only when the bridge action returns true.
+  private def check_mojo_bridge(lines : Array(String), idx : Int32) : String?
+    return unless m = lines[idx].match(/\A\s*(\$\w+.*?)->(?:get|post|put|patch|delete|options|any|websocket)\s*\(/)
+    chain = m[1]
+    8.times do
+      if description = mojo_under_guard(chain)
+        return description
+      end
+      return unless parent = chain.match(/\A\$(\w+)/)
+      return unless found = route_assignment(lines, parent[1], idx)
+      chain, idx = found
+    end
+    nil
+  end
+
+  # The last `my $name = $parent->...;` statement above `before`, joined
+  # across lines; nil when the right side is not a route chain.
+  private def route_assignment(lines : Array(String), name : String, before : Int32) : {String, Int32}?
+    head = /\A\s*(?:my\s+)?\$#{name}\s*(?:=(?![=~>])|$)/
+    (before - 1).downto(0) do |i|
+      next unless lines[i].matches?(head)
+      statement = lines[i...[i + 5, lines.size].min].join(" ")
+      statement = statement[0, statement.index(';') || statement.size]
+      rhs = statement.partition('=')[2].strip
+      return rhs.matches?(/\A\$\w+->/) ? {rhs, i} : nil
+    end
+    nil
+  end
+
+  private def mojo_under_guard(chain : String) : String?
+    return unless at = chain.index("->under")
+    bridge = chain[at..]
+    m = bridge.match(/->to\s*\(\s*['"]([\w:-]+)#(\w+)['"]/) ||
+        bridge.match(/controller\s*=>\s*['"]([\w:-]+)['"]\s*,\s*action\s*=>\s*['"](\w+)['"]/)
+    return unless m
+    "Mojolicious under #{m[1]}##{m[2]}" if mojo_bridge_action_guard?(m[1], m[2])
+  end
+
+  # The bridge action reads who the caller is and has a path that returns
+  # false (`return 0`, `return undef`, `? 1 : $c->redirect...`). The
+  # identity read may sit in a `$self->helper` of the same file, two hops deep.
+  private def mojo_bridge_action_guard?(controller : String, action : String) : Bool
+    @bridge_verdicts.fetch({controller, action}) do |key|
+      suffix = "/#{mojo_camelize(controller).gsub("::", "/")}.pm"
+      @bridge_verdicts[key] = collect_files_by_extension(".pm").select(&.ends_with?(suffix)).any? do |file|
+        next false unless (lines = read_file_lines(file)) && (body = perl_sub_body(lines, action))
+        body.matches?(/\breturn\s+(?:0|undef)\b|\breturn\s*;|\breturn\s+\$\w+->|\?\s*1\s*:/) && reaches_identity?(lines, body, action)
+      end
+    end
+  end
+
+  private def reaches_identity?(lines : Array(String), body : String, name : String) : Bool
+    seen = Set{name}
+    frontier = [body]
+    3.times do
+      return true if frontier.any?(&.matches?(PERL_IDENTITY))
+      callees = frontier.flat_map { |text| text.scan(/\$(?:self|c)->(\w+)/).map(&.[1]) }
+      frontier = callees.select { |callee| seen.add?(callee) }.compact_map { |callee| perl_sub_body(lines, callee) }
+    end
+    false
+  end
+
+  PERL_IDENTITY = /\b(?:current_user|is_user_authenticated|user_exists|logged_in_user)\b|->\s*session\s*(?:\(\s*['"]|->\s*\{\s*['"]?)\w*(?:user|login|account)|\bAuthorization\b|->\s*header\s*\(\s*['"][^'"]*(?:auth|token|key)/i
+
+  # Mojolicious::Util::camelize: `api_key` -> `ApiKey`, `admin-user` ->
+  # `Admin::User`; a name starting uppercase is used as is.
+  private def mojo_camelize(name : String) : String
+    return name if name[0]?.try(&.uppercase?)
+    name.split('-').map { |part| part.split('_').map(&.capitalize).join }.join("::")
+  end
+
+  private def perl_sub_body(lines : Array(String), name : String) : String?
+    return unless start = lines.index(&.matches?(/\A\s*sub\s+#{Regex.escape(name)}\b/))
+    depth = 0
+    String.build do |io|
+      lines[start, 80].each do |line|
+        io << line << '\n'
+        depth += line.count('{') - line.count('}')
+        break if depth <= 0 && line.includes?('}')
+      end
+    end
   end
 
   # An application-wide `hook before { ... }` (Dancer2) or `sub auto`
