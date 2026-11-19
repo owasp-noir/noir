@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -12,9 +13,10 @@ require "../../../../src/tagger/tagger"
 #   Governor::new(). A #[cfg(test)] module also wraps Cors::permissive().
 #
 # axum/src/main.rs
-#   app() layers: CorsLayer::very_permissive(), GovernorLayer,
-#   SetResponseHeaderLayer(STRICT_TRANSPORT_SECURITY),
-#   DefaultBodyLimit::disable()  (all app-wide, prefix "/").
+#   18: .route("/health") -> GET /health
+#   19: .route("/upload") -> POST /upload
+#   app() layers both with CorsLayer::very_permissive(), GovernorLayer,
+#   SetResponseHeaderLayer(STRICT_TRANSPORT_SECURITY), DefaultBodyLimit::disable().
 #
 # loco/config/development.yaml
 #   server.middlewares: limit_payload (enable), cors (allow_origins "*"),
@@ -46,7 +48,130 @@ private def build_endpoint(path : String, line : Int32, url : String, method : S
   Endpoint.new(url, method, [] of Param, details)
 end
 
+# `url => tags` from `RustSecurityTagger` over an inline axum project.
+private def axum_security_tags(src : String, routes : Hash) : Hash(String, Array(String))
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("axum_security")
+  main = File.join(tmpdir, "src", "main.rs")
+  Dir.mkdir_p(File.dirname(main))
+  File.write(main, src)
+  CodeLocator.instance.register_path(main)
+  options = create_test_options
+  options["base"] = YAML::Any.new(tmpdir)
+  # Each endpoint sits on the line of its `.route(` call, found by the
+  # router-local `needle` (or line 1 when it is registered elsewhere).
+  endpoints = routes.map do |url, needle|
+    line = needle ? src.lines.index!(&.includes?(needle)) + 1 : 1
+    build_endpoint(main, line, url, "GET", "rust_axum")
+  end
+  RustSecurityTagger.new(options).perform(endpoints)
+  FileUtils.rm_rf(tmpdir)
+  endpoints.to_h { |e| {e.url, e.tags.map(&.name).sort!} }
+end
+
 describe "RustSecurityTagger" do
+  it "does not read an imported protection type as an applied layer" do
+    src = <<-RUST
+      use axum::{
+          extract::{DefaultBodyLimit, Path},
+          routing::get,
+          Router,
+      };
+      use tower_governor::GovernorLayer;
+
+      pub fn routes() -> Router {
+          Router::new().route("/items", get(list_items))
+      }
+      RUST
+    axum_security_tags(src, {"/items" => %("/items")}).should eq({"/items" => [] of String})
+  end
+
+  it "applies an axum layer only to the routes registered before it" do
+    src = <<-RUST
+      use axum::{extract::DefaultBodyLimit, routing::{get, post}, Router};
+      use tower_http::cors::CorsLayer;
+
+      pub fn file_routes() -> Router {
+          Router::new()
+              .route("/files", get(list_files).post(upload_file))
+              .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+              .route("/files/new", get(new_file))
+              .route("/avatar", post(set_avatar).layer(DefaultBodyLimit::max(1024)))
+      }
+
+      pub fn app() -> Router {
+          Router::new().route("/health", get(health)).merge(file_routes())
+      }
+
+      pub async fn run(api: Router) {
+          let app = api
+              .layer(CorsLayer::permissive())
+              .route("/metrics", get(metrics));
+          serve(app).await;
+      }
+      RUST
+    tags = axum_security_tags(src, {
+      "/files"     => %("/files"),
+      "/files/new" => %("/files/new"),
+      "/avatar"    => %("/avatar"),
+      "/health"    => %("/health"),
+      "/metrics"   => %("/metrics"),
+      "/api/items" => nil,
+    })
+    tags.should eq({
+      "/files"     => ["body-limit", "cors"],
+      "/files/new" => ["cors"],
+      "/avatar"    => ["body-limit", "cors"],
+      "/health"    => ["cors"],
+      "/metrics"   => [] of String,
+      "/api/items" => ["cors"],
+    })
+  end
+
+  it "tells a layered router's routes from same-named routes of another router" do
+    src = <<-RUST
+      use axum::{routing::{get, post}, Router};
+      use tower_http::{cors::CorsLayer, limit::RequestBodyLimitLayer};
+
+      fn upload_router() -> Router {
+          Router::new()
+              .route("/", post(upload))
+              .route("/:id", get(show_upload))
+              .route_service("/raw", raw_service)
+              .layer(RequestBodyLimitLayer::new(1024))
+      }
+
+      fn user_router() -> Router {
+          Router::new().route("/:id", get(show_user))
+      }
+
+      fn app() -> Router {
+          Router::new()
+              .nest("/uploads", upload_router())
+              .route("/health", get(health))
+              .nest("/api", api_router())
+              .layer(CorsLayer::new())
+              .nest("/users", user_router())
+      }
+      RUST
+    tags = axum_security_tags(src, {
+      "/uploads/"    => %("/", post(upload)),
+      "/uploads/:id" => %("/:id", get(show_upload)),
+      "/uploads/raw" => %("/raw", raw_service),
+      "/users/:id"   => %("/:id", get(show_user)),
+      "/health"      => %("/health"),
+      "/api/items"   => nil,
+    })
+    tags.should eq({
+      "/uploads/"    => ["body-limit", "cors"],
+      "/uploads/:id" => ["body-limit", "cors"],
+      "/uploads/raw" => ["body-limit", "cors"],
+      "/users/:id"   => [] of String,
+      "/health"      => ["cors"],
+      "/api/items"   => ["cors"],
+    })
+  end
+
   fixtures = File.expand_path("../../../functional_test/fixtures/rust/rust_security", __DIR__)
 
   describe "target techs" do
@@ -101,7 +226,7 @@ describe "RustSecurityTagger" do
 
     it "flags very_permissive CORS as a risk" do
       options = load_fixture(axum_base)
-      endpoint = build_endpoint(main_path, 8, "/health", "GET", "rust_axum")
+      endpoint = build_endpoint(main_path, 18, "/health", "GET", "rust_axum")
       RustSecurityTagger.new(options).perform([endpoint])
 
       tag = tag_named(endpoint, "cors")
@@ -111,7 +236,7 @@ describe "RustSecurityTagger" do
 
     it "flags a disabled body limit as a risk" do
       options = load_fixture(axum_base)
-      endpoint = build_endpoint(main_path, 12, "/upload", "POST", "rust_axum")
+      endpoint = build_endpoint(main_path, 19, "/upload", "POST", "rust_axum")
       RustSecurityTagger.new(options).perform([endpoint])
 
       tag = tag_named(endpoint, "body-limit")
@@ -121,7 +246,7 @@ describe "RustSecurityTagger" do
 
     it "detects rate limiting and HSTS security header via tower layers" do
       options = load_fixture(axum_base)
-      endpoint = build_endpoint(main_path, 8, "/health", "GET", "rust_axum")
+      endpoint = build_endpoint(main_path, 18, "/health", "GET", "rust_axum")
       RustSecurityTagger.new(options).perform([endpoint])
 
       tag_named(endpoint, "rate-limit").should_not be_nil

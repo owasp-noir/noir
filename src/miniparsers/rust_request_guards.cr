@@ -145,7 +145,126 @@ module Noir::RustRequestGuards
       methods = {} of String => LibTreeSitter::TSNode
       index_inherent_methods(root, source, methods, 0) if source.includes?("Self::")
       collect(root, source, globs, facts, path, crate, 0, methods)
+      collect_macro_guards(root, source, globs, facts, path, crate) if source.includes?("macro_rules!")
     end
+  end
+
+  # `$name` of a transcriber's `impl FromRequest for $name`.
+  MACRO_GUARD_RE = /\bimpl\b[^{;]*\bFromRequest(?:Parts)?\b[^{;]*\bfor\s+\$(\w+)/
+  # `$(#[$doc])*`: attributes a transcriber passes through.
+  MACRO_ATTR_REPEAT_RE = /\$\(\s*#\s*\[[^\]]*\]\s*\)\s*[*+?]/
+  MACRO_ATTR_RE        = /#\s*!?\s*\[[^\]]*\]|\/\/[^\n]*/
+
+  # One `macro_rules!` arm: its matcher's top-level comma-separated pieces
+  # and, when its transcriber implements a request guard for `$name`, the
+  # piece index of `$name` and that impl's sites.
+  private record MacroArm, pieces : Array(String), guard : {Int32, Array(Site)}?
+
+  # Guards a `macro_rules!` stamps out: an invocation takes the first arm
+  # its arguments match (count and literal tokens, as rustc tries arms in
+  # order), and when that arm implements `FromRequest for $name`, the type
+  # it passes as `$name` is that guard.
+  # ponytail: invocations in the defining file only, so a `#[macro_export]`
+  # macro invoked from another file is missed; an arm with a repetition is
+  # not matched, so invocations reaching it are skipped.
+  private def self.collect_macro_guards(root : LibTreeSitter::TSNode, source : String, globs : Array(String),
+                                        facts : Facts, file : String, crate : String) : Nil
+    macros = {} of String => Array(MacroArm)
+    invocations = [] of {String, String}
+    Noir::TreeSitter.walk(root) do |node|
+      case Noir::TreeSitter.node_type(node)
+      when "macro_definition"
+        name = Noir::TreeSitter.field(node, "name") || next
+        arms = [] of MacroArm
+        Noir::TreeSitter.each_named_child(node) do |rule|
+          next unless Noir::TreeSitter.node_type(rule) == "macro_rule"
+          left = Noir::TreeSitter.field(rule, "left") || next
+          right = Noir::TreeSitter.field(rule, "right") || next
+          pieces = top_level_args(Noir::TreeSitter.node_text(left, source).gsub(MACRO_ATTR_REPEAT_RE, ""))
+          transcriber = Noir::TreeSitter.node_text(right, source)
+          guard = transcriber.match(MACRO_GUARD_RE).try do |m|
+            pieces.index(&.matches?(/\A\$#{m[1]}\s*:\s*ident\z/)).try { |index| {index, transcriber_sites(transcriber, m[1], globs, crate)} }
+          end
+          arms << MacroArm.new(pieces, guard)
+        end
+        macros[Noir::TreeSitter.node_text(name, source)] = arms if arms.any?(&.guard)
+      when "macro_invocation"
+        name = Noir::TreeSitter.field(node, "macro") || next
+        args = nil
+        Noir::TreeSitter.each_named_child(node) { |child| args = child if Noir::TreeSitter.node_type(child) == "token_tree" }
+        args.try { |tree| invocations << {Noir::TreeSitter.node_text(name, source).split("::").last, Noir::TreeSitter.node_text(tree, source)} }
+      end
+    end
+    return if macros.empty?
+    invocations.each do |name, args|
+      arms = macros[name]? || next
+      given = top_level_args(args.gsub(MACRO_ATTR_RE, ""))
+      arm = nil
+      arms.each do |candidate|
+        break if candidate.pieces.any?(&.includes?("$("))
+        next unless arm_matches?(candidate.pieces, given)
+        arm = candidate
+        break
+      end
+      index, sites = arm.try(&.guard) || next
+      facts.impls << Impl.new(given[index], sites, file, crate)
+    end
+  end
+
+  # A matcher piece with a `$x:frag` takes any argument (an `ident` only a
+  # name); any other piece only its own tokens.
+  private def self.arm_matches?(pieces : Array(String), given : Array(String)) : Bool
+    return false unless pieces.size == given.size
+    pieces.zip(given).all? do |(piece, arg)|
+      if piece.matches?(/\A\$\w+\s*:\s*ident\z/)
+        arg.matches?(/\A[A-Za-z_]\w*\z/)
+      elsif piece.includes?('$')
+        !arg.empty?
+      else
+        piece.gsub(/\s+/, "") == arg.gsub(/\s+/, "")
+      end
+    end
+  end
+
+  # The sites of the `impl FromRequest for $var` in a transcriber, read as
+  # items on their own with `$x` as `_x`.
+  private def self.transcriber_sites(transcriber : String, var : String, globs : Array(String), crate : String) : Array(Site)
+    items = transcriber[1...-1].gsub(MACRO_ATTR_REPEAT_RE, "").gsub('$', '_')
+    sites = [] of Site
+    Noir::TreeSitter.parse_rust(items) do |root|
+      methods = {} of String => LibTreeSitter::TSNode
+      index_inherent_methods(root, items, methods, 0) if items.includes?("Self::")
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "impl_item"
+        trait = Noir::TreeSitter.field(node, "trait") || next
+        type = Noir::TreeSitter.field(node, "type") || next
+        body = Noir::TreeSitter.field(node, "body") || next
+        next unless Noir::TreeSitter.node_text(trait, items).matches?(TRAIT_RE) && Noir::TreeSitter.node_text(type, items) == "_#{var}"
+        sites.concat(guard_sites(body, "_#{var}", items, globs, methods, crate))
+      end
+    end
+    sites
+  end
+
+  # The comma-separated arguments inside a token tree's delimiters.
+  private def self.top_level_args(tree : String) : Array(String)
+    args = [] of String
+    depth = 0
+    current = String::Builder.new
+    tree.strip[1...-1].each_char do |char|
+      case char
+      when '(', '[', '{' then depth += 1
+      when ')', ']', '}' then depth -= 1
+      end
+      if char == ',' && depth == 0
+        args << current.to_s
+        current = String::Builder.new
+      else
+        current << char
+      end
+    end
+    args << current.to_s
+    args.map(&.strip)
   end
 
   # `Type::method` => body of every fn in an inherent `impl Type` block.

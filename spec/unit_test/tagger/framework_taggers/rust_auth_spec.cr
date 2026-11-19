@@ -758,6 +758,33 @@ describe "RustAuthTagger" do
     files["crates/lib-auth/src/lib.rs"] = mw.sub(%("/login"), %("/v2/admin"))
     axum_guarded_urls(files, ["/admin"]).should be_empty
   end
+
+  it "resolves a middleware imported through `use super::` to the parent module's fn" do
+    items = <<-RUST
+      use super::require_login;
+      pub fn routes() -> Router {
+          Router::new().route("/items", get(list_items)).layer(from_fn(require_login))
+      }
+      RUST
+    parent = <<-RUST
+      pub(crate) async fn require_login(req: Request, next: Next) -> Result<Response, StatusCode> {
+          if req.headers().get("authorization").is_none() {
+              return Err(StatusCode::UNAUTHORIZED);
+          }
+          Ok(next.run(req).await)
+      }
+      RUST
+    passes = <<-RUST
+      pub async fn require_login(req: Request, next: Next) -> Response {
+          next.run(req).await
+      }
+      RUST
+    files = {"src/routes/items.rs" => items, "src/routes/mod.rs" => parent, "src/metrics/mod.rs" => passes}
+    axum_guarded_urls(files, ["/items", "/health"]).should eq(["/items"])
+
+    files = {"src/routes/items.rs" => items, "src/routes/mod.rs" => passes, "src/metrics/mod.rs" => parent}
+    axum_guarded_urls(files, ["/items", "/health"]).should be_empty
+  end
 end
 
 describe "RustAuthTagger request guards read from their FromRequest impls" do
@@ -849,5 +876,269 @@ describe "RustAuthTagger actix extractors that fail with a 401 error variant" do
 
   it "ignores a 401 variant that only appears in a match pattern" do
     tag_handler.call("guarded.rs", "anon", 16).should be_empty
+  end
+end
+
+# Auth tag descriptions of the handler fn `name` in a one-file Rocket app.
+private def handler_guard_tags(src : String, name : String) : Array(String)
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("rocket_macro_guards")
+  main = File.join(tmpdir, "src", "main.rs")
+  Dir.mkdir_p(File.dirname(main))
+  File.write(main, src)
+  CodeLocator.instance.register_path(main)
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(tmpdir)
+  line = src.lines.index!(&.includes?("fn #{name}(")) + 1
+  details = Details.new(PathInfo.new(main, line - 1))
+  details.technology = "rust_rocket"
+  endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+  endpoint.handler = Handler.new(name, main, line)
+  RustAuthTagger.new(noir_options).perform([endpoint])
+  FileUtils.rm_rf(tmpdir)
+  endpoint.tags.map(&.description)
+end
+
+describe "RustAuthTagger request guards a macro_rules! generates" do
+  src = <<-RUST
+    use rocket::http::Status;
+    use rocket::request::{FromRequest, Outcome, Request};
+
+    pub struct User {
+        pub role: String,
+    }
+
+    #[rocket::async_trait]
+    impl<'r> FromRequest<'r> for User {
+        type Error = &'static str;
+
+        async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+            match request.headers().get_one("Authorization") {
+                Some(token) => Outcome::Success(User { role: token.to_string() }),
+                None => Outcome::Error((Status::Unauthorized, "missing token")),
+            }
+        }
+    }
+
+    macro_rules! role_guard {
+        ($(#[$doc:meta])* $name:ident, $role:expr) => {
+            $(#[$doc])*
+            pub struct $name {
+                pub user: User,
+            }
+
+            #[rocket::async_trait]
+            impl<'r> FromRequest<'r> for $name {
+                type Error = &'static str;
+
+                async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+                    let user = try_outcome!(User::from_request(request).await);
+                    if user.role == $role {
+                        Outcome::Success(Self { user })
+                    } else {
+                        Outcome::Error((Status::Forbidden, "missing role"))
+                    }
+                }
+            }
+        };
+    }
+
+    macro_rules! labelled {
+        ($name:ident) => {
+            pub struct $name;
+
+            #[rocket::async_trait]
+            impl<'r> FromRequest<'r> for $name {
+                type Error = ();
+
+                async fn from_request(_request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+                    Outcome::Success($name)
+                }
+            }
+        };
+    }
+
+    role_guard!(Manager, "manager");
+    role_guard!(
+        /// Reads reports.
+        Auditor,
+        "auditor"
+    );
+    labelled!(Locale);
+
+    #[post("/items")]
+    fn create_item(manager: Manager) -> &'static str { "created" }
+
+    #[get("/reports")]
+    fn list_reports(auditor: Auditor) -> &'static str { "reports" }
+
+    #[get("/drafts")]
+    fn list_drafts(auditor: Option<Auditor>) -> &'static str { "drafts" }
+
+    #[get("/items")]
+    fn list_items(locale: Locale) -> &'static str { "items" }
+    RUST
+
+  tag_handler = ->(name : String) { handler_guard_tags(src, name) }
+
+  it "tags each guard type a macro invocation names, doc comments and all" do
+    tag_handler.call("create_item").should eq(["Protected by Rust Manager request guard"])
+    tag_handler.call("list_reports").should eq(["Protected by Rust Auditor request guard"])
+  end
+
+  it "leaves an Option-wrapped or never-failing generated guard anonymous" do
+    tag_handler.call("list_drafts").should be_empty
+    tag_handler.call("list_items").should be_empty
+  end
+end
+
+describe "RustAuthTagger axum middleware that hands some paths on unchecked" do
+  it "exempts the literal paths a middleware passes through before it refuses" do
+    src = <<-RUST
+      fn is_public(path: &str) -> bool {
+          if path.starts_with("/assets/") {
+              return true;
+          }
+          matches!(path, "/login" | "/signup")
+      }
+
+      async fn require_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
+          let path = req.uri().path().to_owned();
+          if is_public(&path) {
+              return Ok(next.run(req).await);
+          }
+          if path == "/health" {
+              return Ok(next.run(req).await);
+          }
+          if req.headers().get("authorization").is_none() {
+              return Err(StatusCode::UNAUTHORIZED);
+          }
+          Ok(next.run(req).await)
+      }
+
+      pub fn routes() -> Router {
+          Router::new()
+              .route("/login", post(login))
+              .route("/signup", post(signup))
+              .route("/health", get(health))
+              .route("/assets/app.css", get(stylesheet))
+              .route("/items", get(list_items))
+              .route("/logins", get(list_logins))
+              .layer(middleware::from_fn(require_auth))
+      }
+      RUST
+    urls = ["/login", "/signup", "/health", "/assets/app.css", "/items", "/logins"]
+    axum_guarded_urls({"src/main.rs" => src}, urls).should eq(["/items", "/logins"])
+  end
+
+  it "keeps the guard behind a pass-through that is nested, compared to false, or decided by role" do
+    routes = <<-RUST
+      pub fn routes() -> Router {
+          Router::new()
+              .route("/admin/users", get(admin_users))
+              .route("/items", get(list_items).post(create_item))
+              .route("/reports", get(list_reports))
+              .layer(middleware::from_fn(require_auth))
+      }
+
+      fn allowed(path: &str, role: Role) -> bool {
+          if path.starts_with("/admin") {
+              return matches!(role, Role::Admin);
+          }
+          matches!(role, Role::User | Role::Admin)
+      }
+
+      async fn require_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
+          let path = req.uri().path().to_owned();
+          let role = role_of(&req);
+          if req.method() == Method::GET {
+              if path == "/items" {
+                  return Ok(next.run(req).await);
+              }
+          }
+          if path.starts_with("/reports") == false {
+              return Ok(next.run(req).await);
+          }
+          if allowed(&path, role) {
+              return Ok(next.run(req).await);
+          }
+          if req.headers().get("authorization").is_none() {
+              return Err(StatusCode::UNAUTHORIZED);
+          }
+          Ok(next.run(req).await)
+      }
+      RUST
+    urls = ["/admin/users", "/items", "/reports"]
+    axum_guarded_urls({"src/main.rs" => routes}, urls).should eq(urls.sort)
+  end
+
+  it "keeps the guard when the passing condition is not a plain path test" do
+    src = <<-RUST
+      fn is_open(path: &str) -> bool {
+          if path == "/admin" {
+              return false;
+          }
+          path.starts_with("/")
+      }
+
+      async fn require_auth(req: Request, next: Next) -> Result<Response, StatusCode> {
+          let path = req.uri().path().to_owned();
+          if is_open(&path) && req.method() == Method::GET {
+              return Ok(next.run(req).await);
+          }
+          if req.headers().get("authorization").is_none() {
+              return Err(StatusCode::UNAUTHORIZED);
+          }
+          Ok(next.run(req).await)
+      }
+
+      pub fn routes() -> Router {
+          Router::new()
+              .route("/admin", get(admin))
+              .route("/items", get(list_items))
+              .layer(middleware::from_fn(require_auth))
+      }
+      RUST
+    axum_guarded_urls({"src/main.rs" => src}, ["/admin", "/items"]).should eq(["/admin", "/items"])
+  end
+end
+
+describe "RustAuthTagger request guards a multi-arm macro_rules! generates" do
+  it "binds each invocation to the arm it matches, not to an argument position" do
+    src = <<-RUST
+      macro_rules! extractor {
+          ($name:ident, optional) => {
+              impl<S: Send + Sync> FromRequestParts<S> for $name {
+                  type Rejection = Infallible;
+                  async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Self::Rejection> {
+                      Ok($name(parts.headers.get("authorization").cloned()))
+                  }
+              }
+          };
+          ($name:ident) => {
+              impl<S: Send + Sync> FromRequestParts<S> for $name {
+                  type Rejection = StatusCode;
+                  async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Self::Rejection> {
+                      let v = parts.headers.get("authorization").ok_or(StatusCode::UNAUTHORIZED)?;
+                      Ok($name(v.clone()))
+                  }
+              }
+          };
+          ($name:ident, alias) => {
+              pub type $name = Option<String>;
+          };
+      }
+
+      extractor!(Required);
+      extractor!(Maybe, optional);
+      extractor!(Loose, alias);
+
+      async fn secure(_u: Required) {}
+      async fn open(_u: Maybe) {}
+      async fn loose(_u: Loose) {}
+      RUST
+    handler_guard_tags(src, "secure").should eq(["Protected by Rust Required request guard"])
+    handler_guard_tags(src, "open").should be_empty
+    handler_guard_tags(src, "loose").should be_empty
   end
 end

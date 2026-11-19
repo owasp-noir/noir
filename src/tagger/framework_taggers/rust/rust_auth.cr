@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../prefix_scope"
+require "./axum_chain"
 require "../../../miniparsers/rust_request_guards"
 require "../../../miniparsers/rust_use_imports"
 require "../../../ext/tree_sitter/tree_sitter"
@@ -9,6 +10,8 @@ require "../../../analyzer/engines/rust_engine"
 
 @[Noir::TaggerFor(key: "rust_auth", name: "Rust Auth Tagger", desc: "Identifies Rust authentication patterns (guards, extractors, middleware)", order: 70)]
 class RustAuthTagger < FrameworkTagger
+  include RustAxumChain
+
   class RustFnEntry
     getter file_path : String
     getter name : String
@@ -311,8 +314,20 @@ class RustAuthTagger < FrameworkTagger
     end
   end
 
+  # `super::f` named in `from_file`, as the path from the scan base that
+  # `register_function` keys `f` under.
+  private def from_parent_module(ref : String, from_file : String) : String
+    return ref unless ref.starts_with?("super::")
+    mod = file_module_parts(from_file)
+    while ref.starts_with?("super::")
+      ref = ref.lchop("super::")
+      mod.pop?
+    end
+    (mod << ref).join("::")
+  end
+
   private def lookup_function(fn_ref : String, from_file : String) : RustFnEntry?
-    cleaned = fn_ref.lchop("::").lchop("crate::").lchop("self::")
+    cleaned = from_parent_module(fn_ref.lchop("::").lchop("crate::").lchop("self::"), from_file)
     parts = cleaned.split("::")
     ensure_fn_indexed(from_file)
     ensure_fn_ref_indexed(cleaned)
@@ -326,10 +341,10 @@ class RustAuthTagger < FrameworkTagger
     imports = file_imports_for(from_file)
     if parts.size == 1
       if imported_full = imports.names[cleaned]?
-        cleaned = imported_full.lchop("::").lchop("crate::")
+        cleaned = from_parent_module(imported_full.lchop("::").lchop("crate::"), from_file)
       end
     elsif first_imported = imports.names[parts[0]]?
-      cleaned = (first_imported.split("::") + parts[1..]).join("::").lchop("::").lchop("crate::")
+      cleaned = from_parent_module((first_imported.split("::") + parts[1..]).join("::").lchop("::").lchop("crate::"), from_file)
     end
 
     ensure_fn_ref_indexed(cleaned)
@@ -378,13 +393,14 @@ class RustAuthTagger < FrameworkTagger
             next unless middleware_name
 
             mounts = collect_axum_layer_mounts(node, content, file)
+            except = layer_exemptions(args[0], content, file)
             mounts.each do |kind, path|
               @middleware_scopes << {
                 prefix:      path,
                 exact:       kind == "route",
                 local:       true,
                 description: "Protected by Rust #{middleware_name} middleware on #{path}",
-                except:      [] of {String, Bool},
+                except:      except,
                 at:          nil,
               }
             end
@@ -433,6 +449,81 @@ class RustAuthTagger < FrameworkTagger
       end
     end
     Noir::TreeSitter.node_text(arg, source).partition('(')[0].match(/\w*[Aa]uth\w*/).try(&.[0])
+  end
+
+  # `if is_public(&path) { return next.run(req).await; }` ahead of the refusal.
+  PASS_THROUGH = /\bif\s+([^{};]+?)\s*\{\s*return\s+(?:Ok\s*\(\s*)?next\s*\.\s*run\s*\([^()]*\)\s*\.await\s*\)?\s*;?\s*\}/
+  # A path value: `path`, `&path`, `req.uri().path()`.
+  PATH_EXPR = /&?\s*[A-Za-z_]\w*(?:\s*\.\s*\w+\s*\(\s*\))*/
+  PATH_LIT  = /"(\/[^"\\]*)"/
+  # Each is the whole of one `||` operand.
+  EQ_TEST      = /\A#{PATH_EXPR}\s*==\s*#{PATH_LIT}\z|\A#{PATH_LIT}\s*==\s*#{PATH_EXPR}\z/
+  PREFIX_TEST  = /\A#{PATH_EXPR}\s*\.\s*starts_with\s*\(\s*#{PATH_LIT}\s*\)\z/
+  MATCHES_TEST = /\Amatches!\s*\(\s*#{PATH_EXPR}\s*,\s*("\/[^"\\]*"(?:\s*\|\s*"\/[^"\\]*")*)\s*,?\s*\)\z/
+  HELPER_CALL  = /\A((?:\w+::)*\w+)\s*\(\s*#{PATH_EXPR}\s*\)\z/
+  # `if <cond> { return true; }` at the head of a helper body.
+  TRUE_IF = /\A\s*if\s+([^{};]+?)\s*\{\s*return\s+true\s*;?\s*\}/
+
+  # The paths a `from_fn` middleware hands on before it refuses: each
+  # `if <cond> { return next.run(..) }` at the top of its body, ahead of any
+  # refusal, whose condition is nothing but literal path tests joined by
+  # `||` (`path == "/x"`, `path.starts_with("/x/")`, `matches!(path, "/a" | "/b")`)
+  # or a call of one path-taking helper whose every answer is such a test.
+  private def layer_exemptions(arg : LibTreeSitter::TSNode, source : String, file : String) : Array({String, Bool})
+    paths = [] of {String, Bool}
+    return paths unless Noir::TreeSitter.node_type(arg) == "call_expression"
+    args = named_call_args(arg)
+    f = case call_func_leaf_name(arg, source)
+        when "from_fn"            then args[0]?
+        when "from_fn_with_state" then args[1]?
+        end
+    f || return paths
+    ref = Noir::TreeSitter.node_text(f, source).strip.lchop("::").lchop("crate::").lchop("self::")
+    entry = lookup_function(ref, file) || return paths
+    code = Noir::CComments.strip(entry.body_text)
+    refusal = code.index(MIDDLEWARE_REFUSAL) || code.size
+    code.scan(PASS_THROUGH) do |m|
+      head = code[0, m.begin(0)]
+      next if m.begin(0) > refusal || head.count('{') - head.count('}') != 1
+      condition_paths(m[1], entry.file_path, true).try { |found| paths.concat(found) }
+    end
+    paths.uniq!
+  end
+
+  # The paths a condition tests, or nil when it is anything more.
+  private def condition_paths(cond : String, file : String, helpers : Bool) : Array({String, Bool})?
+    paths = [] of {String, Bool}
+    cond.split("||").each do |operand|
+      test = operand.strip
+      if m = test.match(EQ_TEST)
+        paths << {m[1]? || m[2], false}
+      elsif m = test.match(PREFIX_TEST)
+        paths << {m[1], true}
+      elsif m = test.match(MATCHES_TEST)
+        m[1].scan(PATH_LIT) { |lit| paths << {lit[1], false} }
+      elsif helpers && (m = test.match(HELPER_CALL))
+        paths.concat(helper_paths(m[1], file) || return)
+      else
+        return
+      end
+    end
+    paths
+  end
+
+  # A helper whose body is `if <tests> { return true; }` lines then a tail
+  # of tests answers true exactly on those paths.
+  private def helper_paths(ref : String, file : String) : Array({String, Bool})?
+    entry = lookup_function(ref, file) || return
+    body = Noir::CComments.strip(entry.body_text).strip
+    return unless body.starts_with?('{') && body.ends_with?('}')
+    rest = body[1...-1]
+    paths = [] of {String, Bool}
+    while m = rest.match(TRUE_IF)
+      paths.concat(condition_paths(m[1], file, false) || return)
+      rest = rest[m.end(0)..]
+    end
+    tail = rest.strip.lchop("return").rchop(";").strip
+    paths.concat(condition_paths(tail, file, false) || return)
   end
 
   # A middleware fn whose definition (or closure) is in the scan guards when
@@ -497,26 +588,6 @@ class RustAuthTagger < FrameworkTagger
     recv = chain_receiver(call)
     return [] of {String, String} unless recv
     collect_router_mounts(recv, source, file_path)
-  end
-
-  private def find_enclosing_route_call(call : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
-    node = call
-    while parent = Noir::TreeSitter.parent(node)
-      if Noir::TreeSitter.node_type(parent) == "call_expression"
-        if field_call_name(parent, source) == "route"
-          args = named_call_args(parent)
-          if args.size >= 2
-            arg1_start = LibTreeSitter.ts_node_start_byte(args[1]).to_i
-            call_start = LibTreeSitter.ts_node_start_byte(call).to_i
-            if call_start >= arg1_start
-              return parent
-            end
-          end
-        end
-      end
-      node = parent
-    end
-    nil
   end
 
   private def collect_router_mounts(
@@ -656,48 +727,10 @@ class RustAuthTagger < FrameworkTagger
     end
   end
 
-  private def field_call_name(call : LibTreeSitter::TSNode, source : String) : String?
-    fn_node = Noir::TreeSitter.field(call, "function")
-    return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
-    field = Noir::TreeSitter.field(fn_node, "field")
-    field ? Noir::TreeSitter.node_text(field, source) : nil
-  end
-
-  private def chain_receiver(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
-    fn_node = Noir::TreeSitter.field(call, "function")
-    return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
-    Noir::TreeSitter.field(fn_node, "value")
-  end
-
   private def call_func_leaf_name(call : LibTreeSitter::TSNode, source : String) : String?
     fn_node = Noir::TreeSitter.field(call, "function") || return
     text = Noir::TreeSitter.node_text(fn_node, source)
     text.split("::").last.split("<").first.strip
-  end
-
-  private def call_func_full_text(call : LibTreeSitter::TSNode, source : String) : String
-    fn_node = Noir::TreeSitter.field(call, "function")
-    fn_node ? Noir::TreeSitter.node_text(fn_node, source).strip : ""
-  end
-
-  private def named_call_args(call : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
-    args = [] of LibTreeSitter::TSNode
-    if arg_list = Noir::TreeSitter.field(call, "arguments")
-      Noir::TreeSitter.each_named_arg(arg_list) do |arg|
-        args << arg
-      end
-    end
-    args
-  end
-
-  private def string_literal_content(node : LibTreeSitter::TSNode, source : String) : String?
-    return unless Noir::TreeSitter.node_type(node) == "string_literal"
-    raw = Noir::TreeSitter.node_text(node, source)
-    if raw.starts_with?('"') && raw.ends_with?('"') && raw.size >= 2
-      raw[1...-1]
-    elsif m = raw.match(/\Ar#*"(.*)"#*\z/m)
-      m[1]
-    end
   end
 
   private def nest_join(prefix : String, path : String) : String
