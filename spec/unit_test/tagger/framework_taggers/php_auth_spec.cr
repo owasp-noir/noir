@@ -451,7 +451,7 @@ describe "PhpAuthTagger (expanded targets)" do
   it "leaves CakePHP actions untagged when identity is optional, the exempt list is unreadable or the component is commented out" do
     tmpdir = File.tempname("php_cake_edges")
     files = {
-      "config/routes.php" => <<-'PHP',
+      "config/routes.php" => <<-PHP,
         <?php
         return function (RouteBuilder $routes): void {
             $routes->connect('/pages', ['controller' => 'Pages', 'action' => 'display']);
@@ -463,7 +463,7 @@ describe "PhpAuthTagger (expanded targets)" do
             $routes->connect('/articles', ['controller' => 'Articles', 'action' => 'add']);
         };
         PHP
-      "src/Controller/AppController.php" => <<-'PHP',
+      "src/Controller/AppController.php" => <<-PHP,
         <?php
         class AppController extends Controller
         {
@@ -473,7 +473,7 @@ describe "PhpAuthTagger (expanded targets)" do
             }
         }
         PHP
-      "src/Controller/PagesController.php" => <<-'PHP',
+      "src/Controller/PagesController.php" => <<-PHP,
         <?php
         class PagesController extends AppController
         {
@@ -484,7 +484,7 @@ describe "PhpAuthTagger (expanded targets)" do
             }
         }
         PHP
-      "src/Controller/OpenController.php" => <<-'PHP',
+      "src/Controller/OpenController.php" => <<-PHP,
         <?php
         class OpenController extends Controller
         {
@@ -494,7 +494,7 @@ describe "PhpAuthTagger (expanded targets)" do
             }
         }
         PHP
-      "src/Controller/StatusController.php" => <<-'PHP',
+      "src/Controller/StatusController.php" => <<-PHP,
         <?php
         class StatusController extends AppController
         {
@@ -504,7 +504,7 @@ describe "PhpAuthTagger (expanded targets)" do
             }
         }
         PHP
-      "src/Controller/Api/ArticlesController.php" => <<-'PHP',
+      "src/Controller/Api/ArticlesController.php" => <<-PHP,
         <?php
         class ArticlesController extends Controller
         {
@@ -514,13 +514,13 @@ describe "PhpAuthTagger (expanded targets)" do
             }
         }
         PHP
-      "src/Controller/ArticlesController.php" => <<-'PHP',
+      "src/Controller/ArticlesController.php" => <<-PHP,
         <?php
         class ArticlesController extends AppController
         {
         }
         PHP
-      "plugins/Blog/config/routes.php" => <<-'PHP',
+      "plugins/Blog/config/routes.php" => <<-PHP,
         <?php
         $routes->connect('/blog/posts', ['controller' => 'Posts', 'action' => 'add']);
         PHP
@@ -530,7 +530,7 @@ describe "PhpAuthTagger (expanded targets)" do
         {
         }
         PHP
-      "plugins/Blog/src/Controller/PostsController.php" => <<-'PHP',
+      "plugins/Blog/src/Controller/PostsController.php" => <<-PHP,
         <?php
         class PostsController extends AppController
         {
@@ -658,7 +658,7 @@ describe "PhpAuthTagger (expanded targets)" do
     tmpdir = File.tempname("php_yii_edges")
     Dir.mkdir_p(tmpdir)
     files = {
-      "RulesController.php" => <<-'PHP',
+      "RulesController.php" => <<-PHP,
         <?php
         class RulesController extends Controller
         {
@@ -669,7 +669,7 @@ describe "PhpAuthTagger (expanded targets)" do
             public function actionView() {}
         }
         PHP
-      "LongController.php" => <<-'PHP',
+      "LongController.php" => <<-PHP,
         <?php
         class LongController extends Controller
         {
@@ -680,7 +680,7 @@ describe "PhpAuthTagger (expanded targets)" do
             public function actionPage() {}
         }
         PHP
-      "OldController.php" => <<-'PHP',
+      "OldController.php" => <<-PHP,
         <?php
         class OldController extends Controller
         {

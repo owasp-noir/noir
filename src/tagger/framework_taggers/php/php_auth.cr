@@ -283,7 +283,7 @@ class PhpAuthTagger < FrameworkTagger
     names = parser.path(offset).select(&.kind.closure?).compact_map do |closure|
       content[[closure.start - 200, 0].max...closure.start].match(CAKE_PREFIX_SCOPE).try(&.[1])
     end
-    names.map { |name| name.lchop('/').split('/').map { |part| part.split(/[_-]/).map(&.capitalize).join }.join('/') }.join('/')
+    names.join('/', &.lchop('/').split('/').join('/', &.split(/[_-]/).join(&.capitalize)))
   end
 
   # The base class's file: beside the controller, else the nearest
