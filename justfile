@@ -15,17 +15,35 @@ default:
 # concurrent compiles across worktrees (each peaks at 6-11GB RSS). Set
 # NOIR_COMPILE_SLOTS to change the cap, or 0 to turn it off.
 #
+# On Linux, Crystal links with `-rdynamic`, which exports every Crystal symbol
+# into `.dynsym`. noir is past the size where that works: a plain build has
+# about 205,000 dynamic symbols and the binary dies at exec with
+#
+#   symbol lookup error: undefined symbol: __libc_start_main, version Hash::Entry(K, V)...
+#
+# (measured on Ubuntu 26.04, glibc 2.43, Crystal 1.22.0; ci.yml carries the
+# same flag for the same reason). `ld` takes the last of `--export-dynamic` /
+# `--no-export-dynamic`, so appending this cancels the one Crystal adds and
+# leaves about 300 symbols. Nothing dlopens these binaries.
+#
+# A debug build keeps its file:line backtraces, which come from DWARF. A
+# `--no-debug` build loses function names in backtraces (`??`), which is still
+# better than a binary that does not start. `--static` builds (Docker, Snap)
+# never had the problem. A `@[Link(ldflags: ...)]` in the source does not
+# work: Crystal puts lib flags before `-rdynamic`.
+linux_link_flags := if os() == "linux" { "--link-flags=-Wl,--no-export-dynamic" } else { "" }
+
 # Build noir binary (debug; fast incremental compile, slower runtime).
 [group('build')]
 build:
-    scripts/compile_gate.sh shards build
+    scripts/compile_gate.sh shards build {{linux_link_flags}}
 
 # Build noir binary with --release (slower compile, 2–3x faster runtime; use for benchmarks).
 # Uses the same flags as production release builds (Homebrew, GitHub releases, Docker, Snap)
 # so that local benchmark comparisons against the global binary are fair.
 [group('build')]
 build-release:
-    scripts/compile_gate.sh shards build --release --no-debug --production
+    scripts/compile_gate.sh shards build --release --no-debug --production {{linux_link_flags}}
 
 # Regenerate packaging/nix/shards.nix from shard.lock (run after changing dependencies).
 # crystal2nix always writes ./shards.nix, so move it into place afterwards.
@@ -134,7 +152,7 @@ spec_stack_flags := if os() == "macos" { "--link-flags=-Wl,-stack_size,0x2000000
 [group('development')]
 spec-build:
     mkdir -p bin
-    scripts/compile_gate.sh crystal build spec/suite.cr -o bin/noir_spec {{spec_stack_flags}}
+    scripts/compile_gate.sh crystal build spec/suite.cr -o bin/noir_spec {{spec_stack_flags}} {{linux_link_flags}}
 
 # The run is single-threaded and takes only ~0.3GB, so splitting it on the
 # `functional` tag turns ~18s of examples into ~10s of wall time (the unit half

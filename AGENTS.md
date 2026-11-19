@@ -15,6 +15,8 @@ Crystal-based attack surface detector that identifies endpoints by static analys
 | `just check` | format check + lint | 60s |
 | `just fix` | auto-format + fix lint | 60s |
 
+On Linux the bare alternatives need `--link-flags=-Wl,--no-export-dynamic`, or the binary exits at start with `symbol lookup error`. The `just` recipes add it.
+
 ### Keep compiles cheap (parallel worktrees)
 
 A compile is the expensive step, and it is memory-bound: building the spec suite peaks at ~11GB RSS, `src/noir.cr` at ~6GB, whatever `--threads` says. Running the examples is cheap (~0.3GB).
