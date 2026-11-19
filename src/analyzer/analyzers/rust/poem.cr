@@ -274,7 +274,8 @@ module Analyzer::Rust
 
     # Convert `:param` syntax to `{param}` and ensure leading slash.
     def normalize_path(route : String) : String
-      result = route.gsub(/:(\w+)/) { "{#{$~[1]}}" }
+      # `:id<\d+>` constrains the segment with a regex; the name is the param.
+      result = route.gsub(/:(\w+)(?:<[^>]*>)?/) { "{#{$~[1]}}" }
       result.starts_with?("/") ? result : "/#{result}"
     end
 
@@ -311,15 +312,15 @@ module Analyzer::Rust
             oai_name = nil
           end
           if !endpoint.params.any? { |p| p.name == "query" && p.param_type == "query" } &&
-             (text.includes?(": Query<") || text.match(/Query\s*\(\s*[^)]+\s*\)/))
+             (text.matches?(/:\s*(?:\w+::)*Query</) || text.match(/Query\s*\(\s*[^)]+\s*\)/))
             endpoint.push_param(Param.new("query", "", "query"))
           end
           if !endpoint.params.any? { |p| p.name == "body" && p.param_type == "json" } &&
-             (text.includes?(": Json<") || text.match(/Json\s*\(\s*[^)]+\s*\)/))
+             (text.matches?(/:\s*(?:\w+::)*Json</) || text.match(/Json\s*\(\s*[^)]+\s*\)/))
             endpoint.push_param(Param.new("body", "", "json"))
           end
           if !endpoint.params.any? { |p| p.name == "form" && p.param_type == "form" } &&
-             (text.includes?(": Form<") || text.match(/Form\s*\(\s*[^)]+\s*\)/))
+             (text.matches?(/:\s*(?:\w+::)*Form</) || text.match(/Form\s*\(\s*[^)]+\s*\)/))
             endpoint.push_param(Param.new("form", "", "form"))
           end
         end
