@@ -4985,7 +4985,7 @@ end
 
 # Auth tags of GET /api/items and GET /public/ping when `interceptor` is
 # registered by `registration` inside `addInterceptors` on `/api/**`.
-private def kotlin_interceptor_guards(interceptor : String, registration : String, members = "") : Array(Array(String))
+private def kotlin_interceptor_guards(interceptor : String, registration : String, members = "", extra = {} of String => String) : Array(Array(String))
   config = <<-KT
     package com.example
 
@@ -5013,7 +5013,7 @@ private def kotlin_interceptor_guards(interceptor : String, registration : Strin
     "src/main/kotlin/com/example/ApiKeyInterceptor.kt" => "package com.example\n\n#{interceptor}",
     "src/main/kotlin/com/example/WebConfig.kt"         => config,
     "src/main/kotlin/com/example/ItemController.kt"    => controller,
-  }, {
+  }.merge(extra), {
     "GET /api/items"   => "src/main/kotlin/com/example/ItemController.kt:5",
     "GET /public/ping" => "src/main/kotlin/com/example/ItemController.kt:8",
   })
@@ -5089,6 +5089,35 @@ describe "SpringAuthTagger (Kotlin HandlerInterceptor shapes)" do
       KT
     interceptor = "class ApiKeyInterceptor : HandlerInterceptor {\n" + KOTLIN_SEND_ERROR_PRE_HANDLE
     kotlin_interceptor_guards(interceptor, "registry.addInterceptor(apiKeyInterceptor())", members).should eq([
+      ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
+    ])
+  end
+
+  it "does not take a bodiless class for the interceptor an object below it declares" do
+    interceptor = <<-KT
+      data class ApiKeyInterceptor(val header: String)
+
+      val ENABLED = true
+
+      fun guard(): HandlerInterceptor {
+          return object : HandlerInterceptor {
+              override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+                  if (request.getHeader("X-Api-Key") != "k") {
+                      response.sendError(401)
+                      return false
+                  }
+                  return true
+              }
+          }
+      }
+      KT
+    kotlin_interceptor_guards(interceptor, "registry.addInterceptor(ApiKeyInterceptor())").should eq([[] of String, [] of String])
+  end
+
+  it "keeps reading interceptors past a class with no body before a long file" do
+    filler = "package com.example\n\nclass Holder\n" + (1..12_000).map { |i| "val v#{i} = #{i} + 1\n" }.join + "val type = \"HandlerInterceptor\"\n"
+    interceptor = "class ApiKeyInterceptor : HandlerInterceptor {\n" + KOTLIN_SEND_ERROR_PRE_HANDLE
+    kotlin_interceptor_guards(interceptor, "registry.addInterceptor(ApiKeyInterceptor())", extra: {"src/main/kotlin/com/example/Util.kt" => filler}).should eq([
       ["Protected by Spring HandlerInterceptor ApiKeyInterceptor"], [] of String,
     ])
   end

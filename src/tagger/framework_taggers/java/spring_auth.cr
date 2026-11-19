@@ -316,6 +316,9 @@ class SpringAuthTagger < FrameworkTagger
         next if test_source?(file)
 
         scan_security_config(content, file.ends_with?(".java"), module_dir, file)
+      rescue ex : Regex::Error
+        # One file a pattern cannot finish on must not cost every other file's guards.
+        @logger.debug "SpringAuthTagger: skipped the rest of #{file}: #{ex.message}"
       end
     end
 
@@ -376,18 +379,19 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
-  # A class header up to its body, however many lines a Kotlin primary
-  # constructor spreads it over. `AsyncHandlerInterceptor` extends
-  # `HandlerInterceptor` and keeps its `preHandle` contract.
-  INTERCEPTOR_CLASS = /\bclass\s+([A-Za-z0-9_$]+)(?:(?!\bclass\b)[^{;])*?(?:\bimplements\b|\bextends\b|:)(?:(?!\bclass\b)[^{;])*?\b(?:Async)?HandlerInterceptor(?:Adapter)?\b/
+  # `AsyncHandlerInterceptor` extends `HandlerInterceptor` and keeps its
+  # `preHandle` contract.
+  INTERCEPTOR_TYPE = /\b(?:Async)?HandlerInterceptor(?:Adapter)?\b/
+  # Longest class header read, generics and primary constructor included.
+  HEADER_SPAN = 4000
 
   private def scan_interceptor_def(content : String, file : String, module_dir : String?)
     clean_content = Noir::CComments.strip(content)
 
-    clean_content.scan(INTERCEPTOR_CLASS) do |match|
+    clean_content.scan(/\bclass\s+([A-Za-z0-9_$]+)/) do |match|
       class_name = match[1]
       # The class's own body: a file can declare several interceptors.
-      next unless open = clean_content.byte_index('{', match.byte_end(0))
+      next unless open = interceptor_body_open(clean_content, match.byte_end(0))
       close = Noir::JSLiteralScanner.find_matching_brace_at_byte(clean_content, open) || clean_content.bytesize - 1
       is_auth, open_paths = check_pre_handle_auth(clean_content.byte_slice(open, close - open + 1), clean_content, file)
       @interceptor_defs[class_name] = InterceptorDef.new(
@@ -399,6 +403,47 @@ class SpringAuthTagger < FrameworkTagger
         open_paths: open_paths
       )
     end
+  end
+
+  # Byte offset of the body `{` of the class whose name ends at `from`,
+  # when its supertype list names a HandlerInterceptor. The list follows
+  # the name, generics and primary constructor directly, and a line break
+  # inside it sits next to a `,` / `:` or before `implements` / `extends`:
+  # `data class A(val x: Int)` followed by code has no list.
+  private def interceptor_body_open(content : String, from : Int32) : Int32?
+    span = Math.min(HEADER_SPAN, content.bytesize - from)
+    while span > 0 && from + span < content.bytesize && content.byte_at(from + span) & 0xC0 == 0x80
+      span -= 1
+    end
+    head = content.byte_slice(from, span)
+    pos = 0
+    if generics = head.match(/\A\s*</)
+      depth = 0
+      pos = generics.byte_end(0) - 1
+      while pos < head.bytesize
+        depth += 1 if head.byte_at(pos) == '<'.ord
+        depth -= 1 if head.byte_at(pos) == '>'.ord
+        pos += 1
+        break if depth == 0
+      end
+      return unless depth == 0
+    end
+    if ctor = head.byte_slice(pos).match(/\A\s*(?:(?:@[\w.]+(?:\([^()]*\))?|private|protected|internal|public)\s+)*(?:constructor\s*)?\(/)
+      return unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(head, pos + ctor.byte_end(0) - 1)
+      pos = close + 1
+    end
+    supertypes = head.byte_slice(pos)
+    return unless supertypes.matches?(/\A\s*(?::|extends\b|implements\b)/)
+    return unless (stop = supertypes.match(/[{;]/)) && stop[0] == "{"
+    list = supertypes.byte_slice(0, stop.byte_begin(0))
+    return unless list.matches?(INTERCEPTOR_TYPE)
+    lines = list.split('\n')
+    lines.each_with_index do |line, i|
+      next if i == 0 || (i == lines.size - 1 && line.blank?)
+      previous = lines[i - 1].rstrip
+      return unless previous.ends_with?(',') || previous.ends_with?(':') || line.lstrip.matches?(/\A(?:[,:]|(?:implements|extends|where)\b)/)
+    end
+    from + pos + stop.byte_begin(0)
   end
 
   # A status handed to a response helper: `responseTransform(response, 401, "..")`.
