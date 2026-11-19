@@ -306,17 +306,20 @@ module Analyzer::Javascript
     end
 
     # Request inputs an h3 event handler (Nuxt server routes, Nitro) reads
-    # off `event`: `getQuery`, `readBody`, `getHeader(s)`, `getCookie` and
+    # off `event`: `getQuery`, `readBody`, `readFormData`, `getHeader(s)`,
+    # `event.headers`, `getCookie`, `parseCookies`, `getRequestURL` and
     # `getRouterParam`. Pass comment-stripped source.
     protected def h3_event_params(sanitized : String) : Array(Param)
       params = [] of Param
       # Extract query parameters from getQuery or useQuery
-      # Pattern 1: Direct access - getQuery(event).param
-      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)\.(\w+)/) do |m|
-        params << Param.new(m[1], "", "query")
+      # Pattern 1: Direct access - getQuery(event).param. The arguments are
+      # matched paren-balanced, so a validator argument's own `.min(1)` is
+      # not read as a field of the result.
+      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?=\s*[,)])(?<args>(?:[^()]++|\((?&args)\))*)\)\.(?<name>\w+)/) do |m|
+        params << Param.new(m["name"], "", "query")
       end
-      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        params << Param.new(m[1], "", "query")
+      sanitized.scan(/(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?=\s*[,)])(?<args>(?:[^()]++|\((?&args)\))*)\)\s*\[\s*['"](?<name>[^'"]+)['"]\s*\]/) do |m|
+        params << Param.new(m["name"], "", "query")
       end
       sanitized.scan(/(?:const|let|var)\s*\{\s*([^}]+?)\s*\}\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
         extract_destructure_params(m[1]).each do |param_name|
@@ -327,15 +330,19 @@ module Analyzer::Javascript
       # Pattern 2: Variable assignment - const query = getQuery(event); query.param
       sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |var_match|
         query_var = var_match[1]
-        sanitized.scan(cached_regex("h3:query_dot:#{query_var}") { /#{Regex.escape(query_var)}\.(\w+)/ }) do |m|
+        # Not after a dot: `db.query.users` is no read of a `query` local.
+        sanitized.scan(cached_regex("h3:query_dot:#{query_var}") { /(?<![\w$.])#{Regex.escape(query_var)}\.(\w+)/ }) do |m|
           param_name = m[1]
           # Skip common non-parameter properties like 'toString', 'valueOf', etc.
           next if ["toString", "valueOf", "constructor"].includes?(param_name)
           params << Param.new(param_name, "", "query")
         end
-        sanitized.scan(cached_regex("h3:query_bracket:#{query_var}") { /#{Regex.escape(query_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
+        sanitized.scan(cached_regex("h3:query_bracket:#{query_var}") { /(?<![\w$.])#{Regex.escape(query_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
           params << Param.new(m[1], "", "query")
         end
+      end
+      sanitized.scan(/getRequestURL\s*\(\s*event\s*\)\s*\.\s*searchParams\s*\.\s*(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]/) do |m|
+        params << Param.new(m[1], "", "query")
       end
 
       # Extract body parameters from readBody
@@ -346,17 +353,25 @@ module Analyzer::Javascript
             params << Param.new(param_name, "", "body")
           end
         end
-        body_vars = ["body", "data"]
+        # Only locals bound to the body: a `data` from a database call is not one.
+        body_vars = [] of String
         sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:readBody|readValidatedBody)\s*(?:<[^()]*?>\s*)?\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |m|
           body_vars << m[1] unless body_vars.includes?(m[1])
         end
         body_vars.each do |body_var|
-          sanitized.scan(cached_regex("h3:var_dot:#{body_var}") { /\b#{Regex.escape(body_var)}\.(\w+)/ }) do |m|
+          sanitized.scan(cached_regex("h3:var_dot:#{body_var}") { /(?<![\w$.])#{Regex.escape(body_var)}\.(\w+)/ }) do |m|
             params << Param.new(m[1], "", "body")
           end
-          sanitized.scan(cached_regex("h3:var_bracket:#{body_var}") { /\b#{Regex.escape(body_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
+          sanitized.scan(cached_regex("h3:var_bracket:#{body_var}") { /(?<![\w$.])#{Regex.escape(body_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
             params << Param.new(m[1], "", "body")
           end
+        end
+      end
+
+      # `const form = await readFormData(event); form.get("title")`
+      sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?readFormData\s*\(\s*event\s*\)/) do |m|
+        sanitized.scan(cached_regex("h3:form_get:#{m[1]}") { /(?<![\w$.])#{Regex.escape(m[1])}\.(?:get|getAll|has)\s*\(\s*['"]([^'"]+)['"]/ }) do |mm|
+          params << Param.new(mm[1], "", "form")
         end
       end
 
@@ -364,15 +379,21 @@ module Analyzer::Javascript
       sanitized.scan(/(?:getHeader|getRequestHeader)\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
         params << Param.new(m[1], "", "header")
       end
-      sanitized.scan(/getHeaders\s*\(\s*event\s*\)\.(\w+)/) do |m|
+      sanitized.scan(/\bevent\.headers\.(?:get|has)\s*\(\s*['"]([^'"]+)['"]/) do |m|
         params << Param.new(m[1], "", "header")
       end
-      sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*getHeaders\s*\(\s*event\s*\)/) do |m|
+      sanitized.scan(/\bevent\.node\.req\.headers(?:\s*\[\s*['"]([^'"]+)['"]\s*\]|\.(\w+))/) do |m|
+        params << Param.new(m[1]? || m[2], "", "header")
+      end
+      sanitized.scan(/(?:getHeaders|getRequestHeaders)\s*\(\s*event\s*\)\.(\w+)/) do |m|
+        params << Param.new(m[1], "", "header")
+      end
+      sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:getHeaders|getRequestHeaders)\s*\(\s*event\s*\)/) do |m|
         headers_var = m[1]
-        sanitized.scan(cached_regex("h3:var_dot:#{headers_var}") { /\b#{Regex.escape(headers_var)}\.(\w+)/ }) do |mm|
+        sanitized.scan(cached_regex("h3:var_dot:#{headers_var}") { /(?<![\w$.])#{Regex.escape(headers_var)}\.(\w+)/ }) do |mm|
           params << Param.new(mm[1], "", "header")
         end
-        sanitized.scan(cached_regex("h3:var_bracket:#{headers_var}") { /\b#{Regex.escape(headers_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |mm|
+        sanitized.scan(cached_regex("h3:var_bracket:#{headers_var}") { /(?<![\w$.])#{Regex.escape(headers_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |mm|
           params << Param.new(mm[1], "", "header")
         end
       end
@@ -380,6 +401,18 @@ module Analyzer::Javascript
       # Extract cookie parameters from getCookie
       sanitized.scan(/getCookie\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
         params << Param.new(m[1], "", "cookie")
+      end
+      sanitized.scan(/parseCookies\s*\(\s*event\s*\)\.(\w+)/) do |m|
+        params << Param.new(m[1], "", "cookie")
+      end
+      sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*parseCookies\s*\(\s*event\s*\)/) do |m|
+        cookies_var = m[1]
+        sanitized.scan(cached_regex("h3:var_dot:#{cookies_var}") { /(?<![\w$.])#{Regex.escape(cookies_var)}\.(\w+)/ }) do |mm|
+          params << Param.new(mm[1], "", "cookie")
+        end
+        sanitized.scan(cached_regex("h3:var_bracket:#{cookies_var}") { /(?<![\w$.])#{Regex.escape(cookies_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |mm|
+          params << Param.new(mm[1], "", "cookie")
+        end
       end
       sanitized.scan(/getRouterParam\s*\(\s*event\s*,\s*['"]([^'"]+)['"]/) do |m|
         params << Param.new(m[1], "", "path")
