@@ -26,6 +26,13 @@ class NestjsAuthTagger < FrameworkTagger
     {/\A@(?:Authenticate|UseAuth)\s*\(/, "@Authenticate decorator"},
   ]
 
+  # tsoa `@Middlewares(...)` runs Express middleware in front of the handler.
+  # Whole names only: `allowApiKeyAuthenticationIfPresent` and
+  # `unauthorisedInDemo` sit in the same lists and refuse no anonymous caller.
+  # ponytail: judged by name; reading each middleware's definition is the upgrade.
+  MIDDLEWARES_CALL     = /\A@Middlewares\s*\(/
+  AUTH_MIDDLEWARE_NAME = /\A(?:isAuthenticated|ensureAuthenticated|ensureLoggedIn|requireAuth|requireLogin|authMiddleware)\z/
+
   # NestJS authorization decorators/guards — verify what the caller may do.
   # Distinct from authentication so JwtAuthGuard + @Roles stack as
   # auth_guard + authz_guard rather than collapsing into a single auth tag.
@@ -557,9 +564,18 @@ class NestjsAuthTagger < FrameworkTagger
     AUTH_DECORATORS.each do |pattern, desc|
       authn_descs << desc if current.matches?(pattern) && !authn_descs.includes?(desc)
     end
-    if desc = guard_decorator_desc(decorator, file)
+    if desc = guard_decorator_desc(decorator, file) || middlewares_desc(current)
       authn_descs << desc unless authn_descs.includes?(desc)
     end
+  end
+
+  # For a tsoa `@Middlewares(...)`, its authentication middlewares as a
+  # description; nil for any other decorator or when it runs none.
+  private def middlewares_desc(line : String) : String?
+    args = guard_arg_lists(line, MIDDLEWARES_CALL).first?.try(&.strip) || return
+    args = args[1...-1] if args.starts_with?('[') && args.ends_with?(']')
+    names = Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).select(&.matches?(AUTH_MIDDLEWARE_NAME))
+    "tsoa @Middlewares(#{names.join(", ")})" unless names.empty?
   end
 
   # For a `@UseGuards(...)`, the guards in it that refuse anonymous
@@ -586,7 +602,7 @@ class NestjsAuthTagger < FrameworkTagger
         labeled = "#{desc} (class-level)"
         authn_descs << labeled unless authn_descs.includes?(labeled) || authn_descs.includes?(desc)
       end
-      if desc = guard_decorator_desc(class_decorator, file)
+      if desc = guard_decorator_desc(class_decorator, file) || middlewares_desc(decorator)
         labeled = "#{desc} (class-level)"
         authn_descs << labeled unless authn_descs.includes?(labeled)
       end

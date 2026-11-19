@@ -155,6 +155,54 @@ describe "NestjsAuthTagger" do
     FileUtils.rm_rf(tmpdir)
   end
 
+  it "tags tsoa @Middlewares that run an authentication middleware, method or class level" do
+    tmpdir = File.tempname("tsoa_middlewares")
+    Dir.mkdir_p(tmpdir)
+    items = File.join(tmpdir, "itemController.ts")
+    orders = File.join(tmpdir, "orderController.ts")
+    File.write(items, <<-TS)
+      @Route("items")
+      export class ItemController extends Controller {
+        @Middlewares([allowApiKeyAuthenticationIfPresent, isAuthenticated, unauthorisedInDemo])
+        @Get("/")
+        async list() {}
+
+        @Middlewares([unauthorisedInDemo])
+        @Post("/demo")
+        async demo() {}
+
+        @Middlewares([allowApiKeyAuthenticationIfPresent])
+        @Get("/download")
+        async download() {}
+      }
+      TS
+    File.write(orders, <<-TS)
+      @Route("orders")
+      @Middlewares(isAuthenticated)
+      export class OrderController extends Controller {
+        @Get("/")
+        async list() {}
+      }
+      TS
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = [4, 8, 12].map { |line| Endpoint.new("/items", "GET", [] of Param, Details.new(PathInfo.new(items, line))) }
+      order = Endpoint.new("/orders", "GET", [] of Param, Details.new(PathInfo.new(orders, 4)))
+      (endpoints + [order]).each { |endpoint| endpoint.details.technology = "ts_tsoa" }
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints + [order])
+
+      endpoints[0].tags.map(&.description).should eq(["Protected by tsoa @Middlewares(isAuthenticated)"])
+      endpoints[1].tags.should be_empty
+      endpoints[2].tags.should be_empty
+      order.tags.map(&.description).should eq(["Protected by tsoa @Middlewares(isAuthenticated) (class-level)"])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
+
   it "does not leak a decorator past a one-line handler body" do
     tmpdir = File.tempname("tsoa_one_line")
     Dir.mkdir_p(tmpdir)
