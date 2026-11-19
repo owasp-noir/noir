@@ -658,16 +658,19 @@ class NestjsAuthTagger < FrameworkTagger
       refusing = names.select { |name| middleware_refuses?(name) }
       next if refusing.empty?
       chain = statement_slice(text, close + 1)
-      routes = call_bodies(chain, "forRoutes").flat_map { |body| parse_route_specs(body) }
+      routes = call_bodies(chain, "forRoutes").flat_map { |body| parse_route_specs(body, text) }
       next if routes.empty?
-      excludes = call_bodies(chain, "exclude").flat_map { |body| parse_route_specs(body) }
+      excludes = call_bodies(chain, "exclude").flat_map { |body| parse_route_specs(body, text) }
       @for_routes << ForRoutes.new(refusing.join(", "), routes, excludes)
     end
   end
 
   private def middleware_refuses?(name : String) : Bool
     body = @class_bodies[name]? || return false
-    body.matches?(THROWS_401) || body.matches?(/\bstatus(?:Code)?\s*(?::|\()\s*401\b/) || body.matches?(/\bUNAUTHORIZED\b/)
+    return true if body.matches?(THROWS_401) || body.matches?(/\bstatus(?:Code)?\s*(?::|\()\s*401\b/) || body.matches?(/\bUNAUTHORIZED\b/)
+    # A 403 on what it read from the request, as `guard_verdict` reads a
+    # guard; a project exception by the status its class hands to `super`.
+    body.matches?(READS_REQUEST) && (body.matches?(THROWS_403) || body.scan(THROWN_CLASS).any? { |m| (@class_bodies[m[1]]? || "").matches?(FORBIDDEN_SUPER) })
   end
 
   private def statement_slice(text : String, from : Int32) : String
@@ -709,6 +712,9 @@ class NestjsAuthTagger < FrameworkTagger
         specs << nest_spec(lit[1], nil, wildcard?(lit[1]))
       elsif text.matches?(/\A[A-Za-z_$][\w$]*\z/) && (path = @controller_paths[text]?)
         specs << NestSpec.new(path, nil, true)
+      elsif (spread = text.match(/\A\.\.\.\s*([A-Za-z_$][\w$]*)\z/)) && (list = array_const(source, spread[1]))
+        # `forRoutes(...authenticatedControllers)`: the elements of a const array.
+        specs.concat(parse_route_specs(list, source))
       end
     end
     specs

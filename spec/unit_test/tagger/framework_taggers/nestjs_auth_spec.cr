@@ -203,6 +203,66 @@ describe "NestjsAuthTagger" do
     end
   end
 
+  it "applies forRoutes middleware to the controllers of a spread array" do
+    CodeLocator.instance.clear_all
+    tmpdir = File.tempname("nest_forroutes_spread")
+    controller = ->(name : String, path : String) { "@Controller('#{path}')\nexport class #{name} {\n  @Get()\n  list() {}\n}\n" }
+    files = {
+      "package.json"             => "{}",
+      "src/api.module.ts"        => <<-TS,
+        const authenticatedControllers = [ItemsController, OrdersController];
+
+        @Module({ controllers: [...authenticatedControllers, PublicController] })
+        export class ApiModule implements NestModule {
+          configure(consumer: MiddlewareConsumer) {
+            consumer.apply(TokenMiddleware).forRoutes(...authenticatedControllers);
+          }
+        }
+        TS
+      "src/token.middleware.ts"  => <<-TS,
+        @Injectable()
+        export class TokenMiddleware implements NestMiddleware {
+          use(req: Request, res: Response, next: NextFunction) {
+            if (!req.headers.auth) {
+              throw new UnauthorizedException();
+            }
+            next();
+          }
+        }
+        TS
+      "src/items.controller.ts"  => controller.call("ItemsController", "items"),
+      "src/orders.controller.ts" => controller.call("OrdersController", "orders"),
+      "src/public.controller.ts" => controller.call("PublicController", "public"),
+    }
+    files.each do |rel, body|
+      path = File.join(tmpdir, rel)
+      Dir.mkdir_p(File.dirname(path))
+      File.write(path, body)
+      CodeLocator.instance.register_path(path)
+    end
+
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = %w[items orders public].map do |name|
+        details = Details.new(PathInfo.new(File.join(tmpdir, "src/#{name}.controller.ts"), 4))
+        details.technology = "ts_nestjs"
+        Endpoint.new("/#{name}", "GET", [] of Param, details)
+      end
+
+      NestjsAuthTagger.new(noir_options).perform(endpoints)
+
+      endpoints.map(&.tags.map(&.description)).should eq([
+        ["Protected by NestJS TokenMiddleware middleware"],
+        ["Protected by NestJS TokenMiddleware middleware"],
+        [] of String,
+      ])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "does not leak a decorator past a one-line handler body" do
     tmpdir = File.tempname("tsoa_one_line")
     Dir.mkdir_p(tmpdir)
