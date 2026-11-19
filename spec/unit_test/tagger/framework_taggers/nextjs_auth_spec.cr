@@ -84,6 +84,13 @@ describe "NextjsAuthTagger" do
     tag.call("app/actions/items.ts", 30).should be_empty
   end
 
+  it "tags a wrapper that hands a refusing middleware to its runner, past TypeScript overloads" do
+    tags = tag.call("app/api/runner/route.ts", 4)
+    tags.map(&.description).should eq(["Protected by Next.js withAuth wrapper (runs `authMiddleware()`, replies 401)"])
+    tag.call("app/api/runner/route.ts", 12).map(&.name).should eq(["auth"])
+    tag.call("app/api/runner/route.ts", 8).should be_empty
+  end
+
   it "tags a handler that compares the caller's key with a process.env secret" do
     tag.call("app/api/cron/route.ts", 3).map(&.name).should eq(["auth"])
   end

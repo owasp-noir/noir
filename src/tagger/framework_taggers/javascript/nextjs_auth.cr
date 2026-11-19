@@ -63,6 +63,8 @@ class NextjsAuthTagger < FrameworkTagger
   # withAuth(handler)` wraps the handler declared above it.
   DEFAULT_EXPORT_WRAPPER = /\A\s*export\s+default\s+([A-Za-z_$][\w$]*)\s*\(/
   PAGES_API_PATH         = %r{(?:\A|/)pages/api/}
+  # A bare name handed to a call: `withMiddleware(handler, authMiddleware)`.
+  PASSED_FUNCTION = /[(,]\s*([A-Za-z_$][\w$]*)\s*(?=[,)])/
   # `throw new DubApiError({ code: "unauthorized" })`: the word lives in a
   # string, so this is matched on text that still has strings. The `{` sits
   # between `throw` and the word, and the object may wrap a line or two.
@@ -159,8 +161,7 @@ class NextjsAuthTagger < FrameworkTagger
     if wrapper.nil? && path.matches?(PAGES_API_PATH)
       wrapper = lines.each.compact_map { |text| code_only(text).match(DEFAULT_EXPORT_WRAPPER).try(&.[1]) }.first?
     end
-    if wrapper && (kind = wrapper_refusal(path, wrapper))
-      detail = kind == :throw ? "throws unauthorized" : "replies 401"
+    if wrapper && (detail = wrapper_refusal(path, wrapper))
       endpoint.add_tag(Tag.new("auth", "Protected by Next.js #{wrapper} wrapper (#{detail})", "nextjs_auth"))
       return
     end
@@ -530,20 +531,29 @@ class NextjsAuthTagger < FrameworkTagger
     joined[(open + 1)...close]
   end
 
-  # `:status` when the wrapper's body replies 401 under a missing session,
-  # `:throw` when it throws an error whose code or name says unauthorized.
-  # Nil when the wrapper does not refuse (`withPassthrough`).
-  private def wrapper_refusal(path : String, name : String) : Symbol?
+  # How the wrapper's body refuses: it replies 401 under a missing session,
+  # throws an error whose code or name says unauthorized, or hands a
+  # function that refuses to the runner it returns (`withMiddleware(handler,
+  # authMiddleware)`). Nil when it does not refuse (`withPassthrough`).
+  private def wrapper_refusal(path : String, name : String) : String?
     content = read_file(path) || return
     handler = Noir::JSHandlerResolver.resolve(name, content, path) || return
     def_path = handler.path || return
     def_line = handler.line || return
     source = read_file(def_path) || return
     stripped = Noir::JSRouteExtractor.strip_js_comments(source)
+    # TypeScript overloads: the body is the last declaration's.
+    decls = stripped.scan(/^[ \t]*(?:export\s+)?(?:async\s+)?function\s*\*?\s*#{Regex.escape(name)}\s*[(<]/m)
+    def_line = stripped[0, decls.last.begin(0)].count('\n') + 1 if decls.size > 1
     raw = Noir::JSRouteExtractor.definition_body(stripped, def_line).lines
     code = raw.map { |line| code_only(line) }
-    return :status if session_refusal(code, raw, UNAUTHORIZED, def_path)
-    :throw if thrown_unauthorized?(raw, code)
+    return "replies 401" if session_refusal(code, raw, UNAUTHORIZED, def_path)
+    return "throws unauthorized" if thrown_unauthorized?(raw, code)
+    code.join('\n').scan(PASSED_FUNCTION).map(&.[1]).uniq!.each do |arg|
+      next if {"undefined", "null", "true", "false"}.includes?(arg)
+      found = helper_definition_refusal(arg, source, def_path, 0) || next
+      return "runs `#{arg}()`, #{found.how}"
+    end
   end
 
   private def thrown_unauthorized?(raw : Array(String), code : Array(String)) : Bool
