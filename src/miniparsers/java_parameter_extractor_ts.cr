@@ -1141,6 +1141,8 @@ module Noir
       end
 
       return parameter_format if ann_kind == :path # legacy: @PathVariable is not emitted
+      # `HttpEntity<T>` / `RequestEntity<T>` hand the handler the body as T.
+      ann_kind = :body if ann_kind.nil? && type_name.matches?(ENTITY_BODY_TYPE) && !class_fields.has_key?(simple_type_name(type_name))
 
       # An argument-resolver parameter (`@AuthenticationPrincipal`, …) with
       # no request-binding annotation is server-supplied, not a request
@@ -1393,9 +1395,11 @@ module Noir
     # (keyed by the class's exact name, e.g. "ItemDto", not "itemdto"). Lets
     # `@RequestBody List<ItemDto> items` / `@RequestBody ItemDto[] items`
     # resolve to the same field set as a bare `@RequestBody ItemDto item`.
+    ENTITY_BODY_TYPE = /\A(?:org\.springframework\.http\.)?(?:HttpEntity|RequestEntity)\s*</
+
     private def collection_element_type(type_name : String) : String
       base = type_name.strip
-      if match = base.match(/\A(?:java\.util\.)?(?:List|Set|Collection|Iterable|Optional)\s*<\s*(.+?)\s*>\z/)
+      if match = base.match(/\A(?:java\.util\.|reactor\.core\.publisher\.|org\.springframework\.http\.)?(?:List|Set|Collection|Iterable|Optional|Mono|Flux|HttpEntity|RequestEntity)\s*<\s*(.+?)\s*>\z/)
         base = match[1].strip
       end
       base = base.gsub(/\[\s*\]/, "")

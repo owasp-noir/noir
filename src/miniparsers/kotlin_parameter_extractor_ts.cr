@@ -1067,7 +1067,7 @@ module Noir
           pending_modifiers = child
         when "parameter"
           current_format = emit_param_for(
-            child, pending_modifiers, source, verb, current_format, parameter_format, class_fields, params,
+            child, method, pending_modifiers, source, verb, current_format, parameter_format, class_fields, params,
             string_constants, local_string_constants, injected_annotations, injected_types
           )
           pending_modifiers = nil
@@ -1095,6 +1095,7 @@ module Noir
     end
 
     private def emit_param_for(param : LibTreeSitter::TSNode,
+                               method : LibTreeSitter::TSNode,
                                modifiers : LibTreeSitter::TSNode?,
                                source : String,
                                verb : String,
@@ -1171,6 +1172,8 @@ module Noir
 
       # @PathVariable is carried by the URL, not emitted as a param.
       return parameter_format if ann_kind == :path
+      # `HttpEntity<T>` / `RequestEntity<T>` hand the handler the body as T.
+      ann_kind = :body if ann_kind.nil? && ENTITY_BODY_TYPES.includes?(type_name) && !class_fields.has_key?(type_name)
 
       # A Spring argument-resolver parameter (@AuthenticationPrincipal, a
       # custom @CurrentUser meta-annotation, …) with no request-binding
@@ -1181,6 +1184,19 @@ module Noir
       # A resolver keyed on the parameter's type supplies it too, unless
       # `@ModelAttribute`, whose resolver runs first, claims it.
       return parameter_format if ann_kind.nil? && !model_attribute && injected_types.includes?(type_name.rpartition('.').last)
+
+      # Inputs read through the request object, and a `Pageable`'s query
+      # values; neither passes a format on to the next argument.
+      if ann_kind.nil? && !class_fields.has_key?(type_name)
+        if type_name == "HttpServletRequest"
+          value_format = method_format == "form" || verb == "POST" ? "form" : "query"
+          scan_key_reads(method, source, arg_name, {"getParameter" => value_format, "getHeader" => "header"}, sink)
+          return parameter_format
+        elsif type_name == "Pageable"
+          PAGEABLE_PARAMS.each { |name| sink << Param.new(name, "", "query") }
+          return parameter_format
+        end
+      end
 
       effective_format = parameter_format
       # A carried-over "header"/"cookie" describes how the *previous*
@@ -1221,6 +1237,12 @@ module Noir
         effective_format = verb == "POST" ? "form" : "query"
       end
 
+      # A body wrapped in a collection or a reactive type binds its element.
+      if ann_kind == :body && BODY_WRAPPER_TYPES.includes?(type_name) && !class_fields.has_key?(type_name) &&
+         (element = type_text.match(SINGLE_TYPE_ARGUMENT).try(&.[1])) && class_fields.has_key?(element)
+        type_name = element
+      end
+
       # A multipart file is a body part even when `@RequestParam` names it;
       # the next parameter still inherits the format it would have.
       carry_format = effective_format
@@ -1253,12 +1275,20 @@ module Noir
 
       case ann_kind
       when :query
-        # A Map captures every request value, so it has no single parameter name.
-        sink << Param.new(parameter_name, default_value || "", effective_format) unless type_name == "Map"
+        # A Map captures every request value, so it has no single parameter
+        # name; the keys the handler reads from it are the inputs.
+        if type_name == "Map"
+          scan_key_reads(method, source, arg_name, MAP_ACCESSORS.to_h { |accessor| {accessor, effective_format} }, sink)
+        else
+          sink << Param.new(parameter_name, default_value || "", effective_format)
+        end
       when :header, :cookie
         # `@RequestHeader headers: HttpHeaders` (or a Map) receives every
-        # header; no header is named after the variable.
-        return parameter_format if ann_kind == :header && HEADER_MAP_TYPES.includes?(type_name)
+        # header; no header is named after the variable, only the ones read.
+        if ann_kind == :header && HEADER_MAP_TYPES.includes?(type_name)
+          scan_key_reads(method, source, arg_name, MAP_ACCESSORS.to_h { |accessor| {accessor, "header"} }, sink)
+          return parameter_format
+        end
         # An explicit scalar request input (possibly a collection of
         # scalars like `@RequestParam ids: List<Long>`) — emit by its
         # declared name; never DTO-expand.
@@ -1302,6 +1332,30 @@ module Noir
       # command object into json, so a body param leaves the carry
       # untouched (returns the incoming carry-over).
       ann_kind == :body ? parameter_format : carry_format
+    end
+
+    ENTITY_BODY_TYPES    = Set{"HttpEntity", "RequestEntity"}
+    BODY_WRAPPER_TYPES   = Set{"List", "MutableList", "Set", "MutableSet", "Collection", "Iterable", "Array", "Mono", "Flux", "Flow", "Optional"} | ENTITY_BODY_TYPES
+    SINGLE_TYPE_ARGUMENT = /<\s*(?:[\w.]+\.)?(\w+)\s*\??\s*>\s*\??\z/
+    # `get` also stands for the index form `map["key"]`.
+    MAP_ACCESSORS   = {"get", "getFirst", "getOrDefault", "containsKey", "getValue", "getValuesAsList"}
+    PAGEABLE_PARAMS = {"page", "size", "sort"}
+
+    @@key_read_regexes = Hash(String, Regex).new
+
+    # Literal keys read from `receiver` in `method`'s source:
+    # `receiver.accessor("key")` (also `?.` / `!!.`) and `receiver["key"]`,
+    # each emitted in the format `accessors` gives that accessor.
+    private def scan_key_reads(method : LibTreeSitter::TSNode, source : String, receiver : String,
+                               accessors : Hash(String, String), sink : Array(Param))
+      regex = @@key_read_regexes[receiver] ||=
+        /\b#{Regex.escape(receiver)}\s*(?:!!|\?)?\s*(?:\.\s*(\w+)\s*\(\s*"([^"$\\]+)"|\[\s*"([^"$\\]+)"\s*\])/
+      Noir::TreeSitter.node_text(method, source).scan(regex) do |match|
+        next unless format = accessors[match[1]? || "get"]?
+        name = match[2]? || match[3]
+        next if sink.any? { |param| param.name == name && param.param_type == format }
+        sink << Param.new(name, "", format)
+      end
     end
 
     # `Outer.Inner?` -> `["Outer", "Inner"]`: the dotted segments of a
@@ -1824,6 +1878,13 @@ module Noir
           end
         end
       end
+      # Every class of `package_dir` is already in `result` and `supers`
+      # (`package_layer`), so only the subclass file's imports can add one.
+      if File.dirname(subclass_file) == package_dir
+        Noir::ImportGraph.import_files(subclass_file, package_name, imports, "kt") { |file| absorb_new.call(file) }
+      else
+        Noir::ImportGraph.related_files(subclass_file, package_name, imports, "kt") { |file| absorb_new.call(file) }
+      end
 
       added
     end
@@ -1868,13 +1929,6 @@ module Noir
       if parent.empty?
         memo[cls] = own
         return own
-      end
-      # Every class of `package_dir` is already in `result` and `supers`
-      # (`package_layer`), so only the subclass file's imports can add one.
-      if File.dirname(subclass_file) == package_dir
-        Noir::ImportGraph.import_files(subclass_file, package_name, imports, "kt") { |file| absorb_new.call(file) }
-      else
-        Noir::ImportGraph.related_files(subclass_file, package_name, imports, "kt") { |file| absorb_new.call(file) }
       end
 
       names = own.map(&.name).to_set
