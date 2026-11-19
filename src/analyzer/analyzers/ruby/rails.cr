@@ -1382,9 +1382,10 @@ module Analyzer::Ruby
     # A `Const.list` receiver (`Discourse.filters.each do |filter|`) unrolls
     # too when the app defines it as a literal list (see `constant_list`).
     # The brace form `RECV.each { |x| get "#{x}" }` is the same block on one
-    # line.
-    LOOP_RECEIVER  = /(?:%[wi][\[\(\{][^\]\)\}]*[\]\)\}]|(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*)/
-    LOOP_OPENER    = /^(?:%[wi][\[\(\{]([^\]\)\}]*)[\]\)\}]|((?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*))\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
+    # line. A `[:about, "contact"]` literal unrolls when every element is a
+    # symbol or string literal.
+    LOOP_RECEIVER  = /(?:%[wi][\[\(\{][^\]\)\}]*[\]\)\}]|(?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*|\[[^\]]*\])/
+    LOOP_OPENER    = /^(?:%[wi][\[\(\{]([^\]\)\}]*)[\]\)\}]|((?:::)?[A-Z]\w*(?:::[A-Z]\w*)*\.[a-z_]\w*)|(\[[^\]]*\]))\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
     LOOP_ONE_LINER = /^(#{LOOP_RECEIVER})\s*\.each(?:_with_index)?\s*\{\s*\|\s*([a-z_]\w*)[^|]*\|\s*(.+?)\s*\}\s*$/
 
     # noir scans arbitrary untrusted repos, so loop unrolling must not be a DoS
@@ -1410,8 +1411,8 @@ module Analyzer::Ruby
       index = 0
       while index < lines.size
         line = lines[index]
-        if (m = line.text.match(LOOP_OPENER)) && (values = m[1]? ? m[1].split(/\s+/).reject(&.empty?) : constant_list(m[2]).try(&.values))
-          var = m[3]
+        if (m = line.text.match(LOOP_OPENER)) && (values = loop_values(m))
+          var = m[4]
           # Something extends the list with a value only runtime knows: the
           # unrolled copies are a floor, so the block also stays as written.
           open_ended = m[2]? && constant_list(m[2]).try { |list| !list.complete }
@@ -1459,6 +1460,19 @@ module Analyzer::Ruby
       end
 
       result
+    end
+
+    private def loop_values(m : Regex::MatchData) : Array(String)?
+      return m[1].split(/\s+/).reject(&.empty?) if m[1]?
+      return constant_list(m[2]).try(&.values) if m[2]?
+      values = [] of String
+      m[3][1...-1].split(',').each do |item|
+        item = item.strip
+        next if item.empty?
+        return unless lit = item.match(/\A(?::(\w+)|'([\w\/-]*)'|"([\w\/-]*)")\z/)
+        values << (lit[1]? || lit[2]? || lit[3]?).to_s
+      end
+      values.empty? ? nil : values
     end
 
     # `RECV.each { |x| stmt }` as the `do` / `end` block `expand_static_loops`
