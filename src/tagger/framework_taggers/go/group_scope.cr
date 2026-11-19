@@ -70,6 +70,15 @@ module GoRouteGroupScope
   # A `.Use(...)` / `.Pre(...)` middleware registration call.
   USE_CALL = /(\w+)\.(?:Use|Pre)\s*\(/
 
+  # A `.Use` whose first argument is a path literal.
+  USE_WITH_PATH = /\w\.Use\s*\(\s*"([^"]*)"\s*,/
+
+  # Fiber before v3 matches a `Use` path as a plain string prefix
+  # (`strings.HasPrefix` in its router), so `/admin` also runs for
+  # `/administrator`; v3 stops at a segment boundary. Such a scope's prefix
+  # ends in `*`.
+  FIBER_PLAIN_USE = %r{"github\.com/gofiber/fiber(?:/v2)?(?:"|/(?!v\d))}
+
   # `name := parent.Group("/seg", mw...)` — middleware handed to the group
   # constructor instead of a later `.Use`; gin, Iris (`Party`) and Fiber all
   # take it. The group is already in `Scopes#groups` by the time the line is
@@ -100,6 +109,9 @@ module GoRouteGroupScope
     getter parents = {} of String => Array({String, Int32})
     # The 1-based row of the line being yielded.
     property row = 0
+    # Whether a `.Use` path matches as a plain string prefix (see
+    # `FIBER_PLAIN_USE`).
+    property? plain_use_prefix = false
 
     # The innermost enclosing closure group, or Global at file scope.
     def current : Scope
@@ -127,6 +139,7 @@ module GoRouteGroupScope
   # with `resolve_use_scope`.
   def each_group_scoped_line(content : String, &) : Nil
     scopes = Scopes.new
+    scopes.plain_use_prefix = content.matches?(FIBER_PLAIN_USE)
     depth = 0
 
     content.each_line do |line|
@@ -184,6 +197,14 @@ module GoRouteGroupScope
     receiver = stripped.match(USE_CALL).try &.[1]
     return if receiver.nil?
 
+    # Fiber's `app.Use("/admin", mw)` runs `mw` only under that path.
+    if m = stripped.match(USE_WITH_PATH)
+      scope = scopes.extend(scopes.receiver(receiver), m[1])
+      if scopes.plain_use_prefix? && scope[:kind] == ScopeKind::Group && !m[1].delete('/').empty?
+        return {kind: scope[:kind], prefix: scope[:prefix] + "*"}
+      end
+      return scope
+    end
     scopes.receiver(receiver)
   end
 
@@ -193,6 +214,12 @@ module GoRouteGroupScope
     if m = stripped.match(GROUP_WITH_MIDDLEWARE)
       scopes.groups[m[1]]?
     end
+  end
+
+  # Whether the scope `prefix` covers `url`: a `*`-suffixed prefix (see
+  # `FIBER_PLAIN_USE`) as a plain string prefix, any other by segment.
+  def scope_covers?(prefix : String, url : String) : Bool
+    prefix.ends_with?('*') ? url.starts_with?(prefix.rchop('*')) : prefix_covers?(prefix, url)
   end
 
   # Join a base prefix and a new path segment into a normalized URL prefix:

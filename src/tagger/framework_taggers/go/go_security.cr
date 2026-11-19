@@ -161,7 +161,7 @@ class GoSecurityTagger < FrameworkTagger
     end
 
     @middleware_scopes.each do |scope|
-      next unless prefix_covers?(scope[:prefix], endpoint.url)
+      next unless scope_covers?(scope[:prefix], endpoint.url)
 
       # A broad root/global ("/") scope sweeps in static-asset routes (the
       # SPA shell, `/static/*`, favicon, `*.js`/`*.css`) that are either

@@ -1072,12 +1072,17 @@ describe "GoAuthTagger caller-dependent refusals" do
   end
 
   {
-    "missing user"       => { %(user, _ := c.Get("user")), "user == nil", "c.AbortWithStatus(401)", "auth" },
-    "permission"         => { %(user, _ := c.Get("user")), "!isAdmin(user)", "c.AbortWithStatus(403)", "authz" },
-    "missing token"      => { %(token := c.GetHeader("Authorization")), %(token == ""), "c.AbortWithStatus(401)", "auth" },
-    "verification error" => {"", "err := verify(c.Request); err != nil", "c.AbortWithStatus(401)", "auth"},
-    "session redirect"   => {"sess := session.Get(c)", "!sess.Authenticated()", %(c.Redirect(302, "/login")), "auth"},
-    "followed predicate" => {"", "!allowed(c)", "c.AbortWithStatus(401)", "auth"},
+    "missing user"            => { %(user, _ := c.Get("user")), "user == nil", "c.AbortWithStatus(401)", "auth" },
+    "permission"              => { %(user, _ := c.Get("user")), "!isAdmin(user)", "c.AbortWithStatus(403)", "authz" },
+    "missing token"           => { %(token := c.GetHeader("Authorization")), %(token == ""), "c.AbortWithStatus(401)", "auth" },
+    "missing access token"    => { %(accessToken := c.GetHeader("Authorization")), %(accessToken == ""), "c.AbortWithStatus(401)", "auth" },
+    "missing access key"      => { %(access_key := c.GetHeader("X-Api-Key")), %(access_key == ""), "c.AbortWithStatus(401)", "auth" },
+    "access level"            => { %(user, _ := c.Get("user")), "!hasAccess(user)", "c.AbortWithStatus(403)", "authz" },
+    "access key permission"   => { %(user, _ := c.Get("user")), "!hasAccessKey(user, c.Path())", "c.AbortWithStatus(403)", "authz" },
+    "access token validation" => { %(accessToken := c.GetHeader("Authorization")), "!validAccessToken(accessToken)", "c.AbortWithStatus(401)", "auth" },
+    "verification error"      => {"", "err := verify(c.Request); err != nil", "c.AbortWithStatus(401)", "auth"},
+    "session redirect"        => {"sess := session.Get(c)", "!sess.Authenticated()", %(c.Redirect(302, "/login")), "auth"},
+    "followed predicate"      => {"", "!allowed(c)", "c.AbortWithStatus(401)", "auth"},
   }.each do |shape, (read, test, refusal, kind)|
     it "keeps a real #{shape} guard" do
       source = <<-GO
@@ -1184,6 +1189,86 @@ describe "GoAuthTagger read definitions versus name fallback" do
   end
 end
 
+describe "GoAuthTagger refusals returned by a method on the middleware's receiver" do
+  api_source = ->(body : String) do
+    <<-GO
+      package main
+      type API struct{}
+      func (a *API) extractToken(c echo.Context) (string, error) {
+        token := c.Request().Header.Get("Authorization")
+        if token == "" {
+          return "", echo.ErrUnauthorized
+        }
+        return token, nil
+      }
+      func (a *API) requireUser(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+          #{body}
+        }
+      }
+      func routes(e *echo.Echo, a *API) {
+        g := e.Group("/api")
+        g.Use(a.requireUser)
+        g.GET("/items", h)
+      }
+      GO
+  end
+
+  {
+    "an error it hands back" => "token, err := a.extractToken(c)\nif err != nil {\nreturn err\n}\nc.Set(\"token\", token)\nreturn next(c)",
+    "a tail call"            => "if _, err := a.extractToken(c); err != nil {\nreturn err\n}\nreturn next(c)",
+  }.each do |shape, body|
+    it "follows #{shape}" do
+      lines = api_source.call(body).lines
+      run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("g.GET")) + 1, "go_echo").tags.map(&.name).should eq(["auth"])
+    end
+  end
+
+  {
+    "discards the error"         => "token, _ := a.extractToken(c)\nc.Set(\"token\", token)\nreturn next(c)",
+    "hands the request on after" => "token, err := a.extractToken(c)\nif err != nil {\nreturn next(c)\n}\nc.Set(\"token\", token)\nreturn next(c)",
+    "only acts on success"       => "token, err := a.extractToken(c)\nif err == nil {\nc.Set(\"token\", token)\n}\nreturn next(c)",
+  }.each do |shape, body|
+    it "does not follow a call that #{shape}" do
+      lines = api_source.call(body).lines
+      run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("g.GET")) + 1, "go_echo").tags.should be_empty
+    end
+  end
+end
+
+describe "GoAuthTagger refusals of a receiver method the middleware returns" do
+  it "follows a middleware that returns the method's result" do
+    source = <<-GO
+      package main
+
+      import (
+        "context"
+        "net/http"
+      )
+
+      type API struct{}
+
+      func (a *API) authenticate(r *http.Request) (context.Context, error) {
+        token := r.Header.Get("Authorization")
+        if token == "" {
+          return nil, httpError(http.StatusUnauthorized, "missing token")
+        }
+        return r.Context(), nil
+      }
+
+      func (a *API) requireUser(w http.ResponseWriter, r *http.Request) (context.Context, error) {
+        return a.authenticate(r)
+      }
+
+      func (a *API) routes(r *router) {
+        r.With(a.requireUser).Get("/items", a.listItems)
+      }
+      GO
+    lines = source.lines
+    run_go_auth(lines, "/items", "GET", lines.index!(&.includes?("r.With")) + 1, "go_chi").tags.map(&.name).should eq(["auth"])
+  end
+end
+
 describe "GoAuthTagger permission query success" do
   it "keeps a permission denial after a successful query" do
     source = <<-GO
@@ -1236,5 +1321,100 @@ describe "GoAuthTagger caller checks beside path exemptions" do
       endpoint = run_go_auth(lines, url, "GET", lines.index!(&.includes?(route)) + 1, "go_http")
       endpoint.tags.map(&.name).should eq(url == "/watch" ? ["auth"] : [] of String)
     end
+  end
+end
+
+describe "GoAuthTagger factories returning a library middleware" do
+  source = ->(body : String) do
+    <<-GO
+      package main
+
+      import (
+        "github.com/gofiber/fiber/v2"
+        "github.com/gofiber/fiber/v2/middleware/basicauth"
+        "github.com/gofiber/fiber/v2/middleware/logger"
+      )
+
+      func newMiddleware(users map[string]string) fiber.Handler {
+        #{body}
+      }
+
+      func main() {
+        app := fiber.New()
+        app.Use(newMiddleware(map[string]string{"admin": "secret"}))
+        app.Get("/api/items", func(c *fiber.Ctx) error { return nil })
+      }
+      GO
+  end
+
+  it "reads the library middleware the factory returns" do
+    lines = source.call("return basicauth.New(basicauth.Config{\nUsers: users,\n})").lines
+    endpoint = run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("app.Get")) + 1, "go_fiber")
+    endpoint.tags.map(&.name).should eq(["auth"])
+  end
+
+  it "reads it whatever the factory's parameters are named" do
+    lines = source.call("return basicauth.New(basicauth.Config{\nUsers: returnTo,\n})").sub("users map", "returnTo map").lines
+    endpoint = run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("app.Get")) + 1, "go_fiber")
+    endpoint.tags.map(&.name).should eq(["auth"])
+  end
+
+  it "does not tag a factory returning a library middleware that is no guard" do
+    lines = source.call("return logger.New()").lines
+    run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("app.Get")) + 1, "go_fiber").tags.should be_empty
+  end
+end
+
+describe "GoAuthTagger cross-origin request checks" do
+  source = ->(test : String) do
+    <<-GO
+      package main
+
+      import (
+        "net/http"
+        "strings"
+
+        "github.com/gorilla/mux"
+      )
+
+      func requestOriginHost(r *http.Request) (string, bool) {
+        origin := r.Header.Get("Origin")
+        return origin, origin != ""
+      }
+
+      func protect(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          authHeader := strings.ToLower(r.Header.Get("Authorization"))
+          if strings.Contains(authHeader, "bearer") {
+            next.ServeHTTP(w, r)
+            return
+          }
+          #{test}
+            http.Error(w, "denied", http.StatusForbidden)
+            return
+          }
+          next.ServeHTTP(w, r)
+        })
+      }
+
+      func items(w http.ResponseWriter, r *http.Request) {}
+
+      func main() {
+        r := mux.NewRouter()
+        api := r.PathPrefix("/api").Subrouter()
+        api.Use(protect)
+        api.HandleFunc("/items", items).Methods("GET")
+      }
+      GO
+  end
+
+  it "does not read a refusal of cross-origin requests as a guard" do
+    lines = source.call(%(if origin, ok := requestOriginHost(r); ok && origin != r.Host {)).lines
+    run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("api.HandleFunc")) + 1, "go_mux").tags.should be_empty
+  end
+
+  it "keeps the refusal of a request without a session" do
+    lines = source.call(%(if _, err := r.Cookie("session"); err != nil {)).lines
+    run_go_auth(lines, "/api/items", "GET", lines.index!(&.includes?("api.HandleFunc")) + 1, "go_mux").tags.map(&.name).should eq(["auth"])
   end
 end

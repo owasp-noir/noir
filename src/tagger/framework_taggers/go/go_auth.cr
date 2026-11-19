@@ -137,7 +137,10 @@ class GoAuthTagger < FrameworkTagger
   # (`!ctx.IsUserSiteAdmin()`, `!ctx.Repo.Permission.CanRead(...)`,
   # `!isMember`) is an authorization check; any other is an authentication
   # one.
-  AUTHZ_CONDITION = /[Aa]dmin|[Rr]ole|[Pp]erm|[Oo]wner|[Mm]ember|[Cc]ollaborat|[Ss]cope|[Aa]ccess|[Pp]rivilege|[Vv]isib|[Pp]ublic|[Gg]rant|[Ww]riter|[Rr]eader|\b[Cc]an[A-Z]/
+  # An access token or key read as a value (`accessToken == ""`) or handed
+  # alone to a check (`!validAccessToken(tok)`) is a credential, not a
+  # permission; `hasAccessKey(user, resource)` is a permission check.
+  AUTHZ_CONDITION = /[Aa]dmin|[Rr]ole|[Pp]erm|[Oo]wner|[Mm]ember|[Cc]ollaborat|[Ss]cope|[Aa]ccess(?!_?(?:[Tt]oken|[Kk]ey)(?:\b(?!\s*\()|\w*\s*\(\s*[\w.]*\s*\)))|[Pp]rivilege|[Vv]isib|[Pp]ublic|[Gg]rant|[Ww]riter|[Rr]eader|\b[Cc]an[A-Z]/
 
   # `if cond {` / `} else if x := f(); cond {` and `} else {` on their own line.
   IF_OPEN   = /\A(?:\}\s*)?(?:else\s+)?if\s+(?:[^;{]*;\s*)?(.+?)\s*\{\z/
@@ -248,8 +251,8 @@ class GoAuthTagger < FrameworkTagger
     @bound_requests = Hash(String, Tag).new
     @server_scopes = [] of {owner: Gate, tag: Tag}
     @parameter_scopes = [] of {owner: Gate, tag: Tag, prefix: String?}
-    @group_uses = [] of {file: String, receiver: String, row: Int32, tag: Tag}
-    @registrar_tags = Hash({String, Int32}, Array(Tag)).new
+    @group_uses = [] of {file: String, receiver: String, row: Int32, tag: Tag, last: Int32}
+    @registrar_tags = Hash({String, Int32, String, String}, Array(Tag)).new
     @gozero_groups = Hash(String, Array({Range(Int32, Int32), Array(Tag)})).new
   end
 
@@ -396,6 +399,13 @@ class GoAuthTagger < FrameworkTagger
             args.each { |arg| frame[:binds] << {index, arg} }
           else
             frame[:uses] << {index, args}
+            # Also for the registrars it hands its router to below, up to
+            # the end of the closure (see `registrar_guards`).
+            args.each do |arg|
+              guard_by_definition(arg, file, authish_name: true).try do |tag|
+                @group_uses << {file: file, receiver: call[1], row: index, tag: tag, last: enclosing_block_end(lines, index)}
+              end
+            end
           end
           in_closure = true
         end
@@ -731,7 +741,7 @@ class GoAuthTagger < FrameworkTagger
     receiver = stripped.match(REGISTRATION_RECEIVER).try &.[1]
     # The guard also stays on the group variable, for the registrars it is
     # handed to (see `registrar_guards`).
-    tags.each { |tag| @group_uses << {file: file, receiver: receiver, row: index, tag: tag} } if receiver
+    tags.each { |tag| @group_uses << {file: file, receiver: receiver, row: index, tag: tag, last: lines.size} } if receiver
     # The middleware guards a route group whose URL prefix we could not read
     # (`r.Group(cfg.APIBase + "/v1")`). Recording it as global would claim
     # every endpoint in the app is protected — including the ones registered on
@@ -965,6 +975,12 @@ class GoAuthTagger < FrameworkTagger
         GuardEvidence.new(Tag.new("auth", "Protected by Go middleware #{shown} (verified from its body: refuses anonymous callers#{waiver ? ";#{waiver}" : ""})", "go_auth"), followed && waiver.nil?)
       when Guard::Authz
         GuardEvidence.new(Tag.new("authz", "Protected by Go middleware #{shown} (verified from its body: permission check replies 403#{waiver ? ";#{waiver}" : ""})", "go_auth"), followed && waiver.nil?)
+      when Guard::None
+        # A factory that only returns a library's middleware
+        # (`return basicauth.New(basicauth.Config{...})`) is that middleware.
+        library_middleware(qualifier, name, file).try do |(expr, path)|
+          guard_evidence(expr, path, authish_name, shown).try { |found| GuardEvidence.new(found.tag, false) }
+        end
       when nil
         if display.nil? && (bound = local_binding(file, shown))
           evidence = guard_evidence(bound, file, authish_name, shown)
@@ -976,6 +992,20 @@ class GoAuthTagger < FrameworkTagger
         GuardEvidence.new(Tag.new("auth", "Protected by Go middleware #{shown}", "go_auth"), false) if authish_name && (delegating ? name : reference).matches?(AUTHISH_NAME)
       end
     end
+  end
+
+  FACTORY_RETURN = /\A[^{]*\{\s*return\s+((\w+)\s*\.\s*\w+\s*\(.*)\}\s*\z/m
+
+  # The call a same-package factory `name` returns as its whole body, when
+  # it is a constructor of an imported package outside the scan, with the
+  # factory's file.
+  private def library_middleware(qualifier : String, name : String, file : String) : {String, String}?
+    return unless qualifier.empty?
+    body = @bodies.functions_for(File.dirname(file))[name]? || return
+    source = Noir::CComments.strip(body.source, quotes: %("'`))
+    m = source.match(FACTORY_RETURN) || return
+    return if @dirs_by_base.has_key?(m[2]) || !file_imports(body.file_path).includes?(m[2])
+    {m[1].strip, body.file_path}
   end
 
   # The expression first bound to `name` in `file`.
@@ -1389,7 +1419,7 @@ class GoAuthTagger < FrameworkTagger
                else
                  tests.any?(&.matches?(AUTHZ_CONDITION)) ? Guard::Authz : Guard::Authn
                end
-             elsif receiver && (stmt = line.match(RECEIVER_STATEMENT)) && stmt[1] == receiver[1]
+             elsif receiver && (stmt = line.match(RECEIVER_STATEMENT) || handed_back_call(lines, idx)) && stmt[1] == receiver[1]
                kind_followed = false
                receiver_method(body, receiver[2], stmt[2]).max_of? do |method|
                  found = body_verdict(method, nil, follow, hops - 1, route_path, route_method: route_method)
@@ -1442,6 +1472,30 @@ class GoAuthTagger < FrameworkTagger
       @body_name_veto[key] = @last_body_name_veto
     end
     verdict
+  end
+
+  ERROR_RESULT_CALL = /\A(?:if\s+)?(?:\w+\s*,\s*)*(\w+)\s*:?=\s*(\w+\s*\.\s*\w+\s*\(.*)\z/
+
+  # The call on line `idx` whose error result is returned when set
+  # (`token, err := a.extractToken(c)` then `if err != nil {` / `return
+  # err`, or `if _, err := a.extractToken(c); err != nil {`, or `return
+  # a.extractToken(c)`): a refusal the call returns is the caller's. Nil
+  # for any other line.
+  private def handed_back_call(lines : Array(String), idx : Int32) : Regex::MatchData?
+    if tail = lines[idx].strip.match(/\Areturn\s+(.+)\z/)
+      return tail[1].match(RECEIVER_STATEMENT)
+    end
+    m = lines[idx].strip.match(ERROR_RESULT_CALL) || return
+    err = m[1]
+    return if err == "_"
+    test = "#{err} != nil {"
+    row = if lines[idx].strip.ends_with?("; #{test}")
+            idx
+          elsif lines[idx + 1]?.try(&.strip) == "if #{test}"
+            idx + 1
+          end
+    return unless row && lines[row + 1]?.try(&.strip.matches?(/\Areturn\b.*\b#{err}\z/))
+    m[2].match(RECEIVER_STATEMENT)
   end
 
   # ponytail: credential predicates retain semantic name evidence (including stubs); use typed call/result dataflow to prove their reads.
@@ -1508,7 +1562,9 @@ class GoAuthTagger < FrameworkTagger
 
   # A test of a CSRF token: a call named for it (`!csrfOK(r)`) or a read of
   # a request key named for it (`Header.Get("X-CSRF-Token")`).
-  CSRF_TEST = /csrf|xsrf/i
+  # An `Origin` / `Referer` test refuses cross-site requests, whoever sends
+  # them.
+  CSRF_TEST = /csrf|xsrf|origin(?!al)|referr?er/i
   CSRF_KEY  = /\.\s*(?:Get|GetHeader|FormValue|PostFormValue|PostForm|Query|QueryParam|Cookie)\s*\(\s*"[^"]*(?:csrf|xsrf)[^"]*"\s*\)/i
 
   # A test of the caller's credential or session, as written.
@@ -2007,6 +2063,7 @@ class GoAuthTagger < FrameworkTagger
         # A chain that keeps its group nowhere guards only its own routes.
         use_receiver = above_line.match(GoRouteGroupScope::USE_CALL).try(&.[1])
         if code_only(above_line).matches?(USE_TOKEN) && !ephemeral_group_use(above_line) &&
+           above_line.match(GoRouteGroupScope::USE_WITH_PATH).try { |m| prefix_covers?(m[1], endpoint.url) } != false &&
            (route_receiver.nil? || use_receiver.nil? ||
            router_chain(path_info.path, lines, line_num, route_receiver)[0].any? { |(router, _)| router == use_receiver })
           statement = statement_text(lines, check_idx + 1)
@@ -2950,7 +3007,7 @@ class GoAuthTagger < FrameworkTagger
     ephemeral = nil
 
     @middleware_scopes.each do |scope|
-      next unless prefix_covers?(scope[:prefix], url)
+      next unless scope_covers?(scope[:prefix], url)
       next if !endpoint.details.code_paths.empty? && endpoint.details.code_paths.none? { |path_info| same_program?(go_module(path_info.path), scope[:module]) }
       if gate = scope[:gate]
         next unless registered_on?(endpoint, gate)
@@ -3082,7 +3139,7 @@ class GoAuthTagger < FrameworkTagger
 
   FUNC_NAME = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)/
   # A one-line signature: the function name and its parameter list.
-  FUNC_SIGNATURE = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)\s*\(([^)]*)\)/
+  FUNC_SIGNATURE = /\Afunc\s*(?:\([^)]*\)\s*)?(\w+)\s*(?:\[[^\]]*\]\s*)?\(([^)]*)\)/
   IDENTIFIER     = /\A\w+\z/
 
   # Routers whose group middleware runs for every route under the group's
@@ -3161,22 +3218,21 @@ class GoAuthTagger < FrameworkTagger
   # derived from) above the call in the caller's function. A call handing it
   # anything else (an expression, its own parameter, the helper as a value)
   # leaves the route unguarded.
-  # ponytail: one hop; a registrar called by another registrar with its own
-  # parameter is unguarded.
+  # ponytail: three registrars deep (see `registrar_call_tags`).
   # An endpoint merged from several Go routes (the same method and path in
   # two registrars) needs the guard on each of them.
   private def registrar_guards(endpoint : Endpoint) : Array(Tag)
     return [] of Tag if @group_uses.empty? || PREFIX_MATCHED_MIDDLEWARE.includes?(endpoint.details.technology)
     per_route = endpoint.details.code_paths.compact_map do |path_info|
       next unless path_info.path.ends_with?(".go")
-      registrar_route_tags(path_info)
+      registrar_route_tags(path_info, endpoint.url)
     end
     common_guards(per_route)
   end
 
   # The guards every caller hands the registrar `path_info`'s route is
   # registered in, on its group parameter; empty for any other route.
-  private def registrar_route_tags(path_info : PathInfo) : Array(Tag)
+  private def registrar_route_tags(path_info : PathInfo, url : String) : Array(Tag)
     none = [] of Tag
     line = path_info.line || return none
     lines = read_file_lines(path_info.path) || return none
@@ -3187,18 +3243,45 @@ class GoAuthTagger < FrameworkTagger
     start = function_start(lines, line)
     return none if start < 0
     slot = parameter_slot(lines[start], chain.last[0]) || return none
-    @registrar_tags.put_if_absent(slot) { registrar_call_tags(*slot) }
+    @registrar_tags.put_if_absent({slot[0], slot[1], url, File.dirname(path_info.path)}) { registrar_call_tags(slot[0], slot[1], url, path_info.path) }
   end
 
   # The guard tags (one per name) every call of `fn` hands its group
-  # parameter at `index`; empty when any call does not.
-  private def registrar_call_tags(fn : String, index : Int32) : Array(Tag)
+  # parameter at `index`; empty when any call does not. A call whose path
+  # literal is not in `url` (`rx(r, "/translation")` for `/user/`) did not
+  # register it. A caller that hands on its own router parameter
+  # (`func addFoo(r chi.Router) { addBar(r) }`) passes on what its callers
+  # hand it, up to three registrars deep. An unexported `fn` (declared in
+  # `path`) is only called in its own package.
+  private def registrar_call_tags(fn : String, index : Int32, url : String, path : String, depth : Int32 = 0) : Array(Tag)
     calls = [] of {String, Int32, String, Int32}
-    (@go_files ||= collect_files_by_extension(".go")).each do |file|
-      next if file.ends_with?("_test.go")
+    files = fn[0].lowercase? ? package_files(path) : (@go_files ||= collect_files_by_extension(".go")).reject(&.ends_with?("_test.go"))
+    files.each do |file|
       calls.concat(call_arguments(file, fn, index, qualified: true) || return [] of Tag)
     end
-    common_guards(calls.map { |(file, caller, arg, row)| caller_group_tags(file, caller, arg, row) })
+    calls.reject! do |(file, _, _, row)|
+      call = read_file_lines(file).try(&.[row - 1]?) || ""
+      call.scan(/"(\/[^"]*)"/).any? do |literal|
+        path = literal[1].rchop('/')
+        !path.empty? && !url.includes?(path)
+      end
+    end
+    common_guards(calls.map do |(file, caller, arg, row)|
+      tags = caller_group_tags(file, caller, arg, row)
+      handed = depth < 3 ? handed_parameter(file, caller, arg, row) : nil
+      handed ? tags + registrar_call_tags(handed[0], handed[1], url, file, depth + 1) : tags
+    end)
+  end
+
+  # The function starting on `caller` (0-based) and the position of its
+  # router parameter that `arg`, handed out on `row`, is (or is derived
+  # from); nil for a router the caller builds or gets elsewhere.
+  private def handed_parameter(file : String, caller : Int32, arg : String, row : Int32) : {String, Int32}?
+    return if caller < 0
+    lines = read_file_lines(file) || return
+    chain, local = router_chain(file, lines, row, arg)
+    return if local
+    parameter_slot(lines[caller], chain.last[0])
   end
 
   # The first tag of each guard kind present in every one of `sets`; empty
@@ -3220,7 +3303,7 @@ class GoAuthTagger < FrameworkTagger
     @group_uses.compact_map do |use|
       next unless use[:file] == file && function_start(lines, use[:row]) == caller
       reaches = chain.any? do |(group, at)|
-        next false unless group == use[:receiver] && use[:row] < at
+        next false unless group == use[:receiver] && use[:row] < at <= use[:last]
         # Reassigned in between: the `.Use` was on the old group.
         reassigned = /\A\s*#{Regex.escape(group)}\s*:?=(?!=)/
         ((use[:row] + 1)...at).none? { |between| lines[between - 1].matches?(reassigned) }
@@ -3320,17 +3403,34 @@ class GoAuthTagger < FrameworkTagger
       # `:=` or `var r = ...` only: `r = chi.NewRouter()` may set a
       # package-level router other functions use.
       built = /\A(?:var\s+#{receiver}\b[^=]*=|#{receiver}\s*:=)\s*(?:&\s*)?\w+\s*\.\s*New\w*\s*\([^()]*\)\s*\z/
-      use = /\A#{receiver}\s*\.\s*(?:Use\s*\(|(?i:get|post|put|patch|delete|head|options)\s*\(\s*""\s*,)/
+      use = /\A#{receiver}\s*\.\s*(?:Use\s*\(|(?i:get|post|put|patch|delete|head|options|handle(?:func)?)\s*\(\s*""\s*,)/
       mount = /\A\w+\s*\.\s*Mount\s*\(\s*""\s*,\s*#{receiver}\s*\)\z/
+      # Returned as an `http.Handler`, it can only be served or mounted.
+      handed_back = code_only(owner_lines[start]).matches?(HANDLER_RESULT) ? "return #{owner[:receiver]}" : nil
+      # A func literal whose parameters rebind the name (`r.Get("/x",
+      # func(w http.ResponseWriter, r *http.Request) {`) speaks of another
+      # `r` until it closes.
+      shadow = /\bfunc\s*\([^()]*\b#{receiver}\s+[^()]*\)/
+      nested = 0
       ((start + 1)...Math.min(last, owner_lines.size)).any? do |row|
         code = code_only(owner_lines[row]).strip
+        if nested > 0
+          nested += code.count('{') - code.count('}')
+          next false
+        end
+        if at = code.index(shadow)
+          nested = code[at..].count('{') - code[at..].count('}')
+          code = code[0, at]
+        end
         mentions = code.split(/\W+/).count(owner[:receiver])
         next false if mentions.zero?
         next true if mentions > 1
-        !(code.matches?(built) || code.matches?(use) || code.matches?(mount))
+        !(code.matches?(built) || code.matches?(use) || code.matches?(mount) || code == handed_back)
       end
     end
   end
+
+  HANDLER_RESULT = /\)\s*http\s*\.\s*Handler\s*\{\s*\z/
 
   ROUTER_ASSIGNMENT = /\A(?:var\s+)?(\w+)(?:\s+[\w.*\[\]]+)?\s*:?=(?!=)\s*(.+)\z/
   # A router read off another variable: `r.Group("/x")`, `r.PathPrefix("/api").
