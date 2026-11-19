@@ -193,25 +193,41 @@ class JsMiscAuthTagger < FrameworkTagger
 
   NUXT_HANDLER         = /\b(?:defineEventHandler|eventHandler|defineCachedEventHandler)\s*\(/
   NUXT_REQUIRE_SESSION = /(?<![\w$.])requireUserSession\s*\(\s*event\b/
+  # `defineEventHandler({ handler: async (event) => { … } })`: the body's `{`.
+  NUXT_OBJECT_HANDLER = /\A\s*\{[\s\S]*?\bhandler\s*(?::\s*(?:async\s+)?(?:function\b[^(]*)?(?:\([^()]*\)|[A-Za-z_$][\w$]*)\s*(?:=>\s*)?|\([^()]*\)\s*)\{/
+  # What makes the call's own statement conditional, or not run at all:
+  # a branch, a ternary, a short-circuit, or a function it sits in.
+  NUXT_CONDITIONAL = /\b(?:if|else|while|for|case|function)\b|\?(?!\.)|&&|\|\||=>/
+  # A previous line the call's line continues: a brace-less branch head or
+  # a trailing operator.
+  NUXT_CONTINUED = /(?:\b(?:if|while|for)\s*\(.*\)|\belse|&&|\|\||\?\??|:)\s*\z/
 
   # A Nuxt server handler that calls nuxt-auth-utils' `requireUserSession`
-  # (401 without a session) in its own body, not under an `if` or inside
-  # a nested function.
+  # (401 without a session) in its own body, not under an `if`, inside a
+  # nested function, or with its rejection caught (`.catch(() => null)`).
   private def nuxt_session_guard(path : String) : String?
     raw = read_file(path) || return
     return unless raw.includes?("requireUserSession")
     code = Noir::JSLiteralScanner.blank_literals(Noir::CComments.strip(raw, quotes: %("'`)))
     head = code.match(NUXT_HANDLER) || return
-    open = code.index('{', head.end(0)) || return
+    open = if object = code[head.end(0)..].match(NUXT_OBJECT_HANDLER)
+             head.end(0) + object.end(0) - 1
+           else
+             code.index('{', head.end(0)) || return
+           end
     close = Noir::JSLiteralScanner.find_matching_brace(code, open) || return
     body = code[open + 1...close]
     call = body.match(NUXT_REQUIRE_SESSION) || return
     before = body[0...call.begin(0)]
     return unless before.count('{') == before.count('}') && before.count('(') == before.count(')')
-    # An earlier `return` can answer first; a brace-less `if`, a ternary or a
-    # short-circuit in the call's own statement makes it conditional.
+    # An earlier `return` can answer first.
     return if before.matches?(/\breturn\b/)
-    return if before[((before.rindex(/[;{}]/) || -1) + 1)..].matches?(/\b(?:if|else|while|for|case)\b|\?|&&|\|\|/)
+    return if before[((before.rindex(/[;{}\n]/) || -1) + 1)..].matches?(NUXT_CONDITIONAL)
+    previous_line = before.rpartition('\n')[0].rpartition('\n')[2]
+    return if previous_line.rstrip.matches?(NUXT_CONTINUED)
+    paren = body.index('(', call.begin(0)) || return
+    call_close = Noir::JSLiteralScanner.find_matching_paren(body, paren) || return
+    return if body[call_close + 1..].matches?(/\A\s*\.\s*catch\b/)
     "Nuxt requireUserSession(event)"
   end
 

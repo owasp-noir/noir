@@ -278,6 +278,11 @@ describe "JsMiscAuthTagger" do
       "mine.get.ts"   => "export default defineEventHandler(async (event) => {\n  if (getQuery(event).mine) {\n    await requireUserSession(event)\n  }\n  return listItems()\n})\n",
       "peek.get.ts"   => "export default defineEventHandler(async (event) => {\n  const session = await getUserSession(event)\n  return listItems(session.user?.id)\n})\n",
       "own.get.ts"    => "export default defineEventHandler(async (event) => {\n  if (getQuery(event).own)\n    await requireUserSession(event)\n  return listItems()\n})\n",
+      "id.get.ts"     => "export default defineEventHandler(async (event) => {\n  const id = event.context.params?.id\n  await requireUserSession(event)\n  return getItem(id)\n})\n",
+      "page.get.ts"   => "export default defineEventHandler(async (event) => {\n  const limit = Number(getQuery(event).limit) || 20\n  await requireUserSession(event)\n  return listItems(limit)\n})\n",
+      "obj.get.ts"    => "export default defineEventHandler({\n  handler: async (event) => {\n    await requireUserSession(event)\n    return listItems()\n  }\n})\n",
+      "soft.get.ts"   => "export default defineEventHandler(async (event) => {\n  const session = await requireUserSession(event).catch(() => null)\n  return listItems(session)\n})\n",
+      "lazy.get.ts"   => "export default defineEventHandler(async (event) => {\n  const check = () => requireUserSession(event)\n  return listItems()\n})\n",
     }
     begin
       endpoints = sources.map do |name, source|
@@ -295,6 +300,9 @@ describe "JsMiscAuthTagger" do
       verdicts["mine.get.ts"].should be_empty
       verdicts["peek.get.ts"].should be_empty
       verdicts["own.get.ts"].should be_empty
+      %w[id.get.ts page.get.ts obj.get.ts].each { |name| verdicts[name].should eq(["Protected by Nuxt requireUserSession(event)"]) }
+      verdicts["soft.get.ts"].should be_empty
+      verdicts["lazy.get.ts"].should be_empty
     ensure
       FileUtils.rm_rf(dir)
     end
