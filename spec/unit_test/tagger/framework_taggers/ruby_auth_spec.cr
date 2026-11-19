@@ -1383,6 +1383,24 @@ describe "RubyAuthTagger (Grape route scope)" do
       CodeLocator.instance.clear_all
     end
   end
+
+  it "does not read a Sinatra route body's helper call by its name" do
+    dir = File.tempname("noir_sinatra_body")
+    Dir.mkdir_p(dir)
+    app = File.join(dir, "app.rb")
+    File.write(app, "require \"sinatra\"\n\nget \"/apikey\" do\n  authenticate_api_key!\n  \"ok\"\nend\n")
+    begin
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(dir)
+      details = Details.new(PathInfo.new(app, 3))
+      details.technology = "ruby_sinatra"
+      endpoint = Endpoint.new("/apikey", "GET", [] of Param, details)
+      RubyAuthTagger.new(noir_options).perform([endpoint])
+      endpoint.tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
 end
 
 describe "RubyAuthTagger (Hanami controller.prepare)" do

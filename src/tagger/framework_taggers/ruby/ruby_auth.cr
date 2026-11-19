@@ -306,7 +306,7 @@ class RubyAuthTagger < FrameworkTagger
 
       # Sinatra/Rack patterns first, then Grape (before blocks, http_basic,
       # etc.), both over the same route scope.
-      scope = route_scope(path, lines, line_idx, endpoint.url, {"ruby_grape", "ruby_sinatra"}.includes?(tech))
+      scope = route_scope(path, lines, line_idx, endpoint.url, tech == "ruby_grape")
       description = match_scope(scope, SINATRA_AUTH_PATTERNS) || match_scope(scope, GRAPE_AUTH_PATTERNS)
       description ||= mounted_guard(path, lines, line_idx, endpoint.url, 0) if tech == "ruby_grape"
       if description
