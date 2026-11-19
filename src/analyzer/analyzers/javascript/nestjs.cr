@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_callee_extractor"
+require "../../../miniparsers/js_handler_resolver"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/ts_class_fields"
 require "../../../miniparsers/ts_decorator_extractor"
@@ -993,12 +994,7 @@ module Analyzer::Javascript
 
     private def analyze_nestjs_controllers(content : String, path : String, result : Array(Endpoint), include_callee : Bool)
       return unless controller_source?(content)
-      literal_values = extract_literal_values(content)
-      # Back-fill cross-file enum/object constants (per-file definitions
-      # already in `literal_values` win — they are the more specific source).
-      if global = @nest_global_literals
-        global.each { |key, value| literal_values[key] = value unless literal_values.has_key?(key) }
-      end
+      literal_values = file_literal_values(content)
       # URI versioning (Nest's default, and the reading when no
       # `enableVersioning` is in the scan) prepends `v<n>`:
       # `@Controller({ path: 'cats', version: '1' })` serves `/v1/cats`.
@@ -1006,12 +1002,49 @@ module Analyzer::Javascript
       versioning = versioning_for(path)
       uri_versioning = versioning.try(&.uri) != false
 
-      Noir::TsDecoratorExtractor.extract(content, path).each do |klass|
+      classes = Noir::TsDecoratorExtractor.extract(content, path)
+      classes.each do |klass|
         controller = klass.decorators.find { |decorator| decorator.called && controller_decorators.includes?(decorator.name) } || next
         base_paths = controller_base_paths(controller.args.first? || "", literal_values, controller.name)
         versions = controller.name == "Controller" ? controller_versions(controller.args.first?) : [] of String
         process_http_methods(content, klass, base_paths, versions, uri_versioning, versioning, path, result, include_callee, literal_values, controller.name)
+        # Route metadata is read through the prototype chain: a base class's
+        # decorated methods serve under the subclass's paths, and are
+        # reported at the subclass so its module, app and versioning apply.
+        owner = {klass.name, path, klass.row + 1}
+        inherited_classes(klass, classes, content, path).each do |base, base_content, base_path|
+          base_literals = base_path == path ? literal_values : file_literal_values(base_content)
+          process_http_methods(base_content, base, base_paths, versions, uri_versioning, versioning, base_path, result, include_callee, base_literals, controller.name, owner)
+        end
       end
+    end
+
+    INHERITANCE_DEPTH_LIMIT = 4
+
+    # `klass`'s base classes, nearest first, each with the decorated methods
+    # no nearer class redefines, and the content and path declaring it: the
+    # same file, else the module a named import of the base resolves to.
+    private def inherited_classes(klass : Noir::TsDecoratorExtractor::ClassDecl, classes : Array(Noir::TsDecoratorExtractor::ClassDecl), content : String, path : String) : Array(Tuple(Noir::TsDecoratorExtractor::ClassDecl, String, String))
+      found = [] of Tuple(Noir::TsDecoratorExtractor::ClassDecl, String, String)
+      seen = klass.methods.map(&.name).to_set
+      current = klass
+      INHERITANCE_DEPTH_LIMIT.times do
+        name = current.superclass || break
+        if local = classes.find { |c| c.name == name && c != current }
+          base = local
+        else
+          specifier, exported = Noir::JSHandlerResolver.imports_of(content, path)[name]? || break
+          path = Noir::JSHandlerResolver.resolve_specifier(path, specifier) || break
+          content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
+          classes = Noir::TsDecoratorExtractor.extract(content, path)
+          base = classes.find { |c| c.name == (exported || name) } || break
+        end
+        methods = base.methods.reject { |m| seen.includes?(m.name) }
+        base.methods.each { |m| seen << m.name }
+        found << {base.copy_with(methods: methods), content, path} unless methods.empty?
+        current = base
+      end
+      found
     end
 
     # Combine the controller's base paths with each version into a
@@ -1168,7 +1201,9 @@ module Analyzer::Javascript
       Noir::TopLevelSplit.split(text, delimiter, Noir::TopLevelSplit::Rules::JS)
     end
 
-    private def process_http_methods(content : String, klass : Noir::TsDecoratorExtractor::ClassDecl, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, versioning : VersioningConfig?, file_path : String, result : Array(Endpoint), include_callee : Bool, literal_values : Hash(String, Array(String)), controller_decorator : String)
+    # `owner` (class name, file, line) is the controller an inherited
+    # `klass` serves under; its routes are reported there.
+    private def process_http_methods(content : String, klass : Noir::TsDecoratorExtractor::ClassDecl, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, versioning : VersioningConfig?, file_path : String, result : Array(Endpoint), include_callee : Bool, literal_values : Hash(String, Array(String)), controller_decorator : String, owner : Tuple(String, String, Int32)? = nil)
       method_map = route_decorator_methods
 
       klass.methods.each do |method|
@@ -1192,15 +1227,16 @@ module Analyzer::Javascript
         dto_fields = dto_params(method.params, file_path)
         # `export default class { ... }` has no name to qualify the method with.
         handler_name = klass.name.empty? ? method.name : "#{klass.name}.#{method.name}"
-        handler = Handler.new(handler_name, file_path, method.row + 1)
+        handler = owner ? Handler.new("#{owner[0]}.#{method.name}", owner[1], owner[2]) : Handler.new(handler_name, file_path, method.row + 1)
+        report_path = owner.try(&.[1]) || file_path
 
         routes.each do |route|
           route_paths = literal_paths_from_expression(route.args.first? || "", literal_values) || next
-          record_version_segments(file_path, effective_versions, literal_values, version_prefix) if uri_versioning
+          record_version_segments(report_path, effective_versions, literal_values, version_prefix) if uri_versioning
           if include_callee && body && callees.nil?
             callees = Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, method.body_row + 1)
           end
-          decorator_line = route.row + 1
+          decorator_line = owner.try(&.[2]) || route.row + 1
           methods = method_map[route.name]
 
           effective_base_paths.each do |base_path|
@@ -1208,7 +1244,7 @@ module Analyzer::Javascript
               full_path = combine_paths(base_path, route_path)
               methods.each do |verb|
                 endpoint = Endpoint.new(full_path, verb)
-                endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
+                endpoint.details = Details.new(PathInfo.new(report_path, decorator_line))
                 endpoint.handler = handler
                 endpoint.route_conditions = [Param.new(VERSION_CONDITION, versions.join(","), "header")] unless uri_versioning || versions.empty?
 
