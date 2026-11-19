@@ -1534,7 +1534,8 @@ module Analyzer::Rust
         next if fn_text.nil?
 
         if fn_text.ends_with?(".headers().get")
-          first_string_literal_text(Noir::TreeSitter.field(call, "arguments"), source).try do |name|
+          args = Noir::TreeSitter.field(call, "arguments")
+          (first_string_literal_text(args, source) || header_constant_name(args, source)).try do |name|
             endpoint.push_param(Param.new(name, "", "header"))
           end
         elsif fn_text.ends_with?(".cookie")
@@ -1543,6 +1544,17 @@ module Analyzer::Rust
           end
         end
       end
+    end
+
+    # `header::USER_AGENT` / `http::header::AUTHORIZATION` → `user-agent` /
+    # `authorization`: the `http` crate names each standard header constant
+    # after the header itself.
+    private def header_constant_name(args : LibTreeSitter::TSNode?, source : String) : String?
+      arg = args.try { |a| named_children(a).first? }
+      return unless arg && Noir::TreeSitter.node_type(arg) == "scoped_identifier"
+      parts = Noir::TreeSitter.node_text(arg, source).split("::")
+      return unless parts.size >= 2 && parts[-2] == "header" && parts[-1].matches?(/\A[A-Z][A-Z0-9_]*\z/)
+      parts[-1].downcase.tr("_", "-")
     end
 
     private def find_paired_function(named : Array(LibTreeSitter::TSNode), start : Int32) : LibTreeSitter::TSNode?
