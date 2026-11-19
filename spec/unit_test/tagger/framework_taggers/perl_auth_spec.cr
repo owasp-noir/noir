@@ -115,6 +115,27 @@ describe "PerlAuthTagger" do
     end
   end
 
+  it "does not take a send_error unrelated to the caller as a refusal" do
+    dir = File.tempname("noir_perl_send_error")
+    Dir.mkdir_p(dir)
+    app = File.join(dir, "App.pm")
+    File.write(app, <<-PL)
+      use Dancer2;
+
+      post '/comment' => sub {
+          my $name = logged_in_user ? logged_in_user->{name} : 'guest';
+          send_error('missing body', 400) unless body_parameters->get('body');
+          return "thanks $name";
+      };
+      PL
+
+    begin
+      perl_auth_tag_for(app, 3, create_test_options).tags.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+
   it "applies a Mojolicious full-app `under` bridge to the routes built on it" do
     dir = File.tempname("noir_perl_bridge")
     Dir.mkdir_p(File.join(dir, "lib/MyApp/Controller"))

@@ -46,7 +46,7 @@ class PerlAuthTagger < FrameworkTagger
   ]
 
   # A 401/403, a forbidden/denied page, or a redirect to the login page.
-  REFUSAL = /(?<![\w.])40[13](?![\d.])|\bsend_error\b|\bforbidden\b|\bdenied\b|\bunauthori[sz]ed\b|\bredirect\w*\b[^;]*\blog_?in\b/i
+  REFUSAL = /(?<![\w.])40[13](?![\d.])|\bforbidden\b|\bdenied\b|\bunauthori[sz]ed\b|\bredirect\w*\b[^;]*\blog_?in\b/i
 
   # Keywords that make a `hook before` / Catalyst `sub auto` block an
   # application-wide guard covering every route in the file.
