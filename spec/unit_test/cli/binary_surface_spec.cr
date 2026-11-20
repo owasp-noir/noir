@@ -139,6 +139,35 @@ describe "noir CLI surface (built binary)" do
     end
   end
 
+  it "rejects a non-array endpoints field in saved reports without a backtrace" do
+    report = File.tempfile("noir-report-shape", ".json")
+    report.close
+    ["null", "false", "42", %q("wrong"), "{}"].each do |value|
+      File.write(report.path, %({"endpoints":#{value}}))
+      [["query"], ["trace", "GET /x"], ["reach", "a.go"]].each do |command|
+        result = run_noir(command + ["--from", report.path, "--no-color"])
+        result.exit_code.should eq(2)
+        result.stdout.should be_empty
+        result.stderr.should contain("expected `endpoints` to be an array")
+        result.stderr.should_not contain("Unhandled exception")
+      end
+    end
+  ensure
+    report.try &.delete
+  end
+
+  it "accepts an empty endpoints array in a saved report" do
+    report = File.tempfile("noir-report-empty", ".json")
+    report.close
+    File.write(report.path, %({"endpoints":[]}))
+    result = run_noir(["query", "--from", report.path, "--no-color"])
+    result.exit_code.should eq(1)
+    result.stdout.should be_empty
+    result.stderr.should be_empty
+  ensure
+    report.try &.delete
+  end
+
   describe "noir help <command>" do
     it "routes every catalog command to a help page" do
       Noir::CLI::Catalog::NAMES.each do |name|
