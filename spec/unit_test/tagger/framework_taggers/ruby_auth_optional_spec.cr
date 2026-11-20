@@ -413,7 +413,7 @@ describe "RubyAuthTagger (optional credential readers)" do
         "app/controllers/application_controller.rb" => "class ApplicationController < ActionController::Base\nend\n",
         "app/controllers/things_controller.rb"      => "class ThingsController < ApplicationController\n  before_action :check\n\n  def create\n    render json: {}\n  end\n\n  private\n\n  def check\n#{body}  end\nend\n",
       }
-      Time.measure { tag_actions(files, [{"/things", "app/controllers/things_controller.rb", 4}]) }
+      measure_without_gc { tag_actions(files, [{"/things", "app/controllers/things_controller.rb", 4}]) }
     end
     time_for.call(50)
     small = time_for.call(150)
