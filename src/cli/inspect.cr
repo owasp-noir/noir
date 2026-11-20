@@ -244,7 +244,7 @@ module Noir::CLI::Inspect
       doc = JSON.parse(text)
       if doc.as_h? && (list = doc["endpoints"]?)
         report = true
-        list.as_a
+        list.as_a? || Noir::CLI.die("--from #{path}: expected `endpoints` to be an array", EXIT_USAGE)
       elsif doc.as_h? && DIFF_CHANGES.all? { |category| doc[category]?.try(&.as_a?) }
         Noir::CLI.die("--from #{path} is a diff report, which `noir query` reads", EXIT_USAGE) unless changes
         report = diff = true
