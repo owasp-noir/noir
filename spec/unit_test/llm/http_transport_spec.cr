@@ -34,10 +34,16 @@ describe LLM::HttpTransport do
     end
 
     it "ignores values that would disable the bound" do
-      ["0", "-1", "forever", ""].each do |raw|
+      ["0", "-1", "forever", "", "NaN", "Infinity", "-Infinity", "1e100", "9223372036854775808", "1e-100"].each do |raw|
         with_env(LLM::HttpTransport::TIMEOUT_ENV, raw) do
           LLM::HttpTransport.timeout.should eq(LLM::HttpTransport::DEFAULT_TIMEOUT)
         end
+      end
+    end
+
+    it "preserves fractional timeout overrides" do
+      with_env(LLM::HttpTransport::TIMEOUT_ENV, "0.25") do
+        LLM::HttpTransport.timeout.should eq(250.milliseconds)
       end
     end
   end
@@ -49,6 +55,9 @@ describe LLM::HttpTransport do
       end
       with_env(LLM::HttpTransport::CONNECT_TIMEOUT_ENV, "3") do
         LLM::HttpTransport.connect_timeout.should eq(3.seconds)
+      end
+      with_env(LLM::HttpTransport::CONNECT_TIMEOUT_ENV, "1e100") do
+        LLM::HttpTransport.connect_timeout.should eq(LLM::HttpTransport::DEFAULT_CONNECT_TIMEOUT)
       end
     end
   end
@@ -132,16 +141,23 @@ describe LLM::HttpTransport do
     end
 
     it "clamps an unreasonable hint so a scan cannot be parked" do
-      response = HTTP::Client::Response.new(429, body: "", headers: HTTP::Headers{"Retry-After" => "3600"})
-      LLM::HttpTransport.retry_after(response).should eq(LLM::HttpTransport::MAX_RETRY_AFTER)
+      ["3600", "1e100", "9223372036854775808"].each do |raw|
+        response = HTTP::Client::Response.new(429, body: "", headers: HTTP::Headers{"Retry-After" => raw})
+        LLM::HttpTransport.retry_after(response).should eq(LLM::HttpTransport::MAX_RETRY_AFTER)
+      end
     end
 
     it "ignores a missing, unparsable or past hint" do
       LLM::HttpTransport.retry_after(nil).should be_nil
-      ["soon", "Wed, 21 Oct 2015 07:28:00 GMT"].each do |raw|
+      ["soon", "Wed, 21 Oct 2015 07:28:00 GMT", "NaN", "Infinity", "-Infinity", "-1e100", "0", "1e-100"].each do |raw|
         response = HTTP::Client::Response.new(429, body: "", headers: HTTP::Headers{"Retry-After" => raw})
         LLM::HttpTransport.retry_after(response).should be_nil
       end
+    end
+
+    it "preserves fractional retry hints" do
+      response = HTTP::Client::Response.new(429, headers: HTTP::Headers{"Retry-After" => "0.5"})
+      LLM::HttpTransport.retry_after(response).should eq(500.milliseconds)
     end
 
     it "reads an HTTP-date hint" do
