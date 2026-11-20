@@ -31,7 +31,8 @@ expected_endpoints = [
 
   # "actions2" standalone action file nested under api/controllers/user/,
   # addressed by its path relative to api/controllers -- /user/find-one.
-  # A shadow route responds to every HTTP verb.
+  # A shadow route responds to every HTTP verb; `config/blueprints.js`
+  # opts in with `actions: true` (off by default since Sails 1.0).
   Endpoint.new("/user/find-one", "GET"),
   Endpoint.new("/user/find-one", "POST"),
   Endpoint.new("/user/find-one", "PUT"),

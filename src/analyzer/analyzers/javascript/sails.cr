@@ -212,15 +212,16 @@ module Analyzer::Javascript
     # Blueprint (convention-based) routes
     # ---------------------------------------------------------------------
 
-    # `config/blueprints.js` turning a blueprint kind off. Only an explicit
-    # `false` is read: without the file, or silent on a key, routes are
-    # emitted as before.
-    BLUEPRINT_ACTIONS_OFF_RE = /\bactions\s*:\s*false\b/
-    BLUEPRINT_REST_OFF_RE    = /\brest\s*:\s*false\b/
+    # `config/blueprints.js` against Sails 1.x defaults: `rest` is on unless
+    # set to `false`, action shadow routes are off unless set to `true`.
+    # Standalone action files are a 1.x convention, so the 0.12 default
+    # (`actions: true`) never applies to them.
+    BLUEPRINT_ACTIONS_ON_RE = /\bactions\s*:\s*true\b/
+    BLUEPRINT_REST_OFF_RE   = /\brest\s*:\s*false\b/
 
     private def analyze_blueprints(root : String, result : Array(Endpoint))
       config = blueprints_config(root)
-      actions = !config.matches?(BLUEPRINT_ACTIONS_OFF_RE)
+      actions = config.matches?(BLUEPRINT_ACTIONS_ON_RE)
       rest = !config.matches?(BLUEPRINT_REST_OFF_RE)
       return unless actions || rest
       identities = {} of String => String
@@ -288,7 +289,8 @@ module Analyzer::Javascript
     # for referencing an action. `api/controllers/user/find-one.js`
     # becomes `/user/find-one`; `api/controllers/login.js` becomes
     # `/login`. Shadow routes respond to every HTTP verb until a custom
-    # route in `config/routes.js` narrows them.
+    # route in `config/routes.js` narrows them. Only emitted when
+    # `config/blueprints.js` sets `actions: true`.
     private def emit_action_shadow_route(file : String, rel : String, result : Array(Endpoint))
       ext = File.extname(rel)
       identity_path = rel[0, rel.size - ext.size]

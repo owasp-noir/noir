@@ -50,16 +50,9 @@ expected_endpoints = [
     Param.new("id", "", "path"),
   ]),
 
-  # `api/controllers/user/find-one.js` is an actions2 action, not a
-  # controller: its shadow route is the path below `api/controllers` and it
-  # answers every verb.
-  Endpoint.new("/user/find-one", "GET"),
-  Endpoint.new("/user/find-one", "POST"),
-  Endpoint.new("/user/find-one", "PUT"),
-  Endpoint.new("/user/find-one", "DELETE"),
-  Endpoint.new("/user/find-one", "PATCH"),
-  Endpoint.new("/user/find-one", "HEAD"),
-  Endpoint.new("/user/find-one", "OPTIONS"),
+  # `api/controllers/user/find-one.js` is an actions2 action, but there is
+  # no `config/blueprints.js`: Sails 1.x leaves action shadow routes off
+  # by default, so it publishes nothing.
 ]
 
 FunctionalTester.new("fixtures/javascript/sails/", {
