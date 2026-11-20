@@ -62,8 +62,9 @@ module LLM
       raw = ENV[name]?
       return if raw.nil?
       seconds = raw.strip.to_f?
-      return if seconds.nil? || seconds <= 0
-      seconds.seconds
+      return if seconds.nil? || !seconds.finite? || seconds <= 0 || seconds >= Time::Span::MAX.total_seconds
+      span = seconds.seconds
+      span if span > Time::Span.zero
     end
 
     def self.retryable_status?(code : Int32) : Bool
@@ -83,7 +84,13 @@ module LLM
     def self.retry_after(response : HTTP::Client::Response?) : Time::Span?
       raw = response.try(&.headers["Retry-After"]?).try(&.strip)
       return if raw.nil?
-      span = raw.to_f?.try(&.seconds) || HTTP.parse_time(raw).try { |time| time - Time.utc }
+      span = if seconds = raw.to_f?
+               return unless seconds.finite? && seconds > 0
+               return MAX_RETRY_AFTER if seconds >= MAX_RETRY_AFTER.total_seconds
+               seconds.seconds
+             else
+               HTTP.parse_time(raw).try { |time| time - Time.utc }
+             end
       return if span.nil? || span <= Time::Span.zero
       span > MAX_RETRY_AFTER ? MAX_RETRY_AFTER : span
     end
