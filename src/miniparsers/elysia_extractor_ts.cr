@@ -228,18 +228,17 @@ module Noir
       args = arguments_node(call)
       return unless args
 
-      path : String? = nil
-      handler : LibTreeSitter::TSNode? = nil
+      arguments = [] of LibTreeSitter::TSNode
       Noir::TreeSitter.each_named_arg(args) do |arg|
-        arg = Noir::TreeSitter.unwrap_expression(arg)
-        case Noir::TreeSitter.node_type(arg)
-        when "string", "template_string"
-          path ||= decode_string(arg, source)
-        when "arrow_function"
-          handler ||= arg
-        end
+        arguments << Noir::TreeSitter.unwrap_expression(arg)
       end
-      return unless path
+      path_arg = arguments.first? || return
+      return unless {"string", "template_string"}.includes?(Noir::TreeSitter.node_type(path_arg))
+      path = decode_string(path_arg, source)
+      handler = arguments[1]?
+      if handler && !{"arrow_function", "function_expression", "generator_function"}.includes?(Noir::TreeSitter.node_type(handler))
+        handler = nil
+      end
 
       full_path = Noir::URLPath.join_trimmed(prefix, path)
       line = Noir::TreeSitter.call_name_row(call)
