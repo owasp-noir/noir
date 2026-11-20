@@ -12,7 +12,9 @@ module Noir::CLI::ReachCommand
   # left alone.
   def self.parse_target(arg : String) : {String, Int32?}
     if m = arg.match(/\A(.+):(\d+)\z/)
-      {m[1], m[2].to_i}
+      line = m[2].to_i?
+      raise ArgumentError.new("line must be between 1 and #{Int32::MAX}") unless line && line > 0
+      {m[1], line}
     else
       {arg, nil}
     end
@@ -31,7 +33,11 @@ module Noir::CLI::ReachCommand
     unless target
       Noir::CLI.die("noir reach: expected <FILE[:LINE]> first. Run `noir reach --help`.", Inspect::EXIT_USAGE)
     end
-    file, line = parse_target(target)
+    file, line = begin
+      parse_target(target)
+    rescue ex : ArgumentError
+      Noir::CLI.die("noir reach: #{ex.message}", Inspect::EXIT_USAGE)
+    end
 
     endpoints = Inspect.load(common, scan_args + positionals[1..])
     rows = Inspect.reach(endpoints, file, line, common.full)
