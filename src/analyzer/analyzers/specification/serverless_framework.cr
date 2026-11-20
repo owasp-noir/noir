@@ -144,6 +144,9 @@ module Analyzer::Specification
 
     private def record_endpoint(method : String?, path : String?, authorizer : String?, cors_flag : Bool, private_flag : Bool, details : Details, stage : String, kind : String)
       return if path.nil? || path.empty?
+      # An HTTP API is served from its `$default` stage, whose URLs carry no
+      # stage segment; only REST API (`http`) URLs start with `/<stage>`.
+      stage = "" if kind == "httpapi"
 
       resolved_method = (method.nil? || method.empty?) ? METHOD_ANY : method.upcase
       resolved_method = METHOD_ANY if resolved_method == "ANY" || resolved_method == "*"

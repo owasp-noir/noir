@@ -3,7 +3,8 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/dev/users", "GET"),
   Endpoint.new("/dev/users", "POST"),
-  Endpoint.new("/dev/users/{id}", "GET"),
+  # httpApi: served from the `$default` stage, no `/dev` segment.
+  Endpoint.new("/users/{id}", "GET"),
   Endpoint.new("/dev/health", "GET"),
 ]
 
