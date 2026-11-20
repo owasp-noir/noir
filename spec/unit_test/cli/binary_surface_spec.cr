@@ -92,6 +92,17 @@ describe "noir CLI surface (built binary)" do
     next
   end
 
+  it "reports an invalid reach line before loading the report" do
+    %w[0 2147483648 999999999999999999999].each do |line|
+      result = run_noir(["reach", "src/a.go:#{line}", "--from", "/nonexistent/report.json", "--no-color"])
+      result.exit_code.should eq(2)
+      result.stdout.should be_empty
+      result.stderr.should contain("line must be between 1 and #{Int32::MAX}")
+      result.stderr.should_not contain("Unhandled exception")
+      result.stderr.should_not contain("report.json")
+    end
+  end
+
   describe "terminal-flag rewriting" do
     it "leaves a subcommand's own -v alone" do
       # `noir rules update -v` used to print the version and exit 0 —

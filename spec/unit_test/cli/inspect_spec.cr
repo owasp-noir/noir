@@ -694,6 +694,15 @@ describe Noir::CLI::ReachCommand do
     Noir::CLI::ReachCommand.parse_target("src/a.go:42").should eq({"src/a.go", 42})
     Noir::CLI::ReachCommand.parse_target("src/a.go").should eq({"src/a.go", nil})
     Noir::CLI::ReachCommand.parse_target("C:/x/a.go").should eq({"C:/x/a.go", nil})
+    Noir::CLI::ReachCommand.parse_target("src/a.go:2147483647").should eq({"src/a.go", Int32::MAX})
+  end
+
+  it "rejects zero and out-of-range line numbers with a usage error" do
+    %w[0 2147483648 999999999999999999999].each do |line|
+      expect_raises(ArgumentError, "line must be between 1 and #{Int32::MAX}") do
+        Noir::CLI::ReachCommand.parse_target("src/a.go:#{line}")
+      end
+    end
   end
 end
 
