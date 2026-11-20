@@ -70,6 +70,24 @@ describe "Serverless Framework Analyzer" do
     tag_descriptions(endpoints[0], "serverless-event").should eq ["httpapi"]
   end
 
+  it "leaves the provider stage off httpApi URLs" do
+    endpoints = analyze_serverless <<-YAML
+      service: my-api
+      provider:
+        name: aws
+        stage: prod
+      functions:
+        getUser:
+          handler: x
+          events:
+            - httpApi: GET /users/{id}
+            - http: GET /legacy
+      YAML
+
+    endpoints.map(&.url).should eq ["/users/{id}", "/prod/legacy"]
+    tag_descriptions(endpoints[0], "serverless-stage").should be_empty
+  end
+
   it "parses shorthand `METHOD /path` form" do
     endpoints = analyze_serverless <<-YAML
       service: my-api
