@@ -172,28 +172,20 @@ module Noir
         # Ranges and route positions below are BYTE offsets (see ByteOffsets).
         function_ranges = [] of Tuple(String, Int32, Int32)
         function_names = Set(String).new
-        function_patterns = {
-          /function\s+(\w+)\s*\(/                                       => :function,
-          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function\b/     => :function,
-          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\([^)]*\)\s*=>/ => :arrow,
-          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\w+\s*=>/       => :arrow,
-        }
-        function_patterns.each do |pattern, kind|
+        function_patterns = [
+          /function\s+(\w+)\s*\(/,
+          /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?function\b/,
+        ]
+        function_patterns.each do |pattern|
           content.scan(pattern) do |m|
             next unless m.size >= 2
             func_name = m[1]
             match_start = m.byte_begin(0)
 
-            open_brace_idx = if kind == :arrow
-                               arrow_idx = content.byte_index("=>", match_start)
-                               next unless arrow_idx
-                               content.byte_index('{', arrow_idx + 2)
-                             else
-                               param_start = content.byte_index('(', match_start)
-                               next unless param_start
-                               param_end = JSLiteralScanner.find_matching_paren_at_byte(content, param_start) || param_start
-                               content.byte_index('{', param_end + 1)
-                             end
+            param_start = content.byte_index('(', match_start)
+            next unless param_start
+            param_end = JSLiteralScanner.find_matching_paren_at_byte(content, param_start) || param_start
+            open_brace_idx = content.byte_index('{', param_end + 1)
 
             next unless open_brace_idx
             close_brace_idx = JSLiteralScanner.find_matching_brace_at_byte(content, open_brace_idx)
@@ -201,6 +193,10 @@ module Noir
             function_ranges << {func_name, open_brace_idx, close_brace_idx}
             function_names.add(func_name)
           end
+        end
+        arrow_function_ranges(content, file_path).each do |range|
+          function_ranges << range
+          function_names.add(range[0])
         end
 
         # Build internal mount relationships: parent function -> child function with prefix
@@ -1995,6 +1991,48 @@ module Noir
         on_path.delete(child)
       end
       capped
+    end
+
+    # A concise arrow has an expression body; the next `{` can belong to a
+    # different function or a registration's options. Typed block arrows can
+    # also have a `{...}` return type before their actual body.
+    private def self.arrow_function_ranges(content : String, file_path : String) : Array(Tuple(String, Int32, Int32))
+      ranges = [] of Tuple(String, Int32, Int32)
+      return ranges unless content.includes?("=>")
+      # Inline route-handler arrows need no named mount range. Keep the
+      # assignment positions so only unresolved shapes pay for an AST pass.
+      unresolved = Set(Int32).new
+      content.scan(/=\s*(?:async\s*)?(?:\(|<|[\w$]+\s*=>)/) { |match| unresolved << match.byte_begin(0) }
+      return ranges if unresolved.empty?
+
+      # Flat parameters followed immediately by `=> {` are unambiguous.
+      # Nested parameters, type annotations and expression bodies use AST.
+      content.scan(/\b(?:const|let|var)\s+([\w$]+)\s*(=\s*(?:async\s*)?(?:\([^()]*\)|[\w$]+)\s*=>\s*\{)/) do |match|
+        open = match.byte_end(0) - 1
+        close = JSLiteralScanner.find_matching_brace_at_byte(content, open) || next
+        ranges << {match[1], open, close}
+        unresolved.delete(match.byte_begin(2))
+      end
+      return ranges if unresolved.empty?
+
+      ast_ranges = [] of Tuple(String, Int32, Int32)
+      Noir::TreeSitter.parse_js_family(content, file_path) do |root|
+        Noir::TreeSitter.walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "variable_declarator"
+          name = Noir::TreeSitter.field(node, "name") || next
+          next unless Noir::TreeSitter.node_type(name) == "identifier"
+          value = Noir::TreeSitter.field(node, "value").try { |v| Noir::TreeSitter.unwrap_expression(v) } || next
+          next unless Noir::TreeSitter.node_type(value) == "arrow_function"
+          body = Noir::TreeSitter.field(value, "body") || next
+          ast_ranges << {Noir::TreeSitter.node_text(name, content),
+                         LibTreeSitter.ts_node_start_byte(body).to_i,
+                         LibTreeSitter.ts_node_end_byte(body).to_i - 1}
+        end
+      end
+      ast_ranges
+    rescue
+      # A failed AST pass still keeps known block scopes and lexer routes.
+      ranges || [] of Tuple(String, Int32, Int32)
     end
 
     # Equivalent to matching /['"`]<literal>['"`]/ — the literal bracketed by
