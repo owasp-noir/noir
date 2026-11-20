@@ -282,17 +282,24 @@ module Noir
       callees = [] of JSCalleeExtractor::Entry
 
       if handler
-        scan_handler(handler, source, 0) do |kind, value|
-          case kind
-          when :query  then query_params << value
-          when :header then header_params << value
-          when :cookie then cookie_params << value
-          when :body   then has_body = true
+        if receiver = handler_parameters(handler).first?.try { |param| parameter_name(param, source) }
+          if body = Noir::TreeSitter.field(handler, "body")
+            scan_handler(body, source, receiver, 0) do |kind, value|
+              case kind
+              when :query  then query_params << value
+              when :header then header_params << value
+              when :cookie then cookie_params << value
+              when :body   then has_body = true
+              end
+            end
           end
         end
         callees = JSCalleeExtractor.callees_for_handler_node(handler, source, "") if include_callees
       end
 
+      query_params.uniq!
+      header_params.uniq!
+      cookie_params.uniq!
       methods.each do |verb|
         routes << Route.new(verb, resolved_path, line, has_body,
           query_params, header_params, cookie_params, callees)
@@ -351,49 +358,65 @@ module Noir
 
     # ---- handler-body scan ------------------------------------------
 
-    private def scan_handler(node : LibTreeSitter::TSNode, source : String, depth : Int32, &block : Symbol, String ->)
+    private def handler_parameters(handler : LibTreeSitter::TSNode) : Array(LibTreeSitter::TSNode)
+      params = [] of LibTreeSitter::TSNode
+      if single = Noir::TreeSitter.field(handler, "parameter")
+        params << single
+      elsif formal = Noir::TreeSitter.field(handler, "parameters")
+        Noir::TreeSitter.each_named_arg(formal) { |param| params << param }
+      end
+      params
+    end
+
+    private def parameter_name(param : LibTreeSitter::TSNode, source : String) : String?
+      param = Noir::TreeSitter.field(param, "pattern") || param
+      param = Noir::TreeSitter.field(param, "left") || param if Noir::TreeSitter.node_type(param) == "assignment_pattern"
+      Noir::TreeSitter.node_text(param, source) if Noir::TreeSitter.node_type(param) == "identifier"
+    end
+
+    private def member_key(node : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "member_expression"
+        Noir::TreeSitter.field(node, "property").try { |property| Noir::TreeSitter.node_text(property, source) }
+      when "subscript_expression"
+        subscript_string_key(node, source)
+      end
+    end
+
+    # Exactly `req.query` (or `req['query']`), so a nested value's members
+    # cannot become additional request keys.
+    private def request_group(node : LibTreeSitter::TSNode, source : String, receiver : String) : String?
+      node = Noir::TreeSitter.unwrap_expression(node)
+      object = Noir::TreeSitter.field(node, "object").try { |value| Noir::TreeSitter.unwrap_expression(value) } || return
+      return unless Noir::TreeSitter.node_type(object) == "identifier" && Noir::TreeSitter.node_text(object, source) == receiver
+      member_key(node, source)
+    end
+
+    private def scan_handler(node : LibTreeSitter::TSNode, source : String, receiver : String, depth : Int32, &block : Symbol, String ->)
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       ty = Noir::TreeSitter.node_type(node)
-
       case ty
-      when "member_expression"
-        chain = navigation_chain(node, source)
-        if chain.size >= 3 && chain[0] == "request"
-          # `request.query.X`, `request.state.X`, `request.headers.X`,
-          # `request.payload.X` — emit just the leaf as the param
-          # name. Note `request.params.X` is intentionally skipped:
-          # the URL placeholder already provides the path param via
-          # the optimizer.
-          tail = chain.last
-          case chain[1]
-          when "query"   then block.call(:query, tail)
-          when "headers" then block.call(:header, tail)
-          when "state"   then block.call(:cookie, tail)
+      when "arrow_function", "function_expression", "function_declaration",
+           "generator_function", "generator_function_declaration", "method_definition"
+        return if handler_parameters(node).any? { |param| parameter_name(param, source) == receiver }
+      end
+
+      if ty == "member_expression" || ty == "subscript_expression"
+        if key = member_key(node, source)
+          object = Noir::TreeSitter.field(node, "object")
+          group = object.try { |value| request_group(value, source, receiver) }
+          case group
+          when "query"   then block.call(:query, key)
+          when "headers" then block.call(:header, key)
+          when "state"   then block.call(:cookie, key)
           when "payload" then block.call(:body, "")
           end
-        elsif chain.size >= 2 && chain == ["request", "payload"]
-          # Top-level `request.payload` access (without a sub-key).
-          block.call(:body, "")
         end
-      when "subscript_expression"
-        target = Noir::TreeSitter.first_named_child(node)
-        if target
-          base_chain = navigation_chain(target, source)
-          if base_chain.size >= 2 && base_chain[0] == "request"
-            key = subscript_string_key(node, source)
-            if key
-              case base_chain[1]
-              when "query"   then block.call(:query, key)
-              when "headers" then block.call(:header, key)
-              when "state"   then block.call(:cookie, key)
-              end
-            end
-          end
-        end
+        block.call(:body, "") if request_group(node, source, receiver) == "payload"
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        scan_handler(child, source, depth + 1, &block)
+        scan_handler(child, source, receiver, depth + 1, &block)
       end
     end
   end
