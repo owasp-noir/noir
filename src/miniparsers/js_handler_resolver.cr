@@ -48,6 +48,7 @@ module Noir::JSHandlerResolver
 
   @@imports = Hash(String, Tuple(UInt64, Imports)).new
   @@definitions = Hash(String, Hash(String, Int32)).new
+  @@local_functions = Hash(UInt64, Hash(String, Int32)).new
   # Analyzers call in from parallel file-scan workers; the caches are
   # shared, so every read and write goes through this lock.
   @@lock = Mutex.new
@@ -56,6 +57,7 @@ module Noir::JSHandlerResolver
     @@lock.synchronize do
       @@imports.clear
       @@definitions.clear
+      @@local_functions.clear
       @@tsconfig_paths.clear
       @@package_imports.clear
       @@member_modules.clear
@@ -526,9 +528,33 @@ module Noir::JSHandlerResolver
     cached = @@lock.synchronize { @@definitions[path]?.try(&.[key]?) }
     return (cached == 0 ? nil : cached) if cached
     content ||= source(path)
-    line = content ? find_definition(content, name, strict, local) : nil
+    line = if content
+             indexed = local && !strict ? local_function_lines(content)[name]? : nil
+             indexed || find_definition(content, name, strict, local)
+           end
     @@lock.synchronize { (@@definitions[path] ||= Hash(String, Int32).new)[key] = line || 0 }
     line
+  end
+
+  LOCAL_FUNCTION_RE = /^[ \t]*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*[(<]/m
+
+  # Local lookups prefer function declarations. Index that same first-match
+  # rule once instead of compiling a name-specific regex and copying the
+  # source prefix to count lines for every route handler.
+  private def local_function_lines(content : String) : Hash(String, Int32)
+    key = Noir::ExtractionResultCache.key(content, "js_local_function_lines")
+    Noir::ExtractionResultCache.fetch(@@local_functions, key, @@lock) do
+      lines = Hash(String, Int32).new
+      line = 1
+      previous = 0
+      content.scan(LOCAL_FUNCTION_RE) do |match|
+        start = match.byte_begin(0)
+        line += content.byte_slice(previous, start - previous).count('\n')
+        lines[match[1]] ||= line
+        previous = start
+      end
+      lines
+    end
   end
 
   SPREAD_REQUIRE = /\.\.\.\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)|^[ \t]*export\s*\*\s*from\s*['"]([^'"]+)['"]/m
