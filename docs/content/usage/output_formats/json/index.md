@@ -176,6 +176,38 @@ A full report looks like this. It was produced with taggers enabled (`-T`), whic
 }
 ```
 
+## OpenAPI comparison coverage
+
+A single `noir scan -f json` records `coverage.openapi` even when the scan produces zero endpoints. For example:
+
+```json
+{"enabled_analyzers":["oas2","oas3"],"documents_read":1,"status":"available"}
+```
+
+`enabled_analyzers` lists the OpenAPI versions allowed by this scan's technology selection. `documents_read` counts distinct root documents whose `paths` map Noir read. An empty map counts as one document. Reading external `$ref` fragments adds no documents.
+
+| Status | What the scan established |
+| --- | --- |
+| `available` | At least one root paths map was read with no reported OpenAPI or file-discovery gaps. |
+| `no_documents` | OpenAPI was enabled and zero root paths maps were read, with no reported gaps. |
+| `disabled` | The scan settings excluded both OpenAPI analyzers. |
+| `incomplete` | File discovery or an enabled OpenAPI analyzer reported a gap. Other documents may have been read successfully. See `errors`. |
+
+For a PR summary, scan the service and its relevant contracts together. This example lists HTTP routes found in code but absent from the OpenAPI documents read in that scope. If the comparison was unavailable it prints the reason. Older reports give `unknown`.
+
+```sh
+jq '
+  .coverage.openapi.status as $status
+  | if $status == "available" then
+      [.endpoints[]
+       | select(.protocol == "http" and .internal != true)
+       | select(any(.details.origins[]?; .kind == "code"))
+       | select(any(.details.origins[]?; .technology == "oas2" or .technology == "oas3") | not)
+       | {method, url}]
+    else {openapi_comparison: ($status // "unknown")} end
+' report.json
+```
+
 ## Analyzer Failures
 
 If an analyzer crashes, Noir logs it, skips it, and continues with the other analyzers. A single file an analyzer cannot read or parse (a file over the parse-time limit, for instance) is skipped the same way, and only that file is lost. `errors` records both. That lets you tell a framework with no endpoints from one that was never analyzed, and a complete scan from one that quietly dropped files:

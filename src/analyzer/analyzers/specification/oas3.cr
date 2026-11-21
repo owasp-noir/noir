@@ -486,12 +486,19 @@ module Analyzer::Specification
       @result
     end
 
+    # OpenAPI 3.1+ permits a document containing only components or webhooks.
+    private def optional_paths_absent?(root)
+      !root["paths"]? && !root["openapi"].to_s.starts_with?("3.0.") &&
+        (root["components"]?.try(&.as_h?) || root["webhooks"]?.try(&.as_h?))
+    end
+
     private def process_paths_json(doc : SpecDoc(JSON::Any), base_path : String, details : Details,
                                    line_index : Noir::SpecLineIndex)
       schemes = security_schemes_json(doc)
       defined_schemes = defined_security_schemes(doc.root["components"]?.try(&.as_h?).try(&.["securitySchemes"]?))
       global_security = doc.root["security"]?
-      paths = doc.root["paths"].as_h
+      return if optional_paths_absent?(doc.root)
+      paths = openapi_paths(doc)
       paths.each do |path, path_obj|
         path_item, item_doc = resolve_path_item_json(doc, path_obj)
         # A Path Item that did not resolve to a mapping — a ref to a scalar,
@@ -548,8 +555,7 @@ module Analyzer::Specification
         record_skipped_entry(doc.path, "path item #{path}", e)
       end
     rescue e
-      @logger.debug "Exception of #{doc.path}/paths"
-      @logger.debug_sub e
+      record_skipped_entry(doc.path, "paths", e)
     end
 
     private def process_paths_yaml(doc : SpecDoc(YAML::Any), base_path : String, details : Details,
@@ -557,7 +563,8 @@ module Analyzer::Specification
       schemes = security_schemes_yaml(doc)
       defined_schemes = defined_security_schemes(doc.root[YAML::Any.new("components")]?.try(&.as_h?).try(&.[YAML::Any.new("securitySchemes")]?))
       global_security = doc.root[YAML::Any.new("security")]?
-      paths = doc.root["paths"].as_h
+      return if optional_paths_absent?(doc.root)
+      paths = openapi_paths(doc)
       paths.each do |path, path_obj|
         path_item, item_doc = resolve_path_item_yaml(doc, path_obj)
         # See `process_paths_json`: a Path Item that is not a mapping must
@@ -615,8 +622,7 @@ module Analyzer::Specification
         record_skipped_entry(doc.path, "path item #{path}", e)
       end
     rescue e
-      @logger.debug "Exception of #{doc.path}/paths"
-      @logger.debug_sub e
+      record_skipped_entry(doc.path, "paths", e)
     end
   end
 end

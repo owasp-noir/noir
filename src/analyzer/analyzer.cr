@@ -7,7 +7,7 @@ require "../models/skipped_files"
 require "../techs/techs"
 require "../utils/redact"
 
-def initialize_analyzers(logger : NoirLogger)
+def initialize_analyzers(logger : NoirLogger, openapi_coverage : Noir::OpenAPICoverage? = nil)
   # Initializing analyzers
   analyzers = {} of String => Proc(Hash(String, YAML::Any), Array(Endpoint))
 
@@ -32,6 +32,7 @@ def initialize_analyzers(logger : NoirLogger)
   {% for klass in Analyzer.all_subclasses.select { |sub| !sub.abstract? && sub.name.starts_with?("Analyzer::") }.sort_by(&.name) %}
     analyzers[{{ klass }}.tech_name] = ->(options : Hash(String, YAML::Any)) do
       instance = {{ klass }}.new(options)
+      instance.openapi_coverage = openapi_coverage if instance.is_a?(Analyzer::Specification::SpecificationEngine)
       instance.analyze
     end
   {% end %}
@@ -112,11 +113,11 @@ end
 # positionally and have no interest in the failure list. Callers that do care
 # (the CLI, via `NoirRunner`) pass an array and get every tech that raised.
 def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLogger,
-                       failures : Array(AnalyzerFailure)? = nil)
-  CodeLocator.instance.with_scan_files { analyze_scanned_endpoints(options, techs, logger, failures) }
+                       failures : Array(AnalyzerFailure)? = nil, openapi_coverage : Noir::OpenAPICoverage? = nil)
+  CodeLocator.instance.with_scan_files { analyze_scanned_endpoints(options, techs, logger, failures, openapi_coverage) }
 end
 
-private def analyze_scanned_endpoints(options, techs, logger, failures)
+private def analyze_scanned_endpoints(options, techs, logger, failures, openapi_coverage)
   result = [] of Endpoint
   file_analyzer = FileAnalyzer.new options
   logger.info "Initializing analyzers"
@@ -140,7 +141,7 @@ private def analyze_scanned_endpoints(options, techs, logger, failures)
   # deliberately NOT cleared here — this pass is what drains them.
   Noir::LocatorKeys.reset(Noir::LocatorKey::Lifecycle::AnalyzeScoped)
 
-  analyzer = initialize_analyzers logger
+  analyzer = initialize_analyzers(logger, openapi_coverage)
 
   logger.verbose "Loaded #{analyzer.size} analyzers"
 

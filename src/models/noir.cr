@@ -42,6 +42,7 @@ class NoirRunner
   # in the code, so the diff must not call the old side's copy "removed".
   @status_excluded = Set({String, String}).new
 
+  getter openapi_coverage : Noir::OpenAPICoverage?
   getter options, techs, endpoints, logger, passive_results
   setter endpoints, techs
 
@@ -165,7 +166,9 @@ class NoirRunner
     # parser layer relativises convention filters against them (see
     # `CodeLocator#base_relative`).
     CodeLocator.instance.scan_base_paths = base_paths
-    detected_techs = detect_techs base_paths, options, @passive_scans, @logger
+    coverage = @openapi_coverage = Noir::OpenAPICoverage.new
+    @tech_failures.clear
+    detected_techs = detect_techs base_paths, options, @passive_scans, @logger, coverage
     @techs = detected_techs[0]
     @passive_results = detected_techs[1]
 
@@ -211,7 +214,10 @@ class NoirRunner
     # after. Same class of leak as the options-hash one
     # `apply_cfml_components_only!` documents.
     @tech_failures.clear
-    @endpoints = analysis_endpoints options, @techs, @logger, @tech_failures
+    excluded = NoirTechs.resolve_tech_list(options["exclude_techs"]?.to_s)
+    @techs = @techs - excluded unless excluded.empty?
+    @openapi_coverage.try(&.reset_documents)
+    @endpoints = analysis_endpoints options, @techs, @logger, @tech_failures, @openapi_coverage
 
     # Use the new optimizer module
     optimizer = any_to_bool(@options["ai_dry_run"]?) ? EndpointOptimizer.new(@logger, @options) : LLMEndpointOptimizer.new(@logger, @options)
@@ -415,7 +421,7 @@ class NoirRunner
   # fourth place a format had to be listed.
   def report
     format = options["format"].to_s
-    return if Noir::OutputFormats.render(format, @options, @endpoints, @passive_results, analyzer_failures)
+    return if Noir::OutputFormats.render(format, @options, @endpoints, @passive_results, analyzer_failures, @openapi_coverage)
 
     # `CliValidation` rejects an unknown `-f` before a scan starts, so this
     # only catches a library caller that built the options hash itself:

@@ -12,6 +12,7 @@ require "../utils/dir_listing"
 require "yaml"
 require "../models/locator_keys"
 require "../models/skipped_files"
+require "../models/openapi_coverage"
 
 # Reference-typed atomic Boolean. Wrapping `Atomic(Int8)` in a
 # class keeps the underlying byte addressable through an Array
@@ -462,7 +463,8 @@ def build_detector_list(options : Hash(String, YAML::Any)) : Array(Detector)
   detector_list
 end
 
-def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger)
+def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger,
+                 openapi_coverage : Noir::OpenAPICoverage? = nil)
   techs = [] of String
   passive_result = [] of PassiveScanResult
   detector_list = build_detector_list(options)
@@ -505,6 +507,8 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       logger.debug "Using #{detector_list.size} detector(s)"
     end
   end
+
+  openapi_coverage.try(&.select_analyzers(detector_list, NoirTechs.resolve_tech_list(options["exclude_techs"]?.to_s)))
 
   # Resolve the severity threshold and prune the rule set once,
   # before the reader/workers spawn. The previous shape did this
