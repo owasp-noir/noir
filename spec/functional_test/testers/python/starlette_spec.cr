@@ -42,6 +42,9 @@ expected_endpoints = [
   Endpoint.new("/internal/status", "GET", [
     Param.new("region", "", "query"),
   ]),
+  Endpoint.new("/internal/readiness", "GET", [
+    Param.new("region", "", "query"),
+  ]),
   Endpoint.new("/accounts/overview", "GET", [
     Param.new("region", "", "query"),
   ]),
@@ -51,6 +54,10 @@ expected_endpoints = [
     Param.new("window", "", "query"),
   ]),
   Endpoint.new("/programmatic/audit/{entry_id}", "GET", [
+    Param.new("entry_id", "", "path"),
+    Param.new("source", "", "query"),
+  ]),
+  Endpoint.new("/programmatic/audit/{entry_id}", "POST", [
     Param.new("entry_id", "", "path"),
     Param.new("source", "", "query"),
   ]),

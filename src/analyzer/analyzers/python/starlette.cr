@@ -107,10 +107,18 @@ module Analyzer::Python
         # `Route(`) matches `Route(path="/x", endpoint=h)`.
         effective_line = effective_line.gsub(/((?:WebSocketRoute|Route)\s*\()\s*path\s*=\s*([rf]?['"][^'"]*['"])/, "\\1\\2,")
 
-        if effective_line.includes?(".add_route(") || effective_line.includes?(".add_websocket_route(")
-          effective_line.scan(ADD_ROUTE_RE) do |programmatic_match|
+        if line.includes?(".add_route(") || line.includes?(".add_websocket_route(")
+          programmatic_line = join_until_python_call_closes(lines, line_index, line)
+          programmatic_line.scan(ADD_ROUTE_RE) do |programmatic_match|
             next if programmatic_match.size < 4
-            receiver = normalize_receiver(programmatic_match[1])
+            receiver = programmatic_match[1]
+            if programmatic_line == line
+              receiver = normalize_receiver(receiver)
+            else
+              # Restrict newly joined calls to known apps or routers.
+              receiver = receiver.rchop(".router")
+              next unless app_prefixes.has_key?(receiver)
+            end
             websocket_route = !(programmatic_match[2]?).to_s.empty?
             args = split_python_arguments(programmatic_match[3])
             route_path = extract_python_keyword_string(args, "path") || args[0]?.try { |arg| Helper.extract_python_string(arg) }

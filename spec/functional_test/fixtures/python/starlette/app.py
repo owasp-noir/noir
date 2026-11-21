@@ -132,9 +132,32 @@ Example route that should be ignored:
     Route('/docstring_route', homepage)
 """
 internal_app = Starlette(routes=internal_routes)
+internal_app.router.add_route(
+    '/readiness',
+    internal_status,
+)
 programmatic_app = Router()
-programmatic_app.add_route('/audit/{entry_id:int}', audit_entry, methods=['GET'])
-programmatic_app.add_websocket_route('/ws/{room}', chat_socket)
+programmatic_app.add_route(  # Register the audit handler before mounting.
+    '/audit/{entry_id:int}',
+    audit_entry,
+    methods=['GET', 'POST'],
+)
+programmatic_app.add_websocket_route(
+    '/ws/{room}',
+    chat_socket,
+)
+
+
+class PreviewRegistry:
+    def add_route(self, label, handler):
+        pass
+
+
+preview_registry = PreviewRegistry()
+preview_registry.add_route(
+    '/preview',
+    homepage,
+)
 
 
 app = Starlette(routes=[
