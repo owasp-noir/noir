@@ -251,7 +251,7 @@ module Noir
     private def emit_route_object(obj : LibTreeSitter::TSNode, source : String, routes : Array(Route), include_callees : Bool)
       methods = [] of String
       path : String? = nil
-      handler : LibTreeSitter::TSNode? = nil
+      handler = object_handler(obj, source)
 
       Noir::TreeSitter.each_named_child(obj) do |pair|
         next unless Noir::TreeSitter.node_type(pair) == "pair"
@@ -263,11 +263,9 @@ module Noir
           collect_method_values(value, source, methods)
         when "path"
           path = decode_string(value, source) if STRING_LITERAL_TYPES.includes?(Noir::TreeSitter.node_type(value))
-        when "handler"
-          handler = value
         when "options", "config"
           # `options: { auth, handler }`, the shape hapi 17+ documents.
-          handler ||= nested_handler(value, source) if Noir::TreeSitter.node_type(value) == "object"
+          handler ||= object_handler(value, source) if Noir::TreeSitter.node_type(value) == "object"
         end
       end
 
@@ -306,13 +304,21 @@ module Noir
       end
     end
 
-    private def nested_handler(obj : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(obj) do |pair|
-        next unless Noir::TreeSitter.node_type(pair) == "pair"
-        key, value = pair_key_value(pair, source)
-        return value if key == "handler"
+    private def object_handler(obj : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
+      handler : LibTreeSitter::TSNode? = nil
+      Noir::TreeSitter.each_named_child(obj) do |member|
+        case Noir::TreeSitter.node_type(member)
+        when "pair"
+          key, value = pair_key_value(member, source)
+          handler = value if key == "handler" && value
+        when "method_definition"
+          # Accessors run when the config is read and are not request handlers.
+          next if Noir::TreeSitter.node_type(LibTreeSitter.ts_node_child(member, 0)).in?("get", "set")
+          name = Noir::TreeSitter.field(member, "name") || next
+          handler = member if decode_string(name, source) == "handler"
+        end
       end
-      nil
+      handler
     end
 
     private def pair_key_value(pair : LibTreeSitter::TSNode, source : String) : Tuple(String, LibTreeSitter::TSNode?)

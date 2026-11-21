@@ -18,6 +18,27 @@ describe "Hapi handler request bindings" do
     routes.last.has_body?.should be_true
   end
 
+  it "reads shorthand handlers at the route and options levels" do
+    source = <<-JS
+      server.route([
+        { method: 'GET', path: '/books', handler(request) {
+          return findBooks(request.query.term);
+        } },
+        { method: 'GET', path: '/editions', options: {
+          async 'handler'(req) { return req.headers['x-format']; },
+          helper(req) { return req.headers['x-unrelated']; }
+        } },
+        { method: 'GET', path: '/getter', get handler() { return createHandler(); } }
+      ]);
+      JS
+    routes = Noir::TreeSitterHapiExtractor.extract_routes(source, include_callees: true)
+    routes.map(&.path).should eq(["/books", "/editions", "/getter"])
+    routes.first.query_params.should eq(["term"])
+    routes.first.callees.map(&.first).should contain("findBooks")
+    routes[1].header_params.should eq(["x-format"])
+    routes.last.callees.should be_empty
+  end
+
   it "unwraps typed request parameters" do
     source = "server.route({ method: 'GET', path: '/typed', handler: (req: Request, h: ResponseToolkit) => req.query.term });"
     Noir::TreeSitterHapiExtractor.extract_routes(source, path: "routes.ts").first.query_params.should eq(["term"])
