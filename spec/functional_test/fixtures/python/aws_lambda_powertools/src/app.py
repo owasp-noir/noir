@@ -58,11 +58,11 @@ def not_found(ex):
     return {"message": "not found"}
 
 
-app.include_router(router, prefix=f"/{API_VERSION}")
-app.include_router(orders.router, prefix="/orders")
-app.include_router(health_router, prefix=os.environ.get("HEALTH_PREFIX", ""))
-app.include_router(v2, "/v2")
-# app.include_router(orders.router, prefix="/old")
+app.include_router (router, prefix=f"/{API_VERSION}")
+app . include_router(orders.router, prefix="/orders")
+app.include_router (health_router, prefix=os.environ.get("HEALTH_PREFIX", ""))
+app.include_router (v2, "/v2")
+# app.include_router (orders.router, prefix="/old")
 
 
 @logger.inject_lambda_context

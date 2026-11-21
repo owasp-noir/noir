@@ -7,8 +7,8 @@ app = Chalice(app_name='helloworld')
 REPORTS_PREFIX = '/reports'
 authorizer = CognitoUserPoolAuthorizer('MyPool', provider_arns=['arn:aws:cognito-idp:us-east-1:1:userpool/x'])
 
-app.register_blueprint(admin_bp, url_prefix='/admin')
-app.register_blueprint(reports.bp, url_prefix=REPORTS_PREFIX)
+app.register_blueprint (admin_bp, url_prefix='/admin')
+app . register_blueprint(reports.bp, url_prefix=REPORTS_PREFIX)
 
 
 @app.route('/')

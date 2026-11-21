@@ -24,7 +24,7 @@ module Analyzer::Python
     private def collect_mounts(source : ::String, path : ::String, base_path : ::String, attribute : ::String,
                                target_keyword : ::String, prefix_keyword : ::String, prefix_index : Int32) : Array(Mount)
       mounts = [] of Mount
-      return mounts unless source.includes?(".#{attribute}(")
+      return mounts unless source.includes?(attribute)
 
       imports = mount_imports(base_path, path, source)
       Noir::TreeSitterPythonRouteExtractor.extract_attribute_calls(source, [attribute]).each do |call|
