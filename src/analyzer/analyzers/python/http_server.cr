@@ -32,7 +32,7 @@ module Analyzer::Python
       "do_trace"   => "TRACE",
     }
 
-    # `query_vars`/`form_vars`/`json_vars` below hold a discovered (but
+    # `parsed_vars`/`json_vars` below hold a discovered (but
     # low-cardinality — real code overwhelmingly reuses the same handful of
     # conventional names like `qs`/`data`/`params`) variable name, so the
     # bracket/`.get(...)` access matchers can't be hoisted to constants.
@@ -40,6 +40,9 @@ module Analyzer::Python
     # rebuilding it every time the name recurs (same handler-body shape
     # across query/form/json access, so one cache serves all three).
     @var_access_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
+
+    FORM_SOURCE_RE             = /\A\s*(?:self\s*\.\s*rfile\b|((?:[A-Za-z_]\w*_)?body(?:_(?:bytes|text|data|raw))?)\b(?!\s*\.\s*query\b))/
+    QUERY_SOURCE_ASSIGNMENT_RE = /^\s*([A-Za-z_]\w*)\s*=\s*(?:urlparse\([^\r\n]*?\)|[A-Za-z_]\w*)\s*\.\s*query\b/m
 
     STDLIB_SERVER_MARKERS_RE = Regex.union(
       "http.server", "HTTPServer", "BaseHTTPRequestHandler",
@@ -354,27 +357,32 @@ module Analyzer::Python
         params << Param.new(name, "", ptype) if seen.add?(key)
       end
 
-      # Query: parse_qs( ... ).get / [ 'name' ] — covers both direct and urlparse(self.path).query cases.
-      # Also track `qs = parse_qs(...)` then `qs.get("name")` / `qs[...]`.
-      body.scan(/parse_qs\([^)]*\)\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
-        record.call(m[1], "query")
-      end
-      body.scan(/parse_qs\([^)]*\)\s*\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
-        record.call(m[1], "query")
+      body_method = http_method.in?("POST", "PUT", "PATCH")
+      query_sources = body.scan(QUERY_SOURCE_ASSIGNMENT_RE).map(&.[1]).to_set
+      parse_qs_type = ->(source : ::String) do
+        body_source = FORM_SOURCE_RE.match(source) if body_method
+        body_source && !query_sources.includes?(body_source[1]?) ? "form" : "query"
       end
 
-      query_vars = [] of ::String
-      body.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*parse_qs\s*\(/) do |m|
-        qv = m[1]
-        query_vars << qv unless query_vars.includes?(qv)
+      # parse_qs reads both URI query strings and URL-encoded request bodies.
+      body.scan(/parse_qs\(([^)]*)\)\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
+        record.call(m[2], parse_qs_type.call(m[1]))
       end
-      query_vars.each do |var|
+      body.scan(/parse_qs\(([^)]*)\)\s*\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
+        record.call(m[2], parse_qs_type.call(m[1]))
+      end
+
+      parsed_vars = Set(Tuple(::String, ::String)).new
+      body.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*parse_qs\s*\(([^)]*)/) do |m|
+        parsed_vars << {m[1], parse_qs_type.call(m[2])}
+      end
+      parsed_vars.each do |var, type|
         bracket_re, get_re = var_access_regexes(var)
         body.scan(bracket_re) do |mm|
-          record.call(mm[1], "query")
+          record.call(mm[1], type)
         end
         body.scan(get_re) do |mm|
-          record.call(mm[1], "query")
+          record.call(mm[1], type)
         end
       end
 
@@ -397,32 +405,7 @@ module Analyzer::Python
         end
       end
 
-      # Body-bearing methods
-      if ["POST", "PUT", "PATCH"].includes?(http_method)
-        # form via parse_qs on post body / rfile content
-        body.scan(/parse_qs\([^)]*(?:post_body|rfile|body)[^)]*\)\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
-          record.call(m[1], "form")
-        end
-        body.scan(/parse_qs\([^)]*(?:post_body|rfile|body)[^)]*\)\s*\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
-          record.call(m[1], "form")
-        end
-
-        # form via `form = parse_qs(post_body...)` ; form.get / form[...]
-        form_vars = [] of ::String
-        body.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*parse_qs\s*\([^)]*(?:post_body|rfile|body)[^)]*\)/) do |m|
-          fv = m[1]
-          form_vars << fv unless form_vars.includes?(fv)
-        end
-        form_vars.each do |var|
-          bracket_re, get_re = var_access_regexes(var)
-          body.scan(bracket_re) do |mm|
-            record.call(mm[1], "form")
-          end
-          body.scan(get_re) do |mm|
-            record.call(mm[1], "form")
-          end
-        end
-
+      if body_method
         # json: var = json.loads(...) / orjson.loads(...) / ujson.loads(...) then var['k'] / var.get('k')
         json_vars = [] of ::String
         body.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:json|orjson|ujson)\.loads?\s*\(/) do |m|
