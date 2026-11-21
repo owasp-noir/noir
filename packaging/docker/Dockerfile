@@ -1,5 +1,5 @@
 ##= BUILDER =##
-FROM crystallang/crystal:1.22.2-alpine AS builder
+FROM crystallang/crystal:1.22.3-alpine AS builder
 WORKDIR /noir
 
 # Packages and shards come before the source so a source-only change reuses
