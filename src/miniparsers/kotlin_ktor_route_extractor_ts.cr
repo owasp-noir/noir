@@ -1234,7 +1234,13 @@ module Noir
     # The request input a receiver reads: `call.parameters`, Ktor 3's
     # `call.queryParameters`, `call.request.headers` / `.cookies`, or a local
     # `val` holding one of them (or the `receiveParameters()` form).
-    private def input_kind(chain : Array(String), aliases : Hash(String, Symbol)) : Symbol?
+    private def input_kind(receiver : LibTreeSitter::TSNode, source : String, aliases : Hash(String, Symbol)) : Symbol?
+      if Noir::TreeSitter.node_type(receiver) == "call_expression"
+        return :form if call_receives_parameters?(receiver, source)
+        return
+      end
+
+      chain = navigation_chain(receiver, source)
       case chain
       when ["call", "parameters"], ["call", "queryParameters"], ["call", "request", "queryParameters"]
         :query
@@ -1265,7 +1271,7 @@ module Noir
           else
             Noir::TreeSitter.each_named_child(node) do |child|
               next unless Noir::TreeSitter.node_type(child) == "navigation_expression"
-              if kind = input_kind(navigation_chain(child, source), aliases)
+              if kind = input_kind(child, source, aliases)
                 aliases[name] = kind
               end
             end
@@ -1286,22 +1292,16 @@ module Noir
             chain = navigation_chain(first, source)
             if chain == ["call", "request", "header"]
               sinks[:header] << name
-            elsif PARAMETER_READ_METHODS.includes?(chain.last?) && (kind = input_kind(chain[0...-1], aliases))
-              sinks[kind] << name
+            elsif PARAMETER_READ_METHODS.includes?(chain.last?) && (target = Noir::TreeSitter.first_named_child(first))
+              if kind = input_kind(target, source, aliases)
+                sinks[kind] << name
+              end
             end
           end
         end
       when "indexing_expression"
-        target = Noir::TreeSitter.first_named_child(node)
-        if target
-          kind = if Noir::TreeSitter.node_type(target) == "call_expression"
-                   :form if call_receives_parameters?(target, source)
-                 else
-                   input_kind(navigation_chain(target, source), aliases)
-                 end
-          if kind && (name = indexing_string_key(node, source))
-            sinks[kind] << name
-          end
+        if (target = Noir::TreeSitter.first_named_child(node)) && (kind = input_kind(target, source, aliases)) && (name = indexing_string_key(node, source))
+          sinks[kind] << name
         end
       end
 

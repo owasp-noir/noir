@@ -1,5 +1,6 @@
 package com.acme
 
+import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
@@ -45,6 +46,10 @@ fun Application.module() {
         }
         post("/f-inline-form") {
             val user = call.receiveParameters()["user"]
+            val email = call.receiveParameters().get("email")
+            val item = call.receiveParameters().getOrFail<Int>("item")
+            val labels = call.receive<Parameters>().getAll("labels")
+            val internal = parametersOf("local", "constant").get("local")
             call.respondText("x")
         }
     }
