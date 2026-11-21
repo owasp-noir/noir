@@ -2,7 +2,7 @@ require "../../func_spec.cr"
 
 # Handler inputs read through `getOrFail` / `getAll`, Ktor 3's
 # `call.queryParameters`, `call.request.cookies`, a local `val` holding a
-# parameters or headers value, and an inline `receiveParameters()[...]`.
+# parameters or headers value, and direct reads off `receiveParameters()`.
 expected_endpoints = [
   Endpoint.new("/a-form-getorfail", "POST", [
     Param.new("title", "", "form"),
@@ -30,10 +30,21 @@ expected_endpoints = [
     Param.new("aliased", "", "query"),
     Param.new("X-Aliased", "", "header"),
   ]),
-  Endpoint.new("/f-inline-form", "POST", [Param.new("user", "", "form")]),
+  Endpoint.new("/f-inline-form", "POST", [
+    Param.new("user", "", "form"),
+    Param.new("email", "", "form"),
+    Param.new("item", "", "form"),
+    Param.new("labels", "", "form"),
+  ]),
 ]
 
-FunctionalTester.new("fixtures/kotlin/ktor_request_inputs/", {
+tester = FunctionalTester.new("fixtures/kotlin/ktor_request_inputs/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+it "ignores locally constructed parameters in Ktor handlers", tags: "functional" do
+  endpoint = tester.endpoints.find! { |entry| entry.url == "/f-inline-form" }
+  endpoint.params.any? { |param| param.name == "local" }.should be_false
+end
