@@ -23,7 +23,12 @@ server.mount_proc '/api/users' do |req, res|
     token = req['X-Token']
     auth = req.header['authorization']
     # cookie
-    sess = req.cookies.find { |c| c.name == 'session' }
+    sess = req.cookies.find { |c| c.name == 'session' && c.value != 'expired' }
+    preference = req.cookies.find do |cookie|
+      cookie.value == 'compact' && (cookie.name.eql?('preference') || 'layout' === cookie.name)
+    end
+    format = Struct.new(:name).new('preview')
+    res.status = 200 if format.name == 'preview'
     # json body example
     if (ct = req['Content-Type']) && ct.to_s.include?('json')
       begin
