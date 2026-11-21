@@ -11,6 +11,8 @@ expected_endpoints = [
     Param.new("X-Token", "", "header"),
     Param.new("authorization", "", "header"),
     Param.new("session", "", "cookie"),
+    Param.new("preference", "", "cookie"),
+    Param.new("layout", "", "cookie"),
     Param.new("id", "", "json"),
   ]),
   Endpoint.new("/health", "GET"),
@@ -24,7 +26,16 @@ expected_endpoints = [
   ]),
 ]
 
-FunctionalTester.new("fixtures/ruby/webrick/", {
+tester = FunctionalTester.new("fixtures/ruby/webrick/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+describe "WEBrick cookie name reads", tags: "functional" do
+  it "ignores cookie values and unrelated name checks" do
+    endpoint = tester.endpoints.find! { |ep| ep.url == "/api/users" && ep.method == "POST" }
+    names = endpoint.params.select { |param| param.param_type == "cookie" }.map(&.name)
+    names.sort!.should eq(["layout", "preference", "session"])
+  end
+end
