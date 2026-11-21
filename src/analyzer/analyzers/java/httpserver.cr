@@ -120,10 +120,8 @@ module Analyzer::Java
       return unless path_arg
 
       route_path = resolve_string(path_arg, content, constants)
-      return unless route_path
-      # `createContext("")` is rejected by the JDK at runtime — don't let an
-      # empty literal normalize into a phantom `/` route.
-      return if route_path.strip.empty?
+      # The JDK requires '/' as the first character of a context path.
+      return unless route_path && route_path.starts_with?('/')
       route_path = normalize_path(route_path)
       return unless valid_path?(route_path)
 
@@ -656,16 +654,12 @@ module Analyzer::Java
     end
 
     private def normalize_path(path : String) : String
-      np = path.strip
-      np = "/#{np}" unless np.starts_with?("/")
-      np = np.gsub(%r{/+}, "/")
+      np = path.rstrip.gsub(%r{/+}, "/")
       np = np[0...-1] if np.ends_with?("/") && np != "/"
-      np.empty? ? "/" : np
+      np
     end
 
     private def valid_path?(path : String) : Bool
-      return false if path.empty?
-      return false unless path.starts_with?("/")
       return false if path.includes?(' ')
       path.size <= 200
     end

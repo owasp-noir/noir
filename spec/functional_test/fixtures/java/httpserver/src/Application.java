@@ -83,6 +83,11 @@ public class Application {
     static void createUser(byte[] body) {
     }
 
+    static void registerInvalidContexts(HttpServer server) {
+        server.createContext("relative", Application::health);
+        server.createContext(" /leading-space", Application::health);
+    }
+
     static void health(HttpExchange exchange) throws IOException {
         exchange.sendResponseHeaders(200, 0);
     }
