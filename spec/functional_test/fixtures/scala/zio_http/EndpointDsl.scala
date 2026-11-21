@@ -6,6 +6,10 @@ import zio.http.codec._
 import zio.http.endpoint._
 
 object EndpointDsl {
+  val savedMethod = Method.POST
+  val methodLabels = Map(Method.PUT -> "update")
+  val routeExample = "Method.DELETE / example -> handler"
+
   // Declarative endpoint DSL. Path params come from the path; the trailing
   // `.out[Int]` must NOT register a phantom `{id2}` path param.
   val getUser =
@@ -20,6 +24,8 @@ object EndpointDsl {
   // Response headers built with `Headers(Header.X(...))` must not be read as
   // request header params.
   val routes: Routes[Any, Response] = Routes(
+    Method.GET / Root -> handler(Response.ok),
+    RoutePattern.fromMethod(Method.OPTIONS) -> handler(Response.ok),
     Method.GET / "v2" / "download" -> handler { (req: Request) =>
       Response(
         body = Body.empty,

@@ -4,8 +4,9 @@ module Analyzer::Scala
   class ZioHttp < ScalaEngine
     analyzer_for "scala_zio_http"
 
-    HTTP_METHODS   = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
-    MATCHER_IDENTS = %w[int long string uuid boolean bool trailing]
+    HTTP_METHODS    = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
+    MATCHER_IDENTS  = %w[int long string uuid boolean bool trailing]
+    ROUTE_METHOD_RE = /(?<![.\w])Method\.([A-Z]+)(?=\s*\/)|\bRoutePattern\s*\.\s*fromMethod\s*\(\s*Method\.([A-Z]+)\s*\)/
 
     def analyze_file(path : String) : Array(Endpoint)
       content = read_file_content(path)
@@ -17,22 +18,19 @@ module Analyzer::Scala
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       lexer = scala_lexer(content)
-      lines = scala_code_text(lexer).split('\n')
       code_lines = lexer.code_lines
       masked_lines = lexer.masked_lines
 
-      lines.each_with_index do |_line, index|
-        stripped = code_lines[index]? || ""
-
+      masked_lines.each_with_index do |line, index|
         offset = 0
-        while m = stripped.match(/(?<![.\w])Method\.([A-Z]+)/, offset)
-          method = m[1]
+        while m = line.match(ROUTE_METHOD_RE, offset)
+          method = m[1]? || m[2]
           method_end = m.end(0) || 0
           offset = method_end
 
           next unless HTTP_METHODS.includes?(method)
 
-          rest = stripped[method_end..]
+          rest = code_lines[index][method_end..]
           arrow_idx = rest.index("->")
           path_segments_str = arrow_idx ? rest[0...arrow_idx] : rest
 
@@ -44,7 +42,7 @@ module Analyzer::Scala
           end
 
           if arrow_idx
-            block_info = extract_handler_block(lines, masked_lines, index)
+            block_info = extract_handler_block(code_lines, masked_lines, index)
             if block_info
               block_content, block_start = block_info
               extract_params_from_block(endpoint, block_content)
