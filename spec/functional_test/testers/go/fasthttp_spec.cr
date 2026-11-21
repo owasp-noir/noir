@@ -49,6 +49,7 @@ expected_endpoints = [
   ]),
   # api_router.go: POST with form, header and cookie
   Endpoint.new("/upload", "POST", [
+    Param.new("folder", "", "query"),
     Param.new("file_name", "", "form"),
     Param.new("Content-Type", "", "header"),
     Param.new("auth_token", "", "cookie"),
@@ -60,7 +61,16 @@ expected_endpoints = [
   ]),
 ]
 
-FunctionalTester.new("fixtures/go/fasthttp/", {
+tester = FunctionalTester.new("fixtures/go/fasthttp/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+describe "fasthttp argument locations", tags: "functional" do
+  it "keeps query and form reads separate on the same line" do
+    upload = tester.endpoints.find! { |ep| ep.url == "/upload" && ep.method == "POST" }
+    upload.params.select { |param| param.name == "folder" }.map(&.param_type).should eq(["query"])
+    upload.params.select { |param| param.name == "file_name" }.map(&.param_type).should eq(["form"])
+  end
+end

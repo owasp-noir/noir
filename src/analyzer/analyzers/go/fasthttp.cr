@@ -139,11 +139,8 @@ module Analyzer::Go
     end
 
     # Cheap pre-filter for `analyze_param_line`, called on EVERY line of
-    # every fasthttp file (not just route lines). Union of every literal
-    # substring any of the six scans below requires to possibly match —
-    # a single precompiled `Regex.union` (PCRE2 JIT) pass replaces six
-    # unconditional `String#scan` regex attempts on lines that can't
-    # possibly contain a param accessor.
+    # every fasthttp file (not just route lines). A precompiled union skips
+    # all accessor scans on lines without any of their required substrings.
     PARAM_LINE_SIGNAL_RE = Regex.union(
       "QueryArgs", "PostArgs", "Request.Header", "FormValue", "UserValue",
       "PostBody", ".Request.Body(",
@@ -153,18 +150,10 @@ module Analyzer::Go
       params = [] of Param
       return params unless line.matches?(PARAM_LINE_SIGNAL_RE)
 
-      # QueryArgs().Peek("param") or QueryArgs().Get("param")
-      line.scan(/(?:QueryArgs|PostArgs)\(\)\.(?:Peek|PeekMulti|Get|GetAll)\s*\(\s*"([^"]+)"\s*\)/) do |match|
-        param_name = match[1]
-        param_type = line.includes?("QueryArgs") ? "query" : "form"
-        params << Param.new(param_name, "", param_type)
-      end
-
-      # ctx.QueryArgs().Peek("param")
-      line.scan(/ctx\.(?:QueryArgs|PostArgs)\(\)\.(?:Peek|PeekMulti|Get|GetAll)\s*\(\s*"([^"]+)"\s*\)/) do |match|
-        param_name = match[1]
-        param_type = line.includes?("QueryArgs") ? "query" : "form"
-        params << Param.new(param_name, "", param_type)
+      # QueryArgs().Peek("param") or PostArgs().Peek("param")
+      line.scan(/\b(QueryArgs|PostArgs)\(\)\.(?:Peek|PeekMulti|Get|GetAll)\s*\(\s*"([^"]+)"\s*\)/) do |match|
+        param_type = match[1] == "QueryArgs" ? "query" : "form"
+        params << Param.new(match[2], "", param_type)
       end
 
       # Request.Header.Peek("header")
