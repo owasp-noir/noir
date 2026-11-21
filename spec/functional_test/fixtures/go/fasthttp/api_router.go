@@ -49,10 +49,10 @@ func setupAPIRoutes() {
 
 	// POST with combined form and header
 	api.POST("/upload", func(ctx *fasthttp.RequestCtx) {
-		fileName := ctx.FormValue("file_name")
+		folder, fileName := ctx.QueryArgs().Peek("folder"), ctx.PostArgs().Peek("file_name")
 		contentType := ctx.Request.Header.Peek("Content-Type")
 		authToken := ctx.Request.Header.Cookie("auth_token")
-		fmt.Fprintf(ctx, "Uploaded %s, CT: %s, Auth: %s", fileName, contentType, authToken)
+		fmt.Fprintf(ctx, "Uploaded %s/%s, CT: %s, Auth: %s", folder, fileName, contentType, authToken)
 	})
 
 	// DELETE with header
