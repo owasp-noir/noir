@@ -11,8 +11,10 @@ module Analyzer::Crystal
     # An exact compare only: `path.starts_with?("/api/")` guards a subtree
     # and `includes?` a substring, neither of which is a route.
     PATH_COMPARE_RE = /context\.request\.path\s*(?:==|===)\s*["']([^"']+?)["']/
-    WHEN_RE         = /(?:^|[^.\w])when\s+["']([^"']+?)["']/
+    WHEN_RE         = /(?:^|[^.\w])when\s+((?:"[^"]*"|'[^']*')(?:\s*,\s*(?:"[^"]*"|'[^']*'))*)(?=\s*(?:,|;|then\b|$))/
+    WHEN_LITERAL_RE = /"([^"]*)"|'([^']*)'/
     PATH_CASE_RE    = /(?:^\s*|[=(]\s*|\breturn\s+)(case)\b.*\brequest\.path\b/
+    PATH_BRANCH_RE  = /^\s*(?:when|else)\b/
     # The handler's argument goes by any name (`HTTP::Server.new do |ctx|`,
     # `def call(ctx)`, or `ctx = context` inside one). The patterns above
     # read it as `context`, so those names are rewritten to it first. Only a
@@ -26,21 +28,20 @@ module Analyzer::Crystal
 
       lines = mask_crystal_heredocs(read_file_content(path).lines)
 
-      last_endpoint : Endpoint? = nil
+      last_endpoints = [] of Endpoint
 
       # Indent-based tracking for `case ... request.path` (and similar) blocks so that
       # bare `when "/..."` only produces endpoints when it is actually a route guard.
       # This prevents false positives from unrelated `case` statements (e.g. on enums,
       # strings, or other values) that happen to contain path-like literals.
       # Pattern mirrors the namespace/scope indent stacks used in kemal/grip/lucky/etc.
-      path_case_stack = [] of NamedTuple(indent: Int32, column: Int32)
+      path_case_stack = [] of NamedTuple(indent: Int32, column: Int32, branch_indent: Int32?)
       lines = as_context_receiver(lines)
       param_lines = crystal_param_lines(lines)
 
       lines.each_with_index do |line, index|
         raw = line
         stripped = Noir::CrystalCalleeExtractor.strip_comment(line)
-        content_for_scan = stripped
         indent = raw.size - raw.lstrip.size
 
         # Enter a request.path case, as a statement or as a value
@@ -51,7 +52,7 @@ module Analyzer::Crystal
         one_line_case = false
         if stripped.includes?("case") && (case_match = stripped.match(PATH_CASE_RE))
           case_column = case_match.begin(1)
-          path_case_stack << {indent: indent, column: case_column}
+          path_case_stack << {indent: indent, column: case_column, branch_indent: nil}
           one_line_case = stripped[case_column..].matches?(END_WORD_RE)
         end
 
@@ -63,29 +64,41 @@ module Analyzer::Crystal
             while (open_case = path_case_stack.last?) &&
                   (end_indent == open_case[:column] || end_indent <= open_case[:indent])
               path_case_stack.pop
+              last_endpoints.clear if last_endpoints.size > 1
             end
           end
         end
 
-        in_path_case = !path_case_stack.empty?
+        if (open_case = path_case_stack.last?) && stripped.matches?(PATH_BRANCH_RE)
+          same_level = if branch_indent = open_case[:branch_indent]
+                         indent == branch_indent
+                       else
+                         indent == open_case[:indent] || indent == open_case[:column]
+                       end
+          if same_level
+            path_case_stack[-1] = {indent: open_case[:indent], column: open_case[:column], branch_indent: indent}
+            last_endpoints.clear
+          end
+        end
 
-        endpoint = line_to_endpoint(content_for_scan, in_path_case)
+        line_endpoints = line_to_endpoints(stripped, !path_case_stack.empty?)
         path_case_stack.pop if one_line_case
-        if !endpoint.method.empty? && valid_crystal_route_path?(endpoint.url)
+        line_endpoints.select! { |endpoint| valid_crystal_route_path?(endpoint.url) }
+        unless line_endpoints.empty?
           details = Details.new(PathInfo.new(path, index + 1))
-          endpoint.details = details
-          endpoints << endpoint
-          last_endpoint = endpoint
+          line_endpoints.map! do |endpoint|
+            endpoint.details = details
+            endpoint
+          end
+          endpoints.concat(line_endpoints)
+          last_endpoints = line_endpoints
         end
 
         param = line_to_param(param_lines[index])
         unless param.name.empty?
-          if le = last_endpoint
-            unless le.method.empty?
-              le.push_param(param)
-            end
-          end
+          last_endpoints.each(&.push_param(param))
         end
+        last_endpoints.clear if one_line_case && last_endpoints.size > 1
       end
 
       endpoints
@@ -139,21 +152,19 @@ module Analyzer::Crystal
     # `in_path_case` is only used to gate the unconditional `when` matcher.
     # The explicit `method && path` and `path ==` checks are safe to run unconditionally
     # (they mention the request objects) and are therefore handled the same way inside/outside.
-    def line_to_endpoint(content : String, in_path_case : Bool = false) : Endpoint
-      content = Noir::CrystalCalleeExtractor.strip_comment(content)
-
+    private def line_to_endpoints(content : String, in_path_case : Bool) : Array(Endpoint)
       # No string literal ⇒ no path to extract. Also skip heavy combined
       # method/path regexes unless the request objects appear.
       has_quote = content.includes?('"') || content.includes?("'")
-      return Endpoint.new("", "") unless has_quote
+      return [] of Endpoint unless has_quote
 
       if content.includes?("request.method") && content.includes?("request.path")
         # method + path combined on same line (supports the common "if method && path" pattern)
         if match = content.match(METHOD_THEN_PATH_RE)
-          return Endpoint.new(normalize_crystal_interpolation(match[2]), match[1])
+          return [Endpoint.new(normalize_crystal_interpolation(match[2]), match[1])]
         end
         if match = content.match(PATH_THEN_METHOD_RE)
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), match[2])
+          return [Endpoint.new(normalize_crystal_interpolation(match[1]), match[2])]
         end
       end
 
@@ -161,23 +172,21 @@ module Analyzer::Crystal
       if content.includes?("request.path") && (match = content.match(PATH_COMPARE_RE))
         p = match[1]
         if valid_crystal_route_path?(p)
-          return Endpoint.new(normalize_crystal_interpolation(p), "GET")
+          return [Endpoint.new(normalize_crystal_interpolation(p), "GET")]
         end
       end
 
-      # `when "/path"` — only when we have positively entered a `case ...request.path` block.
+      # `when "/path", "/alias"` — only in a `case ...request.path` block.
       # This avoids matching unrelated `case` / `when` statements that contain path-like strings
       # (e.g. `case status; when "/foo" ...` or documentation strings that leak past heredoc mask).
-      if in_path_case && content.includes?("when")
-        if match = content.match(WHEN_RE)
-          p = match[1]
-          if valid_crystal_route_path?(p)
-            return Endpoint.new(normalize_crystal_interpolation(p), "GET")
-          end
+      if in_path_case && content.includes?("when") && (match = content.match(WHEN_RE))
+        return match[1].scan(WHEN_LITERAL_RE).compact_map do |literal|
+          p = literal[1]? || literal[2]
+          Endpoint.new(normalize_crystal_interpolation(p), "GET") if valid_crystal_route_path?(p)
         end
       end
 
-      Endpoint.new("", "")
+      [] of Endpoint
     end
   end
 end

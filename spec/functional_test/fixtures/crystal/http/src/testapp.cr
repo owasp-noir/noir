@@ -14,11 +14,25 @@ server = HTTP::Server.new do |context|
     context.response.print "home"
   when "/users"
     context.response.print "users list"
-  when "/api/items"
-    context.response.print "items"
   when "/after-heredoc"
     context.response.print "real after heredoc"
+  when %r{^/assets/}
+    context.response.print context.request.query_params["prefix"]?
+  when "/api/items", "/api/catalog"
+    if filter = context.request.query_params["filter"]?
+      context.response.print filter
+    else
+      context.response.print context.request.query_params["sort"]?
+    end
+  else
+    context.response.print context.request.query_params["fallback"]?
   end
+
+  case context.request.path
+  when "/guide", "/docs"
+    context.response.print "documentation"
+  end
+  context.request.query_params["after_case"]?
 
   # combined method + path on one line (for explicit POST test)
   if context.request.method == "POST" && context.request.path == "/users"
