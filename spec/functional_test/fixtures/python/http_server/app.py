@@ -26,19 +26,23 @@ class MyHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"ok")
 
     def do_POST(self):
-        if self.path == "/submit":
+        parsed = urlparse(self.path)
+        if parsed.path == "/submit":
             content_len = int(self.headers.get("Content-Length", 0) or 0)
-            post_body = self.rfile.read(content_len).decode("utf-8", errors="ignore") if content_len else ""
+            decoded_body = self.rfile.read(content_len).decode("utf-8", errors="ignore") if content_len else ""
 
             # form via parse_qs on body
-            form = parse_qs(post_body)
+            form = parse_qs(decoded_body)
             name = form.get("name", [""])[0]
+            label = parse_qs(decoded_body)["label"][0]
+            query_body = parsed.query
+            page = parse_qs(query_body).get("page", ["1"])[0]
 
             # json
             payload = {}
-            if post_body and self.headers.get("Content-Type", "").startswith("application/json"):
+            if decoded_body and self.headers.get("Content-Type", "").startswith("application/json"):
                 try:
-                    payload = json.loads(post_body)
+                    payload = json.loads(decoded_body)
                 except Exception:
                     payload = {}
             user_id = payload.get("id", "") if isinstance(payload, dict) else ""
