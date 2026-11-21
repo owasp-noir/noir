@@ -1,3 +1,4 @@
+require "../../utils/control_chars"
 require "colorize"
 require "yaml"
 require "../common"
@@ -108,9 +109,6 @@ module Noir::CLI::ScanCommand
     end
     if app.techs.empty?
       app.logger.warning "No technologies detected."
-    else
-      exclude_techs = NoirTechs.resolve_tech_list(app.options["exclude_techs"].to_s).to_set
-      app.techs = app.techs.reject { |tech| exclude_techs.includes?(tech) }
     end
     app.logger.loading "Starting code analysis." do
       app.analyze
@@ -532,7 +530,7 @@ module Noir::CLI::ScanCommand
     logger.warning "#{failures.size} coverage #{plural} reported#{scope}; results may be incomplete."
     failures.each_with_index do |failure, index|
       prefix = index < failures.size - 1 ? "├──" : "└──"
-      logger.sub "#{prefix} #{failure.tech}: #{failure.message}"
+      logger.sub "#{prefix} #{ControlChars.escape(failure.tech)}: #{ControlChars.escape(failure.message)}"
     end
   end
 
@@ -775,7 +773,6 @@ module Noir::CLI::ScanCommand
         app.logger.sub "#{prefix} #{tech}#{status}"
       end
 
-      app.techs = app.techs.reject { |tech| exclude_techs.includes?(tech) }
       analysis_message = "Starting code analysis based on the detected technologies."
     end
 

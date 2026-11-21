@@ -261,7 +261,6 @@ module Analyzer::Specification
     end
 
     private def process_json(swagger_json : String)
-      return unless File.exists?(swagger_json)
       details = Details.new(PathInfo.new(swagger_json))
       content = read_file_content(swagger_json)
       json_obj = parse_json_lenient(content)
@@ -285,7 +284,7 @@ module Analyzer::Specification
       defined_schemes = defined_security_schemes(json_obj["securityDefinitions"]?)
       global_security = json_obj["security"]?
       begin
-        paths = json_obj["paths"].as_h
+        paths = openapi_paths(doc)
         paths.each do |path, path_obj|
           path_item, item_doc = resolve_path_item_json(doc, path_obj)
           # A Path Item that did not resolve to a mapping costs itself and
@@ -333,13 +332,11 @@ module Analyzer::Specification
           record_skipped_entry(swagger_json, "path item #{path}", e)
         end
       rescue e
-        @logger.debug "Exception of #{swagger_json}/paths"
-        @logger.debug_sub e
+        record_skipped_entry(doc.path, "paths", e)
       end
     end
 
     private def process_yaml(swagger_yaml : String)
-      return unless File.exists?(swagger_yaml)
       details = Details.new(PathInfo.new(swagger_yaml))
       content = read_file_content(swagger_yaml)
       yaml_obj = parse_spec_yaml(content)
@@ -361,7 +358,7 @@ module Analyzer::Specification
       defined_schemes = defined_security_schemes(yaml_obj[YAML::Any.new("securityDefinitions")]?)
       global_security = yaml_obj[YAML::Any.new("security")]?
       begin
-        paths = yaml_obj["paths"].as_h
+        paths = openapi_paths(doc)
         paths.each do |path, path_obj|
           path_item, item_doc = resolve_path_item_yaml(doc, path_obj)
           # See `process_json`: a Path Item that is not a mapping must not
@@ -412,8 +409,7 @@ module Analyzer::Specification
           record_skipped_entry(swagger_yaml, "path item #{path}", e)
         end
       rescue e
-        @logger.debug "Exception of #{swagger_yaml}/paths"
-        @logger.debug_sub e
+        record_skipped_entry(doc.path, "paths", e)
       end
     end
   end

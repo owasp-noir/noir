@@ -176,6 +176,38 @@ YAML, JSONL, TOML 출력에도 같은 필드가 들어가고, 일반 리포트�
 }
 ```
 
+## OpenAPI 명세 비교 범위
+
+단일 `noir scan -f json` 보고서는 엔드포인트가 0개일 때도 `coverage.openapi`를 기록합니다.
+
+```json
+{"enabled_analyzers":["oas2","oas3"],"documents_read":1,"status":"available"}
+```
+
+`enabled_analyzers`는 이번 스캔 설정에서 허용한 OpenAPI 분석기 목록입니다. `documents_read`는 Noir가 `paths` 맵을 읽은 루트 명세 수입니다. 빈 맵도 문서 한 개로 세며 같은 문서는 한 번만 셉니다. 외부 `$ref`로 읽은 조각 파일은 이 수에 더하지 않습니다.
+
+| 상태 | 의미 |
+| --- | --- |
+| `available` | 루트 명세의 경로 맵을 하나 이상 읽었고, 파일 탐색과 활성 OpenAPI 분석기에서 누락을 보고하지 않았습니다. |
+| `no_documents` | OpenAPI 분석이 허용됐지만 읽은 루트 경로 맵이 0개이고, 관련 오류도 없습니다. |
+| `disabled` | 스캔 설정에서 두 OpenAPI 분석기를 모두 제외했습니다. |
+| `incomplete` | 파일 탐색 또는 활성 OpenAPI 분석기가 누락을 보고했습니다. 일부 명세는 정상적으로 읽었을 수 있습니다. 원인은 `errors`에서 확인합니다. |
+
+PR 요약을 만들 때는 서비스와 그 서비스의 계약을 함께 스캔하세요. 아래 예시는 코드에서 발견한 HTTP 경로 중 이번에 읽은 OpenAPI 명세에서 찾지 못한 경로를 나열합니다. 비교할 수 없으면 그 이유를 출력합니다. 이 필드가 없는 이전 보고서는 `unknown`으로 표시합니다.
+
+```sh
+jq '
+  .coverage.openapi.status as $status
+  | if $status == "available" then
+      [.endpoints[]
+       | select(.protocol == "http" and .internal != true)
+       | select(any(.details.origins[]?; .kind == "code"))
+       | select(any(.details.origins[]?; .technology == "oas2" or .technology == "oas3") | not)
+       | {method, url}]
+    else {openapi_comparison: ($status // "unknown")} end
+' report.json
+```
+
 ## 분석기 실패 기록
 
 분석기 하나가 예외를 던지면 로그를 남기고 건너뛰며, 스캔은 나머지 분석기로 계속 진행합니다. 읽거나 파싱할 수 없는 파일 하나(예: 파싱 시간 상한을 넘긴 파일) 역시 그 파일만 건너뛰고 스캔은 이어집니다. `errors`에는 두 경우가 모두 남기 때문에, 결과가 비어 있는 이유가 "그 프레임워크가 없어서"인지 "아예 분석하지 못해서"인지, 그리고 조용히 빠진 파일이 있었는지 구분할 수 있습니다.

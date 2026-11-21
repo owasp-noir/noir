@@ -1,6 +1,8 @@
 require "../../models/analyzer"
 require "../../models/code_locator"
 require "../../models/skipped_files"
+require "../../models/openapi_coverage"
+require "../../utils/control_chars"
 require "uri"
 require "../../utils/json"
 require "yaml"
@@ -56,6 +58,16 @@ module Analyzer::Specification
   # the log wording differed everywhere. `each_spec_file` is that drain,
   # once.
   abstract class SpecificationEngine < Analyzer
+    setter openapi_coverage : Noir::OpenAPICoverage?
+
+    # Only entry documents contribute to coverage. Fragments resolved through
+    # $ref never pass here. An empty paths map is still a successful read.
+    protected def openapi_paths(doc : SpecDoc)
+      paths = doc.root["paths"].as_h
+      @openapi_coverage.try(&.record_document(doc.path))
+      paths
+    end
+
     # `scheme://host/…` and protocol-relative `//host/…` ref targets.
     REMOTE_REF = /\A(?:[A-Za-z][A-Za-z0-9+.\-]*:)?\/\//
 
@@ -172,9 +184,12 @@ module Analyzer::Specification
       paths = paths.sort if sorted
 
       paths.each do |path|
-        next unless File.exists?(path)
         # Silent, like the language engines' test-tree gates: nothing was lost.
         next if test_tree?(key, path) || generated_client_spec?(key, path)
+        unless File.exists?(path)
+          Noir::SkippedFiles.record(tech, path, "document disappeared after detection") if OAS_KEYS.includes?(key.name)
+          next
+        end
 
         begin
           block.call(path)
@@ -597,27 +612,25 @@ module Analyzer::Specification
     protected def resolve_ref_json(doc : SpecDoc(JSON::Any), ref : String) : Tuple(JSON::Any, SpecDoc(JSON::Any))?
       file, pointer = split_ref(ref)
 
-      if file.empty?
-        node = resolve_pointer_json(doc.root, pointer)
-        return node.nil? ? nil : {node, doc}
+      target = file.empty? ? doc : external_json_doc(doc.path, file)
+      return unless target
+      if node = resolve_pointer_json(target.root, pointer)
+        {node, target}
+      else
+        record_ref_gap(doc.path, ref, "fragment not resolved")
       end
-
-      return unless target = external_json_doc(doc.path, file)
-      node = resolve_pointer_json(target.root, pointer)
-      node.nil? ? nil : {node, target}
     end
 
     protected def resolve_ref_yaml(doc : SpecDoc(YAML::Any), ref : String) : Tuple(YAML::Any, SpecDoc(YAML::Any))?
       file, pointer = split_ref(ref)
 
-      if file.empty?
-        node = resolve_pointer_yaml(doc.root, pointer)
-        return node.nil? ? nil : {node, doc}
+      target = file.empty? ? doc : external_yaml_doc(doc.path, file)
+      return unless target
+      if node = resolve_pointer_yaml(target.root, pointer)
+        {node, target}
+      else
+        record_ref_gap(doc.path, ref, "fragment not resolved")
       end
-
-      return unless target = external_yaml_doc(doc.path, file)
-      node = resolve_pointer_yaml(target.root, pointer)
-      node.nil? ? nil : {node, target}
     end
 
     # Splits and URI-decodes a `$ref`'s file part and JSON Pointer fragment;
@@ -779,7 +792,7 @@ module Analyzer::Specification
     private def record_ref_gap(from_path : String, file_ref : String, reason : String) : Nil
       message = "unresolved $ref '#{file_ref}': #{reason}"
       return unless @reported_refs.add?("#{from_path}\u0000#{message}")
-      logger.debug "#{from_path}: #{message}"
+      logger.debug { ControlChars.escape("#{from_path}: #{message}") }
       Noir::SkippedFiles.record(tech, from_path, message, noun: "referenced file")
     end
 
@@ -787,8 +800,8 @@ module Analyzer::Specification
     # rest of the document is still read, but the loss belongs in `errors` —
     # and `--strict` — like any other skipped document.
     protected def record_skipped_entry(doc_path : String, entry : String, e : Exception) : Nil
-      logger.debug "#{doc_path}: skipped #{entry}"
-      logger.debug_sub e
+      logger.debug { ControlChars.escape("#{doc_path}: skipped #{entry}") }
+      logger.debug_sub ControlChars.escape(e.to_s)
       Noir::SkippedFiles.record(tech, doc_path, "#{entry}: #{e.message.presence || e.class.name}", noun: "spec entry")
     end
 
@@ -881,9 +894,13 @@ module Analyzer::Specification
     protected def resolve_path_item_json(doc : SpecDoc(JSON::Any), path_obj : JSON::Any, seen : Set(String) = Set(String).new) : Tuple(JSON::Any, SpecDoc(JSON::Any))
       return {path_obj, doc} unless path_obj_h = path_obj.as_h?
       return {path_obj, doc} unless ref = path_obj_h["$ref"]?.try(&.as_s?)
-      return {path_obj, doc} unless seen.add?(ref_key(doc, ref))
+      unless seen.add?(ref_key(doc, ref))
+        record_ref_gap(doc.path, ref, "cyclic path item or operation reference")
+        return {path_obj, doc}
+      end
       if resolved = resolve_ref_json(doc, ref)
         node, ref_doc = resolved
+        record_ref_gap(doc.path, ref, "path item or operation target is not a mapping") unless node.as_h?
         resolve_path_item_json(ref_doc, node, seen)
       else
         {path_obj, doc}
@@ -894,9 +911,13 @@ module Analyzer::Specification
       return {path_obj, doc} unless path_obj_h = path_obj.as_h?
       return {path_obj, doc} unless ref_node = path_obj_h[YAML::Any.new("$ref")]?
       return {path_obj, doc} unless ref = ref_node.as_s?
-      return {path_obj, doc} unless seen.add?(ref_key(doc, ref))
+      unless seen.add?(ref_key(doc, ref))
+        record_ref_gap(doc.path, ref, "cyclic path item or operation reference")
+        return {path_obj, doc}
+      end
       if resolved = resolve_ref_yaml(doc, ref)
         node, ref_doc = resolved
+        record_ref_gap(doc.path, ref, "path item or operation target is not a mapping") unless node.as_h?
         resolve_path_item_yaml(ref_doc, node, seen)
       else
         {path_obj, doc}
