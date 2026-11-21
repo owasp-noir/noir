@@ -96,7 +96,7 @@ module Analyzer::Crystal
 
         param = line_to_param(param_lines[index])
         unless param.name.empty?
-          last_endpoints.each { |endpoint| endpoint.push_param(param) }
+          last_endpoints.each(&.push_param(param))
         end
         last_endpoints.clear if one_line_case && last_endpoints.size > 1
       end
