@@ -11,7 +11,7 @@ Crystal-based attack surface detector that identifies endpoints by static analys
 | Command | Alternative | Timeout |
 |---------|-------------|---------|
 | `just build` | `shards build` | 120s (~30s typical) |
-| `just test` | `crystal build spec/suite.cr -o bin/noir_spec && ./bin/noir_spec` | 120s (~40s typical) |
+| `just test` | `crystal build spec/suite.cr -o bin/noir_spec && ./bin/noir_spec` | 240s (~2 min typical) |
 | `just check` | format check + lint | 60s |
 | `just fix` | auto-format + fix lint | 60s |
 

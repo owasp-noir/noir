@@ -54,6 +54,12 @@ describe "Analyzer::Mobile::Ios (code-level route harvesting)" do
   end
 end
 
+private def ios_analyzer_at(dir : String)
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+  Analyzer::Mobile::Ios.new(options)
+end
+
 describe "Analyzer::Mobile::Ios (format-string literals)" do
   dir = File.tempname("noir-ios-format-literals")
   Dir.mkdir_p(dir)
@@ -76,7 +82,7 @@ describe "Analyzer::Mobile::Ios (format-string literals)" do
   CodeLocator.instance.reset_files
   CodeLocator.instance.push(Noir::LocatorKeys::IOS_INFO_PLIST, plist)
   CodeLocator.instance.register_file(swift, File.read(swift))
-  urls = Analyzer::Mobile::Ios.new(create_test_options).analyze.map(&.url)
+  urls = ios_analyzer_at(dir).analyze.map(&.url)
   CodeLocator.instance.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
   CodeLocator.instance.reset_files
   FileUtils.rm_rf(dir)
@@ -177,7 +183,7 @@ describe "Analyzer::Mobile::Ios (secondary-scheme dispatchers)" do
   CodeLocator.instance.reset_files
   CodeLocator.instance.push(Noir::LocatorKeys::IOS_INFO_PLIST, plist)
   [swift, constants].each { |path| CodeLocator.instance.register_file(path, File.read(path)) }
-  urls = Analyzer::Mobile::Ios.new(create_test_options).analyze.map(&.url)
+  urls = ios_analyzer_at(dir).analyze.map(&.url)
   CodeLocator.instance.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
   CodeLocator.instance.reset_files
   FileUtils.rm_rf(dir)
@@ -225,7 +231,7 @@ private def secondary_scheme_urls(sources : Array(Tuple(String, String))) : Arra
     File.write(path, body)
     CodeLocator.instance.register_file(path, body)
   end
-  Analyzer::Mobile::Ios.new(create_test_options).analyze.map(&.url)
+  ios_analyzer_at(dir).analyze.map(&.url)
 ensure
   CodeLocator.instance.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
   CodeLocator.instance.reset_files
