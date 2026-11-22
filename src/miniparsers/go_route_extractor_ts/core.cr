@@ -25,7 +25,7 @@ module Noir
       "ANY", "Any", "All",
     }
 
-    # The seven canonical HTTP methods Gin's `r.Any`, Echo's `e.Any`,
+    # The seven canonical HTTP methods Echo's `e.Any`,
     # Beego's `*` route etc. all stand for. Used by analyzer-level
     # fan-out (see `fan_out_verbs`).
     ANY_FAN_OUT_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
@@ -37,10 +37,10 @@ module Noir
     # explicitly instead of carrying a non-HTTP "ANY" verb that
     # tools like SARIF/Postman can't ingest. Anything else passes
     # through as a single-element list.
-    def self.fan_out_verbs(verb : String) : Array(String)
+    def self.fan_out_verbs(verb : String, any_verbs : Array(String) = ANY_FAN_OUT_VERBS) : Array(String)
       case verb.upcase
       when "ANY", "ALL"
-        ANY_FAN_OUT_VERBS
+        any_verbs
       else
         # `Methods("GET, HEAD", ...)` carries a comma-separated list;
         # a plain verb is a one-element list of itself.
@@ -422,10 +422,11 @@ module Noir
           end
           found
         end
-        tables = collect_table_loops(root, source, string_values)
+        string_calls = StringRangeCalls.new
+        tables = collect_table_loops(root, source, string_values, string_calls)
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          found = decode.call(node, string_values)
+          found = decode_string_range(node, string_values, string_calls) { |values| decode.call(node, values) }
           if found.empty? && !tables.empty?
             found = table_routes(node, source, tables, string_values) { |values| decode.call(node, values) }
           end
@@ -1149,15 +1150,26 @@ module Noir
             end
           end
           declarers = DeclarerCache.new
+          string_calls = StringRangeCalls.new
+          tables = collect_table_loops(root, source, string_values, string_calls)
           Noir::TreeSitter.walk(body) do |node|
             next unless Noir::TreeSitter.node_type(node) == "call_expression"
-            if handlefunc_methods
-              decode_handlefunc_methods_call(node, source, group_prefixes, string_values, subrouters).each { |r| routes << r } unless chained.includes?(node_key(node))
-            elsif route = decode_verb_call(node, source, group_prefixes, [] of String, "Group", [] of String, string_values, literal_join: literal_join, declarers: declarers)
-              routes << route
-            elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
-              routes << route
+            decode = ->(values : Hash(String, String)) do
+              if handlefunc_methods
+                chained.includes?(node_key(node)) ? [] of Route : decode_handlefunc_methods_call(node, source, group_prefixes, values, subrouters)
+              elsif route = decode_verb_call(node, source, group_prefixes, [] of String, group_method, [] of String, values, literal_join: literal_join, declarers: declarers)
+                [route]
+              elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method, string_values: values))
+                [route]
+              else
+                [] of Route
+              end
             end
+            found = decode_string_range(node, string_values, string_calls) { |values| decode.call(values) }
+            if found.empty? && !tables.empty?
+              found = table_routes(node, source, tables, string_values) { |values| decode.call(values) }
+            end
+            routes.concat(found)
           end
         end
       end
@@ -1400,14 +1412,48 @@ module Noir
     # files, from a map, or by `append` stays unread.
     MAX_TABLE_ELEMENTS = 500
 
+    # Direct calls in a range over []string, keyed by call-site byte offset.
+    # Their source location and handler belong to the call, not the literal.
+    alias StringRangeCalls = Hash(UInt32, Tuple(String, Array(String)))
+
+    private def decode_string_range(call, values, bindings, & : Hash(String, String) -> Array(Route)) : Array(Route)
+      binding = bindings[LibTreeSitter.ts_node_start_byte(call)]?
+      return yield values unless binding
+      name, paths = binding
+      paths.flat_map { |path| yield values.merge({name => path}) }
+    end
+
+    private def collect_string_range(body, literal, var, source, string_values, calls)
+      paths = [] of String
+      items = Noir::TreeSitter.field(literal, "body") || return
+      Noir::TreeSitter.each_named_child(items) do |item|
+        break if paths.size >= MAX_TABLE_ELEMENTS
+        value = Noir::TreeSitter.first_named_child(item) || next
+        string_expr_text(value, source, string_values).try { |path| paths << path }
+      end
+      return if paths.empty?
+      Noir::TreeSitter.each_named_arg(body) do |stmt|
+        break unless Noir::TreeSitter.node_type(stmt) == "expression_statement"
+        call = Noir::TreeSitter.first_named_child(stmt) || break
+        break unless Noir::TreeSitter.node_type(call) == "call_expression"
+        args = Noir::TreeSitter.field(call, "arguments") || next
+        Noir::TreeSitter.each_named_arg(args) do |arg|
+          if Noir::TreeSitter.node_type(arg) == "identifier" && Noir::TreeSitter.node_text(arg, source) == var
+            calls[LibTreeSitter.ts_node_start_byte(call)] = {var, paths}
+            break
+          end
+        end
+      end
+    end
+
     # The loops of `root` over a literal route table, in source order.
     private def collect_table_loops(root : LibTreeSitter::TSNode, source : String,
-                                    string_values : Hash(String, String)) : Array(TableLoop)
+                                    string_values : Hash(String, String), string_calls : StringRangeCalls? = nil) : Array(TableLoop)
       loops = [] of TableLoop
       return loops unless source.includes?("range")
       Noir::TreeSitter.walk(root) do |node|
         next unless Noir::TreeSitter.node_type(node) == "for_statement"
-        if table = table_loop(node, root, source, string_values)
+        if table = table_loop(node, root, source, string_values, string_calls)
           loops << table
         end
       end
@@ -1470,7 +1516,7 @@ module Noir
     # variable over a literal table whose elements set at least one field
     # the loop body reads.
     private def table_loop(for_node : LibTreeSitter::TSNode, root : LibTreeSitter::TSNode, source : String,
-                           string_values : Hash(String, String)) : TableLoop?
+                           string_values : Hash(String, String), string_calls : StringRangeCalls? = nil) : TableLoop?
       clause = nil
       Noir::TreeSitter.each_named_child(for_node) { |child| clause = child if Noir::TreeSitter.node_type(child) == "range_clause" }
       clause = clause || return
@@ -1481,9 +1527,16 @@ module Noir
       return unless names.size == 2
       var = names[1]
       body = Noir::TreeSitter.field(for_node, "body") || return
-      return unless Noir::TreeSitter.node_text(body, source).includes?("#{var}.")
+      body_text = Noir::TreeSitter.node_text(body, source)
+      return unless string_calls ? body_text.includes?(var) : body_text.includes?("#{var}.")
       literal = table_literal(right, for_node, root, source) || return
-      fields = table_fields(Noir::TreeSitter.field(literal, "type"), root, source) || return
+      type = Noir::TreeSitter.field(literal, "type") || return
+      if Noir::TreeSitter.node_text(type, source) == "[]string"
+        collect_string_range(body, literal, var, source, string_values, string_calls) if string_calls
+        return
+      end
+      return unless body_text.includes?("#{var}.")
+      fields = table_fields(type, root, source) || return
       elements = [] of TableElement
       Noir::TreeSitter.field(literal, "body").try do |items|
         Noir::TreeSitter.each_named_child(items) do |item|

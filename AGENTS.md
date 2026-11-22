@@ -222,6 +222,8 @@ Run `just runtime-reference` with Docker and Python 3 to regenerate `routes.json
 
 Each `known-gaps.txt` line is a normalized `missed METHOD /path` or `extra METHOD /path`. Once established, entries may only be removed. Investigate new differences and delete entries flagged as stale. Run `./bin/noir_spec -e "runtime reference"` after refreshing the manifests.
 
+The runtime comparison expands a manifest `ALL` or `ANY` into GET, HEAD, POST, PUT, PATCH, DELETE and OPTIONS. All seven must be reported. A manifest listing explicit verbs requires each listed verb, including Gin's CONNECT and TRACE. Rows with `resolution.registration = "unresolved"` provide no evidence of a served route and are excluded from this comparison. For Express, a flagless anchored regex literal compares with a Noir regex row after removing its delimiters and anchors and unescaping slash delimiters. An optional whole segment `{/:name}` compares as `/:name?`. FastAPI's `{name:path}` compares as `{*name}` so it stays distinct from a single-segment parameter.
+
 ## Before Committing
 
 1. `just build` - Ensure compilation succeeds

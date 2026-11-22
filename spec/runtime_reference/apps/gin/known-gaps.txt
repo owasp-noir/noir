@@ -1,8 +1,1 @@
 # One normalized difference per line: missed METHOD /path or extra METHOD /path.
-# Initial entries inferred from registrations and a Noir scan; verify with the first container dump.
-extra GET /unpublished
-missed CONNECT /echo
-missed GET /featured
-missed GET /popular
-missed GET /recent
-missed TRACE /echo

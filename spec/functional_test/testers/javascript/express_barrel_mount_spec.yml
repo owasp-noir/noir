@@ -8,7 +8,7 @@
 # The mount prefix used to be keyed on the barrel, which defines no routes,
 # so every router behind it was reported at its bare path.
 fixture: fixtures/javascript/express_barrel_mount/
-counts: {techs: 1, endpoints: 7}
+counts: {techs: 1, endpoints: 10}
 endpoints:
   - url: "/users/list"
     method: "GET"
@@ -24,3 +24,11 @@ endpoints:
     method: "GET"
   - url: "/carts/current"
     method: "GET"
+  - url: "/staff/stats"
+    method: "GET"
+  - url: "/new"
+    method: "GET"
+    params: [{name: "page", type: "query"}]
+  - url: "/upcoming"
+    method: "GET"
+    params: [{name: "page", type: "query"}]

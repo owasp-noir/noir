@@ -1,7 +1,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { bearerAuth } from "hono/bearer-auth";
 import { authMiddleware } from "./auth";
-import { priv as privateRoute } from "./generic.js";
+import { restricted as privateRoute } from "./contracts.js";
 import { versioned } from "./masked";
 import { rateLimit } from "./limits";
 
@@ -53,3 +53,7 @@ team.openapi(purge, (c) => c.json({}));
 app.route("/team", team);
 
 export default app;
+
+for (const path of ["/events", "/news"]) {
+  app.get(path, (c) => c.text("ok"));
+}

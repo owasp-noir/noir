@@ -51,5 +51,9 @@ func NewHTTPServer(uiConf *UIConf, apiRouter *router.APIRouter, pluginRouter *ro
 	seo.GET("/robots.txt", func(ctx *gin.Context) {})
 	pages := seo.Group("/pages")
 	pages.GET("/about", func(ctx *gin.Context) {})
+	for _, path := range []string{"/events", "/news"} {
+		plain.GET(path, func(ctx *gin.Context) { ctx.Query("page") })
+	}
+	plain.Any("/echo", func(ctx *gin.Context) {})
 	return r
 }

@@ -330,6 +330,9 @@ module Noir
           end
           last_step_counts[0]
         end
+        default_export = if resolve_mount_prefixes && !file_prefixes.empty?
+                           content.match(/^[ \t]*(?:module\.exports\s*=|export\s+default)\s*([\w$]+)[ \t]*;?[ \t]*$/m).try(&.[1])
+                         end
         route_patterns.each do |pattern|
           start_byte = pattern.start_pos >= 0 ? offsets.byte(pattern.start_pos) : -1
           owner_keys = [lookup_key.name] if middleware
@@ -389,7 +392,11 @@ module Noir
               end
             end
           end
-          if prefixes.empty? && !file_prefixes.empty?
+          # An unplaced router may be mounted outside this scan. Keep its
+          # own path, without borrowing a sibling router's file mount.
+          registration_unknown = resolve_mount_prefixes && prefixes.empty? &&
+                                 parser.unmounted_express_router?(pattern.receiver, !file_prefixes.empty?, default_export)
+          if prefixes.empty? && !file_prefixes.empty? && !registration_unknown
             prefixes = file_prefixes
           end
           prefixes = [""] if prefixes.empty?
@@ -454,6 +461,7 @@ module Noir
               all_methods.each do |method|
                 endpoint = Endpoint.new(path_with_prefix, method, route_details)
                 endpoint.kind = "regex" if pattern.regex?
+                endpoint.mark_resolution("registration") if registration_unknown
 
                 # Add path parameters detected in the URL
                 pattern.params.each do |param|
@@ -471,6 +479,7 @@ module Noir
             else
               endpoint = Endpoint.new(path_with_prefix, normalized_method, route_details)
               endpoint.kind = "regex" if pattern.regex?
+              endpoint.mark_resolution("registration") if registration_unknown
 
               # Add path parameters detected in the URL
               pattern.params.each do |param|

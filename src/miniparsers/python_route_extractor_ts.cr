@@ -423,6 +423,32 @@ module Noir
       rows
     end
 
+    # Literal values of a for target at each direct call statement in its
+    # suite. A nested scope or reassignment must not inherit a stale value.
+    def loop_call_strings(source : String) : Hash(Tuple(Int32, String), Array(String))
+      bindings = {} of Tuple(Int32, String) => Array(String)
+      return bindings unless source.includes?("for ") && source.includes?("add_api_")
+      TreeSitter.parse_python(source) do |root|
+        TreeSitter.walk(root) do |node|
+          next unless TreeSitter.node_type(node) == "for_statement"
+          target = TreeSitter.field(node, "left") || next
+          values = TreeSitter.field(node, "right") || next
+          body = TreeSitter.field(node, "body") || next
+          next unless TreeSitter.node_type(target) == "identifier" && TreeSitter.node_type(values).in?("list", "tuple")
+          name = TreeSitter.node_text(target, source)
+          paths = decode_path_list(values, source)
+          TreeSitter.each_named_child(body) do |statement|
+            next if TreeSitter.node_type(statement) == "comment"
+            break unless TreeSitter.node_type(statement) == "expression_statement"
+            call = TreeSitter.first_named_child(statement)
+            break unless call && TreeSitter.node_type(call) == "call"
+            bindings[{TreeSitter.node_start_row(call), name}] = paths unless paths.empty?
+          end
+        end
+      end
+      bindings
+    end
+
     # The string constants `source` binds at module level, by name.
     def module_string_constants(source : String) : Hash(String, String)
       strings = NO_STRINGS

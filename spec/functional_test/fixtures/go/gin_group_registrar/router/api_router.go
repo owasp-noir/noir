@@ -27,3 +27,8 @@ func (a *APIRouter) RegisterAPIRouter(r *gin.RouterGroup) {
 func (a *APIRouter) RegisterAdminAPIRouter(r *gin.RouterGroup) {
 	r.PUT("/users/status", func(ctx *gin.Context) {})
 }
+
+// An exported registrar may also be called by another package outside this scan.
+func Preview(group *gin.RouterGroup) {
+	group.GET("/preview-only", func(ctx *gin.Context) {})
+}
