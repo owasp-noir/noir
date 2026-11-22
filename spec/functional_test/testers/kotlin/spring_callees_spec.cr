@@ -91,13 +91,16 @@ expected_endpoints = [
     ep.push_callee(Callee.new("budgetRepository.deleteById", line: 28))
   end,
 
-  Endpoint.new("/graphql#Query.articles", "POST").tap do |ep|
+  Endpoint.new("/graphql#Query.articles", "POST", [
+    Param.new("graphql_query_articles", "", "json"),
+  ]).tap do |ep|
     ep.push_callee(Callee.new("articleService.findAllArticles", line: 14))
   end,
 
   Endpoint.new("/graphql#Mutation.createArticle", "POST", [
     Param.new("title", "", "json"),
     Param.new("userId", "", "json"),
+    Param.new("graphql_mutation_createArticle", "", "json"),
   ]).tap do |ep|
     ep.push_callee(Callee.new("articleService.createArticle", line: 19))
     ep.push_callee(Callee.new("articles.add", line: 34))

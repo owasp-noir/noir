@@ -29,19 +29,24 @@ FunctionalTester.new("fixtures/python/graphene/", {
     Param.new("first", "", "json"),
     Param.new("last", "", "json"),
     Param.new("offset", "", "json"),
+    Param.new("graphql_query_allIngredients", "", "json"),
   ]),
   Endpoint.new("/api/graphql/#Query.recipe", "POST", [
     Param.new("recipeId", "", "json"),
     Param.new("includeDrafts", "", "json"),
+    Param.new("graphql_query_recipe", "", "json"),
   ]),
   Endpoint.new("/api/graphql/#Query.allRecipes", "POST", [
     Param.new("first", "", "json"),
+    Param.new("graphql_query_allRecipes", "", "json"),
   ]),
   Endpoint.new("/api/graphql/#Query.hello", "POST", [
     Param.new("name", "", "json"),
+    Param.new("graphql_query_hello", "", "json"),
   ]),
   Endpoint.new("/api/graphql/#Query.node", "POST", [
     Param.new("id", "", "json"),
+    Param.new("graphql_query_node", "", "json"),
   ]),
   Endpoint.new("/api/graphql/#Mutation.createCategory", "POST", [
     Param.new("name", "", "json"),
@@ -50,9 +55,11 @@ FunctionalTester.new("fixtures/python/graphene/", {
   ]),
   Endpoint.new("/api/graphql/#Mutation.updateIngredient", "POST", [
     Param.new("input", "", "json"),
+    Param.new("graphql_mutation_updateIngredient", "", "json"),
   ]),
   ws.call(Endpoint.new("/api/graphql/#Subscription.countSeconds", "POST", [
     Param.new("upTo", "", "json"),
+    Param.new("graphql_subscription_countSeconds", "", "json"),
   ])),
   Endpoint.new("/api/graphql/", "GET"),
 ]).perform_tests
@@ -71,6 +78,7 @@ FunctionalTester.new("fixtures/python/graphene_composed/", {
   ]),
   Endpoint.new("/graphql#Mutation.reindexProducts", "POST", [
     Param.new("force", "", "json"),
+    Param.new("graphql_mutation_reindexProducts", "", "json"),
   ]),
 ]).perform_tests
 
@@ -82,8 +90,14 @@ FunctionalTester.new("fixtures/python/graphene_multi_app/", {
   :techs     => 1,
   :endpoints => 2,
 }, [
-  Endpoint.new("/billing/graphql/#Query.invoice", "POST", [Param.new("number", "", "json")]),
-  Endpoint.new("/graphql#Query.product", "POST", [Param.new("slug", "", "json")]),
+  Endpoint.new("/billing/graphql/#Query.invoice", "POST", [
+    Param.new("number", "", "json"),
+    Param.new("graphql_query_invoice", "", "json"),
+  ]),
+  Endpoint.new("/graphql#Query.product", "POST", [
+    Param.new("slug", "", "json"),
+    Param.new("graphql_query_product", "", "json"),
+  ]),
 ], {
   "only_techs" => YAML::Any.new("python_graphene"),
 }).perform_tests
@@ -93,8 +107,14 @@ FunctionalTester.new("fixtures/python/graphene_composed/", {
   :techs     => 1,
   :endpoints => 12,
 }, [
-  Endpoint.new("/graphql#Query.product", "POST", [Param.new("slug", "", "json")]),
-  Endpoint.new("/api/graphql/#Query.allRecipes", "POST", [Param.new("first", "", "json")]),
+  Endpoint.new("/graphql#Query.product", "POST", [
+    Param.new("slug", "", "json"),
+    Param.new("graphql_query_product", "", "json"),
+  ]),
+  Endpoint.new("/api/graphql/#Query.allRecipes", "POST", [
+    Param.new("first", "", "json"),
+    Param.new("graphql_query_allRecipes", "", "json"),
+  ]),
 ], {
   "only_techs" => YAML::Any.new("python_graphene"),
   "base"       => YAML::Any.new([

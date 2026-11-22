@@ -48,6 +48,8 @@ expected_endpoints = [
   Endpoint.new("https://www.hahwul.com/multiple_http2", "GET"),
   Endpoint.new("https://www.hahwul.com/graphql", "POST", [
     Param.new("graphql_operation_query_GetUserData", "{\"query\":\"GetUserData\"}", "json"),
+    Param.new("graphql_operation_mutation_UpdateUserProfile", "", "json"),
+    Param.new("graphql_operation_query_ListItems", "", "json"),
   ]),
   # prose.md — a URL literal carries the surrounding prose/markup with it
   # unless it is trimmed: `](url)` drops the closing paren, `<url>` and
