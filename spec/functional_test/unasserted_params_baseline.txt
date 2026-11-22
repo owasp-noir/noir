@@ -59,15 +59,7 @@ fixtures/kotlin/spring_message_mapping_stereotype/	SEND::/app/ping
 fixtures/kotlin/spring_message_mapping_stereotype/	SEND::/app/score
 fixtures/mobile/android/	GET::myapp://${missingHost}
 fixtures/mobile/android/	GET::myapp://users/:userId
-fixtures/python/django_request_inputs/	POST::/items/{pk}/notes/
-fixtures/python/falcon_callees/	POST::/items
 fixtures/python/fastapi_package_roots/	POST::/notes
-fixtures/python/flask_advanced/	POST::/api/reports-view
-fixtures/python/quart/	POST::/dispatch-reports
-fixtures/python/quart/	POST::/items
-fixtures/python/starlette/	GET::/external/{item_id}
-fixtures/python/starlette/	POST::/admin/reports/{report_id}
-fixtures/python/starlette/	POST::/reports/{report_id}
 fixtures/ruby/rails/	GET::/api/users/auth/:provider
 fixtures/ruby/rails/	GET::/api/users/auth/:provider/callback
 fixtures/ruby/rails/	POST::/api/users/auth/:provider

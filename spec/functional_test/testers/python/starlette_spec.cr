@@ -18,6 +18,7 @@ expected_endpoints = [
   Endpoint.new("/external/{item_id}", "GET", [
     Param.new("item_id", "", "path"),
     Param.new("q", "", "query"),
+    Param.new("body", "", "json"),
     Param.new("title", "", "json"),
   ]),
   Endpoint.new("/reports/{report_id}", "GET", [
@@ -26,6 +27,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/reports/{report_id}", "POST", [
     Param.new("report_id", "", "path"),
+    Param.new("body", "", "json"),
     Param.new("title", "", "json"),
   ]),
   Endpoint.new("/api/items", "GET"),
@@ -37,6 +39,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/admin/reports/{report_id}", "POST", [
     Param.new("report_id", "", "path"),
+    Param.new("body", "", "json"),
     Param.new("title", "", "json"),
   ]),
   Endpoint.new("/internal/status", "GET", [

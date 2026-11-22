@@ -1,4 +1,5 @@
 require "../../engines/python_engine"
+require "../../../miniparsers/python_method_guard"
 require "json"
 require "../../../utils/top_level_split"
 require "./django_view_registry"
@@ -3443,23 +3444,23 @@ module Analyzer::Python
       drf_action.filepath = klass.filepath
       drf_action.handler = "#{klass.name}.#{drf_action.name}"
       codeblock = parse_code_block(body_lines[offset..]) || return
-      fold_python_continuations(codeblock.split("\n")).each do |body_line|
-        extract_params_from_line(body_line, [drf_action.method]).each do |param|
-          drf_action.params << param
-        end
+      input_lines = Noir::PythonMethodGuard.lines_for(codeblock.lines, drf_action.method, request_argument: true)
+      fold_python_continuations(input_lines).each do |body_line|
+        drf_action.params.concat extract_params_from_line(body_line, [drf_action.method])
       end
+      input_code = input_lines.join('\n')
       # What the action's serializer reads is its body, whatever the verb
       # (`ChangeLogMessageSerializer(data=request.data)` on DELETE), unless
       # the body branches on the verb and the binding may be another's.
-      serializer_params = drf_serializer_params(codeblock, klass.filepath, chain, drf_action.name)
-      (codeblock.includes?("request.method") ? drf_action.params : drf_action.body_params).concat serializer_params
-      drf_action.params.concat cbv_body_params(codeblock, klass.filepath, chain, drf_action.method, action: drf_action.name)
+      serializer_params = drf_serializer_params(input_code, klass.filepath, chain, drf_action.name)
+      (input_code.includes?("request.method") ? drf_action.params : drf_action.body_params).concat serializer_params
+      drf_action.params.concat cbv_body_params(input_code, klass.filepath, chain, drf_action.method, action: drf_action.name)
       # A DELETE action's own body reads, unless it branches on the verb
       # and they may be another's.
-      if drf_action.method == "DELETE" && !codeblock.includes?("request.method")
+      if drf_action.method == "DELETE" && !input_code.includes?("request.method")
         drf_action.body_params.concat drf_filter_params(drf_action.method, drf_action.params)
       end
-      if paginates?(codeblock, klass.filepath, body_lines, offset)
+      if paginates?(input_code, klass.filepath, body_lines, offset)
         drf_action.params.concat pagination_params(chain, drf_action.name)
       end
       drf_action.callees = build_callees_from(

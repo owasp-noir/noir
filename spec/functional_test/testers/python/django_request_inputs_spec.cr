@@ -13,7 +13,7 @@ expected_endpoints = [
   Endpoint.new("/versions/<int:pk>/", "GET", [Param.new("pk", "", "path"), Param.new("verbose", "", "query")]),
   Endpoint.new("/versions/<int:pk>/", "DELETE", [Param.new("pk", "", "path"), Param.new("version", "", "form")]),
   Endpoint.new("/items/{pk}/", "DELETE", [Param.new("pk", "", "path"), Param.new("reason", "", "form")]),
-  Endpoint.new("/items/{pk}/notes/", "DELETE", [Param.new("pk", "", "path"), Param.new("id", "", "query")]),
+  Endpoint.new("/items/{pk}/notes/", "DELETE", [Param.new("pk", "", "path"), Param.new("id", "", "query"), Param.new("reason", "", "form")]),
   Endpoint.new("/items/{pk}/notes/", "POST", [Param.new("pk", "", "path"), Param.new("note", "", "form")]),
   # A form whose field set is open (`fields = "__all__"`, fields added in
   # `__init__`) keeps its cleaned_data keys.

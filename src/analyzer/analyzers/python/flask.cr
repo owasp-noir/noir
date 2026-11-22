@@ -747,7 +747,7 @@ module Analyzer::Python
 
       fn_methods.each do |m|
         fn_details = Details.new(PathInfo.new(fs.path, line_index + 1))
-        fn_params = fn_codeblock_lines.empty? ? [] of Param : get_filtered_params(m, extract_request_params(fn_codeblock_lines))
+        fn_params = handler_request_params(fn_codeblock_lines, m)
         endpoint = Endpoint.new(route_path, m, fn_params)
         endpoint.details = fn_details
         endpoint.handler = handler_at(fn_lines, fn_def_index, fn_path) if fn_def_index
@@ -967,9 +967,7 @@ module Analyzer::Python
             # decorator's synthesized `methods=['GET']` default must not
             # override it (function routers still honour `methods=`).
             method_extra_params = is_class_router ? "" : extra_params
-            indirect_params = indirect_request_params(codeblock_lines, path)
-            (prefixes || [prefix]).flat_map { |p| get_endpoints(method, route_path, method_extra_params, codeblock_lines, p) }.each do |endpoint|
-              get_filtered_params(endpoint.method, indirect_params + reqparse_params(codeblock_lines, path, endpoint.method)).each { |param| endpoint.push_param(param) }
+            (prefixes || [prefix]).flat_map { |p| get_endpoints(method, route_path, method_extra_params, codeblock_lines, p, path) }.each do |endpoint|
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint.details = details
               endpoint.handler = handler_at(lines, _class_def_index, path)
@@ -1102,9 +1100,7 @@ module Analyzer::Python
             codeblock_lines = codeblock.split("\n")
 
             # Extract parameters from method body
-            suspicious_params = extract_request_params(codeblock_lines) + indirect_request_params(codeblock_lines, method_file) +
-                                reqparse_params(codeblock_lines, method_file, http_method)
-            params = get_filtered_params(http_method, suspicious_params)
+            params = handler_request_params(codeblock_lines, http_method, method_file)
 
             prefixes.each do |route_prefix|
               # Generate endpoint with parameters
@@ -1928,7 +1924,7 @@ module Analyzer::Python
           codeblock = def_line.try { |index| parse_code_block(lines[index..]) }
           expose.methods.each do |method|
             params = path_params.dup
-            params.concat(get_filtered_params(method, extract_request_params(codeblock.split("\n")))) if codeblock
+            params.concat(handler_request_params(codeblock.lines, method)) if codeblock
 
             endpoint = Endpoint.new(normalized_path, method, params,
               Details.new(PathInfo.new(owner.path, expose.line_index + 1)))
@@ -2255,6 +2251,15 @@ module Analyzer::Python
         end
       end
       json_variable_names
+    end
+
+    private def extract_request_params(lines : Array(::String), method : ::String, path : ::String?) : Array(Param)
+      params = extract_request_params(lines)
+      if path
+        params.concat indirect_request_params(lines, path)
+        params.concat reqparse_params(lines, path, method)
+      end
+      params
     end
 
     # Extracts request parameters from a code block by detecting JSON variable

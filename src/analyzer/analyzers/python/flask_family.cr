@@ -1,4 +1,5 @@
 require "../../../miniparsers/python"
+require "../../../miniparsers/python_method_guard"
 require "../../engines/python_engine"
 
 module Analyzer::Python
@@ -126,9 +127,8 @@ module Analyzer::Python
 
     # Build endpoints from a single route decoration: split on declared
     # `methods=[...]`, default to `method`, run the analyzer's own
-    # `extract_request_params` over the handler body once and filter the
-    # params per method.
-    def get_endpoints(method : ::String, route_path : ::String, extra_params : ::String, codeblock_lines : Array(::String), prefix : ::String)
+    # parameter extractor over the lines reachable for each verb.
+    def get_endpoints(method : ::String, route_path : ::String, extra_params : ::String, codeblock_lines : Array(::String), prefix : ::String, path : ::String? = nil)
       endpoints = [] of Endpoint
       methods = [] of ::String
 
@@ -146,17 +146,24 @@ module Analyzer::Python
       end
       methods << method.upcase if methods.empty?
 
-      suspicious_params = extract_request_params(codeblock_lines)
-
       methods.uniq.each do |http_method_name|
         route_url = "#{prefix}#{route_path}"
         route_url = "/#{route_url}" unless route_url.starts_with?("/")
 
-        params = get_filtered_params(http_method_name, suspicious_params)
+        params = handler_request_params(codeblock_lines, http_method_name, path)
         endpoints << Endpoint.new(route_url.gsub("//", "/"), http_method_name, params)
       end
 
       endpoints
+    end
+
+    private def handler_request_params(lines : Array(::String), method : ::String, path : ::String? = nil) : Array(Param)
+      scoped = Noir::PythonMethodGuard.lines_for(lines, method)
+      get_filtered_params(method, extract_request_params(scoped, method, path))
+    end
+
+    private def extract_request_params(lines : Array(::String), method : ::String, path : ::String?) : Array(Param)
+      extract_request_params(lines)
     end
 
     private def split_python_call_args(args_str : ::String) : Array(::String)
