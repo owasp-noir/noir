@@ -28,3 +28,13 @@ func localGroup(e *echo.Echo) {
 func RegisterOptional(nearby *echo.Group) {
 	nearby.GET("/optional", func(c echo.Context) error { return nil })
 }
+
+func firstGroup(e *echo.Echo) {
+	branch := e.Group("/first")
+	branch.GET("/earlier", func(c echo.Context) error { return nil })
+}
+
+func secondGroup(e *echo.Echo) {
+	branch := e.Group("/second")
+	branch.GET("/later", func(c echo.Context) error { return nil })
+}

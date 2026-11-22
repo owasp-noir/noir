@@ -11,6 +11,8 @@ expected_endpoints = [
   Endpoint.new("/api/users/login", "POST"),
   Endpoint.new("/api/tags", "GET"),
   Endpoint.new("/admin/stats", "GET"),
+  Endpoint.new("/second/earlier", "GET"),
+  Endpoint.new("/second/later", "GET"),
   Endpoint.new("/audit", "GET"),
   Endpoint.new("/invoices", "GET"),
 ]
@@ -23,6 +25,8 @@ tester.perform_tests
 
 describe "echo_group_method_builder route resolution", tags: "functional" do
   it "records the evidence for each reported route" do
+    tester.endpoints.find! { |ep| ep.url == "/second/earlier" }.resolution.should eq({"prefix" => "heuristic"})
+    tester.endpoints.find! { |ep| ep.url == "/second/later" }.resolution.should be_nil
     tester.endpoints.find! { |ep| ep.url == "/audit" }.resolution.should eq({"prefix" => "unresolved"})
     tester.endpoints.find! { |ep| ep.url == "/invoices" }.resolution.should eq({"prefix" => "unresolved"})
     tester.endpoints.find! { |ep| ep.url == "/local/optional" }.resolution.should eq({"prefix" => "heuristic"})

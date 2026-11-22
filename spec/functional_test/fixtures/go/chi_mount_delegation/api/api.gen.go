@@ -3,6 +3,7 @@ package api
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -15,6 +16,7 @@ type ServerInterface interface {
 
 type ChiServerOptions struct {
 	BaseURL    string
+	RuntimeURL string
 	BaseRouter chi.Router
 }
 
@@ -28,6 +30,8 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r = chi.NewRouter()
 	}
 
+	options.RuntimeURL = os.Getenv("RUNTIME_BASE")
+	r.Get(options.RuntimeURL+"/dynamic", si.GetStatus)
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/status", si.GetStatus)
 	})

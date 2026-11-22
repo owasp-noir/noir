@@ -509,7 +509,7 @@ module Analyzer::Go
     # one-string wrappers read from their definitions (`conf.BaseUri("/s")`),
     # see `TreeSitterGoRouteExtractor#extract_string_exports`. A name two
     # files define differently is left out. Pass the result as `string_seed`.
-    def go_string_seed(mark_wrappers : Bool = false) : Hash(String, String)
+    def go_string_seed : Hash(String, String)
       sources = get_files_by_extension(".go").compact_map do |path|
         next if go_test_path?(path)
         content = read_file_content(path)
@@ -519,7 +519,7 @@ module Analyzer::Go
         nil
       end
       exports = Noir::WorkerThreads.map(sources) do |source|
-        Noir::TreeSitterGoRouteExtractor.extract_string_exports(source, mark_wrappers)
+        Noir::TreeSitterGoRouteExtractor.extract_string_exports(source)
       end
       merged = Hash(String, String?).new
       conflicts = Set(String).new
@@ -534,7 +534,7 @@ module Analyzer::Go
       end
       seed = Hash(String, String).new
       merged.each { |name, value| seed[name] = value if value && !conflicts.includes?(name) }
-      seed[Noir::TreeSitterGoRouteExtractor::UNREAD_WRAPPERS] = "" if mark_wrappers && seed.any? { |key, _| key.starts_with?(Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX) }
+      seed[Noir::TreeSitterGoRouteExtractor::UNREAD_WRAPPERS] = "" if seed.any? { |key, _| key.starts_with?(Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX) }
       seed
     end
 

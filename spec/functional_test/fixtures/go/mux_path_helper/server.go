@@ -48,6 +48,9 @@ func (s *Server) hidden(w http.ResponseWriter, r *http.Request)  {}
 
 func (s *Server) registerHandlers() {
 	status := s.prefixedPath("/status")
+	s.router.HandleFunc(s.config.Prefix+"/live", s.health).Methods("GET")
+	group := s.router.PathPrefix(s.prefixedPath("/account")).Subrouter()
+	group.HandleFunc("/info", s.health).Methods("GET")
 	s.router.HandleFunc(status, s.health).Methods("GET")
 	s.router.HandleFunc(s.prefixedPath("/version"), s.version).Methods("GET")
 	s.router.HandleFunc(s.prefixedPath("/store"), s.store).Methods("POST")

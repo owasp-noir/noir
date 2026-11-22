@@ -335,11 +335,9 @@ module Analyzer::Go
                (target_dir = resolve_mount_dir(path, dir, target, file_contents_cache))
               endpoints = expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
                 package_files, file_contents_cache, file_lines_cache, [] of String, target[:then_method])
-              prefix = mount_join(mount_scopes[index]? || "", target[:prefix])
               endpoints.each do |ep|
                 apply_mount_middleware(ep, path, content, index)
-                ep.url = mount_join(prefix, ep.url)
-                result << ep
+                result << mounted_endpoint(ep, mount_scopes[index]?, target[:prefix])
               end
             end
             next
@@ -664,9 +662,19 @@ module Analyzer::Go
       url.starts_with?("/") ? "#{base}#{url}" : "#{base}/#{url}"
     end
 
+    private def mounted_endpoint(ep, scope, prefix) : Endpoint
+      ep.url = mount_join(mount_join(scope.try(&.path) || "", prefix), ep.url)
+      if scope.try(&.prefix_unresolved?)
+        ep.mark_resolution("prefix")
+      elsif scope.try(&.prefix_heuristic?) && !ep.resolution.try(&.has_key?("prefix"))
+        ep.mark_resolution("prefix", Endpoint::RESOLUTION_HEURISTIC)
+      end
+      ep
+    end
+
     # The `r.Route(...)` prefix around each `.Mount(` line of `content`.
-    private def mount_scopes_for(content : String, dir : String) : Hash(Int32, String)
-      return Hash(Int32, String).new unless content.includes?(".Mount(")
+    private def mount_scopes_for(content : String, dir : String) : Hash(Int32, Noir::TreeSitterGoRouteExtractor::Route)
+      return Hash(Int32, Noir::TreeSitterGoRouteExtractor::Route).new unless content.includes?(".Mount(")
       Noir::TreeSitterGoRouteExtractor.extract_chi_mount_scopes(content, string_values_for(dir))
     end
 
@@ -706,7 +714,8 @@ module Analyzer::Go
                               package_files : Hash(String, Array(String)),
                               file_contents_cache : Hash(String, String),
                               file_lines_cache : Hash(String, Array(String)),
-                              ancestors : Array(String), then_method : String? = nil) : Array(Endpoint)
+                              ancestors : Array(String), then_method : String? = nil,
+                              arguments : Noir::TreeSitterGoRouteExtractor::StructArguments? = nil) : Array(Endpoint)
       endpoints = [] of Endpoint
       key = "#{dir}|#{recv_type}.#{func_name}"
       return endpoints if ancestors.includes?(key) || ancestors.size >= MAX_MOUNT_DEPTH
@@ -725,6 +734,7 @@ module Analyzer::Go
 
         found = false
         body_rows = {0, -1}
+        returned_arguments = nil
         result_type = nil
         nested = [] of Endpoint
         collected = [] of Noir::TreeSitterGoRouteExtractor::Route
@@ -743,6 +753,12 @@ module Analyzer::Go
             helpers.file = search_path
             helpers.external = ->(from_file : String, qualifier : String, name : String) do
               external_route_helper(from_file, qualifier, name, package_files, file_contents_cache)
+            end
+            if arguments && !arguments.empty?
+              string_values = Noir::TreeSitterGoRouteExtractor.bind_struct_arguments(decl, body, content, arguments, string_values)
+            end
+            if scope = @named_scope
+              returned_arguments = Noir::TreeSitterGoRouteExtractor.returned_struct_arguments(body, content, search_path, scope.structs)
             end
             Noir::TreeSitterGoRouteExtractor.walk_chi_public(body, content, collected, string_values, helpers)
 
@@ -763,8 +779,7 @@ module Analyzer::Go
               expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
                 package_files, file_contents_cache, file_lines_cache, ancestors + [key], target[:then_method]).each do |ep|
                 apply_mount_middleware(ep, search_path, content, row - 1)
-                ep.url = mount_join(mount_join(mount_scopes[row - 1]? || "", target[:prefix]), ep.url)
-                nested << ep
+                nested << mounted_endpoint(ep, mount_scopes[row - 1]?, target[:prefix])
               end
             end
           end
@@ -797,7 +812,7 @@ module Analyzer::Go
             delegate_dir = (qualifier = m[1]?) ? import_dir(search_path, qualifier, file_contents_cache) : dir
             next unless delegate_dir
             delegated = expand_mounted_router(delegate_dir, m[2], nil,
-              package_files, file_contents_cache, file_lines_cache, ancestors + [key])
+              package_files, file_contents_cache, file_lines_cache, ancestors + [key], arguments: returned_arguments)
             break unless delegated.empty?
           end
           if delegated.empty? && then_method && (rt = result_type)
