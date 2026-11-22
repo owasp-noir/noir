@@ -65,9 +65,10 @@ module Noir
       getter method_name : String # Java method name, or "" when class-level only
       getter line : Int32         # 0-based line of the method annotation
       getter params : Array(Param)
+      getter? prefix_unresolved : Bool
       getter signature_line : Int32? # 0-based line of the method name (the handler), nil for class-level routes
 
-      def initialize(@verb, @path, @class_name, @method_name, @line, @params = [] of Param, @signature_line = nil)
+      def initialize(@verb, @path, @class_name, @method_name, @line, @params = [] of Param, @signature_line = nil, @prefix_unresolved = false)
       end
     end
 
@@ -76,7 +77,9 @@ module Noir
       getter verbs : Array(String)
       getter params : Array(Param)
 
-      def initialize(@paths, @verbs, @params = [] of Param)
+      getter? prefix_unresolved : Bool
+
+      def initialize(@paths, @verbs, @params = [] of Param, @prefix_unresolved = false)
       end
     end
 
@@ -94,8 +97,10 @@ module Noir
       # concrete override once it supplies its own mapping.
       getter annotated_method_names : Set(String)
 
+      getter? prefix_unresolved : Bool
+
       def initialize(@class_name, @interface_names, @paths, @verbs, @params, @line,
-                     @annotated_method_names = Set(String).new)
+                     @annotated_method_names = Set(String).new, @prefix_unresolved = false)
       end
     end
 
@@ -428,7 +433,8 @@ module Noir
                              routes : Array(Route),
                              constants : Hash(String, String),
                              meta_mappings : Hash(String, ClassMapping),
-                             inert_annotations : Set(String)?)
+                             inert_annotations : Set(String)?,
+                             outer_unresolved : Bool = false)
       ty = Noir::TreeSitter.node_type(node)
       if ty == "class_declaration" || ty == "interface_declaration"
         if ty == "interface_declaration" && !endpoint_interface?(node, source)
@@ -449,6 +455,7 @@ module Noir
 
         class_name = class_simple_name(node, source)
         mapping = class_mapping(node, source, constants, class_name, meta_mappings)
+        unresolved = outer_unresolved || mapping.prefix_unresolved?
         class_prefixes = mapping.paths
         class_prefixes = [""] if class_prefixes.empty?
         prefixes = [] of String
@@ -464,9 +471,9 @@ module Noir
           Noir::TreeSitter.each_named_child(body) do |member|
             case Noir::TreeSitter.node_type(member)
             when "method_declaration"
-              collect_method_routes(member, source, class_name, prefixes, verbs, params, routes, constants, meta_mappings) unless skip_methods
+              collect_method_routes(member, source, class_name, prefixes, verbs, params, routes, constants, meta_mappings, unresolved) unless skip_methods
             when "class_declaration", "interface_declaration"
-              walk_classes(member, source, prefixes, verbs, params, routes, constants, meta_mappings, inert_annotations)
+              walk_classes(member, source, prefixes, verbs, params, routes, constants, meta_mappings, inert_annotations, unresolved)
             end
           end
         end
@@ -474,7 +481,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_classes(child, source, outer_prefixes, outer_verbs, outer_params, routes, constants, meta_mappings, inert_annotations)
+        walk_classes(child, source, outer_prefixes, outer_verbs, outer_params, routes, constants, meta_mappings, inert_annotations, outer_unresolved)
       end
     end
 
@@ -500,7 +507,7 @@ module Noir
         if body = Noir::TreeSitter.field(node, "body")
           Noir::TreeSitter.each_named_child(body) do |member|
             next unless Noir::TreeSitter.node_type(member) == "method_declaration"
-            collect_method_routes(member, source, type_name, prefixes, mapping.verbs, mapping.params, routes[type_name], constants, meta_mappings)
+            collect_method_routes(member, source, type_name, prefixes, mapping.verbs, mapping.params, routes[type_name], constants, meta_mappings, mapping.prefix_unresolved?)
           end
         end
         # Interfaces never enclose a controller; an abstract class might
@@ -538,7 +545,7 @@ module Noir
           implementations << ControllerInterfaceImplementation.new(
             class_name, interface_names, paths, mapping.verbs, mapping.params,
             Noir::TreeSitter.node_start_row(node),
-            spring_mapping_method_names(node, source, meta_mappings)
+            spring_mapping_method_names(node, source, meta_mappings), mapping.prefix_unresolved?
           )
         end
       end
@@ -693,7 +700,8 @@ module Noir
                                       class_params : Array(Param),
                                       routes : Array(Route),
                                       constants : Hash(String, String),
-                                      meta_mappings : Hash(String, ClassMapping))
+                                      meta_mappings : Hash(String, ClassMapping),
+                                      prefix_unresolved : Bool = false)
       method_name = ""
       signature_line = nil
       if name_node = Noir::TreeSitter.field(method, "name")
@@ -710,7 +718,11 @@ module Noir
         route_params = class_params + mapping_condition_params(args_node, source, constants, class_name)
         route_params = route_params + meta_mapping.params if meta_mapping
         paths = annotation_paths(args_node, source, constants, class_name)
-        paths = meta_mapping.paths if paths.empty? && meta_mapping
+        unresolved = prefix_unresolved || (paths.empty? && annotation_has_path_argument?(args_node, source, for_resolution: true))
+        if paths.empty? && meta_mapping
+          unresolved ||= meta_mapping.prefix_unresolved?
+          paths = meta_mapping.paths
+        end
         next if paths.empty? && annotation_has_path_argument?(args_node, source)
         paths = [""] if paths.empty?
 
@@ -735,7 +747,7 @@ module Noir
           class_prefixes.each do |class_prefix|
             full = Noir::URLPath.join_absorbing(class_prefix, path)
             verbs.each do |verb|
-              routes << Route.new(verb, full, class_name, method_name, ann_line, route_params, signature_line)
+              routes << Route.new(verb, full, class_name, method_name, ann_line, route_params, signature_line, unresolved)
             end
           end
         end
@@ -788,7 +800,7 @@ module Noir
       usage_paths = annotation_paths(args_node, source, constants, class_name)
       paths = usage_paths.empty? ? meta_mapping.paths : usage_paths
       params = meta_mapping.params + mapping_condition_params(args_node, source, constants, class_name)
-      ClassMapping.new(paths, meta_mapping.verbs, params)
+      ClassMapping.new(paths, meta_mapping.verbs, params, usage_paths.empty? && (meta_mapping.prefix_unresolved? || annotation_has_path_argument?(args_node, source, for_resolution: true)))
     end
 
     private def direct_mapping_from_annotation(name : String,
@@ -805,7 +817,7 @@ module Noir
               end
       params = mapping_condition_params(args_node, source, constants, class_name)
 
-      ClassMapping.new(paths, verbs, params)
+      ClassMapping.new(paths, verbs, params, paths.empty? && annotation_has_path_argument?(args_node, source, for_resolution: true))
     end
 
     private def collect_gateway_routes(source : String,
@@ -1175,20 +1187,28 @@ module Noir
       keyword.empty? ? positional : keyword
     end
 
-    private def annotation_has_path_argument?(args_node : LibTreeSitter::TSNode?, source : String) : Bool
+    private def annotation_has_path_argument?(args_node : LibTreeSitter::TSNode?, source : String, for_resolution : Bool = false) : Bool
       return false unless args_node
       return false unless Noir::TreeSitter.node_type(args_node) == "annotation_argument_list"
 
       Noir::TreeSitter.each_named_child(args_node) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "string_literal", "identifier", "field_access", "binary_expression", "parenthesized_expression",
-             "element_value_array_initializer", "ERROR"
+             "ERROR"
           return true
+        when "element_value_array_initializer"
+          return true unless for_resolution && LibTreeSitter.ts_node_named_child_count(arg) == 0
         when "element_value_pair"
           key = Noir::TreeSitter.field(arg, "key")
           next unless key
           k = Noir::TreeSitter.node_text(key, source)
-          return true if k == "value" || k == "path" || k == "url"
+          if k.in?("value", "path", "url")
+            val = Noir::TreeSitter.field(arg, "value")
+            next if for_resolution && val && Noir::TreeSitter.node_type(val) == "element_value_array_initializer" && LibTreeSitter.ts_node_named_child_count(val) == 0
+            return true
+          end
+        when "ternary_expression", "cast_expression", "method_invocation", "array_access", "unary_expression"
+          return true if for_resolution
         end
       end
 

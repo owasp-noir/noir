@@ -466,7 +466,7 @@ module Analyzer::Go
     # one-string wrappers read from their definitions (`conf.BaseUri("/s")`),
     # see `TreeSitterGoRouteExtractor#extract_string_exports`. A name two
     # files define differently is left out. Pass the result as `string_seed`.
-    def go_string_seed : Hash(String, String)
+    def go_string_seed(mark_wrappers : Bool = false) : Hash(String, String)
       sources = get_files_by_extension(".go").compact_map do |path|
         next if go_test_path?(path)
         content = read_file_content(path)
@@ -476,7 +476,7 @@ module Analyzer::Go
         nil
       end
       exports = Noir::WorkerThreads.map(sources) do |source|
-        Noir::TreeSitterGoRouteExtractor.extract_string_exports(source)
+        Noir::TreeSitterGoRouteExtractor.extract_string_exports(source, mark_wrappers)
       end
       merged = Hash(String, String?).new
       conflicts = Set(String).new
@@ -491,6 +491,7 @@ module Analyzer::Go
       end
       seed = Hash(String, String).new
       merged.each { |name, value| seed[name] = value if value && !conflicts.includes?(name) }
+      seed[Noir::TreeSitterGoRouteExtractor::UNREAD_WRAPPERS] = "" if mark_wrappers && seed.any? { |key, _| key.starts_with?(Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX) }
       seed
     end
 
@@ -742,15 +743,29 @@ module Analyzer::Go
     # `chi.NewRouter()`. Mark one once its call sites are told apart.
     def unread_builder_routes(content : String, builder_type : String, dir_prefixes : Hash(String, Set(String))?,
                               cross_file_groups : Hash(String, String), handle_method : String? = nil,
-                              string_seed : Hash(String, String)? = nil, literal_join : Bool = false) : Set({Int32, String})
+                              string_seed : Hash(String, String)? = nil, literal_join : Bool = false,
+                              by_name : Set({Int32, String})? = nil) : Set({Int32, String})
       found = Set({Int32, String}).new
       return found unless content.includes?(builder_type)
       qualifier, _, type_name = builder_type.lchop('*').rpartition('.')
-      Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name, qualifier).each do |fn, rb|
-        next if dir_prefixes.try(&.has_key?(fn)) || cross_file_groups.has_key?(rb.param)
-        Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(content, fn, {rb.param => Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX.to_s},
+      builders = if by_name
+                   Noir::TreeSitterGoRouteExtractor.router_group_builders(content, type_name, qualifier)
+                 else
+                   Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_name, qualifier).to_a
+                 end
+      builders.each do |fn, rb|
+        next if dir_prefixes.try(&.has_key?(fn))
+        binding = cross_file_groups[rb.param]?
+        next if binding && by_name.nil?
+        prefix = "#{Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX}#{binding}"
+        Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(content, fn, {rb.param => prefix},
           handle_method: handle_method, string_seed: string_seed, literal_join: literal_join).each do |route|
-          found << {route.line, route.path} if route.prefix_unresolved?
+          next unless route.prefix_unresolved? && rb.start_row <= route.line <= rb.end_row
+          if binding && by_name
+            by_name << {route.line, route.path}
+          else
+            found << {route.line, route.path}
+          end
         end
       end
       found

@@ -245,10 +245,11 @@ module Analyzer::Java
               line = route.line + 1
               details = Details.new(PathInfo.new(path, line))
 
-              endpoint = Endpoint.new(
-                resolve_endpoint_path(Noir::URLPath.join_rooted(base_path, route.path), spring_properties),
+              endpoint = spring_endpoint(spring_properties,
+                Noir::URLPath.join_rooted(base_path, route.path),
                 route.verb, parameters, details, is_internal_client
               )
+              endpoint.mark_resolution("prefix") if route.prefix_unresolved?
               endpoint.route_conditions = route.params
               endpoint.handler = jvm_route_handler(route, path)
 
@@ -301,16 +302,18 @@ module Analyzer::Java
                     merge_route_condition_params(parameters, Noir::TreeSitterJavaRouteExtractor.request_params(implementation.params + entry_route.params))
 
                     details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
-                    endpoint = Endpoint.new(
-                      resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, inherited_path), spring_properties),
+                    endpoint = spring_endpoint(spring_properties,
+                      Noir::URLPath.join_rooted(configured_base_path, inherited_path),
                       entry_route.verb, parameters, details
                     )
+                    endpoint.mark_resolution("prefix") if entry_route.prefix_unresolved? || implementation.prefix_unresolved?
                     endpoint.route_conditions = implementation.params + entry_route.params
                     # The body lives on the `@Override`, not the interface method;
                     # no override in this class, no handler.
                     param_index ||= Noir::TreeSitterJavaParameterExtractor.build_file_index(root, content)
-                    if (impl_method = param_index.methods["#{implementation.class_name}##{entry_route.method_name}"]?.try(&.first?)) &&
+                    if (overloads = param_index.methods["#{implementation.class_name}##{entry_route.method_name}"]?) && (impl_method = overloads.first?) &&
                        (impl_row = Noir::TreeSitter.name_row(impl_method))
+                      endpoint.mark_resolution("handler", Endpoint::RESOLUTION_HEURISTIC) if overloads.size > 1
                       endpoint.handler = Handler.new("#{implementation.class_name}.#{entry_route.method_name}", path, impl_row + 1)
                     end
 
@@ -338,8 +341,8 @@ module Analyzer::Java
               constants = file_constants
               collect_stomp_endpoints(JavaEngine.strip_comments(content), constants).each do |entry|
                 endpoint_path, line = entry
-                endpoint = Endpoint.new(
-                  resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, endpoint_path), spring_properties),
+                endpoint = spring_endpoint(spring_properties,
+                  Noir::URLPath.join_rooted(configured_base_path, endpoint_path),
                   "GET", Details.new(PathInfo.new(path, line))
                 )
                 endpoint.protocol = "ws"
@@ -351,8 +354,8 @@ module Analyzer::Java
               constants = file_constants
               collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes, spring_inert_annotations(path)).each do |entry|
                 verb, destination, line = entry
-                endpoint = Endpoint.new(
-                  resolve_endpoint_path(destination, spring_properties),
+                endpoint = spring_endpoint(spring_properties,
+                  destination,
                   verb, Details.new(PathInfo.new(path, line))
                 )
                 endpoint.protocol = "ws"
@@ -364,8 +367,8 @@ module Analyzer::Java
               constants = file_constants
               collect_resource_handler_endpoints(content, constants).each do |entry|
                 endpoint_path, line = entry
-                @result << Endpoint.new(
-                  resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, endpoint_path), spring_properties),
+                @result << spring_endpoint(spring_properties,
+                  Noir::URLPath.join_rooted(configured_base_path, endpoint_path),
                   "GET", Details.new(PathInfo.new(path, line))
                 )
               end
@@ -447,8 +450,8 @@ module Analyzer::Java
               composed = nest_prefix.empty? ? endpoint : Noir::URLPath.join_rooted(nest_prefix, endpoint)
               composed = Noir::URLPath.join_rooted(mount, composed) if mount
               details = Details.new(PathInfo.new(path, line_number_for_index(content, block_offset + verb_pos)))
-              reactive_endpoint = Endpoint.new(
-                resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, composed), spring_properties),
+              reactive_endpoint = spring_endpoint(spring_properties,
+                Noir::URLPath.join_rooted(configured_base_path, composed),
                 method, details
               )
 
@@ -1592,10 +1595,6 @@ module Analyzer::Java
       end
 
       prefixes
-    end
-
-    private def resolve_endpoint_path(path : String, properties : Hash(String, String)) : String
-      SpringPropertyPath.resolve(path, properties)
     end
   end
 end

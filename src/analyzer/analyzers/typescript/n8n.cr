@@ -41,10 +41,10 @@ module Analyzer::Typescript
       false
     end
 
-    private def controller_base_paths(arg : String, literal_values : Hash(String, Array(String)), name : String) : Array(String)
+    private def controller_base_paths(arg : String, literal_values : LiteralValues, name : String) : Array(Tuple(String, Bool))
       paths = super
       prefix = PREFIXES[name]? || return paths
-      paths.map { |path| combine_paths(prefix, path) }
+      paths.map { |path, unread| {combine_paths(prefix, path), unread} }
     end
 
     # A resolved `@Body() payload: Dto` is the DTO's fields.

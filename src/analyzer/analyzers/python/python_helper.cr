@@ -114,7 +114,12 @@ module Analyzer::Python
     # concatenation joined (`r"^a/" r"b/"` is one pattern) and a
     # parenthesised group of literals unwrapped (`(r"^a/" r"b/")`).
     def extract_python_string(expression : ::String) : ::String?
+      python_string_with_status(expression)[0]
+    end
+
+    def python_string_with_status(expression : ::String) : Tuple(::String?, Bool)
       rest = expression.strip
+      interpolated = false
       parens = 0
       while rest.starts_with?('(')
         rest = rest[1..].lstrip
@@ -122,18 +127,19 @@ module Analyzer::Python
       end
       value = nil
       while piece = rest.match(PYTHON_STRING_PIECE_RE)
+        interpolated ||= piece[0].lstrip.starts_with?('f') && piece[0].matches?(/(?<!\{)\{(?!\{)/)
         value = "#{value}#{piece[1]? || piece[2]}"
         rest = rest[piece[0].size..]
       end
-      return value if value.nil? || parens == 0
+      return {nil, false} unless value
       # Every opened `(` must close right after the literals; anything else
       # (`("a", b)`, `("a" % x)`) is not a plain string.
       parens.times do
         rest = rest.lstrip
-        return unless rest.starts_with?(')')
+        return {nil, false} unless rest.starts_with?(')')
         rest = rest[1..]
       end
-      value
+      {value, interpolated || !rest.blank?}
     end
 
     # `alias=` renames a parameter on the wire. Every Pydantic-backed Python

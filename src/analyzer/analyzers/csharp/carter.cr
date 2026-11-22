@@ -84,7 +84,7 @@ module Analyzer::CSharp
         arg = split_csharp_parameters(m[1]).first?
         line = type.line
       end
-      route_template_value(arg, file, line) if arg && line
+      route_template_value(arg, file, line).try(&.text) if arg && line
     end
 
     private def analyze_add_routes_body(file : String, lines : Array(String), masked_lines : Array(String),
@@ -95,7 +95,7 @@ module Analyzer::CSharp
 
       each_map_block(lines, masked_lines, body_start..Math.min(body_end, lines.size - 1), group_prefixes, file) do |block, idx, chain_prefix|
         extract_endpoints_from_map_block(block, group_prefixes, file, idx + 1,
-          lines, masked_lines, include_callee, prefix, chain_prefix).each do |endpoint|
+          lines, masked_lines, include_callee, RoutePart.new(prefix), chain_prefix).each do |endpoint|
           @result << endpoint
         end
       end

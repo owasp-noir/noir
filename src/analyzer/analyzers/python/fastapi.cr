@@ -160,6 +160,7 @@ module Analyzer::Python
         # unless the mount is a route-less wrapper in another file
         # (`wrapper = FastAPI(); wrapper.mount("/x", app)` in a dev script):
         # the real app is then likely served on its own too, so keep both.
+        unread_mounts = Set(Tuple(::String, ::String)).new
         mounted_apps = Set(Tuple(::String, ::String)).new
         fastapi_app_instances.each do |app_file, app_instance|
           source = read_file_content(app_file)
@@ -167,15 +168,20 @@ module Analyzer::Python
           extract_app_mount_calls(source, app_instance).each do |args|
             next unless mount = parse_app_mount(args, source, import_modules)
             target = resolve_router_reference(app_file, source, import_modules, include_router_map, mount[1])
-            next unless target && target != {app_file, app_instance}
-            next if target[0] != app_file && !declares_own_routes?(source, app_instance)
-            mounted_apps << target
+            next unless target && target.key != {app_file, app_instance}
+            next if target.key[0] != app_file && !declares_own_routes?(source, app_instance)
+            if mount[0]
+              mounted_apps << target.key
+            else
+              unread_mounts << target.key
+            end
           end
         end
         (fastapi_app_instances + (parameter_app_instances - fastapi_app_instances)).each do |app_file, app_instance|
           next if mounted_apps.includes?({app_file, app_instance})
           app_base_path = fastapi_base_path_for(app_file, fastapi_base_paths)
-          configure_router_prefix(app_file, include_router_map, app_base_path, "", app_instance, prefix_visited)
+          prefix = unread_mounts.includes?({app_file, app_instance}) ? Router::UNREAD_PREFIX : ""
+          configure_router_prefix(app_file, include_router_map, app_base_path, prefix, app_instance, prefix_visited)
         end
         seed_unmounted_router_roots(include_router_map, fastapi_base_paths,
           (fastapi_app_instances + parameter_app_instances).to_set, prefix_visited)
@@ -376,9 +382,9 @@ module Analyzer::Python
         next if names.empty?
         import_modules = find_fastapi_imported_modules(fastapi_base_path_for(path, project_roots), path, source)
         names.each do |name|
-          next unless (target = resolve_router_reference(path, source, import_modules, include_router_map, name)) && target[0] != path
-          next unless router = include_router_map[target[0]]?.try(&.[target[1]]?)
-          (uses[path] ||= [] of Tuple(::String, Router)).concat(router.mounts.map { |mounted| {name, mounted} })
+          next unless (target = resolve_router_reference(path, source, import_modules, include_router_map, name)) && target.key[0] != path
+          next unless router = include_router_map[target.key[0]]?.try(&.[target.key[1]]?)
+          (uses[path] ||= [] of Tuple(::String, Router)).concat(router.mounts.map { |mounted| {name, target.guessed ? Router.new(mounted.prefix, true) : mounted} })
         end
       end
       uses
@@ -531,7 +537,7 @@ module Analyzer::Python
                                 app_base_path : ::String,
                                 router_prefix : ::String = "",
                                 target_instance_name : ::String? = nil,
-                                visited : Set(::String) = Set(::String).new)
+                                visited : Set(::String) = Set(::String).new, guessed : Bool = false)
       return if file.empty? || !File.exists?(file)
 
       # Parse the source file for router configuration
@@ -548,7 +554,7 @@ module Analyzer::Python
         # diamond-shaped include graph is not re-walked once per path.
         visit_key = "#{file}::#{instance_name}"
         next if visited.includes?(visit_key)
-        next unless visited.add?("#{visit_key}\0#{router_prefix}")
+        next unless visited.add?("#{visit_key}\0#{router_prefix}\0#{guessed}")
         visited.add(visit_key)
 
         # PREPEND the inherited prefix to the router's own. The
@@ -562,7 +568,7 @@ module Analyzer::Python
         # time, but their routes were surfacing without the
         # `/users` / `/items` segment.
         mounted = Router.new(combine_fastapi_router_prefixes(router_prefix, router_class.prefix))
-        router_class.mounted_prefixes << mounted.prefix unless router_class.mounted_prefixes.includes?(mounted.prefix)
+        router_class.add_mount(mounted.prefix, guessed)
 
         # Parse `{app}.include_router(...)` calls. Real FastAPI apps
         # often use keyword form (`router=users.router`) and nested
@@ -587,7 +593,7 @@ module Analyzer::Python
           # OWN `include_router` calls are processed under the inherited
           # prefix too.
           if target = resolve_router_reference(file, source, import_modules, include_router_map, router_instance_name)
-            configure_router_prefix(target[0], include_router_map, app_base_path, mounted.join_prefix(prefix), target[1], visited)
+            configure_router_prefix(target.key[0], include_router_map, app_base_path, mounted.join_prefix(prefix), target.key[1], visited, guessed || target.guessed)
           end
         end
 
@@ -595,8 +601,9 @@ module Analyzer::Python
         # under the mount path, like an include_router prefix.
         extract_app_mount_calls(source, instance_name).each do |args|
           next unless mount = parse_app_mount(args, source, import_modules)
+          next unless mount_path = mount[0]
           if target = resolve_router_reference(file, source, import_modules, include_router_map, mount[1])
-            configure_router_prefix(target[0], include_router_map, app_base_path, mounted.join_prefix(mount[0]), target[1], visited)
+            configure_router_prefix(target.key[0], include_router_map, app_base_path, mounted.join_prefix(mount_path), target.key[1], visited, guessed || target.guessed)
           end
         end
         visited.delete(visit_key)
@@ -632,7 +639,7 @@ module Analyzer::Python
             target_name = extract_include_router_target(args)
             next if target_name.empty?
             if target = resolve_router_reference(file, source, import_modules, include_router_map, target_name)
-              included << target
+              included << target.key
             end
           end
         end
@@ -644,7 +651,7 @@ module Analyzer::Python
           key = {file, name}
           next unless router.mounted_prefixes.empty? && handed.includes?(key)
           next if apps.includes?(key) || included.includes?(key)
-          configure_router_prefix(file, include_router_map, fastapi_base_path_for(file, project_roots), "", name, visited)
+          configure_router_prefix(file, include_router_map, fastapi_base_path_for(file, project_roots), Router::UNREAD_PREFIX, name, visited)
         end
       end
     end
@@ -704,7 +711,7 @@ module Analyzer::Python
             next unless name.matches?(/\A[A-Za-z_]\w*\z/)
             import_modules ||= find_fastapi_imported_modules(fastapi_base_path_for(path, project_roots), path, source)
             if target = resolve_router_reference(path, source, import_modules, include_router_map, name)
-              handed << target
+              handed << target.key
             end
           end
         end
@@ -801,15 +808,15 @@ module Analyzer::Python
     # `{prefix, target}` of an app mount: `mount("/sub", sub)` or
     # `mount(path="/sub", app=sub)`.
     private def parse_app_mount(args : ::String, source : ::String,
-                                import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String)?
+                                import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String?, ::String)?
       positional = split_python_arguments(args).map(&.strip).reject(&.empty?).take_while { |arg| !top_level_keyword_argument?(arg) }
       target = extract_python_keyword_expression(args, "app").try(&.strip) || positional[1]?
       path_expr = positional[0]? || extract_python_keyword_expression(args, "path")
       return unless target && path_expr
-      return unless path = resolve_string_expression(path_expr, source, import_modules)
-
-      {path, target}
+      {resolve_string_expression(path_expr, source, import_modules), target}
     end
+
+    private record RouterReference, key : Tuple(::String, ::String), guessed : Bool = false
 
     # `{file, instance}` a router or app reference used in `file` is
     # registered under: a same-file name, an imported name (aliases
@@ -818,12 +825,12 @@ module Analyzer::Python
                                          source : ::String,
                                          import_modules : Hash(::String, Tuple(::String, Int32)),
                                          include_router_map : Hash(::String, Hash(::String, Router)),
-                                         name : ::String) : Tuple(::String, ::String)?
+                                         name : ::String) : RouterReference?
       case name.count(".")
       when 0
         # A router included from the SAME file (e.g. dispatch's
         # `api_router.include_router(authenticated_organization_api_router)`).
-        return {file, name} if include_router_map[file]?.try(&.has_key?(name))
+        return RouterReference.new({file, name}) if include_router_map[file]?.try(&.has_key?(name))
         return unless imported = import_modules[name]?
         import_module_path = imported.first
         return unless target_map = include_router_map[import_module_path]?
@@ -836,7 +843,8 @@ module Analyzer::Python
         # dropping the ENTIRE sub-router prefix tree — the dominant
         # FastAPI accuracy bug on real apps (fastapi-realworld,
         # Netflix/dispatch) that lean on `import router as X`.
-        {import_module_path, fastapi_original_import_name(file, source, name, import_module_path, target_map)}
+        original, guessed = fastapi_original_import_name(file, source, name, import_module_path, target_map)
+        RouterReference.new({import_module_path, original}, guessed)
       else
         # `module.router`, `pkg.router` re-exported by `pkg/__init__.py`, or
         # a chain of modules (`api.v1.users.router`), read left to right.
@@ -846,7 +854,7 @@ module Analyzer::Python
         attrs = rest.split('.')
         attrs.each_with_index do |attr, i|
           last = i == attrs.size - 1
-          return {current, attr} if last && include_router_map.has_key?(current)
+          return RouterReference.new({current, attr}) if last && include_router_map.has_key?(current)
           return if current.empty?
           symbol = Noir::ImportGraph::Python.find_imported_symbols(fastapi_base_path_for(current, @fastapi_project_roots),
             current, read_file_content(current))[attr]? || return
@@ -854,7 +862,7 @@ module Analyzer::Python
             current = symbol[0]
           else
             return unless last && include_router_map[symbol[0]]?.try(&.has_key?(symbol[1]))
-            return {symbol[0], symbol[1]}
+            return RouterReference.new({symbol[0], symbol[1]})
           end
         end
         nil
@@ -865,18 +873,18 @@ module Analyzer::Python
                                              source : ::String,
                                              local_name : ::String,
                                              target_path : ::String,
-                                             target_map : Hash(::String, Router)) : ::String
-      original = resolve_original_import_name(source, local_name, target_map)
-      return original if target_map.has_key?(original)
+                                             target_map : Hash(::String, Router)) : Tuple(::String, Bool)
+      original, guessed = resolve_original_import_name(source, local_name, target_map)
+      return {original, guessed} if target_map.has_key?(original)
 
       roots = [fastapi_base_path_for(file, @fastapi_project_roots), File.dirname(file)] + @fastapi_project_roots
       roots.uniq.each do |root|
         symbols = Noir::ImportGraph::Python.find_imported_symbols(root, file, source)
         if imported = symbols[local_name]?
-          return imported[1] if imported[0] == target_path && target_map.has_key?(imported[1])
+          return {imported[1], false} if imported[0] == target_path && target_map.has_key?(imported[1])
         end
       end
-      original
+      {original, guessed}
     end
 
     # Translate a locally-used router name back to the symbol it is
@@ -897,8 +905,8 @@ module Analyzer::Python
     # Falls back to the local name (the prior behaviour) otherwise.
     private def resolve_original_import_name(importing_source : ::String,
                                              local_name : ::String,
-                                             target_map : Hash(::String, Router)) : ::String
-      return local_name if target_map.has_key?(local_name)
+                                             target_map : Hash(::String, Router)) : Tuple(::String, Bool)
+      return {local_name, false} if target_map.has_key?(local_name)
 
       aliased = false
       importing_source.each_line do |raw|
@@ -908,7 +916,7 @@ module Analyzer::Python
         next unless stripped.includes?(" as ") && stripped.includes?(local_name)
         if match = stripped.match(/\b(#{PYTHON_VAR_NAME_REGEX})\s+as\s+#{Regex.escape(local_name)}\b/)
           original = match[1]
-          return original if target_map.has_key?(original)
+          return {original, false} if target_map.has_key?(original)
           aliased = true
         end
       end
@@ -916,9 +924,9 @@ module Analyzer::Python
       # An import under its own name that the file does not register names
       # something else (a router of a class noir does not know); handing it
       # the file's one router moved that router's prefix onto it.
-      return target_map.first_key if aliased && target_map.size == 1
+      return {target_map.first_key, true} if aliased && target_map.size == 1
 
-      local_name
+      {local_name, false}
     end
 
     private def extract_include_router_target(args : ::String) : ::String
@@ -1691,7 +1699,9 @@ module Analyzer::Python
 
     private def mark_unresolved_prefix(endpoint : Endpoint, router : Router) : Endpoint
       if router.prefix_unresolved?
-        endpoint.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED}
+        endpoint.mark_resolution("prefix")
+      elsif router.guessed?
+        endpoint.mark_resolution("prefix", Endpoint::RESOLUTION_HEURISTIC)
       end
       endpoint
     end
@@ -2284,13 +2294,25 @@ module Analyzer::Python
     # "/v2" gives two). Empty when no app includes it.
     getter mounted_prefixes = [] of ::String
 
-    def initialize(@prefix : ::String)
+    @guessed_prefixes = Set(::String).new
+    getter? guessed : Bool
+
+    def initialize(@prefix : ::String, @guessed = false)
+    end
+
+    # An exact include establishes this path even if a second alias was guessed.
+    def add_mount(prefix : ::String, guessed : Bool)
+      unless @mounted_prefixes.includes?(prefix)
+        @mounted_prefixes << prefix
+        @guessed_prefixes << prefix if guessed
+      end
+      @guessed_prefixes.delete(prefix) unless guessed
     end
 
     # One router per mounted prefix, or itself when never included.
     def mounts : Array(Router)
       return [self] if @mounted_prefixes.empty?
-      @mounted_prefixes.map { |mounted_prefix| Router.new(mounted_prefix) }
+      @mounted_prefixes.map { |mounted_prefix| Router.new(mounted_prefix, @guessed_prefixes.includes?(mounted_prefix)) }
     end
 
     def prefix_unresolved? : Bool

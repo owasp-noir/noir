@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/labstack/echo/v4"
@@ -13,6 +14,7 @@ import (
 func main() {
 	e := echo.New()
 	e.GET("/", home)
+	e.GET(configuredPath("/status"), home)
 
 	ag := e.Group("/admin", RequireAdmin)
 	entities := ag.Group("/entity")
@@ -35,4 +37,11 @@ func RequireAdmin(next echo.HandlerFunc) echo.HandlerFunc {
 		}
 		return next(c)
 	}
+}
+
+func configuredPath(route string) string {
+	if prefix := os.Getenv("API_PREFIX"); prefix != "" {
+		return prefix + route
+	}
+	return route
 }

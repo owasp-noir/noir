@@ -1,3 +1,5 @@
+require "../../func_spec.cr"
+
 # Regression: a whole-repo scan must not report fewer routes than a scan
 # of one of its subdirectories.
 #
@@ -26,20 +28,29 @@
 #     appears once under `billing/` and never a second time as a bare
 #     `/invoices/`. That is the false positive the old gate was there to
 #     prevent, and `@visited_url_paths` is what keeps preventing it.
-fixture: fixtures/python/django_dynamic_root/
-counts: {techs: 2, endpoints: 12}
-endpoints:
-  - url: "/-/health/"
-    method: "GET"
-  - url: "/billing/invoices/"
-    method: "GET"
-  - url: "/profile/"
-    method: "GET"
-  - url: "/tokens/"
-    method: "GET"
-  - url: "/tokens/<uuid:pk>/"
-    method: "GET"
-    params:
-      - {name: "pk", type: "path"}
-  - url: "/gateway/status"
-    method: "GET"
+extracted_endpoints = [
+  Endpoint.new("/optional/", "GET"),
+  Endpoint.new("/-/health/", "GET"),
+  Endpoint.new("/billing/invoices/", "GET"),
+  Endpoint.new("/profile/", "GET"),
+  Endpoint.new("/tokens/", "GET"),
+  Endpoint.new("/tokens/<uuid:pk>/", "GET", [Param.new("pk", "", "path")]),
+  Endpoint.new("/gateway/status", "GET"),
+]
+
+tester = FunctionalTester.new("fixtures/python/django_dynamic_root/", {
+  :techs     => 2,
+  :endpoints => 13,
+}, extracted_endpoints)
+tester.perform_tests
+
+describe "django_dynamic_root route resolution", tags: "functional" do
+  it "records the evidence for each reported route" do
+    tester.endpoints.find! { |ep| ep.url == "/optional/" }.resolution.should eq({"prefix" => "unresolved"})
+    tester.endpoints.find! { |ep| ep.url == "/profile/" }.resolution.should eq({"prefix" => "unresolved"})
+    tester.endpoints.find! { |ep| ep.url == "/tokens/" }.resolution.should eq({"prefix" => "unresolved"})
+    tester.endpoints.find! { |ep| ep.url == "/tokens/<uuid:pk>/" }.resolution.should eq({"prefix" => "unresolved"})
+    tester.endpoints.find! { |ep| ep.url == "/billing/invoices/" }.resolution.should be_nil
+    tester.endpoints.find! { |ep| ep.url == "/-/health/" }.resolution.should be_nil
+  end
+end

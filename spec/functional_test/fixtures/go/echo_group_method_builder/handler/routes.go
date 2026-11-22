@@ -19,3 +19,12 @@ func (h *Handler) Register(v1 *echo.Group) {
 func RegisterAdmin(h *Handler, g *echo.Group) {
 	g.GET("/stats", h.ok)
 }
+
+func localGroup(e *echo.Echo) {
+	nearby := e.Group("/local")
+	nearby.GET("/ready", func(c echo.Context) error { return nil })
+}
+
+func RegisterOptional(nearby *echo.Group) {
+	nearby.GET("/optional", func(c echo.Context) error { return nil })
+}

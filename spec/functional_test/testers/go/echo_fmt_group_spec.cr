@@ -4,6 +4,7 @@ require "../../func_spec.cr"
 # prefix and names the dynamic segment. `GET ""` must not collapse to
 # `/`, or the admin middleware is reported on the public home route.
 expected_endpoints = [
+  Endpoint.new("/status", "GET"),
   Endpoint.new("/", "GET"),
   Endpoint.new("/admin/entity/{name}", "GET", [
     Param.new("name", "", "path"),
@@ -17,10 +18,11 @@ expected_endpoints = [
   ]),
 ]
 
-FunctionalTester.new("fixtures/go/echo_fmt_group/", {
+tester = FunctionalTester.new("fixtures/go/echo_fmt_group/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
 
 describe "echo fmt.Sprintf group middleware stays on that group", tags: "functional" do
   it "tags the dynamic admin routes and not GET /" do
@@ -39,5 +41,12 @@ describe "echo fmt.Sprintf group middleware stays on that group", tags: "functio
 
     add = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/admin/entity/{name}/add" }
     add.tags.any? { |tag| tag.name == "auth" || tag.name == "authz" }.should be_true
+  end
+end
+
+describe "echo_fmt_group route resolution", tags: "functional" do
+  it "records the evidence for each reported route" do
+    tester.endpoints.find! { |ep| ep.url == "/status" }.resolution.should eq({"prefix" => "unresolved"})
+    tester.endpoints.find! { |ep| ep.url == "/" }.resolution.should be_nil
   end
 end

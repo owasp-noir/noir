@@ -2,7 +2,7 @@ import os
 
 from fastapi import APIRouter, FastAPI
 
-from prefixes import API_PREFIX
+from prefixes import API_PREFIX, actual_router, exported as public_router
 from routes import outer_router
 from settings import settings
 
@@ -128,3 +128,16 @@ app.include_router(include_tail_router, prefix=BASE + "/include-v1")
 app.include_router(include_unread_router, prefix=os.environ["UNREAD_PREFIX"])
 app.include_router(nested_parent)
 app.include_router(outer_router, prefix=f"{settings.RUNTIME_PREFIX}/cross")
+
+
+subapp = FastAPI()
+app.mount(os.environ["SUBAPP_PATH"], subapp)
+
+
+@subapp.get("/subapp-health")
+def subapp_health():
+    return {}
+
+app.include_router(public_router, prefix="/public")
+app.include_router(public_router, prefix="/verified")
+app.include_router(actual_router, prefix="/verified")

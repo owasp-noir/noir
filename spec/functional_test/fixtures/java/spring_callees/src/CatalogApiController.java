@@ -9,4 +9,7 @@ public class CatalogApiController implements CatalogApi {
         catalogService.load(id);
         return AuditLog.write("get");
     }
+    public String getItem(int index) {
+        return Integer.toString(index);
+    }
 }

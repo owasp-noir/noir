@@ -49,6 +49,8 @@ module Analyzer::CSharp::MinimalApiSupport
     end
   end
 
+  record RoutePart, text : String = "", unread : Bool = false
+
   # A `static … MapTodosApi(this RouteGroupBuilder group)` extension method:
   # the routes it registers on `group` take the prefix of whichever
   # `MapGroup(...)` it is called on, possibly from another file —
@@ -58,7 +60,7 @@ module Analyzer::CSharp::MinimalApiSupport
   ROUTE_BUILDER_EXTENSION_RE = /\bstatic\s[^;{}()=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^<>()]*>\s*)?\(\s*this\s+(?:RouteGroupBuilder|IEndpointRouteBuilder|WebApplication)\b/
 
   # `{body_line_range, caller_prefixes}` of one extension method in a file.
-  alias ExtensionScope = Tuple(Range(Int32, Int32), Array(String))
+  alias ExtensionScope = Tuple(Range(Int32, Int32), Array(RoutePart))
 
   # Maps each file to its route-builder extension method bodies and the group
   # prefix of every call site of each, so a route inside one is emitted once
@@ -85,7 +87,7 @@ module Analyzer::CSharp::MinimalApiSupport
 
     names = decls.map(&.[0]).uniq!
     call_re = /\.\s*(#{names.map { |n| Regex.escape(n) }.join('|')})\s*(?:<[^<>()]*>\s*)?\(/
-    calls = [] of Tuple(String, String, Int32, String)
+    calls = [] of Tuple(String, String, Int32, RoutePart)
     sources.each do |file, content|
       next unless content.matches?(call_re)
       lexer = Noir::CSharpLexer.new(content)
@@ -96,16 +98,16 @@ module Analyzer::CSharp::MinimalApiSupport
         stmt_start = (masked.rindex(/[;{}]/, m.begin) || -1) + 1
         head = code[stmt_start...m.begin]
         line = masked[0...m.begin].count('\n')
-        group_prefixes = group_scopes.find(&.[0].includes?(line)).try(&.[1]) || Hash(String, String).new
+        group_prefixes = group_scopes.find(&.[0].includes?(line)).try(&.[1]) || Hash(String, RoutePart).new
         local = group_chain_prefix(head, group_prefixes, file, line - head.count('\n'))
-        if local.empty? && (receiver = head.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\z/))
-          local = group_prefixes[receiver[1]]? || ""
+        if local.text.empty? && !local.unread && (receiver = head.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\z/))
+          local = group_prefixes[receiver[1]]? || RoutePart.new
         end
         calls << {m[1], file, line, local}
       end
     end
 
-    memo = Hash(String, Array(String)).new
+    memo = Hash(String, Array(RoutePart)).new
     decls.each do |name, file, range|
       prefixes = extension_caller_prefixes(name, decls, calls, memo, Set(String).new)
       (scopes[file] ||= [] of ExtensionScope) << {range, prefixes}
@@ -117,22 +119,22 @@ module Analyzer::CSharp::MinimalApiSupport
   # extensions share their callers' prefixes; key by declaring type if that
   # ever surfaces.
   private def extension_caller_prefixes(name : String, decls : Array(Tuple(String, String, Range(Int32, Int32))),
-                                        calls : Array(Tuple(String, String, Int32, String)),
-                                        memo : Hash(String, Array(String)), seen : Set(String)) : Array(String)
+                                        calls : Array(Tuple(String, String, Int32, RoutePart)),
+                                        memo : Hash(String, Array(RoutePart)), seen : Set(String)) : Array(RoutePart)
     if cached = memo[name]?
       return cached
     end
-    return [""] unless seen.add?(name)
+    return [RoutePart.new] unless seen.add?(name)
 
     sites = calls.select { |call| call[0] == name }
-    return memo[name] = [""] if sites.empty?
+    return memo[name] = [RoutePart.new] if sites.empty?
 
     prefixes = sites.flat_map do |_, file, line, local|
       outer = decls.find { |decl| decl[1] == file && decl[2].includes?(line) }
-      outer_prefixes = outer ? extension_caller_prefixes(outer[0], decls, calls, memo, seen) : [""]
+      outer_prefixes = outer ? extension_caller_prefixes(outer[0], decls, calls, memo, seen) : [RoutePart.new]
       outer_prefixes.map { |outer_prefix| join_route_parts(outer_prefix, local) }
     end
-    memo[name] = prefixes.uniq.map { |prefix| prefix == "/" ? "" : prefix }
+    memo[name] = prefixes.uniq.map { |prefix| prefix.text == "/" ? RoutePart.new("", prefix.unread) : prefix }
   end
 
   MINIMAL_API_MARKER_RE = /\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*(?:<[^<>()]*>\s*)?\(/
@@ -161,7 +163,7 @@ module Analyzer::CSharp::MinimalApiSupport
 
     group_prefix_scopes(file, lexer).each do |range, group_prefixes|
       each_map_block(lines, masked_lines, range, group_prefixes, file) do |block, index, chain_prefix|
-        caller_prefixes = extension_scopes.find(&.[0].includes?(index)).try(&.[1]) || [""]
+        caller_prefixes = extension_scopes.find(&.[0].includes?(index)).try(&.[1]) || [RoutePart.new]
         caller_prefixes.each do |route_prefix|
           extract_endpoints_from_map_block(block, group_prefixes, file, index + 1, lines, masked_lines,
             include_callee, route_prefix: route_prefix, chain_prefix: chain_prefix).each do |endpoint|
@@ -172,7 +174,7 @@ module Analyzer::CSharp::MinimalApiSupport
     end
   end
 
-  alias GroupScope = Tuple(Range(Int32, Int32), Hash(String, String))
+  alias GroupScope = Tuple(Range(Int32, Int32), Hash(String, RoutePart))
 
   # The `MapGroup` variables of each method or constructor body, and of the
   # top-level statements outside them, over line ranges that cover the file
@@ -182,7 +184,7 @@ module Analyzer::CSharp::MinimalApiSupport
   private def group_prefix_scopes(file : String, lexer : Noir::CSharpLexer) : Array(GroupScope)
     lines = lexer.code_lines
     last = lines.size - 1
-    return [GroupScope.new(0..last, Hash(String, String).new)] unless lexer.code_source.includes?("MapGroup")
+    return [GroupScope.new(0..last, Hash(String, RoutePart).new)] unless lexer.code_source.includes?("MapGroup")
 
     members = [] of Range(Int32, Int32)
     Noir::CSharpDeclParser.parse(lexer).types.each do |type|
@@ -192,7 +194,7 @@ module Analyzer::CSharp::MinimalApiSupport
     end
 
     top_lines = lines.dup
-    spans = [] of Tuple(Range(Int32, Int32), Hash(String, String)?)
+    spans = [] of Tuple(Range(Int32, Int32), Hash(String, RoutePart)?)
     cursor = 0
     members.sort_by(&.begin).each do |range|
       next if range.begin < cursor
@@ -214,28 +216,29 @@ module Analyzer::CSharp::MinimalApiSupport
   #   app.MapGroup("/api")
   #      .MapGet("/items", ...);
   private def each_map_block(lines : Array(String), masked_lines : Array(String), range : Range(Int32, Int32),
-                             group_prefixes : Hash(String, String), file : String, &)
-    chain_prefix = ""
+                             group_prefixes : Hash(String, RoutePart), file : String, &)
+    chain_prefix = RoutePart.new
     range.each do |index|
       line = lines[index]
       masked = masked_lines[index]? || line
       # A comment or blank line inside a chain does not end it.
       next if masked.blank?
       continuation = masked.lstrip.starts_with?('.')
-      chain_prefix = "" unless continuation
+      chain_prefix = RoutePart.new unless continuation
       if route_builder_line?(line)
         starts = map_statement_starts(masked)
         start_chars = {line.chars, masked.chars} if starts.size > 1
         starts.each do |column|
-          prefix = column == 0 && continuation ? chain_prefix : ""
+          prefix = column == 0 && continuation ? chain_prefix : RoutePart.new
           yield extract_map_block(lines, masked_lines, index, column, start_chars), index, prefix
         end
       end
       next unless line.includes?("MapGroup")
       # Both sides are already normalized (`/a`, `/a/b`), so a plain append
       # joins them without re-normalizing the whole chain on every line.
-      line_prefix = group_chain_prefix(line, group_prefixes, file, index).rchop("/")
-      chain_prefix = continuation ? chain_prefix + line_prefix : line_prefix
+      part = group_chain_prefix(line, group_prefixes, file, index)
+      line_prefix = RoutePart.new(part.text.rchop("/"), part.unread)
+      chain_prefix = continuation ? RoutePart.new(chain_prefix.text + line_prefix.text, chain_prefix.unread || line_prefix.unread) : line_prefix
     end
   end
 
@@ -270,18 +273,19 @@ module Analyzer::CSharp::MinimalApiSupport
   end
 
   private def extract_endpoints_from_map_block(block : String,
-                                               group_prefixes : Hash(String, String),
+                                               group_prefixes : Hash(String, RoutePart),
                                                file : String,
                                                line : Int32,
                                                file_lines : Array(String),
                                                masked_lines : Array(String),
                                                include_callee : Bool,
-                                               route_prefix : String = "",
-                                               chain_prefix : String = "") : Array(Endpoint)
+                                               route_prefix : RoutePart = RoutePart.new,
+                                               chain_prefix : RoutePart = RoutePart.new) : Array(Endpoint)
     route, methods = extract_route_and_methods(block, group_prefixes, chain_prefix, file, line - 1)
     return [] of Endpoint unless route && methods.size > 0
 
-    route = join_route_parts(route_prefix, route) unless route_prefix.empty?
+    part = prepend_route_part(route_prefix, route)
+    route = part.text
 
     consts = string_consts(file_lines) if block.matches?(CONST_REFERENCE_RE)
     extra_params = extract_params_from_block(block, consts)
@@ -296,8 +300,9 @@ module Analyzer::CSharp::MinimalApiSupport
     callee_line = line
     callee_skip_first = false
     handler_ref = nil
+    guessed_handler = false
     if handler = resolve_handler_method(block, file_lines, masked_lines)
-      name, sig, handler_block, handler_line, skip_first, decl_line = handler
+      name, sig, handler_block, handler_line, skip_first, decl_line, guessed_handler = handler
       extra_params.concat(handler_signature_params(sig, route, methods.first, file, file_lines, masked_lines))
       consts ||= string_consts(file_lines) if handler_block.matches?(CONST_REFERENCE_RE)
       extra_params.concat(extract_params_from_block(handler_block, consts))
@@ -315,14 +320,16 @@ module Analyzer::CSharp::MinimalApiSupport
       next unless endpoint
 
       attach_csharp_callees(endpoint, callee_block, file, callee_line, include_callee, skip_first_line: callee_skip_first)
+      endpoint.mark_resolution("prefix") if part.unread
+      endpoint.mark_resolution("handler", Endpoint::RESOLUTION_HEURISTIC) if guessed_handler
       endpoint.handler = handler_ref
       endpoints << endpoint
     end
     endpoints
   end
 
-  private def extract_route_and_methods(block : String, group_prefixes : Hash(String, String), chain_prefix : String,
-                                        file : String, line_index : Int32) : Tuple(String?, Array(String))
+  private def extract_route_and_methods(block : String, group_prefixes : Hash(String, RoutePart), chain_prefix : RoutePart,
+                                        file : String, line_index : Int32) : Tuple(RoutePart?, Array(String))
     if block.includes?("MapMethods")
       route, methods = extract_map_methods_route(block, group_prefixes, chain_prefix, file, line_index)
       return {route, methods}
@@ -330,32 +337,32 @@ module Analyzer::CSharp::MinimalApiSupport
 
     inline_prefix = extract_inline_group_prefix(block, group_prefixes, chain_prefix, file, line_index)
     if match = block.match(MAP_VERB_ROUTE_RE)
-      template = match[3]? || route_argument_value(block, file, line_index) || return {nil, [] of String}
+      template = match[3]?.try { |literal| RoutePart.new(literal) } || route_argument_value(block, file, line_index) || return {nil, [] of String}
       receiver = match[1]?
       route = apply_group_prefix(template, receiver, group_prefixes)
-      route = join_route_parts(inline_prefix, route) unless inline_prefix.empty?
+      route = prepend_route_part(inline_prefix, route)
       return {route, [match[2].upcase]}
     end
 
     if match = block.match(MAP_ANY_ROUTE_RE)
-      template = match[2]? || route_argument_value(block, file, line_index) || return {nil, [] of String}
+      template = match[2]?.try { |literal| RoutePart.new(literal) } || route_argument_value(block, file, line_index) || return {nil, [] of String}
       receiver = match[1]?
       route = apply_group_prefix(template, receiver, group_prefixes)
-      route = join_route_parts(inline_prefix, route) unless inline_prefix.empty?
+      route = prepend_route_part(inline_prefix, route)
       return {route, ["ANY"]}
     end
 
     {nil, [] of String}
   end
 
-  private def extract_map_methods_route(block : String, group_prefixes : Hash(String, String), chain_prefix : String,
-                                        file : String, line_index : Int32) : Tuple(String?, Array(String))
+  private def extract_map_methods_route(block : String, group_prefixes : Hash(String, RoutePart), chain_prefix : RoutePart,
+                                        file : String, line_index : Int32) : Tuple(RoutePart?, Array(String))
     inline_prefix = extract_inline_group_prefix(block, group_prefixes, chain_prefix, file, line_index)
 
     if match = block.match(MAP_METHODS_RE)
       receiver = match[1]?
-      route = apply_group_prefix(match[2], receiver, group_prefixes)
-      route = join_route_parts(inline_prefix, route) unless inline_prefix.empty?
+      route = apply_group_prefix(RoutePart.new(match[2]), receiver, group_prefixes)
+      route = prepend_route_part(inline_prefix, route)
       methods = extract_http_methods(match[3])
       return {route, methods}
     end
@@ -374,23 +381,25 @@ module Analyzer::CSharp::MinimalApiSupport
     methods.uniq
   end
 
-  private def extract_inline_group_prefix(block : String, group_prefixes : Hash(String, String), chain_prefix : String,
-                                          file : String, line_index : Int32) : String
+  private def extract_inline_group_prefix(block : String, group_prefixes : Hash(String, RoutePart), chain_prefix : RoutePart,
+                                          file : String, line_index : Int32) : RoutePart
     map_index = block.index(MAP_ANY_PREFIX_RE)
-    return "" unless map_index
+    return RoutePart.new unless map_index
 
     own_prefix = group_chain_prefix(block[0...map_index], group_prefixes, file, line_index)
-    return own_prefix if chain_prefix.empty?
-    return chain_prefix if own_prefix.empty?
+    return prepend_route_part(chain_prefix, own_prefix) if chain_prefix.text.empty?
+    return RoutePart.new(chain_prefix.text, chain_prefix.unread || own_prefix.unread) if own_prefix.text.empty?
     join_route_parts(chain_prefix, own_prefix)
   end
 
   # The joined `MapGroup("...")` prefixes in `prefix_source`, led by the
   # prefix of the receiver variable the chain starts from; "" when none.
-  private def group_chain_prefix(prefix_source : String, group_prefixes : Hash(String, String),
-                                 file : String, line_index : Int32) : String
+  private def group_chain_prefix(prefix_source : String, group_prefixes : Hash(String, RoutePart),
+                                 file : String, line_index : Int32) : RoutePart
     parts = map_group_values(prefix_source, file, line_index)
-    return "" if parts.empty?
+    unread = parts.any?(&.unread)
+    parts.reject!(&.text.empty?)
+    return RoutePart.new("", unread) if parts.empty?
 
     # A chained `group.MapGroup("/sub").Map*(...)` registration carries the
     # accumulated prefix of the leading receiver variable (e.g. `admin` ->
@@ -403,12 +412,13 @@ module Analyzer::CSharp::MinimalApiSupport
       end
     end
 
-    join_route_parts_array(parts)
+    joined = join_route_parts_array(parts)
+    RoutePart.new(joined.text, unread || joined.unread)
   end
 
   # `first_line` is the line index `content` starts at in `file`.
-  private def extract_map_group_prefixes(content : String, file : String, first_line : Int32) : Hash(String, String)
-    prefixes = Hash(String, String).new
+  private def extract_map_group_prefixes(content : String, file : String, first_line : Int32) : Hash(String, RoutePart)
+    prefixes = Hash(String, RoutePart).new
     line = first_line
     content.split(';').each do |statement|
       statement_line = line
@@ -419,13 +429,19 @@ module Analyzer::CSharp::MinimalApiSupport
       variable = left.strip.split(/\s+/).last?
       next unless variable && variable.matches?(/^[A-Za-z_][A-Za-z0-9_]*$/)
 
-      parent_prefix = ""
+      parent_prefix = RoutePart.new
       if parent_match = right.match(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*MapGroup\s*\(/)
-        parent_prefix = prefixes[parent_match[1]]? || ""
+        parent_prefix = prefixes[parent_match[1]]? || RoutePart.new
       end
 
       parts = map_group_values(right, file, statement_line + left.count('\n'))
-      next if parts.empty?
+      if parts.all?(&.text.empty?)
+        # No literal was collected, so the old reader kept the prior text.
+        if parts.any?(&.unread)
+          prefixes[variable] = RoutePart.new(prefixes[variable]?.try(&.text) || "", true)
+        end
+        next
+      end
 
       prefixes[variable] = join_route_parts_array([parent_prefix] + parts)
     end
@@ -439,22 +455,22 @@ module Analyzer::CSharp::MinimalApiSupport
 
   # The non-empty template of each `MapGroup(...)` call in `text`, in order;
   # `line_index` is the line `text` starts at in `file`.
-  private def map_group_values(text : String, file : String, line_index : Int32) : Array(String)
-    values = [] of String
+  private def map_group_values(text : String, file : String, line_index : Int32) : Array(RoutePart)
+    values = [] of RoutePart
     return values unless text.includes?("MapGroup")
     lexer = Noir::CSharpLexer.new(text)
     lexer.masked_source.scan(MAP_GROUP_CALL_RE) do |m|
       open = m.end(0) - 1
       close = lexer.matching_delimiter(open) || next
       arg = split_csharp_parameters(text[open + 1...close]).first? || next
-      value = route_template_value(arg, file, line_index + text[0, open].count('\n')) || next
-      values << value unless value.empty?
+      value = route_template_value(arg, file, line_index + text[0, open].count('\n'))
+      values << (value || RoutePart.new("", true))
     end
     values
   end
 
   # The first argument of the block's `Map*` call, evaluated.
-  private def route_argument_value(block : String, file : String, line_index : Int32) : String?
+  private def route_argument_value(block : String, file : String, line_index : Int32) : RoutePart?
     map_call_arguments(block).first?.try { |arg| route_template_value(arg, file, line_index) }
   end
 
@@ -462,33 +478,40 @@ module Analyzer::CSharp::MinimalApiSupport
   # value `csharp_string_value` reads for it at line `line_index` of `file`
   # (a const, a local, `Type.Member`, an interpolation), else the leading
   # literal of an expression it cannot read (`"/a" + suffix`).
-  private def route_template_value(arg : String, file : String, line_index : Int32) : String?
+  private def route_template_value(arg : String, file : String, line_index : Int32) : RoutePart?
     arg = arg.strip.sub(NAMED_ARGUMENT_HEAD_RE, "")
     if m = arg.match(PLAIN_TEMPLATE_RE)
-      return m[1]
+      return RoutePart.new(m[1])
     end
     before = csharp_code(file).code_lines[0, line_index].join('\n')
-    csharp_string_value(arg, file, before) || arg.match(LEADING_LITERAL_RE).try(&.[1])
+    if value = csharp_string_value(arg, file, before)
+      return RoutePart.new(value)
+    end
+    arg.match(LEADING_LITERAL_RE).try { |leading| RoutePart.new(leading[1], true) }
   end
 
-  private def apply_group_prefix(route : String, receiver : String?, group_prefixes : Hash(String, String)) : String
+  private def apply_group_prefix(route : RoutePart, receiver : String?, group_prefixes : Hash(String, RoutePart)) : RoutePart
     return route unless receiver
     prefix = group_prefixes[receiver]?
     return route unless prefix
+    prepend_route_part(prefix, route)
+  end
+
+  private def prepend_route_part(prefix : RoutePart, route : RoutePart) : RoutePart
+    return RoutePart.new(route.text, route.unread || prefix.unread) if prefix.text.empty?
     join_route_parts(prefix, route)
   end
 
-  private def join_route_parts(*parts : String) : String
+  private def join_route_parts(*parts : RoutePart) : RoutePart
     join_route_parts_array(parts.to_a)
   end
 
-  private def join_route_parts_array(parts : Array(String)) : String
+  private def join_route_parts_array(parts : Array(RoutePart)) : RoutePart
     clean_parts = parts.compact_map do |part|
-      clean = part.strip.gsub(/^\//, "").gsub(/\/$/, "")
+      clean = part.text.strip.gsub(/^\//, "").gsub(/\/$/, "")
       clean.empty? ? nil : clean
     end
-    return "/" if clean_parts.empty?
-    "/" + clean_parts.join("/")
+    RoutePart.new("/" + clean_parts.join("/"), parts.any?(&.unread))
   end
 
   # The registration statement starting at `start_column` of
@@ -780,7 +803,7 @@ module Analyzer::CSharp::MinimalApiSupport
   # or nil when the handler is a lambda (already handled) or can't be found
   # in this file. A qualified `Type.Method` resolves only when this file
   # declares `Type`, so a same-named method of another class is never taken.
-  private def resolve_handler_method(block : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, String, Int32, Bool, Int32)?
+  private def resolve_handler_method(block : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, String, Int32, Bool, Int32, Bool)?
     name = handler_method_name(block)
     return unless name
     *qualifier, method = name.split('.')
@@ -788,8 +811,8 @@ module Analyzer::CSharp::MinimalApiSupport
       type_re = /\b(?:class|record|struct)\s+#{Regex.escape(qualifier.last)}\b/
       return unless lines.any? { |l| l.includes?(qualifier.last) && l.matches?(type_re) }
     end
-    locate_method_definition(method, lines, masked_lines).try do |sig, body, body_line, skip_first, decl_line|
-      {name, sig, body, body_line, skip_first, decl_line}
+    locate_method_definition(method, lines, masked_lines).try do |sig, body, body_line, skip_first, decl_line, ambiguous|
+      {name, sig, body, body_line, skip_first, decl_line, ambiguous}
     end
   end
 
@@ -865,7 +888,7 @@ module Analyzer::CSharp::MinimalApiSupport
   # callee scanner should skip the first body line, then the declaration
   # line (1-based). Skips the registration call itself and assignment/call
   # sites.
-  private def locate_method_definition(name : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, Int32, Bool, Int32)?
+  private def locate_method_definition(name : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, Int32, Bool, Int32, Bool)?
     decl = /(?:public|private|internal|protected|static|async)\b[^;={(]*\b#{Regex.escape(name)}\s*\(/
 
     lines.each_with_index do |line, idx|
@@ -877,7 +900,8 @@ module Analyzer::CSharp::MinimalApiSupport
       sig, end_idx = build_signature(lines, masked_lines, idx)
       block, body_idx, skip_first = extract_callable_body(lines, masked_lines, end_idx)
       return if block.empty?
-      return {sig, block, body_idx + 1, skip_first, idx + 1}
+      ambiguous = lines.each.skip(idx + 1).any? { |other| other.includes?(name) && other.matches?(decl) && !other.matches?(MAP_CALL_RE) }
+      return {sig, block, body_idx + 1, skip_first, idx + 1, ambiguous}
     end
 
     nil

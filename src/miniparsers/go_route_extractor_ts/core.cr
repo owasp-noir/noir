@@ -213,6 +213,7 @@ module Noir
       # unmarked; marking those needs group-typed receivers told from
       # engine-typed ones.
       getter? prefix_unresolved : Bool
+      property? prefix_heuristic : Bool = false
 
       def initialize(@router_name, @verb, path : String, @raw_path, @handler, @line,
                      @query_params : Array(String) = [] of String,
@@ -250,7 +251,8 @@ module Noir
 
       # The mark an endpoint built from this route carries (`Endpoint#resolution`).
       def resolution : Hash(String, String)?
-        {"prefix" => Endpoint::RESOLUTION_UNRESOLVED} if @prefix_unresolved
+        return {"prefix" => Endpoint::RESOLUTION_UNRESOLVED} if @prefix_unresolved
+        {"prefix" => Endpoint::RESOLUTION_HEURISTIC} if @prefix_heuristic
       end
 
       # Text of every handler argument after the path, middleware included
@@ -658,6 +660,21 @@ module Noir
     def collect_router_group_builders(source : String, type_name : String | Array(String) = "RouterGroup", qualifier : String? = nil) : Hash(String, RouterBuilder)
       result = Hash(String, RouterBuilder).new
       duplicates = Set(String).new
+      router_group_builders(source, type_name, qualifier).each do |name, builder|
+        if result.has_key?(name) || duplicates.includes?(name)
+          duplicates << name
+          result.delete(name)
+        else
+          result[name] = builder
+        end
+      end
+      result
+    end
+
+    # Expansion needs a unique name. Attribution also needs the groups in
+    # overloaded methods that the expansion pass deliberately skipped.
+    def router_group_builders(source : String, type_name : String | Array(String), qualifier : String?) : Array({String, RouterBuilder})
+      builders = [] of {String, RouterBuilder}
       Noir::TreeSitter.parse_go(source) do |root|
         Noir::TreeSitter.walk(root) do |node|
           next unless {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(node))
@@ -667,17 +684,10 @@ module Noir
           param = router_group_param_name(params, source, type_name, qualifier)
           next unless param
           name = Noir::TreeSitter.node_text(name_node, source)
-          # Two methods sharing a name (`(*UserH).Register`, `(*PostH).Register`)
-          # can't be told apart at a `h.Register(g)` call site: neither expands.
-          if result.has_key?(name) || duplicates.includes?(name)
-            duplicates << name
-            result.delete(name)
-            next
-          end
-          result[name] = RouterBuilder.new(param, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))
+          builders << {name, RouterBuilder.new(param, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))}
         end
       end
-      result
+      builders
     end
 
     # Returns the sole `*gin.RouterGroup` parameter's name, or nil when
@@ -1757,7 +1767,11 @@ module Noir
         Noir::TreeSitter.walk(root) do |node|
           name_value = string_assignment(node, source, values)
           next unless name_value
-          name, value = name_value
+          name, value, expr = name_value
+          if values.has_key?(UNREAD_WRAPPERS) && !values.has_key?("#{UNREAD_PREFIX}#{name}") && uses_unread_wrapper?(expr, source, values)
+            values["#{UNREAD_PREFIX}#{name}"] = ""
+            changed = true
+          end
           next if ambiguous.includes?(name)
           if old_value = values[name]?
             next if old_value == value
@@ -1775,7 +1789,7 @@ module Noir
 
     private def string_assignment(node : LibTreeSitter::TSNode,
                                   source : String,
-                                  values : Hash(String, String)) : Tuple(String, String)?
+                                  values : Hash(String, String)) : Tuple(String, String, LibTreeSitter::TSNode)?
       case Noir::TreeSitter.node_type(node)
       when "const_spec", "var_spec"
         name = Noir::TreeSitter.field(node, "name")
@@ -1786,7 +1800,7 @@ module Noir
         return unless expr
         text = string_expr_text(expr, source, values)
         return unless text
-        {Noir::TreeSitter.node_text(name, source), text}
+        {Noir::TreeSitter.node_text(name, source), text, expr}
       else
         return unless group_assignment_node?(node)
         left = Noir::TreeSitter.field(node, "left")
@@ -1798,7 +1812,7 @@ module Noir
         return unless Noir::TreeSitter.node_type(name) == "identifier"
         text = string_expr_text(expr, source, values)
         return unless text
-        {Noir::TreeSitter.node_text(name, source), text}
+        {Noir::TreeSitter.node_text(name, source), text, expr}
       end
     end
 
@@ -2950,7 +2964,25 @@ module Noir
     # tail. The strict read needs every operand and is the partial one
     # everywhere else, so it fails exactly where the tail was kept.
     private def unread_base?(arg : LibTreeSitter::TSNode, source : String, values : Hash(String, String)) : Bool
-      string_expr_text(arg, source, values).nil?
+      string_expr_text(arg, source, values).nil? || uses_unread_wrapper?(arg, source, values)
+    end
+
+    # A wrapper may contribute its literal default while another return
+    # adds a runtime prefix. Follow that evidence through path variables.
+    private def uses_unread_wrapper?(expr : LibTreeSitter::TSNode, source : String, values : Hash(String, String)) : Bool
+      return false unless values.has_key?(UNREAD_WRAPPERS)
+      found = false
+      Noir::TreeSitter.walk(expr) do |node|
+        case Noir::TreeSitter.node_type(node)
+        when "identifier"
+          found = true if values.has_key?("#{UNREAD_PREFIX}#{Noir::TreeSitter.node_text(node, source)}")
+        when "call_expression"
+          if function = Noir::TreeSitter.field(node, "function")
+            found = true if values.has_key?("#{UNREAD_PREFIX}#{call_basename(function, source)}()")
+          end
+        end
+      end
+      found
     end
 
     # The prefix of a group whose prefix argument `arg` the strict read
@@ -3160,7 +3192,8 @@ module Noir
     end
 
     # Stands for a wrapper's argument in its seeded template.
-    WRAPPER_ARG = "\u0000"
+    UNREAD_WRAPPERS = "\u{FDD0}wrappers"
+    WRAPPER_ARG     = "\u0000"
 
     # A `func [(recv)] Name(p string) string {` head: the only shape
     # `extract_string_exports` reads as a wrapper.
@@ -3180,7 +3213,7 @@ module Noir
     # wrapper that only adds a runtime-configured prefix reads as its
     # default. One whose computable returns disagree, or with none, maps to
     # nil, so the caller can drop a name defined both ways.
-    def extract_string_exports(source : String) : Hash(String, String?)
+    def extract_string_exports(source : String, mark_wrappers : Bool = false) : Hash(String, String?)
       exports = Hash(String, String?).new
       Noir::TreeSitter.parse_go(source) do |root|
         values = collect_string_values(root, source)
@@ -3206,7 +3239,10 @@ module Noir
             name = Noir::TreeSitter.field(decl, "name")
             body = Noir::TreeSitter.field(decl, "body")
             next unless name && body && (param = sole_string_param(decl, source))
-            exports["#{Noir::TreeSitter.node_text(name, source)}()"] = wrapper_template(body, source, values.merge({param => WRAPPER_ARG}))
+            key = "#{Noir::TreeSitter.node_text(name, source)}()"
+            template, incomplete = wrapper_template(body, source, values.merge({param => WRAPPER_ARG}))
+            exports[key] = template
+            exports["#{UNREAD_PREFIX}#{key}"] = "" if mark_wrappers && template && incomplete
           end
         end
       end
@@ -3233,13 +3269,18 @@ module Noir
       count == 1 ? found : nil
     end
 
-    private def wrapper_template(body : LibTreeSitter::TSNode, source : String, values : Hash(String, String)) : String?
+    private def wrapper_template(body : LibTreeSitter::TSNode, source : String, values : Hash(String, String)) : Tuple(String?, Bool)
       templates = Set(String).new
+      incomplete = false
       each_return_value(body) do |expr|
         text = string_expr_text(expr, source, values)
-        templates << text if text && text.count(WRAPPER_ARG) == 1
+        if text && text.count(WRAPPER_ARG) == 1
+          templates << text
+        else
+          incomplete = true
+        end
       end
-      templates.size == 1 ? templates.first : nil
+      {templates.size == 1 ? templates.first : nil, incomplete}
     end
 
     # The single returned expression of every `return` in `node`, closures
