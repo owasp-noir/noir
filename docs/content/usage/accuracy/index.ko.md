@@ -8,7 +8,7 @@ weight = 2
 
 <!-- SCOREBOARD -->
 
-Measured: 2026-11-22. Analyzer source: `733a55018000278fefdd741e357229a0e6bbe8bb`.
+Measured: 2026-11-22. Analyzer source: `a80bec92ba7511a2160c35acd9539e372099a6cc`.
 
 저장소 하나에서 측정한 기술은 단일 데이터 포인트입니다.
 
@@ -16,11 +16,11 @@ Measured: 2026-11-22. Analyzer source: `733a55018000278fefdd741e357229a0e6bbe8bb
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | cs_aspnet_core_minimal_api | 1 | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | go_chi | 2 | 264 | 41 | 249 | 86.6% | 51.5% | 262 (51.1%) |
-| go_echo | 1 | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
+| go_echo | 1 | 153 | 19 | 115 | 89.0% | 57.1% | 4 (1.5%) |
 | go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 230 (81.6%) |
 | go_mux | 1 | 26 | 1 | 88 | 96.3% | 22.8% | 108 (94.7%) |
 | java_spring | 1 | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
-| js_express | 2 | 303 | 128 | 366 | 70.3% | 45.3% | 9 (1.3%) |
+| js_express | 2 | 411 | 20 | 264 | 95.4% | 60.9% | 228 (33.8%) |
 | python_django | 2 | 235 | 0 | 300 | 100.0% | 43.9% | 1 (0.2%) |
 | python_fastapi | 2 | 348 | 1 | 114 | 99.7% | 75.3% | 21 (4.5%) |
 | ts_nestjs | 1 | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
@@ -28,7 +28,7 @@ Measured: 2026-11-22. Analyzer source: `733a55018000278fefdd741e357229a0e6bbe8bb
 | Repository | Matched | Spec-only | Code-only | Recall | Agreement | Marked |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | InvokeAI | 264 | 1 | 3 | 99.6% | 98.9% | 0 (0.0%) |
-| NodeBB | 250 | 128 | 355 | 66.1% | 41.3% | 9 (1.5%) |
+| NodeBB | 358 | 20 | 253 | 94.7% | 58.6% | 228 (37.3%) |
 | answer | 196 | 3 | 34 | 98.5% | 85.2% | 228 (99.1%) |
 | auth | 23 | 41 | 60 | 35.9% | 27.7% | 0 (0.0%) |
 | dvws-node | 53 | 0 | 11 | 100.0% | 82.8% | 0 (0.0%) |
@@ -41,7 +41,7 @@ Measured: 2026-11-22. Analyzer source: `733a55018000278fefdd741e357229a0e6bbe8bb
 | podinfo | 26 | 1 | 88 | 96.3% | 22.8% | 108 (94.7%) |
 | pokeapi | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | pretalx | 133 | 0 | 300 | 100.0% | 30.7% | 1 (0.2%) |
-| vikunja | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
+| vikunja | 153 | 19 | 115 | 89.0% | 57.1% | 4 (1.5%) |
 
 | Technology | Detected / repositories | Other technologies detected | Forced-only rows | Automatic-only rows |
 | --- | ---: | --- | ---: | ---: |
@@ -81,15 +81,15 @@ Measured: 2026-11-22. Analyzer source: `733a55018000278fefdd741e357229a0e6bbe8bb
 | go_chi | Parameters | 56 | 2 | 94 | 96.6% | 37.3% |
 | go_chi | Body fields | 43 | 135 | 22 | 24.2% | 66.2% |
 | go_echo | Parameters | 197 | 0 | 52 | 100.0% | 79.1% |
-| go_echo | Body fields | 363 | 1 | 246 | 99.7% | 59.6% |
+| go_echo | Body fields | 368 | 1 | 246 | 99.7% | 59.9% |
 | go_gin | Parameters | 130 | 11 | 122 | 92.2% | 51.6% |
 | go_gin | Body fields | 326 | 16 | 467 | 95.3% | 41.1% |
 | go_mux | Parameters | 7 | 0 | 0 | 100.0% | 100.0% |
 | go_mux | Body fields | 0 | 0 | 0 | n/a | n/a |
 | java_spring | Parameters | 544 | 21 | 109 | 96.3% | 83.3% |
 | java_spring | Body fields | 378 | 67 | 90 | 84.9% | 80.8% |
-| js_express | Parameters | 272 | 18 | 65 | 93.8% | 80.7% |
-| js_express | Body fields | 96 | 78 | 19 | 55.2% | 83.5% |
+| js_express | Parameters | 313 | 35 | 80 | 89.9% | 79.6% |
+| js_express | Body fields | 96 | 88 | 19 | 52.2% | 83.5% |
 | python_django | Parameters | 609 | 19 | 381 | 97.0% | 61.5% |
 | python_django | Body fields | 393 | 60 | 21 | 86.8% | 94.9% |
 | python_fastapi | Parameters | 454 | 20 | 9 | 95.8% | 98.1% |
@@ -101,11 +101,11 @@ Measured: 2026-11-22. Analyzer source: `733a55018000278fefdd741e357229a0e6bbe8bb
 | --- | ---: | ---: | ---: | ---: |
 | cs_aspnet_core_minimal_api | 0 | 16 | 0 | 0 |
 | go_chi | 120 | 3 | 8 | 133 |
-| go_echo | 131 | 9 | 1 | 8 |
+| go_echo | 135 | 9 | 1 | 8 |
 | go_gin | 162 | 56 | 10 | 10 |
 | go_mux | 0 | 26 | 0 | 0 |
 | java_spring | 0 | 0 | 182 | 0 |
-| js_express | 8 | 85 | 0 | 210 |
+| js_express | 8 | 170 | 0 | 233 |
 | python_django | 0 | 230 | 0 | 5 |
 | python_fastapi | 325 | 17 | 6 | 0 |
 | ts_nestjs | 268 | 19 | 0 | 0 |
@@ -118,7 +118,8 @@ Measured: 2026-11-22. Analyzer source: `733a55018000278fefdd741e357229a0e6bbe8bb
 | go_gin | `handler:heuristic` | 8 | 2.8% |
 | go_gin | `prefix:unresolved` | 228 | 80.9% |
 | go_mux | `prefix:unresolved` | 108 | 94.7% |
-| js_express | `prefix:unresolved` | 9 | 1.3% |
+| js_express | `prefix:heuristic` | 217 | 32.1% |
+| js_express | `prefix:unresolved` | 11 | 1.6% |
 | python_django | `prefix:unresolved` | 1 | 0.2% |
 | python_fastapi | `prefix:heuristic` | 21 | 4.5% |
 
