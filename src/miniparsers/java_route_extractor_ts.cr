@@ -68,7 +68,9 @@ module Noir
       getter? prefix_unresolved : Bool
       getter signature_line : Int32? # 0-based line of the method name (the handler), nil for class-level routes
 
-      def initialize(@verb, @path, @class_name, @method_name, @line, @params = [] of Param, @signature_line = nil, @prefix_unresolved = false)
+      getter declaration_byte : UInt32?
+
+      def initialize(@verb, @path, @class_name, @method_name, @line, @params = [] of Param, @signature_line = nil, @prefix_unresolved = false, @declaration_byte = nil)
       end
     end
 
@@ -747,7 +749,7 @@ module Noir
           class_prefixes.each do |class_prefix|
             full = Noir::URLPath.join_absorbing(class_prefix, path)
             verbs.each do |verb|
-              routes << Route.new(verb, full, class_name, method_name, ann_line, route_params, signature_line, unresolved)
+              routes << Route.new(verb, full, class_name, method_name, ann_line, route_params, signature_line, unresolved, LibTreeSitter.ts_node_start_byte(method))
             end
           end
         end
@@ -1130,7 +1132,7 @@ module Noir
         # last segment so the mapping-annotation lookup matches.
         name = simple_annotation_name(name_node, source)
         args = Noir::TreeSitter.field(ann, "arguments")
-        yield name, args, Noir::TreeSitter.node_start_row(ann)
+        yield name, args, Noir::TreeSitter.node_start_row(ann), Noir::TreeSitter.node_text(name_node, source)
       end
     end
 

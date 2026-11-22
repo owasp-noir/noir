@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/spring_annotation_support"
 require "../../../miniparsers/kotlin_route_extractor_ts"
 require "../../../miniparsers/kotlin_parameter_extractor_ts"
 require "../../../miniparsers/kotlin_callee_extractor"
@@ -15,6 +16,7 @@ module Analyzer::Kotlin
     analyzer_for "kotlin_spring"
 
     include Analyzer::Java::JavaEngine
+    include Analyzer::Java::SpringAnnotationSupport
 
     KOTLIN_EXTENSION = "kt"
     alias SpringRoute = Noir::TreeSitterKotlinRouteExtractor::Route
@@ -246,6 +248,7 @@ module Analyzer::Kotlin
         )
       end
 
+      resolve_spring_annotations
       Fiber.yield
       @result
     end
@@ -815,6 +818,7 @@ module Analyzer::Kotlin
           end
         next if routes.empty? && implementations.empty? && stomp_routes.empty? && graphql_routes.empty?
 
+        index_spring_annotations(root, content, path)
         dto_index = with_jackson_defaults(dto_builder.build_for_with_root(path, content, root), path)
         method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, content)
         file_callees = Noir::KotlinCalleeExtractor::FileCallees.new(root, content, path)
@@ -832,12 +836,12 @@ module Analyzer::Kotlin
             else
               [] of Param
             end
-          endpoint = spring_endpoint(spring_properties, route_path, route.verb, parameters, Details.new(PathInfo.new(path, line)))
+          endpoint = spring_endpoint(spring_properties, route_path, route.verb, parameters, Details.new(@annotations.bind(PathInfo.new(path, line), route.method_name)))
           endpoint.protocol = "ws"
           route.messaging_destinations.each do |destination|
             endpoint.add_tag(Tag.new("stomp-send-to", destination, "kotlin_spring_stomp_analyzer"))
           end
-          attach_method_security_tags(endpoint, method, content)
+          attach_method_security_tags(endpoint, method, content, path)
 
           if include_callee && !(route.class_name.empty? || route.method_name.empty?)
             before_callee_count = endpoint.callees.size
@@ -860,13 +864,13 @@ module Analyzer::Kotlin
         graphql_routes.each do |route|
           params = graphql_params(route, dto_index)
           line = route.line + 1
-          endpoint = Endpoint.new("#{graphql_path}##{route.root_kind}.#{route.field_name}", "POST", params, Details.new(PathInfo.new(path, line)))
+          endpoint = Endpoint.new("#{graphql_path}##{route.root_kind}.#{route.field_name}", "POST", params, Details.new(@annotations.bind(PathInfo.new(path, line), route.method_name)))
           endpoint.mark_resolution("prefix") if graphql_path.includes?("${")
           endpoint.protocol = "ws" if route.root_kind == "Subscription"
           endpoint.add_tag(Tag.new("graphql", "#{route.root_kind}.#{route.field_name}", "kotlin_spring_graphql_analyzer"))
           endpoint.add_tag(Tag.new("graphql-root", route.root_kind, "kotlin_spring_graphql_analyzer"))
           method = route_method_node(method_nodes, route.class_name, route.method_name, route.line)
-          attach_method_security_tags(endpoint, method, content)
+          attach_method_security_tags(endpoint, method, content, path)
 
           if include_callee && !(route.class_name.empty? || route.method_name.empty?)
             before_callee_count = endpoint.callees.size
@@ -936,7 +940,7 @@ module Analyzer::Kotlin
           base_path = webflux_base_path
 
           line = route.line + 1
-          details = Details.new(PathInfo.new(path, line))
+          details = Details.new(@annotations.bind(PathInfo.new(path, line), route.method_name, offset: route.declaration_byte))
           endpoint = spring_endpoint(spring_properties, Noir::URLPath.join_rooted(base_path, route.path), route.verb, parameters, details)
           endpoint.mark_resolution("prefix") if route.prefix_unresolved?
           endpoint.handler = jvm_route_handler(route, path)
@@ -945,7 +949,7 @@ module Analyzer::Kotlin
               method, content, format_verb, string_constants, local_string_constants || Hash(String, String).new
             )
           end
-          attach_method_security_tags(endpoint, method, content)
+          attach_method_security_tags(endpoint, method, content, path)
 
           # Functional router method references can point at a handler
           # class in another file; those are resolved below when callee /
@@ -1015,6 +1019,7 @@ module Analyzer::Kotlin
           interface_path = pairs.first[1].path
 
           Noir::TreeSitter.parse_kotlin(interface_source) do |interface_root|
+            index_spring_annotations(interface_root, interface_source, interface_path)
             interface_dto_index = with_jackson_defaults(dto_builder.build_for_with_root(interface_path, interface_source, interface_root), interface_path)
 
             pairs.each do |implementation, entry|
@@ -1036,13 +1041,16 @@ module Analyzer::Kotlin
                 base_path = base_path[..-2]
               end
 
-              details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
-              details.add_path(PathInfo.new(path, implementation.line + 1))
+              implementation_location = PathInfo.new(path, implementation.line + 1)
+              declaration = @annotations.bind(PathInfo.new(entry.path, entry_route.line + 1), entry_route.method_name, implementation_location, entry_route.declaration_byte)
+              implementation_location.route_evidence = declaration.route_evidence
+              details = Details.new(declaration)
+              details.add_path(implementation_location)
               endpoint = spring_endpoint(spring_properties, Noir::URLPath.join_rooted(base_path, inherited_path), entry_route.verb, parameters, details)
               endpoint.mark_resolution("prefix") if entry_route.prefix_unresolved? || implementation.prefix_unresolved?
               method_key = "#{implementation.class_name}##{entry_route.method_name}"
               impl_function = method_nodes[method_key]?
-              attach_method_security_tags(endpoint, impl_function, content)
+              attach_method_security_tags(endpoint, impl_function, content, path)
               # The body lives on the `override fun`, not the interface function.
               if impl_function && (impl_row = Noir::TreeSitterKotlinRouteExtractor.function_name_row(impl_function))
                 endpoint.mark_resolution("handler", Endpoint::RESOLUTION_HEURISTIC) if method_nodes.any? { |key, _| key.starts_with?("#{method_key}@") }
@@ -1103,29 +1111,24 @@ module Analyzer::Kotlin
       "#{route.class_name}##{route.method_name}@#{row}"
     end
 
-    private def attach_method_security_tags(endpoint : Endpoint, method : LibTreeSitter::TSNode?, source : String)
+    # Preserve the analyzer's method-only tags (also used without -T) and
+    # their display order. Use the same declaration data as the auth tagger.
+    private def attach_method_security_tags(endpoint : Endpoint, method : LibTreeSitter::TSNode?, source : String, path : String)
       return unless method
-
-      annotations = spring_security_annotations(method, source)
-      return if annotations.empty?
-
-      endpoint.add_tag(Tag.new("auth", "Protected by #{annotations.join("; ")}", "kotlin_spring_security_analyzer"))
-    end
-
-    private def spring_security_annotations(method : LibTreeSitter::TSNode, source : String) : Array(String)
-      text = Noir::TreeSitter.node_text(method, source)
-      annotations = [] of String
-
-      text.scan(/@(PreAuthorize|PostAuthorize)\s*\(\s*"([^"]*)"\s*\)/m) do |match|
-        annotations << "@#{match[1]}(#{match[2]})"
+      annotations = @annotations.direct_annotations(path, method) || Noir::TreeSitterKotlinRouteExtractor.declaration_annotations(method, source, path)
+      expressions = [] of String
+      roles = [] of String
+      annotations.each do |ann|
+        value = ann.argument.try(&.strip) || next
+        case name = ann.name.split('.').last
+        when "PreAuthorize", "PostAuthorize"
+          expressions << "@#{name}(#{value[1...-1]})" if value.starts_with?('"') && value.ends_with?('"')
+        when "Secured", "RolesAllowed"
+          roles << "@#{name}(#{value.gsub(/\s+/, " ")})"
+        end
       end
-
-      text.scan(/@(Secured|RolesAllowed)\s*\(([^)]*)\)/m) do |match|
-        value = match[2].gsub(/\s+/, " ").strip
-        annotations << "@#{match[1]}(#{value})"
-      end
-
-      annotations.uniq
+      descriptions = (expressions + roles).uniq!
+      endpoint.add_tag(Tag.new("auth", "Protected by #{descriptions.join("; ")}", "kotlin_spring_security_analyzer")) unless descriptions.empty?
     end
 
     private def attach_cross_file_handler_details(endpoint : Endpoint,
@@ -1146,12 +1149,15 @@ module Analyzer::Kotlin
       return unless entries.size == 1
 
       entry = entries.first
-      endpoint.details.add_path(PathInfo.new(entry.path, entry.line))
+      location = PathInfo.new(entry.path, entry.line)
+      endpoint.details.add_path(location)
 
       Noir::TreeSitter.parse_kotlin(entry.source) do |handler_root|
         handler_dto_index = with_jackson_defaults(dto_builder.build_for_with_root(entry.path, entry.source, handler_root), entry.path)
         method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(handler_root, entry.source)
         if method = method_nodes["#{entry.class_name}##{entry.method_name}"]?
+          index_spring_annotations(handler_root, entry.source, entry.path)
+          endpoint.details.code_paths[-1] = @annotations.bind(location, entry.method_name, offset: LibTreeSitter.ts_node_start_byte(method))
           Noir::TreeSitterKotlinParameterExtractor.extract_server_request_parameters_from_method(
             method, entry.source, verb, parameter_format, handler_dto_index
           ).each do |param|

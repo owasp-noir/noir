@@ -56,9 +56,11 @@ module Noir
       getter? prefix_unresolved : Bool
       getter signature_line : Int32? # 0-based line of the function name (the handler), nil for class-level routes
 
+      getter declaration_byte : UInt32?
+
       def initialize(@verb, @path, @class_name, @method_name, @line, @handler_reference = nil,
                      @inline_callees = [] of NamedTuple(name: String, line: Int32),
-                     @messaging_destinations = [] of String, @signature_line = nil, @prefix_unresolved = false)
+                     @messaging_destinations = [] of String, @signature_line = nil, @prefix_unresolved = false, @declaration_byte = nil)
       end
     end
 
@@ -849,47 +851,22 @@ module Noir
       MappingPrefixes.new(joined, unread_paths: unread_paths)
     end
 
-    # Walk annotations buried under nested `prefix_expression`
-    # chunks and return `{name, args_node_or_nil}` tuples. Returning
-    # an array (instead of yielding) sidesteps Crystal's restriction
-    # on recursive block expansion in private helpers.
     private def collect_stray_annotations(node : LibTreeSitter::TSNode, source : String) : Array(Tuple(String, LibTreeSitter::TSNode?))
-      sink = [] of Tuple(String, LibTreeSitter::TSNode?)
-      walk_stray_annotations(node, source, sink)
-      sink
+      result = [] of Tuple(String, LibTreeSitter::TSNode?)
+      each_stray_annotation(node, source) { |name, args, _| result << {simple_annotation_name(name), args} }
+      result
     end
 
-    private def walk_stray_annotations(node : LibTreeSitter::TSNode,
-                                       source : String,
-                                       sink : Array(Tuple(String, LibTreeSitter::TSNode?)))
-      Noir::TreeSitter.each_named_child(node) do |child|
-        case Noir::TreeSitter.node_type(child)
+    # A prefix-expression annotation can carry its arguments in a sibling.
+    private def each_stray_annotation(node, source, &block : String, LibTreeSitter::TSNode?, Int32 ->) : Nil
+      TreeSitter.each_named_child(node) do |child|
+        case TreeSitter.node_type(child)
         when "annotation"
-          Noir::TreeSitter.each_named_child(child) do |sub|
-            case Noir::TreeSitter.node_type(sub)
-            when "user_type"
-              name = simple_annotation_name(Noir::TreeSitter.node_text(sub, source))
-              # Annotation arguments may live in a sibling
-              # `parenthesized_expression` (the
-              # `@RequestMapping("/x")` case).
-              args = parenthesized_args_following(node, child)
-              sink << {name, args}
-            when "constructor_invocation"
-              inner_name = ""
-              ctor_args : LibTreeSitter::TSNode? = nil
-              Noir::TreeSitter.each_named_child(sub) do |arg_child|
-                case Noir::TreeSitter.node_type(arg_child)
-                when "user_type"
-                  inner_name = simple_annotation_name(Noir::TreeSitter.node_text(arg_child, source))
-                when "value_arguments"
-                  ctor_args = arg_child
-                end
-              end
-              sink << {inner_name, ctor_args} unless inner_name.empty?
-            end
+          if entry = annotation_name_and_args(child, source)
+            block.call(entry[0], entry[1] || parenthesized_args_following(node, child), TreeSitter.node_start_row(child))
           end
         when "prefix_expression"
-          walk_stray_annotations(child, source, sink)
+          each_stray_annotation(child, source, &block)
         end
       end
     end
@@ -949,7 +926,7 @@ module Noir
             full = Noir::URLPath.join_absorbing(class_prefix, path)
             unread = missing || class_prefixes.unread?(class_prefix) || unread_paths.includes?(path)
             verbs.each do |verb|
-              routes << Route.new(verb, full, class_name, method_name, ann_line, signature_line: signature_line, prefix_unresolved: unread)
+              routes << Route.new(verb, full, class_name, method_name, ann_line, signature_line: signature_line, prefix_unresolved: unread, declaration_byte: LibTreeSitter.ts_node_start_byte(func))
             end
           end
         end

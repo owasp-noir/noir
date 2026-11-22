@@ -443,19 +443,34 @@ record RouteMiddleware, source : String, file : String, origin : Symbol = :route
   handler_position : Bool = false, receiver : String = "", prefix : String? = nil, verb : String = "use",
   line : Int32? = nil, scope_proven : Bool = false
 
+# A declaration contributing to a handler's authorization. For a composed
+# annotation the location is the definition of the effective annotation and
+# composed_from identifies the annotation applied to the handler or type.
+record RouteAnnotation, name : String, argument : String?, file : String, line : Int32,
+  origin : Symbol, level : Int32 = 0, composed_from : String? = nil, uncertain : Bool = false
+
 struct PathInfo
   include JSON::Serializable
   include YAML::Serializable
   property path, line
 
-  # Scan-time evidence for framework auth taggers: the middleware the
-  # analyzer read for the route registered at this location, in execution order.
-  # An empty array means the registration was read and has none; nil means
-  # the analyzer did not record middleware for this location. The evidence
-  # stays on the location through endpoint deduplication.
+  # Ordered, scan-only evidence attached to this registration. An empty
+  # array means the analyzer read the declaration; nil leaves it to the tagger.
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
-  property route_middleware : Array(RouteMiddleware)?
+  property route_evidence : (Array(RouteMiddleware) | Array(RouteAnnotation))?
+
+  def route_middleware : Array(RouteMiddleware)?
+    @route_evidence.as?(Array(RouteMiddleware))
+  end
+
+  def route_middleware=(chain : Array(RouteMiddleware)?)
+    @route_evidence = chain
+  end
+
+  def route_annotations : Array(RouteAnnotation)?
+    @route_evidence.as?(Array(RouteAnnotation))
+  end
 
   # The registration arguments were read, but a caller or mount can
   # supply additional middleware the analyzer could not place.

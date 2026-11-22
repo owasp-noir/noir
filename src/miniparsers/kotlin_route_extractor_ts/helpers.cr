@@ -39,7 +39,7 @@ module Noir
       Noir::TreeSitter.each_named_child(mods) do |ann|
         next unless Noir::TreeSitter.node_type(ann) == "annotation"
         if entry = annotation_name_and_args(ann, source)
-          yield entry[0], entry[1], Noir::TreeSitter.node_start_row(ann)
+          yield simple_annotation_name(entry[0]), entry[1], Noir::TreeSitter.node_start_row(ann), entry[0]
         end
       end
     end
@@ -609,7 +609,7 @@ module Noir
           when "parameter_modifiers"
             Noir::TreeSitter.each_named_child(entry) do |ann|
               next unless Noir::TreeSitter.node_type(ann) == "annotation"
-              annotation_name_and_args(ann, source).try { |(name, args)| annotations << {name, args, Noir::TreeSitter.node_start_row(ann)} }
+              annotation_name_and_args(ann, source).try { |(name, args)| annotations << {simple_annotation_name(name), args, Noir::TreeSitter.node_start_row(ann)} }
             end
           when "parameter"
             name = ""
@@ -632,13 +632,13 @@ module Noir
       Noir::TreeSitter.each_named_child(ann) do |child|
         case Noir::TreeSitter.node_type(child)
         when "user_type"
-          return {simple_annotation_name(Noir::TreeSitter.node_text(child, source)), nil}
+          return {Noir::TreeSitter.node_text(child, source), nil}
         when "constructor_invocation"
           name = ""
           args : LibTreeSitter::TSNode? = nil
           Noir::TreeSitter.each_named_child(child) do |sub|
             case Noir::TreeSitter.node_type(sub)
-            when "user_type"       then name = simple_annotation_name(Noir::TreeSitter.node_text(sub, source))
+            when "user_type"       then name = Noir::TreeSitter.node_text(sub, source)
             when "value_arguments" then args = sub
             end
           end

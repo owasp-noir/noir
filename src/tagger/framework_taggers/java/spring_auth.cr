@@ -1,6 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
-require "../../../miniparsers/java_route_extractor_ts"
+require "../../../miniparsers/spring_annotation_index"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
 require "../../../analyzer/engines/java_engine"
@@ -11,10 +11,6 @@ require "./spring_module_scope"
 @[Noir::TaggerFor(key: "spring_auth", name: "Spring Auth Tagger", desc: "Identifies Spring Security patterns (annotations, security config)", order: 20)]
 class SpringAuthTagger < FrameworkTagger
   include SpringModuleScope
-
-  record MetaAnnotation,
-    name : String,
-    spring_annotation : String
 
   record InterceptorDef,
     name : String,
@@ -69,17 +65,7 @@ class SpringAuthTagger < FrameworkTagger
     module_dir : String?,
     settings : Array(String)
 
-  ANNOTATION_PATTERNS = [
-    /\@PreAuthorize\s*\(/,
-    /\@PostAuthorize\s*\(/,
-    /\@Secured\s*\(/,
-    /\@RolesAllowed\s*\(/,
-    /\@DenyAll\b/,
-  ]
-
-  # The same authorization annotations, as the bare names they are matched by
-  # when they decorate the controller *class* instead of a single handler.
-  CLASS_ANNOTATION_NAMES = ["@PreAuthorize", "@PostAuthorize", "@Secured", "@RolesAllowed", "@DenyAll", "@RequiresAuthentication", "@RequiresUser", "@RequiresPermissions", "@RequiresRoles", "@RequiresGuest"]
+  SECURITY_ANNOTATIONS = %w[PreAuthorize PostAuthorize Secured RolesAllowed PermitAll DenyAll RequiresAuthentication RequiresUser RequiresPermissions RequiresRoles RequiresGuest]
 
   # What a `preHandle` that turns the caller away does: a 401/403 status or
   # an auth exception. `return false` alone is not read: a rate limiter or
@@ -137,8 +123,6 @@ class SpringAuthTagger < FrameworkTagger
   # An authorization noir does not read off `access` attributes.
   XML_OTHER_AUTHORIZATION = /<(?:[\w-]+:)?custom-filter\b|\b(?:access-decision-manager|authorization-manager)-ref\s*=/
 
-  KOTLIN_FUN_DECLARATION = /(?:^|\s)fun\s/
-
   # A method-security expression that admits an anonymous caller. Anything
   # else, including a mixed `permitAll() or hasRole(...)`, stays a guard.
   PUBLIC_SPEL     = /\A(?:permitAll\s*\(\s*\)|anonymous(?:\s*\(\s*\))?|isAnonymous\s*\(\s*\)|hasRole\s*\(\s*['"](?:ROLE_)?ANONYMOUS['"]\s*\)|hasAuthority\s*\(\s*['"](?:ROLE_)?ANONYMOUS['"]\s*\))\z/
@@ -184,7 +168,7 @@ class SpringAuthTagger < FrameworkTagger
     # Boot apps => whether they exclude SecurityAutoConfiguration.
     @security_autoconfig_off = Hash(String, Bool).new
     @management_port = Hash(String, Bool).new
-    @security_meta_annotations = Hash(String, MetaAnnotation).new
+    @fallback_annotations = Noir::SpringAnnotationIndex.new
     @annotation_aliases = Hash(String, Set(String)).new
     @method_readers = Hash(String, {Set(String), Bool}).new
     @permit_markers = Hash(String, Set(String)).new
@@ -195,7 +179,6 @@ class SpringAuthTagger < FrameworkTagger
     @principal_param_re = nil.as(Regex?)
     @refusing_param_re = nil.as(Regex?)
     @shiro_chains = [] of ShiroChain
-    @stripped_lines = Hash(String, Array(String)).new
     @field_types = Hash(String, Hash(String, String)).new
     @type_files = Hash({String, String}, String?).new
     @code_index = Hash(String, CodeIndex?).new
@@ -217,7 +200,11 @@ class SpringAuthTagger < FrameworkTagger
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     # Phase 1: Pre-scan security config files
-    pre_scan_security_configs
+    fallback = endpoints.any? do |endpoint|
+      paths = endpoint.details.code_paths
+      paths.none?(&.route_annotations) && paths.any? { |p| p.path.ends_with?(".java") || p.path.ends_with?(".kt") }
+    end
+    pre_scan_security_configs(fallback)
     endpoints.map! do |endpoint|
       @guard_tagged = false
       @guard_followed = false
@@ -240,7 +227,8 @@ class SpringAuthTagger < FrameworkTagger
     endpoint
   end
 
-  private def pre_scan_security_configs
+  private def pre_scan_security_configs(fallback : Bool)
+    meta_files = [] of String
     @security_rules.clear
     @scoped_chains.clear
     @management_chains.clear
@@ -251,7 +239,7 @@ class SpringAuthTagger < FrameworkTagger
     @security_autoconfig_off.clear
     @management_port.clear
     @boot_apps.clear
-    @security_meta_annotations.clear
+    @fallback_annotations = Noir::SpringAnnotationIndex.new
     @annotation_aliases.clear
     @method_readers.clear
     @permit_markers.clear
@@ -260,7 +248,6 @@ class SpringAuthTagger < FrameworkTagger
     @refusing_resolvers.clear
     @resolver_registrations.clear
     @shiro_chains.clear
-    @stripped_lines.clear
     @field_types.clear
     @type_files.clear
     @code_index.clear
@@ -286,7 +273,7 @@ class SpringAuthTagger < FrameworkTagger
         module_dir = build_module(file)
 
         if content.includes?("@interface") || content.includes?("annotation class")
-          scan_meta_annotations(content, file, module_dir)
+          meta_files << file
         end
 
         scan_annotation_readers(content, file, module_dir) if (content.includes?("Annotation") || content.includes?("addArgumentResolvers")) && !test_source?(file)
@@ -322,6 +309,12 @@ class SpringAuthTagger < FrameworkTagger
       end
     end
 
+    if fallback || !@method_readers.empty?
+      meta_files.each { |file| index_annotation_source(file) }
+      @fallback_annotations.each_meta do |name, annotations|
+        @annotation_aliases[name] = annotations.map(&.name.split('.').last).to_set
+      end
+    end
     resolve_permit_markers
 
     collect_files_by_extension(".xml").each do |file|
@@ -340,43 +333,13 @@ class SpringAuthTagger < FrameworkTagger
     end
   end
 
-  private def scan_meta_annotations(content : String, file : String, module_dir : String?)
-    clean_content = Noir::CComments.strip(content)
-    lines = clean_content.lines
-
-    lines.each_with_index do |line, idx|
-      name = if match = line.match(/(?:public\s+|protected\s+|private\s+)?@interface\s+([A-Za-z0-9_$]+)/)
-               match[1]
-             elsif match = line.match(/\bannotation\s+class\s+([A-Za-z0-9_$]+)/)
-               match[1]
-             end
-      next unless name
-
-      annotations_text = [] of String
-      j = idx - 1
-      while j >= 0 && j >= idx - 20
-        prev = lines[j].strip
-        break if prev.starts_with?("package ") || prev.starts_with?("import ")
-        break if prev.includes?("class ") || prev.includes?("@interface ")
-        annotations_text.unshift(prev)
-        j -= 1
-      end
-      annotations_text << line
-
-      full_block = annotations_text.join("\n")
-      applied = full_block.scan(/(?:\A|[^@\w$.])@([A-Z][\w$]*)/).map(&.[1]).reject!(&.==(name))
-      @annotation_aliases[name] = applied.to_set unless applied.empty?
-      if match = full_block.match(/@(PreAuthorize|PostAuthorize|Secured|RolesAllowed)\s*\(/)
-        @security_meta_annotations[name] = MetaAnnotation.new(name, "@#{match[1]}")
-      elsif @security_meta_annotations.present?
-        @security_meta_annotations.each_value do |meta|
-          if full_block.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
-            @security_meta_annotations[name] = MetaAnnotation.new(name, meta.spring_annotation)
-            break
-          end
-        end
-      end
-    end
+  private def index_annotation_source(path : String)
+    return if @fallback_annotations.indexed?(path)
+    return unless content = read_file(path)
+    base = @base_paths.find { |root| Noir::PathScope.under_root?(path, root) } || @base_path
+    @fallback_annotations.read(path, content, base, build_module(path) || base)
+  rescue ex
+    @logger.debug "Could not read Spring annotations in #{path}: #{ex.message}"
   end
 
   # `AsyncHandlerInterceptor` extends `HandlerInterceptor` and keeps its
@@ -2525,154 +2488,57 @@ class SpringAuthTagger < FrameworkTagger
     end || 0
   end
 
-  private def check_annotations(ctx : SourceContext, method : String) : SecurityAnnotation?
-    line = ctx.line
-    return unless line
+  private def check_annotations(location : PathInfo, method : String) : SecurityAnnotation?
+    evidence = location.route_annotations
+    unless evidence
+      return unless location.line && (location.path.ends_with?(".java") || location.path.ends_with?(".kt"))
+      index_annotation_source(location.path)
+      evidence = @fallback_annotations.at(location) || return
+    end
 
-    # `@PostAuthorize` is evaluated after the handler returns: it hides a
-    # read's result, but a write has already happened when it refuses.
-    post_ok = SAFE_HTTP_METHODS.includes?(method.upcase)
-    class_names = post_ok ? CLASS_ANNOTATION_NAMES : CLASS_ANNOTATION_NAMES - ["@PostAuthorize"]
-    metas = @security_meta_annotations.values
-    metas.reject!(&.spring_annotation.==("@PostAuthorize")) unless post_ok
-
-    # Walk backwards from endpoint line to find annotations
-    # `line` is 1-indexed (from PathInfo), array is 0-indexed
-    lines = (@stripped_lines[ctx.path] ||= Noir::CComments.strip(ctx.full_content).lines)
-    endpoint_idx = line - 1
-    found = [] of SecurityAnnotation
-
-    idx = [endpoint_idx - 1, lines.size - 1].min
-    while idx >= 0 && idx >= endpoint_idx - 15
-      current_line = code_line(lines[idx])
-      # Skip empty lines but stop at method/class boundaries
-      if current_line.empty?
-        idx -= 1
-        next
+    evidence.chunk(&.level).each do |_, annotations|
+      decisions = annotations.compact_map { |ann| judge_annotation(ann, method) }
+      if picked = pick_security_annotation(decisions)
+        return picked
       end
-      break if current_line.starts_with?("public ") || current_line.starts_with?("private ") || current_line.starts_with?("protected ")
-      break if current_line.starts_with?("class ") || current_line.starts_with?("}")
-      break if current_line.ends_with?("}")
-      # The previous handler's declaration: a Kotlin `fun admin() = "admin"`
-      # or a bodiless interface method `String admin();`.
-      break if current_line.ends_with?(";") || current_line.matches?(KOTLIN_FUN_DECLARATION)
-
-      if item = line_security_annotation(current_line, post_ok, metas, false)
-        found << item
-      end
-
-      idx -= 1
-    end
-
-    annotation_lines_below(lines, endpoint_idx, "@").each do |below|
-      if item = line_security_annotation(code_line(below), post_ok, metas, false)
-        found << item
-      end
-    end
-
-    if (route = lines[endpoint_idx]?) && (item = permit_marker_annotation(code_line(route)))
-      found << item
-    end
-
-    if picked = pick_security_annotation(found)
-      return picked
-    end
-
-    # A controller-level `@PreAuthorize`/`@Secured`/`@RolesAllowed` applies to
-    # every handler the class declares. The walk above cannot reach it — it
-    # stops at the `public`/`class` boundary by design, so a handler under an
-    # `@PreAuthorize("hasRole('ADMIN')")` controller was reported as
-    # unauthenticated. Check the class declaration separately.
-    class_found = [] of SecurityAnnotation
-    class_names.each do |annotation_name|
-      if class_line = class_level_annotation(ctx.path, lines, annotation_name)
-        if item = line_security_annotation(code_line(class_line), post_ok, metas, true)
-          class_found << item
-        end
-      end
-    end
-
-    metas.each do |meta|
-      # The lookup matches by prefix: `@Admin` must not take `@AdminApi`.
-      if class_level_annotation(ctx.path, lines, "@#{meta.name}").try { |raw| code_line(raw).matches?(/\A@#{Regex.escape(meta.name)}\b/) }
-        class_found << {
-          public_access: false,
-          description:   "Protected by Spring #{meta.spring_annotation} (@#{meta.name}) on the controller class",
-          followed:      false,
-          denies_all:    false,
-        }
-      end
-    end
-
-    pick_security_annotation(class_found)
-  end
-
-  private def code_line(raw : String) : String
-    Noir::CComments.strip(raw).strip
-  end
-
-  # `public_access` is a whole-expression anonymous rule (`permitAll()`,
-  # `@Secured("IS_AUTHENTICATED_ANONYMOUSLY")`). A restricting annotation on
-  # the same member wins. An argument we cannot read stays a guard.
-  private def line_security_annotation(line : String, post_ok : Bool, metas : Array(MetaAnnotation), on_class : Bool) : SecurityAnnotation?
-    if match = line.match(/@((?:[\w$]+\.)*?(PreAuthorize|PostAuthorize|Secured|RolesAllowed|DenyAll|RequiresAuthentication|RequiresUser|RequiresPermissions|RequiresRoles|RequiresGuest))\b/)
-      simple = match[2]
-      return if simple == "PostAuthorize" && !post_ok
-      suffix = on_class ? " on the controller class" : ""
-      arg = annotation_argument(line, simple)
-      admits = annotation_admits_anonymous?(simple, arg)
-      framework = simple.starts_with?("Requires") ? "Shiro" : "Spring"
-      return {
-        public_access: admits,
-        description:   "Protected by #{framework} @#{match[1]}#{suffix}",
-        followed:      annotation_semantics_followed?(simple, arg),
-        denies_all:    annotation_denies_all?(simple, arg),
-      }
-    end
-
-    metas.each do |meta|
-      next unless line.matches?(/(?:\A|[^@\w])@#{Regex.escape(meta.name)}\b/)
-      suffix = on_class ? " on the controller class" : ""
-      return {public_access: false, description: "Protected by Spring #{meta.spring_annotation} (@#{meta.name})#{suffix}", followed: false, denies_all: false}
-    end
-    on_class ? nil : permit_marker_annotation(line)
-  end
-
-  # A handler annotation the permitAll matcher is collected from (the route
-  # annotation itself can be one: `@AnonymousGetMapping`).
-  private def permit_marker_annotation(line : String) : SecurityAnnotation?
-    return if @permit_marker_names.empty?
-    line.gsub(STRING_LITERAL, "\"\"").scan(/(?:\A|[^@\w$.])@([A-Z][\w$]*)\b/) do |found|
-      return {public_access: true, description: "#{PERMIT_MARKER_PREFIX}#{found[1]}", followed: false, denies_all: false} if @permit_marker_names.includes?(found[1])
     end
     nil
   end
 
-  private def annotation_argument(line : String, name : String) : String?
-    start = line.index(/@[\w$.]*#{Regex.escape(name)}\b/)
-    return unless start
-    open = line.index('(', start)
-    return unless open
-    depth = 0
-    idx = open
-    while idx < line.size
-      case line[idx]
-      when '('
-        depth += 1
-      when ')'
-        depth -= 1
-        return line[(open + 1)...idx] if depth == 0
+  private def judge_annotation(ann : RouteAnnotation, method : String) : SecurityAnnotation?
+    name = ann.name.split('.').last
+    on_class = ann.origin.in?(:class, :inherited_class)
+    unless SECURITY_ANNOTATIONS.includes?(name)
+      if !ann.uncertain && !on_class && !ann.composed_from && @permit_marker_names.includes?(name)
+        return {public_access: true, description: "#{PERMIT_MARKER_PREFIX}#{name}", followed: false, denies_all: false}
       end
-      idx += 1
+      return
     end
-    nil
+    return if name == "PostAuthorize" && !SAFE_HTTP_METHODS.includes?(method.upcase)
+    admits = annotation_admits_anonymous?(name, ann.argument)
+    denies = annotation_denies_all?(name, ann.argument)
+    # A possible override carrying an exemption cannot establish either a
+    # guard or an exemption for this route. Continue down the hierarchy.
+    return if ann.uncertain && (admits || denies)
+    framework = name.starts_with?("Requires") ? "Shiro" : "Spring"
+    description = "Protected by #{framework} @#{ann.name}"
+    if applied = ann.composed_from
+      description += " (@#{applied})"
+    end
+    description += " on the controller class" if on_class
+    {
+      public_access: admits,
+      description:   description,
+      followed:      !ann.uncertain && annotation_semantics_followed?(name, ann.argument),
+      denies_all:    denies,
+    }
   end
 
   private def annotation_admits_anonymous?(name : String, arg : String?) : Bool
     case name
     when "RolesAllowed", "DenyAll", "RequiresAuthentication", "RequiresUser", "RequiresPermissions", "RequiresRoles"
       false
-    when "RequiresGuest"
+    when "RequiresGuest", "PermitAll"
       true
     when "Secured"
       secured_admits_anonymous?(arg)
@@ -2751,9 +2617,10 @@ class SpringAuthTagger < FrameworkTagger
     # anonymous so a name-only source scan does not put the guard back.
     annotation_public = false
     marker : String? = nil
-    contexts = read_source_context(endpoint)
-    contexts.each do |ctx|
-      decision = check_annotations(ctx, endpoint.method)
+    recorded = endpoint.details.code_paths.select(&.route_annotations)
+    locations = recorded.empty? ? endpoint.details.code_paths : recorded
+    locations.each do |location|
+      decision = check_annotations(location, endpoint.method)
       next unless decision
       return endpoint if decision[:denies_all]
       if decision[:public_access]
@@ -2790,7 +2657,7 @@ class SpringAuthTagger < FrameworkTagger
     end
 
     # Phase 5: a handler that refuses an anonymous caller itself.
-    contexts.each do |ctx|
+    read_source_context(endpoint).each do |ctx|
       if description = anonymous_refusal(ctx)
         endpoint = add_guard_tag(endpoint, description, false)
         note_public_annotation(endpoint) if annotation_public

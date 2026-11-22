@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/spring_annotation_support"
 require "../../../miniparsers/java_route_extractor_ts"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../miniparsers/java_callee_extractor"
@@ -14,6 +15,7 @@ module Analyzer::Java
     analyzer_for "java_spring"
 
     include JavaEngine
+    include Analyzer::Java::SpringAnnotationSupport
 
     REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
     # Where a router statement starts: `route(` / `route()` and the
@@ -198,6 +200,7 @@ module Analyzer::Java
             package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
             next if package_name.empty?
 
+            index_spring_annotations(root, content, path)
             dto_index = with_jackson_defaults(dto_builder.build_for_with_root(path, content, root), path)
             feign_clients = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes_from(root, content)
             http_exchange_clients = Noir::TreeSitterJavaParameterExtractor.extract_http_exchange_client_classes_from(root, content)
@@ -243,7 +246,7 @@ module Analyzer::Java
               base_path = is_internal_client ? "" : configured_base_path
 
               line = route.line + 1
-              details = Details.new(PathInfo.new(path, line))
+              details = Details.new(@annotations.bind(PathInfo.new(path, line), route.method_name, offset: route.declaration_byte))
 
               endpoint = spring_endpoint(spring_properties,
                 Noir::URLPath.join_rooted(base_path, route.path),
@@ -301,7 +304,7 @@ module Analyzer::Java
                     parameters = entry_params[entry_index].dup
                     merge_route_condition_params(parameters, Noir::TreeSitterJavaRouteExtractor.request_params(implementation.params + entry_route.params))
 
-                    details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
+                    details = Details.new(@annotations.bind(PathInfo.new(entry.path, entry_route.line + 1), entry_route.method_name, PathInfo.new(path, implementation.line + 1), entry_route.declaration_byte))
                     endpoint = spring_endpoint(spring_properties,
                       Noir::URLPath.join_rooted(configured_base_path, inherited_path),
                       entry_route.verb, parameters, details
@@ -356,7 +359,7 @@ module Analyzer::Java
                 verb, destination, line = entry
                 endpoint = spring_endpoint(spring_properties,
                   destination,
-                  verb, Details.new(PathInfo.new(path, line))
+                  verb, Details.new(@annotations.bind(PathInfo.new(path, line)))
                 )
                 endpoint.protocol = "ws"
                 @result << endpoint
@@ -475,6 +478,7 @@ module Analyzer::Java
       path_configs.each do |root, config|
         @result.concat(spring_provided_endpoints(root, spring_property_maps[root], config.web_base_path))
       end
+      resolve_spring_annotations
       Fiber.yield
 
       @result
@@ -589,6 +593,7 @@ module Analyzer::Java
 
           visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
           constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content, java_project_constants(path))
+          index_spring_annotations(root, content, path)
           Noir::TreeSitterJavaRouteExtractor.extract_interface_routes_from(root, content, visible_meta_mappings, constants).each do |interface_name, routes|
             routes.each do |route|
               index.add(project_root_for(path), package_name, interface_name, SpringInterfaceRouteEntry.new(route, path, content, package_name))
