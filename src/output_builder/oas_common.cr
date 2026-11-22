@@ -305,7 +305,7 @@ module OutputBuilderOasCommon
     normalized = method.downcase
     return [normalized] if supported.includes?(normalized)
 
-    if {"any", "all", "forward", "use"}.includes?(normalized)
+    if synthetic_any_method?(method)
       return ANY_OPERATION_METHODS.select { |candidate| supported.includes?(candidate) }
     end
 

@@ -591,14 +591,40 @@ describe "EndpointOptimizer" do
       ])
     end
 
-    it "normalizes HTTP methods" do
+    it "keeps extension methods distinct from GET and merges their case variants" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
         Endpoint.new("/test", "INVALID_METHOD"),
+        Endpoint.new("/test", "GET"),
+        Endpoint.new("/test", "propfind", [Param.new("depth", "", "header")]),
+        Endpoint.new("/test", "PROPFIND", [Param.new("fields", "", "query")]),
       ]
 
       result = optimizer.optimize_endpoints(endpoints)
-      result[0].method.should eq("GET")
+      result.map(&.method).sort!.should eq(["GET", "INVALID_METHOD", "PROPFIND"])
+      result.find!(&.method.==("PROPFIND")).params.map(&.name).sort!.should eq(["depth", "fields"])
+      result.find!(&.method.==("GET")).params.should be_empty
+    end
+
+    it "accepts RFC 9110 token punctuation and digits" do
+      method = "x-09!#$%&'*+.^_`|~"
+      result = EndpointOptimizer.new(logger, options).optimize_endpoints([Endpoint.new("/test", method)])
+      result.first.method.should eq(method.upcase)
+      result.first.resolution.should be_nil
+    end
+
+    it "reports malformed methods as unresolved alongside real routes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      ["", " GET", "GET\n", "get/post", "ſend"].each do |method|
+        malformed = Endpoint.new("/test", method, [Param.new("input", "", "query")])
+        malformed.resolution = {"handler" => Endpoint::RESOLUTION_HEURISTIC}
+        result = optimizer.optimize_endpoints([malformed, Endpoint.new("/test", "GET")])
+
+        result.map(&.method).sort!.should eq(["GET", "UNKNOWN METHOD"])
+        unresolved = result.find!(&.method.==("UNKNOWN METHOD"))
+        unresolved.params.map(&.name).should eq(["input"])
+        unresolved.resolution.should eq({"handler" => "heuristic", "method" => "unresolved"})
+      end
     end
 
     it "preserves ANY as a valid HTTP method" do

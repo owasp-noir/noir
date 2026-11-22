@@ -167,6 +167,8 @@ describe OutputBuilderOasCommon do
 
     it "returns empty array for unrecognized methods" do
       helper.test_operation_methods("INVALID").should be_empty
+      helper.test_operation_methods("FORWARD").should be_empty
+      helper.test_operation_methods("USE").should be_empty
     end
   end
 

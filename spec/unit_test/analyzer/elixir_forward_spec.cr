@@ -68,7 +68,7 @@ describe "Elixir forward mounts" do
       "lib/admin_router.ex" => ADMIN_ROUTER,
     }) { |options| Analyzer::Elixir::Plug.new(options).analyze }
 
-    routes.should eq(["DELETE /users/admin/purge", "FORWARD /graphql", "GET /hello", "GET /users/:id"])
+    routes.should eq(["ANY /graphql", "DELETE /users/admin/purge", "GET /hello", "GET /users/:id"])
   end
 
   it "re-roots a child of a Phoenix router forward inside a scope and drops the forward" do

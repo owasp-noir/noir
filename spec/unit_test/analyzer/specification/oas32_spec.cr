@@ -86,7 +86,7 @@ describe "OAS 3.2 additionalOperations and discriminators" do
       JSON
 
     rows = endpoints.map { |endpoint| "#{endpoint.method} #{endpoint.url}" }.sort!
-    rows.should eq(["GET /stations", "PUT /document", "PUT /pet", "SUBSCRIBE /trips/{id}"])
+    rows.should eq(["GET /stations", "LINK /trips/{id}", "PUT /document", "PUT /pet", "SUBSCRIBE /trips/{id}"])
 
     subscribe = endpoints.find { |endpoint| endpoint.method == "SUBSCRIBE" }
     subscribe.should_not be_nil

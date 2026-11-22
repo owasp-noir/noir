@@ -4,6 +4,15 @@ require "../../../src/models/endpoint"
 require "../../../src/utils/utils"
 
 describe "OutputBuilderHttpie" do
+  it "keeps a punctuated method visible without letting HTTPie use it as the host" do
+    builder = OutputBuilderHttpie.new(create_test_options)
+    builder.io = IO::Memory.new
+    builder.print([Endpoint.new("/items", "M-SEARCH"), Endpoint.new("/items", "PROPFIND")])
+    output = builder.io.to_s
+    output.should contain("# curl -i -g -X 'M-SEARCH' '/items'")
+    output.lines.reject(&.starts_with?('#')).should eq(["http 'PROPFIND' '/items'"])
+  end
+
   it "print endpoints as httpie commands" do
     options = {
       "debug"   => YAML::Any.new(false),

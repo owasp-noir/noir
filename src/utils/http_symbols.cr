@@ -28,7 +28,10 @@ def get_symbol(method : String)
   symbol[method]
 end
 
-# The real HTTP methods an endpoint can carry. `QUERY` (RFC 10008) is
+# RFC 9110 method = token. Validate the original bytes before case folding.
+HTTP_METHOD_TOKEN_RE = /\A[!#$%&'*+.^_`|~A-Za-z0-9-]+\z/
+
+# The HTTP methods Noir recognizes by name. `QUERY` (RFC 10008) is
 # accepted core-wide, but a framework analyzer adds it to its own verb
 # table only when the upstream framework actually routes the verb —
 # adding it speculatively would report endpoints the framework itself
@@ -44,14 +47,13 @@ ALLOWED_HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEA
 SAFE_HTTP_METHODS = Set{"GET", "HEAD", "OPTIONS", "QUERY"}
 
 # Verbs an endpoint can carry that are not HTTP methods: the wildcard
-# `ANY`, and the AsyncAPI / messaging verbs the optimizer allow-lists so
-# event-driven endpoints aren't downgraded to `GET`.
+# `ANY`, and the AsyncAPI / messaging verbs used by event-driven endpoints.
 SYNTHETIC_ENDPOINT_METHODS = ["ANY", "PUBLISH", "SUBSCRIBE", "SEND", "RECEIVE"]
 
 # The synthetic verb CLI entry points carry (`cli://<binary>/<subcommand>`).
 CLI_ENDPOINT_METHOD = "CLI"
 
-# Every verb that can appear as `Endpoint#method`. Consumers that have to
+# Known endpoint verbs. Consumers that have to
 # tell "this token names a method" from "this token is part of a URL"
 # (the probe matchers) read this instead of keeping their own list.
 ENDPOINT_METHODS = ALLOWED_HTTP_METHODS + SYNTHETIC_ENDPOINT_METHODS + [CLI_ENDPOINT_METHOD]
@@ -65,7 +67,8 @@ def synthetic_any_method?(method : String) : Bool
 end
 
 def expand_synthetic_http_methods(method : String) : Array(String)
-  normalized = method.upcase
+  return [] of String unless method.matches?(HTTP_METHOD_TOKEN_RE)
+  normalized = method.upcase(:ascii)
   return WILDCARD_HTTP_METHODS if synthetic_any_method?(normalized)
 
   [normalized]

@@ -31,7 +31,7 @@ module Analyzer::Elixir
       rerooted = [] of Endpoint
       @result.each do |endpoint|
         location = endpoint.details.code_paths.first?
-        next if endpoint.method == "FORWARD" && location && forwarded_at.includes?({location.path, location.line || 0})
+        next if endpoint.method == "ANY" && location && forwarded_at.includes?({location.path, location.line || 0})
 
         mod = location.try { |loc| module_by_path[loc.path]? }
         prefixes = mod ? forward_prefixes(mod, forwards, module_by_path, prefix_cache, Set(String).new) : [] of String
@@ -353,7 +353,7 @@ module Analyzer::Elixir
       "delete"  => "DELETE",
       "head"    => "HEAD",
       "options" => "OPTIONS",
-      "forward" => "FORWARD",
+      "forward" => "ANY", # The mount delegates every method to the target plug.
       # RFC 10008, shipped in elixir-plug/plug#1319 (merged 2026-06-25).
       "query" => "QUERY",
     }

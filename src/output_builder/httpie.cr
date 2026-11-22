@@ -68,6 +68,12 @@ class OutputBuilderHttpie < OutputBuilder
       end
 
       expand_synthetic_http_methods(endpoint.method).each do |method|
+        # HTTPie's positional parser treats a non-alphabetic method as the host.
+        unless method.matches?(/\A[A-Z]+\z/)
+          ob_puts "# HTTPie requires an alphabetic method. Equivalent curl command:"
+          ob_puts "# #{CurlCommand.for_endpoint(method, baked, endpoint.params)}#{project_shell_comment(endpoint)}"
+          next
+        end
         parts = ["http"]
         parts.concat(option_parts)
         parts << CurlCommand.shell_quote(method)
