@@ -31,7 +31,7 @@ describe "Python param attribution", tags: "functional" do
 
   it "keeps a FastAPI body whose model is imported from outside the scan" do
     rows = params_for.call("fastapi_unresolved_model")
-    rows["POST /acks/{item_id}"].should eq(["item_id:path", "payload:json"])
+    rows["POST /acks/{item_id}"].should eq(["body:json", "item_id:path"])
     # Stdlib and local Enum types add no body.
     day = rows["GET /days/{day_id}"]
     day.should contain("color:query")

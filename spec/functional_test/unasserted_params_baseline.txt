@@ -19,7 +19,6 @@ fixtures/cpp/drogon/	POST::/api/users
 fixtures/cpp/drogon/	PUT::/api/users/{id}
 fixtures/csharp/aspnet_core_mvc_discovery/	POST::/returns/record-parameter
 fixtures/etc/multi_techs/	GET::/
-fixtures/python/fastapi_package_roots/	POST::/notes
 fixtures/ruby/rails_advanced/	GET::/{ENV.fetch}/:area
 fixtures/ruby/rails_route_loader/	GET::/{api_path}/stale_interp
 fixtures/specification/hasura/	POST::/v1/graphql#Mutation.delete_movies_by_pk

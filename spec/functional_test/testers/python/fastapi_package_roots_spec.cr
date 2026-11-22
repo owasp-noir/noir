@@ -8,8 +8,7 @@ require "../../func_spec.cr"
 #   * `flat/`: `from core.schemas import OrderIn` in
 #     `backend/api/routers/orders.py`, the service run from `backend/api`.
 #   * `sibling/` also imports `common`, which both `shared/` and `libs/`
-#     hold: ambiguous, so `/notes` reads no model, even though `shared/`
-#     is the root picked for `shared`.
+#     hold. Both possible definitions of NoteIn declare the text field.
 expected_endpoints = [
   Endpoint.new("/orders", "POST", [
     Param.new("customer_email", "", "json"),
@@ -19,7 +18,16 @@ expected_endpoints = [
     Param.new("order_id", "", "json"),
     Param.new("reason", "", "json"),
   ]),
-  Endpoint.new("/notes", "POST"),
+  Endpoint.new("/notes", "POST", [Param.new("text", "", "json")]),
+  Endpoint.new("/notes/embedded", "POST", [Param.new("data", "", "json")]),
+  Endpoint.new("/notes/pair", "POST", [
+    Param.new("first", "", "json"),
+    Param.new("second", "", "json"),
+  ]),
+  Endpoint.new("/notes/external", "POST", [
+    Param.new("body", "", "json"),
+    Param.new("preview", "false", "query"),
+  ]),
   Endpoint.new("/api/v1/orders", "POST", [
     Param.new("customer_email", "", "json"),
     Param.new("amount", "", "json"),
@@ -32,7 +40,7 @@ FunctionalTester.new("fixtures/python/fastapi_package_roots/", {
 }, expected_endpoints).perform_tests
 
 describe "FastAPI package roots: ambiguous package", tags: "functional" do
-  it "binds no model from a package two roots hold" do
+  it "marks the opaque body and treats a field found in both packages as resolved" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/python/fastapi_package_roots/")])
     options["nolog"] = YAML::Any.new(true)
@@ -41,6 +49,11 @@ describe "FastAPI package roots: ambiguous package", tags: "functional" do
     app.detect
     app.analyze
 
-    app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/notes" }.params.map(&.name).should_not contain("text")
+    notes = app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/notes" }
+    notes.params.map { |param| {param.name, param.param_type} }.should eq([{"text", "json"}])
+    notes.params.first.tags.map(&.name).should_not contain("unresolved")
+
+    external = app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/notes/external" }
+    external.params.find! { |param| param.name == "body" }.tags.map(&.name).should contain("unresolved")
   end
 end
