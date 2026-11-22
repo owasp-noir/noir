@@ -5,35 +5,107 @@ name: GHCR Publish
 # separate terms of service, privacy policy, and support
 # documentation.
 on:
+  # `:main` is rebuilt once a night, not on every push. A push-triggered build
+  # ran two release compiles (about 13 and 17 minutes) for each merge that
+  # touched `src/**`: 437 runs in 30 days. Nothing that reads `:main` needs it
+  # within minutes of a merge: people pulling the edge image get an analyzer
+  # change the next morning, and a manual run (no `version`) refreshes it on
+  # demand. The `changed` job below skips the night when the published image
+  # was already built from a tree with the same image inputs.
+  schedule:
+    - cron: "17 18 * * *"
+  # The exception: the action's inputs (action.yml) and the entrypoint inside
+  # the image change together. `uses: owasp-noir/noir@main` reads action.yml
+  # from the branch and pulls `:main`, so a night between the two would run a
+  # new action.yml against an old entrypoint. These paths change rarely.
   push:
     branches: [main]
-    # Only republish :main when something that actually lands in the image
-    # changes. The Dockerfile.dockerignore next to the Dockerfile excludes
-    # spec/, docs/, .github/ and *.md, so a docs or CI push produces a
-    # byte-identical image and used to rebuild and repush it anyway. Releases
-    # and manual dispatches stay unconditional.
     paths:
-      - .github/workflows/publish-ghcr.yml
-      - packaging/docker/**
-      - shard.yml
-      - shard.lock
-      - src/**
+      - action.yml
       - github-action/entrypoint.sh
+      - packaging/docker/**
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       version:
-        description: Version to build and tag (e.g., 0.0.13)
-        required: true
+        description: Version to build and tag (e.g., 0.0.13). Leave empty to rebuild :main.
+        required: false
+        default: ""
         type: string
+
+# One run at a time for everything that can move `:main`, in the order the
+# runs were requested. Without this a nightly build that started first and
+# finished last would put `:main` back on the older commit, undoing an
+# entrypoint push. A release publishes version tags and `latest` only, so it
+# has a group of its own.
+concurrency:
+  group: ghcr-${{ github.event_name == 'release' && github.ref || 'main' }}
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  changed:
+    # Only the nightly run asks this question. A release or a manual run is an
+    # explicit request and always builds.
+    #
+    # The published image records the commit it was built from
+    # (`org.opencontainers.image.revision`, set by docker/metadata-action). If
+    # nothing that lands in the image differs between that commit and HEAD, a
+    # rebuild would push the same program under a new digest. This compares
+    # this repository's sources only: the path list is what the old push
+    # trigger watched (Dockerfile.dockerignore drops spec/, docs/, .github/
+    # and *.md from the build context), and the passive rules the Dockerfile
+    # clones from their own repository are not part of it. Any doubt (no image
+    # yet, a label that is missing, a revision this clone cannot find)
+    # resolves to "build".
+    name: Image inputs changed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.diff.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Compare HEAD with the published :main image
+        id: diff
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
+          SCHEDULED: ${{ github.event_name == 'schedule' }}
+          MANUAL_MAIN_REFRESH: ${{ github.event_name == 'workflow_dispatch' && inputs.version == '' }}
+        run: |
+          # A manual run without a version means "rebuild :main". From any
+          # other ref it would publish that branch's name as a tag, or no tag
+          # at all.
+          if [ "$MANUAL_MAIN_REFRESH" = "true" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Run this workflow from main, or give a version."
+            exit 1
+          fi
+          if [ "$SCHEDULED" != "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          revision=$(docker buildx imagetools inspect "$IMAGE" \
+            --format '{{ index (index .Image "linux/amd64").Config.Labels "org.opencontainers.image.revision" }}' 2>/dev/null || true)
+          echo "published revision: ${revision:-unknown}"
+          build=true
+          if printf '%s' "$revision" | grep -Eq '^[0-9a-f]{40}$' && git cat-file -e "$revision^{commit}" 2>/dev/null; then
+            if git diff --quiet "$revision" HEAD -- \
+              .github/workflows/publish-ghcr.yml packaging/docker shard.yml shard.lock src github-action/entrypoint.sh; then
+              build=false
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "build=$build"
+
   build:
+    needs: changed
+    if: needs.changed.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -138,7 +210,7 @@ jobs:
 
       # Normalize version: strip leading 'v' if present
       - name: Normalize version
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
         id: normalize
         run: |
           RAW_VERSION="${{ inputs.version }}"
@@ -151,7 +223,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # main push -> :main
+            # nightly run, or a manual run from main -> :main
             type=ref,event=branch
 
             # GitHub Release v1.2.3 -> 1.2.3, 1.2, 1, latest
@@ -160,9 +232,9 @@ jobs:
             type=semver,pattern={{major}},enable=${{ github.event_name == 'release' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
 
-            # Manual dispatch -> input version + latest
-            type=raw,value=${{ steps.normalize.outputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
+            # Manual dispatch with a version -> that version + latest
+            type=raw,value=${{ steps.normalize.outputs.version }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
 
       - name: Create manifest list and push
         working-directory: /tmp/digests

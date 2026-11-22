@@ -1,6 +1,12 @@
 ---
 name: Snapcraft Publish
 on:
+  # The nightly run only builds: it proves snap/snapcraft.yaml still builds
+  # the current source. That check used to be a ci.yml job on every push to
+  # main that touched `src/**`, about ten minutes each time. The publish step
+  # below runs for a release or a manual run only.
+  schedule:
+    - cron: "47 18 * * *"
   release:
     types: [published]
   workflow_dispatch:
@@ -11,6 +17,9 @@ on:
         default: warning
       tags:
         description: Test scenario tags
+permissions:
+  contents: read
+
 jobs:
   snapcraft-releaser:
     runs-on: ubuntu-latest
