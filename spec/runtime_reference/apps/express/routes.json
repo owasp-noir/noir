@@ -33,6 +33,38 @@
   },
   {
     "method": "GET",
+    "path": "/api/readers/clubs"
+  },
+  {
+    "method": "GET",
+    "path": "/api/readers/clubs/:club"
+  },
+  {
+    "method": "GET",
+    "path": "/api/readers/events"
+  },
+  {
+    "method": "GET",
+    "path": "/api/readers/reviews"
+  },
+  {
+    "method": "GET",
+    "path": "/api/staff/clubs"
+  },
+  {
+    "method": "GET",
+    "path": "/api/staff/clubs/:club"
+  },
+  {
+    "method": "GET",
+    "path": "/api/staff/events"
+  },
+  {
+    "method": "GET",
+    "path": "/api/staff/reviews"
+  },
+  {
+    "method": "GET",
     "path": "/archive/authors/:\"author-name\""
   },
   {
@@ -77,11 +109,59 @@
   },
   {
     "method": "GET",
+    "path": "/readers/clubs"
+  },
+  {
+    "method": "GET",
+    "path": "/readers/clubs/:club"
+  },
+  {
+    "method": "POST",
+    "path": "/readers/clubs/:club/join"
+  },
+  {
+    "method": "DELETE",
+    "path": "/readers/clubs/:club/membership"
+  },
+  {
+    "method": "GET",
+    "path": "/readers/events"
+  },
+  {
+    "method": "GET",
+    "path": "/readers/reviews"
+  },
+  {
+    "method": "GET",
     "path": "/recent"
   },
   {
     "method": "GET",
     "path": "/search"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/clubs"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/clubs/:club"
+  },
+  {
+    "method": "POST",
+    "path": "/staff/clubs/:club/join"
+  },
+  {
+    "method": "DELETE",
+    "path": "/staff/clubs/:club/membership"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/events"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/reviews"
   },
   {
     "method": "GET",

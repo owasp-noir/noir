@@ -41,8 +41,18 @@ describe "runtime reference", tags: "functional" do
       })
       # A library route with no observed registration is still visible to
       # scan users. It supplies no evidence for a running server's table.
-      reported = tester.endpoints.select { |ep| ep.protocol == "http" && ep.resolution.try(&.["registration"]?) != "unresolved" }
-        .map { |ep| runtime_route(name, ep.method, ep.url, regex: ep.kind == "regex") }.to_set
+      reported = Set(String).new
+      excluded = [] of String
+      tester.endpoints.each do |ep|
+        next unless ep.protocol == "http"
+        route = runtime_route(name, ep.method, ep.url, regex: ep.kind == "regex")
+        if ep.resolution.try(&.["registration"]?) == "unresolved"
+          excluded << route
+        else
+          reported << route
+        end
+      end
+      puts "runtime reference #{name}: excluded #{excluded.size} HTTP rows with unresolved registration"
 
       gaps = (served - reported).map { |route| "missed #{route}" }.to_set
       (reported - served).each { |route| gaps << "extra #{route}" }
@@ -50,6 +60,7 @@ describe "runtime reference", tags: "functional" do
       known = File.read_lines(baseline).reject { |line| line.empty? || line.starts_with?('#') }.to_set
 
       changes = (gaps - known).to_a.sort.map { |line| "New: #{line}" }
+      (excluded.to_set & served).to_a.sort.each { |route| changes << "Served but registration unresolved: #{route}" }
       (known - gaps).to_a.sort.each { |line| changes << "Stale: #{line}" }
       fail "#{baseline}\n#{changes.join('\n')}" unless changes.empty?
     end

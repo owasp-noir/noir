@@ -48,6 +48,78 @@
     "path": "/archive/isbn/:number{[0-9]+}"
   },
   {
+    "method": "GET",
+    "path": "/branches/central/circulation/holds"
+  },
+  {
+    "method": "POST",
+    "path": "/branches/central/circulation/holds"
+  },
+  {
+    "method": "DELETE",
+    "path": "/branches/central/circulation/holds/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/branches/central/circulation/hours"
+  },
+  {
+    "method": "GET",
+    "path": "/branches/central/circulation/loans"
+  },
+  {
+    "method": "POST",
+    "path": "/branches/central/circulation/loans"
+  },
+  {
+    "method": "DELETE",
+    "path": "/branches/central/circulation/loans/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/branches/central/circulation/loans/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/branches/central/circulation/loans/:id/renew"
+  },
+  {
+    "method": "GET",
+    "path": "/branches/mobile/circulation/holds"
+  },
+  {
+    "method": "POST",
+    "path": "/branches/mobile/circulation/holds"
+  },
+  {
+    "method": "DELETE",
+    "path": "/branches/mobile/circulation/holds/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/branches/mobile/circulation/hours"
+  },
+  {
+    "method": "GET",
+    "path": "/branches/mobile/circulation/loans"
+  },
+  {
+    "method": "POST",
+    "path": "/branches/mobile/circulation/loans"
+  },
+  {
+    "method": "DELETE",
+    "path": "/branches/mobile/circulation/loans/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/branches/mobile/circulation/loans/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/branches/mobile/circulation/loans/:id/renew"
+  },
+  {
     "method": "ALL",
     "path": "/echo"
   },

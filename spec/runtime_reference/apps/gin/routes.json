@@ -97,11 +97,111 @@
   },
   {
     "method": "GET",
+    "path": "/members/desk/holds"
+  },
+  {
+    "method": "POST",
+    "path": "/members/desk/holds"
+  },
+  {
+    "method": "DELETE",
+    "path": "/members/desk/holds/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/members/desk/loans/:id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/members/desk/loans/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/members/desk/receipts"
+  },
+  {
+    "method": "POST",
+    "path": "/members/desk/returns"
+  },
+  {
+    "method": "GET",
     "path": "/popular"
   },
   {
     "method": "GET",
     "path": "/recent"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/desk/holds"
+  },
+  {
+    "method": "POST",
+    "path": "/staff/desk/holds"
+  },
+  {
+    "method": "DELETE",
+    "path": "/staff/desk/holds/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/desk/loans/:id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/staff/desk/loans/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/desk/receipts"
+  },
+  {
+    "method": "POST",
+    "path": "/staff/desk/returns"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/terminal/status"
+  },
+  {
+    "method": "HEAD",
+    "path": "/staff/terminal/status"
+  },
+  {
+    "method": "CONNECT",
+    "path": "/staff/terminal/sync"
+  },
+  {
+    "method": "DELETE",
+    "path": "/staff/terminal/sync"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/terminal/sync"
+  },
+  {
+    "method": "HEAD",
+    "path": "/staff/terminal/sync"
+  },
+  {
+    "method": "OPTIONS",
+    "path": "/staff/terminal/sync"
+  },
+  {
+    "method": "PATCH",
+    "path": "/staff/terminal/sync"
+  },
+  {
+    "method": "POST",
+    "path": "/staff/terminal/sync"
+  },
+  {
+    "method": "PUT",
+    "path": "/staff/terminal/sync"
+  },
+  {
+    "method": "TRACE",
+    "path": "/staff/terminal/sync"
   },
   {
     "method": "GET",
