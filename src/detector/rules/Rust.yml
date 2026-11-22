@@ -1,0 +1,313 @@
+ActixWeb:
+  key: rust_actix_web
+  gate: {extensions: [.rs], basenames: [Cargo.toml, Cargo.lock]}
+  files: {path_segments: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - cargo_dependency: actix-web
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          actix-web = "4"
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          serde = "1"
+
+Axum:
+  key: rust_axum
+  gate: {extensions: [.rs], basenames: [Cargo.toml, Cargo.lock]}
+  files: {path_segments: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - cargo_dependency: axum
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          axum = {}
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          serde = "1"
+
+Dioxus:
+  key: rust_dioxus
+  files: {basenames: [Cargo.toml]}
+  match:
+    regex: '(?ms)^\s*(?:dioxus\s*[=.]|\[(?:[\w.-]+\.)?dependencies\.dioxus\])'
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          dioxus = { version = "0.8", features = ["fullstack"] }
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          dioxus.workspace = true
+      - path: Cargo.toml
+        content: |-
+          [dependencies.dioxus]
+          version = "0.8"
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          dioxus_router = "0.8"
+          dioxus-cli = "0.8"
+      - {path: main.rs, content: "use dioxus::prelude::*;"}
+
+Gotham:
+  key: rust_gotham
+  gate: {extensions: [.rs], basenames: [Cargo.toml, Cargo.lock]}
+  files: {path_segments: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - cargo_dependency: gotham
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          gotham = "0.7"
+      - path: Cargo.toml
+        content: |-
+          [package]
+          name = "my-app"
+          version = "0.1.0"
+
+          [dependencies]
+          gotham = "0.7"
+          serde = "1.0"
+          tokio = "1.0"
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          rocket = "0.5"
+      - {path: main.rs, content: "use gotham::prelude::*;"}
+
+Leptos:
+  key: rust_leptos
+  files: {basenames: [Cargo.toml]}
+  match:
+    regex: '(?ms)^\s*(?:leptos\s*[=.]|\[(?:[\w.-]+\.)?dependencies\.leptos\])'
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          leptos = { version = "0.8", features = ["fullstack"] }
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          leptos.workspace = true
+      - path: Cargo.toml
+        content: |-
+          [dependencies.leptos]
+          version = "0.8"
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          leptos_router = "0.8"
+          leptos-cli = "0.8"
+      - {path: main.rs, content: "use leptos::prelude::*;"}
+
+Loco:
+  key: rust_loco
+  gate: {extensions: [.rs], basenames: [Cargo.toml, Cargo.lock]}
+  files: {path_segments: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - cargo_dependency: loco-rs
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          loco-rs = { version = "0.2" }
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          loco-rs = "0.2"
+    no_match:
+      - {path: package.json, content: "loco-rs"}
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          axum = "0.7"
+
+Ntex:
+  key: rust_ntex
+  files: {basenames: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - regex: '(?ms)^\s*(?:ntex\s*[=.]|\[(?:[\w.-]+\.)?dependencies\.ntex\])'
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          ntex = { version = "2", features = ["tokio"] }
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          ntex.workspace = true
+      - path: Cargo.toml
+        content: |-
+          [dependencies.ntex]
+          version = "2"
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          ntex-mqtt = "4"
+          ntex-bytes = "0.1"
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          actix-web = "4"
+      - {path: src/main.rs, content: "use ntex::web;"}
+      - path: Cargo.lock
+        content: |-
+          [[package]]
+          name = "ntex"
+          dependencies = []
+
+Poem:
+  key: rust_poem
+  gate: {extensions: [.rs], basenames: [Cargo.toml, Cargo.lock]}
+  files: {extensions: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - regex: '(?ms)^\s*poem(-openapi)?\s*=\s*'
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          poem = { version = "3.1" }
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          poem-openapi = { version = "5.0" }
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          axum = {}
+      - {path: main.rs, content: "use poem::prelude::*;"}
+
+Rocket:
+  key: rust_rocket
+  gate: {extensions: [.rs], basenames: [Cargo.toml, Cargo.lock]}
+  files: {path_segments: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - cargo_dependency: rocket
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          rocket = {}
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          serde = "1"
+
+Rwf:
+  key: rust_rwf
+  gate: {extensions: [.rs], basenames: [Cargo.toml, Cargo.lock]}
+  files: {path_segments: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - cargo_dependency: rwf
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          rwf = {}
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          serde = "1"
+
+Salvo:
+  key: rust_salvo
+  gate: {extensions: [.rs], basenames: [Cargo.toml, Cargo.lock]}
+  files: {path_segments: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - cargo_dependency: salvo
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          salvo = { version = "0.68" }
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          axum = {}
+      - {path: main.rs, content: "use salvo::prelude::*;"}
+
+Tide:
+  key: rust_tide
+  gate: {extensions: [.rs], basenames: [Cargo.toml, Cargo.lock]}
+  files: {path_segments: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - cargo_dependency: tide
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          tide = {}
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          serde = "1"
+
+Warp:
+  key: rust_warp
+  gate: {extensions: [.rs], basenames: [Cargo.toml, Cargo.lock]}
+  files: {path_segments: [Cargo.toml]}
+  match:
+    all:
+      - contains: dependencies
+      - cargo_dependency: warp
+  examples:
+    match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          warp = {}
+    no_match:
+      - path: Cargo.toml
+        content: |-
+          [dependencies]
+          serde = "1"

@@ -1,0 +1,101 @@
+Effect:
+  key: ts_effect
+  gate: {extensions: [.ts, .tsx, .mts, .cts, .js, .jsx, .mjs, .cjs]}
+  match:
+    all:
+      - contains: HttpApiEndpoint
+      - regex: '(?:from\s*|require\(\s*)[''"](?:@effect/platform(?:/HttpApi\w*)?|effect/unstable/httpapi(?:/\w+)?)[''"]'
+  examples:
+    match:
+      - {path: src/api.ts, content: "import { HttpApiEndpoint, HttpApiGroup } from \"@effect/platform\""}
+      - {path: src/api.ts, content: "import { HttpApiEndpoint } from \"effect/unstable/httpapi\""}
+      - {path: src/api.ts, content: "import * as HttpApiEndpoint from \"@effect/platform/HttpApiEndpoint\""}
+    no_match:
+      - {path: src/client.ts, content: "import { HttpClient, FileSystem } from \"@effect/platform\""}
+      - {path: src/notes.ts, content: "// HttpApiEndpoint is from Effect"}
+
+Inversify:
+  key: ts_inversify
+  gate: {extensions: [.ts], basenames: [package.json]}
+  match:
+    package_json_or_ts_import: {package: '"inversify-express-utils"\s*:', import: '(?:\bfrom|\brequire\s*\()\s*[''"]inversify-express-utils[''"]'}
+  examples:
+    match:
+      - {path: UserController.ts, content: "import { controller, httpGet } from \"inversify-express-utils\";"}
+      - {path: package.json, content: "{\"dependencies\": {\"inversify-express-utils\": \"^6.4.6\"}}"}
+    no_match:
+      - {path: container.ts, content: "import { Container } from 'inversify';"}
+      - {path: package.json, content: "{\"dependencies\": {\"inversify\": \"^6.0.0\"}}"}
+
+N8n:
+  key: ts_n8n
+  gate: {extensions: [.ts], basenames: [package.json]}
+  match:
+    package_json_or_ts_import: {package: '"@n8n/decorators"\s*:', import: '(?:\bfrom|\brequire\s*\()\s*[''"]@n8n/decorators[''"]'}
+  examples:
+    match:
+      - {path: auth.controller.ts, content: "import { Get, RestController } from '@n8n/decorators';"}
+      - {path: package.json, content: "{\"dependencies\": {\"@n8n/decorators\": \"workspace:*\"}}"}
+    no_match:
+      - {path: node.ts, content: "import { NodeOperationError } from 'n8n-workflow';"}
+      - {path: di.ts, content: "import { Service } from '@n8n/di';"}
+      - {path: package.json, content: "{\"dependencies\": {\"@n8n/di\": \"workspace:*\"}}"}
+      - path: users.controller.ts
+        content: |-
+          import { Controller } from '@nestjs/common';
+          @Controller('users')
+
+RoutingControllers:
+  key: ts_routing_controllers
+  gate: {extensions: [.ts], basenames: [package.json]}
+  match:
+    package_json_or_ts_import: {package: '"routing-controllers"\s*:', import: '(?:\bfrom|\brequire\s*\()\s*[''"]routing-controllers[''"]'}
+  examples:
+    match:
+      - {path: UserController.ts, content: "import { JsonController, Get } from 'routing-controllers';"}
+      - path: app.ts
+        content: |-
+          import {
+            createExpressServer,
+          } from "routing-controllers";
+      - {path: package.json, content: "{\"dependencies\": {\"routing-controllers\": \"^0.10.4\"}}"}
+    no_match:
+      - path: users.controller.ts
+        content: |-
+          import { Controller, Get } from '@nestjs/common';
+          @Controller('users')
+      - {path: app.js, content: "import { Get } from 'routing-controllers';"}
+
+Tsed:
+  key: ts_tsed
+  gate: {extensions: [.ts], basenames: [package.json]}
+  match:
+    package_json_or_ts_import: {package: '"@tsed/(?:common|schema|di|platform-[\w-]+)"\s*:', import: '(?:\bfrom|\brequire\s*\()\s*[''"]@tsed/(?:common|schema|di|platform-[\w-]+)[''"]'}
+  examples:
+    match:
+      - {path: CalendarsController.ts, content: "import { Controller } from \"@tsed/di\";"}
+      - {path: CalendarsController.ts, content: "import { Get } from '@tsed/schema';"}
+      - {path: Server.ts, content: "import { Controller, Get } from \"@tsed/common\";"}
+      - {path: package.json, content: "{\"dependencies\": {\"@tsed/platform-express\": \"^8.0.0\"}}"}
+    no_match:
+      - {path: logger.ts, content: "import { Logger } from '@tsed/logger';"}
+      - {path: package.json, content: "{\"dependencies\": {\"@tsed/logger\": \"^6.0.0\"}}"}
+      - path: users.controller.ts
+        content: |-
+          import { Controller } from '@nestjs/common';
+          @Controller('users')
+
+Tsoa:
+  key: ts_tsoa
+  gate: {extensions: [.ts], basenames: [package.json]}
+  match:
+    package_json_or_ts_import: {package: '"(?:tsoa|@tsoa/runtime)"\s*:', import: '(?:\bfrom|\brequire\s*\()\s*[''"](?:tsoa|@tsoa/runtime)[''"]'}
+  examples:
+    match:
+      - {path: usersController.ts, content: "import { Controller, Get, Route } from \"tsoa\";"}
+      - {path: routes.ts, content: "import { fetchMiddlewares } from '@tsoa/runtime';"}
+      - {path: package.json, content: "{\"dependencies\": {\"tsoa\": \"^6.4.0\"}}"}
+    no_match:
+      - {path: app.ts, content: "import { Controller } from '@nestjs/common';"}
+      - {path: app.ts, content: "import { tsoaHelper } from './tsoa-helper';"}
+      - {path: package.json, content: "{\"dependencies\": {\"tsoa-zod\": \"^1.0.0\"}}"}

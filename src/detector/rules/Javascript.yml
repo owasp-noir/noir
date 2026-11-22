@@ -1,0 +1,142 @@
+Express:
+  key: js_express
+  files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx]}
+  match:
+    all:
+      - contains: express
+      - regex:
+          - >-
+            require\(['"]express['"]\)
+          - >-
+            from ['"]express['"]
+          - >-
+            app\.use\(express\.json\(\)\)
+          - >-
+            app\.use\(express\.urlencoded\(\{ extended: true \}\)\)
+  examples:
+    match:
+      - {path: index.js, content: "require('express')"}
+      - {path: index.js, content: "require(\"express\")"}
+      - {path: index.js, content: "import express from 'express'"}
+      - {path: index.js, content: "import express from \"express\""}
+      - {path: index.js, content: "const express = require('express')"}
+      - {path: index.js, content: "const express = require(\"express\")"}
+      - {path: index.js, content: "let express = require('express')"}
+      - {path: index.js, content: "let express = require(\"express\")"}
+      - {path: index.js, content: "var express = require('express')"}
+      - {path: index.js, content: "var express = require(\"express\")"}
+      - {path: index.js, content: "import { Router } from 'express'"}
+      - {path: index.js, content: "import { Router } from \"express\""}
+      - {path: index.js, content: "app.use(express.json())"}
+      - {path: index.js, content: "app.use(express.urlencoded({ extended: true }))"}
+    no_match:
+      - {path: index.js, content: "# unrelated framework"}
+
+Fastify:
+  key: js_fastify
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx], basenames: [package.json]}
+  files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx]}
+  match:
+    all:
+      - contains: fastify
+      - regex:
+          - >-
+            require\(['"]fastify['"]\)
+          - >-
+            from ['"]fastify['"]
+          - >-
+            fastify\s*\(\s*\{
+          - >-
+            fastify\.register\s*\(
+          - >-
+            fastify\.(get|post|put|delete|patch|head|options|query|route)\s*\(
+  examples:
+    match:
+      - {path: server.js, content: "const fastify = require('fastify')()"}
+      - {path: server.ts, content: "import Fastify from 'fastify'"}
+      - {path: server.js, content: "fastify.get('/path', (req, reply) => {})"}
+      - {path: server.js, content: "fastify.query('/search', (req, reply) => {})"}
+      - {path: server.js, content: "fastify.route({ method: 'QUERY', url: '/search' })"}
+    no_match:
+      - {path: server.js, content: "# unrelated framework"}
+
+Hono:
+  key: js_hono
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx], basenames: [package.json]}
+  files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx]}
+  match:
+    all:
+      - contains: [hono, Hono]
+      - regex:
+          - >-
+            require\(['"]hono['"]\)
+          - >-
+            from ['"]hono['"]
+          - >-
+            new\s+Hono\s*\(
+          - >-
+            from ['"]@hono/zod-openapi['"]
+          - >-
+            new\s+OpenAPIHono\s*\(
+  examples:
+    match:
+      - {path: index.ts, content: "import { OpenAPIHono, createRoute } from \"@hono/zod-openapi\";"}
+      - {path: app.ts, content: "const app = new OpenAPIHono();"}
+      - {path: index.js, content: "require('hono')"}
+      - {path: index.js, content: "require(\"hono\")"}
+      - {path: index.js, content: "import { Hono } from 'hono'"}
+      - {path: index.js, content: "import { Hono } from \"hono\""}
+      - {path: index.js, content: "const { Hono } = require('hono')"}
+      - {path: index.js, content: "const { Hono } = require(\"hono\")"}
+      - {path: index.ts, content: "const app = new Hono()"}
+      - {path: index.ts, content: "const app = new Hono({ strict: false })"}
+      - {path: index.ts, content: "import { Hono } from 'hono'"}
+      - {path: index.tsx, content: "import { Hono } from 'hono'"}
+      - {path: index.jsx, content: "import { Hono } from 'hono'"}
+      - {path: index.mjs, content: "import { Hono } from 'hono'"}
+      - {path: index.cjs, content: "const { Hono } = require('hono')"}
+    no_match:
+      - {path: index.js, content: "require('express')"}
+      - {path: index.py, content: "import { Hono } from 'hono'"}
+
+Koa:
+  key: js_koa
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx], basenames: [package.json]}
+  files: {extensions: [.js, .mjs, .ts, .cjs, .mts, .cts]}
+  match:
+    all:
+      - contains: [koa, Koa]
+      - regex:
+          - >-
+            require\(['"]koa['"]\)
+          - >-
+            import Koa from ['"]koa['"]
+          - >-
+            import Router from ['"]koa-router['"]
+          - >-
+            require\(['"]koa-router['"]\)
+          - >-
+            require\(['"]koa-[a-zA-Z0-9-]+['"]\)
+          - >-
+            new Koa\(\)
+  examples:
+    match:
+      - {path: index.js, content: "require('koa')"}
+      - {path: index.js, content: "require(\"koa\")"}
+      - {path: index.js, content: "import Koa from 'koa'"}
+      - {path: index.js, content: "import Koa from \"koa\""}
+      - {path: index.js, content: "const Koa = require('koa')"}
+      - {path: index.js, content: "const Koa = require(\"koa\")"}
+      - {path: index.js, content: "let Koa = require('koa')"}
+      - {path: index.js, content: "let Koa = require(\"koa\")"}
+      - {path: index.js, content: "var Koa = require('koa')"}
+      - {path: index.js, content: "var Koa = require(\"koa\")"}
+      - {path: index.js, content: "const app = new Koa()"}
+      - {path: index.js, content: "const Router = require('koa-router')"}
+      - {path: index.js, content: "const Router = require(\"koa-router\")"}
+      - {path: index.js, content: "import Router from 'koa-router'"}
+      - {path: index.js, content: "import Router from \"koa-router\""}
+      - {path: index.js, content: "const bodyParser = require('koa-bodyparser')"}
+      - {path: index.js, content: "const bodyParser = require(\"koa-bodyparser\")"}
+    no_match:
+      - {path: index.js, content: "# unrelated framework"}

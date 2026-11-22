@@ -1,0 +1,92 @@
+Akka:
+  key: scala_akka
+  gate: {extensions: [.scala, .sbt], basenames: [build.sbt]}
+  files: {extensions: [.scala]}
+  match:
+    regex: '\bimport\s+(?:akka|org\.apache\.pekko)\.http\b'
+  examples:
+    match:
+      - {path: test.scala, content: "import akka.http.scaladsl.server.Directives._"}
+      - {path: test.scala, content: "import akka.http.scaladsl.Http"}
+      - {path: test.scala, content: "import org.apache.pekko.http.scaladsl.server.Directives._"}
+    no_match:
+      - {path: test.scala, content: "import org.apache.pekko.actor.typed.ActorSystem"}
+      - {path: test.scala, content: "ConfigFactory.parseString(\"pekko.http.server.idle-timeout = 5s\")"}
+      - {path: test.scala, content: "import scala.concurrent.Future"}
+      - {path: test.java, content: "import akka.http.scaladsl.server.Directives._"}
+
+Finatra:
+  key: scala_finatra
+  gate: {extensions: [.scala], basenames: [build.sbt]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [build.sbt]}
+          - contains: finatra-http
+      - all:
+          - files: {extensions: [.scala]}
+          - regex: '\bimport\s+com\.twitter\.finatra\.http\b'
+  examples:
+    match:
+      - {path: UserController.scala, content: "import com.twitter.finatra.http.Controller"}
+      - {path: build.sbt, content: "libraryDependencies += \"com.twitter\" %% \"finatra-http-server\" % \"22.12.0\""}
+    no_match:
+      - {path: Main.scala, content: "import com.twitter.finagle.http.Request"}
+      - path: Servlet.scala
+        content: |-
+          import org.scalatra._
+          get("/x") { }
+      - {path: Main.java, content: "import com.twitter.finatra.http.Controller"}
+
+Http4s:
+  key: scala_http4s
+  files: {extensions: [.scala, .sbt], basenames: [build.sbt]}
+  match:
+    contains: [org.http4s, http4s-dsl]
+  examples:
+    match:
+      - {path: Server.scala, content: "import org.http4s.HttpRoutes"}
+    no_match:
+      - {path: Server.scala, content: "# unrelated framework"}
+
+Scalatra:
+  key: scala_scalatra
+  gate: {extensions: [.scala, .sbt], basenames: [build.sbt]}
+  files: {extensions: [.scala]}
+  match:
+    contains: [org.scalatra, ScalatraServlet]
+  examples:
+    match:
+      - {path: test.scala, content: "import org.scalatra._"}
+      - {path: test.scala, content: "class MyServlet extends ScalatraServlet"}
+    no_match:
+      - {path: test.scala, content: "import scala.concurrent.Future"}
+      - {path: test.java, content: "import org.scalatra._"}
+
+Tapir:
+  key: scala_tapir
+  gate: {extensions: [.scala, .sbt], basenames: [build.sbt]}
+  files: {extensions: [.scala]}
+  match:
+    contains: [sttp.tapir, 'import tapir.']
+  examples:
+    match:
+      - {path: test.scala, content: "import sttp.tapir._"}
+      - {path: test.scala, content: "import sttp.tapir.json.circe._"}
+    no_match:
+      - {path: test.scala, content: "import scala.concurrent.Future"}
+      - {path: test.java, content: "import sttp.tapir._"}
+
+ZioHttp:
+  key: scala_zio_http
+  gate: {extensions: [.scala, .sbt], basenames: [build.sbt]}
+  files: {extensions: [.scala]}
+  match:
+    contains: [zio.http, zhttp.http]
+  examples:
+    match:
+      - {path: test.scala, content: "import zio.http._"}
+      - {path: test.scala, content: "val routes = Routes(Method.GET / \"x\" -> handler(zio.http.Response.ok))"}
+    no_match:
+      - {path: test.scala, content: "import scala.concurrent.Future"}
+      - {path: test.java, content: "import zio.http._"}

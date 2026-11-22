@@ -1,0 +1,31 @@
+AspNetMvc:
+  key: vb_aspnet_mvc
+  gate: {extensions: [.vb]}
+  match:
+    any:
+      - regex: '(?i)\bClass\s+\w+Controller\b[\s:]*Inherits\s+[\w.]*Controller(?:Base)?\b'
+      - regex: '(?i)\.Map(?:Http|Controller)?Route\s*\('
+  examples:
+    match:
+      - path: UsersController.vb
+        content: |-
+          Public Class UsersController
+              Inherits ApiController
+          End Class
+      - path: HomeController.vb
+        content: |-
+          Public Class HomeController
+              Inherits System.Web.Mvc.Controller
+          End Class
+      - {path: WebApiConfig.vb, content: "config.Routes.MapHttpRoute(name:=\"DefaultApi\", routeTemplate:=\"api/{controller}/{id}\")"}
+    no_match:
+      - path: Customer.vb
+        content: |-
+          Public Class Customer
+              Inherits EntityBase
+          End Class
+      - path: Default.aspx.vb
+        content: |-
+          Partial Class _Default
+              Inherits System.Web.UI.Page
+          End Class

@@ -1,23 +1,23 @@
 require "../../../spec_helper"
-require "../../../../src/detector/detectors/rust/*"
+require "../../../../src/detector/detector"
 
 # A framework name inside a comment (qdrant's `lib/edge/ffi/Cargo.toml` says
 # "the gRPC/router stack (tonic/axum) is trimmed") or a sibling crate must not
 # fire the analyzer: with no manifest depending on the crate, the analyzer's
 # crate-root gate waves every `.rs` file through and parses them all.
 describe "Rust detectors read the Cargo dependency key" do
-  options = create_test_options
+  registry = build_detector_list(create_test_options).index_by(&.name)
 
   {
-    {Detector::Rust::Axum.new(options), "axum"},
-    {Detector::Rust::ActixWeb.new(options), "actix-web"},
-    {Detector::Rust::Rocket.new(options), "rocket"},
-    {Detector::Rust::Warp.new(options), "warp"},
-    {Detector::Rust::Salvo.new(options), "salvo"},
-    {Detector::Rust::Tide.new(options), "tide"},
-    {Detector::Rust::Gotham.new(options), "gotham"},
-    {Detector::Rust::Loco.new(options), "loco-rs"},
-    {Detector::Rust::Rwf.new(options), "rwf"},
+    {registry["rust_axum"], "axum"},
+    {registry["rust_actix_web"], "actix-web"},
+    {registry["rust_rocket"], "rocket"},
+    {registry["rust_warp"], "warp"},
+    {registry["rust_salvo"], "salvo"},
+    {registry["rust_tide"], "tide"},
+    {registry["rust_gotham"], "gotham"},
+    {registry["rust_loco"], "loco-rs"},
+    {registry["rust_rwf"], "rwf"},
   }.each do |instance, crate|
     it "#{crate}: key, dotted key and table form count" do
       instance.detect("Cargo.toml", "[dependencies]\n#{crate} = \"1\"").should be_true

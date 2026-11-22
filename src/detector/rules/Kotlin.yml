@@ -1,0 +1,24 @@
+Ktor:
+  key: kotlin_ktor
+  files: {extensions: [.kt]}
+  match:
+    contains: io.ktor
+  examples:
+    match:
+      - {path: test.kt, content: "import io.ktor.server.application.*"}
+      - {path: test.kt, content: "import io.ktor.server.routing.*"}
+      - {path: test.kt, content: "import io.ktor.server.response.*"}
+    no_match:
+      - {path: test.kt, content: "import org.springframework.boot.SpringApplication"}
+      - {path: test.java, content: "import io.ktor.server.application.*"}
+
+Spring:
+  key: kotlin_spring
+  files: {extensions: [.kt]}
+  match:
+    contains: org.springframework
+  examples:
+    match:
+      - {path: test.kt, content: "import org.springframework.boot.SpringApplication"}
+    no_match:
+      - {path: test.kt, content: "# unrelated framework"}

@@ -2,25 +2,6 @@ require "../../spec_helper"
 require "../../../src/detector/detector"
 require "../../../src/models/detector"
 
-# Instantiate every concrete Detector subclass. Using `all_subclasses`
-# rather than a hand-written list is deliberate: a new detector joins
-# this sweep automatically, so it cannot silently regress the memo.
-#
-# Restricted to the `Detector::` namespace, which is where every production
-# detector lives. `crystal spec` compiles the whole suite into one binary, so
-# `all_subclasses` also sees the throwaway subclasses other spec files define
-# to exercise the base class (`detector_for_spec.cr`) — and because those are
-# file-private, naming them here does not even compile.
-private def every_detector(options) : Array(Detector)
-  detectors = [] of Detector
-  {% for sub in Detector.all_subclasses %}
-    {% if !sub.abstract? && sub.name.starts_with?("Detector::") %}
-      detectors << {{ sub }}.new(options).as(Detector)
-    {% end %}
-  {% end %}
-  detectors
-end
-
 # `Noir::Detection.build_applicable_lookup` memoizes `applicable?` by basename
 # for every detector that `Noir::Detection.path_sensitive?` does not flag. That
 # classifier is probe-based, and a probe whose *basename* independently
@@ -33,7 +14,7 @@ end
 # detector never runs, which means silently dropped endpoints.
 private def memo_misses(paths : Array(String)) : Array(String)
   options = create_test_options
-  detectors = every_detector(options)
+  detectors = build_detector_list(options)
   lookup = Noir::Detection.build_applicable_lookup(detectors)
 
   missed = [] of String

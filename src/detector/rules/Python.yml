@@ -1,0 +1,310 @@
+Aiohttp:
+  key: python_aiohttp
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: aiohttp
+      - any:
+          - regex: '(^|\n)\s*from\s+aiohttp(\.|[\s])'
+          - regex: '(^|\n)\s*import\s+aiohttp(\s|,|$|\.)'
+  examples:
+    match:
+      - {path: app.py, content: "from aiohttp import web"}
+      - {path: app.py, content: "import aiohttp"}
+    no_match:
+      - {path: app.js, content: "from aiohttp import web"}
+      - {path: app.py, content: "from flask import Flask"}
+
+Bottle:
+  key: python_bottle
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: bottle
+      - any:
+          - regex: '(^|\n)\s*from\s+bottle\s+import\s+'
+          - regex: '(^|\n)\s*import\s+bottle(\s|,|$)'
+  examples:
+    match:
+      - {path: app.py, content: "from bottle import route, run"}
+      - {path: app.py, content: "import bottle"}
+    no_match:
+      - {path: app.py, content: "import bottleneck"}
+      - {path: requirements.txt, content: "from bottle import route"}
+
+CherryPy:
+  key: python_cherrypy
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: cherrypy
+      - any:
+          - regex: '(^|\n)\s*from\s+cherrypy(\.|\s+import\s+)'
+          - regex: '(^|\n)\s*import\s+cherrypy(\s|,|\.|$)'
+  examples:
+    match:
+      - {path: app.py, content: "import cherrypy"}
+      - {path: app.py, content: "from cherrypy import expose"}
+      - {path: app.py, content: "import cherrypy, sys"}
+    no_match:
+      - {path: app.py, content: "from flask import Flask"}
+      - {path: app.txt, content: "import cherrypy"}
+
+Django:
+  key: python_django
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: [django, rest_framework]
+      - any:
+          - regex: '(^|\n)\s*from\s+django\.'
+          - regex: '(^|\n)\s*import\s+django(\s|,|$)'
+          - regex: '(^|\n)\s*from\s+rest_framework[\s.]'
+          - regex: '(^|\n)\s*import\s+rest_framework(\s|,|\.|$)'
+  examples:
+    match:
+      - {path: settings.py, content: "from django.apps import AppConfig"}
+      - {path: manage.py, content: "import django"}
+      - {path: urls.py, content: "from rest_framework.routers import DefaultRouter"}
+      - {path: views.py, content: "from rest_framework import viewsets"}
+      - {path: views.py, content: "import rest_framework"}
+    no_match:
+      - {path: views.py, content: "from rest_framework_ext import helpers"}
+      - {path: app.py, content: "from flask import Flask"}
+
+DjangoNinja:
+  key: python_django_ninja
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: ninja
+      - any:
+          - regex: '(^|\n)\s*from\s+ninja(\.\w|\s+import)'
+          - regex: '(^|\n)\s*import\s+ninja(\s|,|\.|$)'
+  examples:
+    match:
+      - {path: api.py, content: "from ninja import NinjaAPI, Router"}
+      - {path: api.py, content: "from ninja.security import HttpBearer"}
+      - {path: api.py, content: "import ninja"}
+      - {path: api.py, content: "import ninja.security"}
+    no_match:
+      - {path: api.py, content: "from ninja_extra import api_controller"}
+      - {path: ninja.txt, content: "from ninja import NinjaAPI"}
+      - {path: views.py, content: "from django.http import JsonResponse"}
+
+Falcon:
+  key: python_falcon
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: falcon
+      - any:
+          - regex: '(^|\n)\s*from\s+falcon(\.|\s+import\s+)'
+          - regex: '(^|\n)\s*import\s+falcon(\s|,|$|\.)'
+  examples:
+    match:
+      - {path: app.py, content: "import falcon"}
+      - {path: app.py, content: "from falcon import App"}
+      - {path: app.py, content: "from falcon.asgi import App"}
+      - {path: app.py, content: "import falcon.asgi"}
+    no_match:
+      - {path: app.py, content: "from flask import Flask"}
+      - {path: app.js, content: "import falcon"}
+
+FastAPI:
+  key: python_fastapi
+  files: {extensions: [.py]}
+  match:
+    contains: ['from fastapi', 'import fastapi']
+  examples:
+    match:
+      - {path: settings.py, content: "from fastapi"}
+    no_match:
+      - {path: settings.py, content: "# unrelated framework"}
+
+Flask:
+  key: python_flask
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: flask
+      - any:
+          - regex: '(^|\n)\s*from\s+flask\s+import\s+'
+          - regex: '(^|\n)\s*import\s+flask(\s|,|$)'
+          - regex: '(^|\n)\s*(?:from|import)\s+flask_appbuilder\b'
+  examples:
+    match:
+      - {path: app.py, content: "from flask import Flask"}
+      - {path: app.py, content: "from flask_appbuilder.api import expose"}
+    no_match:
+      - {path: app.py, content: "# unrelated framework"}
+
+HttpServer:
+  key: python_http_server
+  files: {extensions: [.py]}
+  match:
+    any:
+      - regex: '(?:^|\n)[ \t\x{FEFF}]*(?:from[ \t]+http\.server[ \t]+import\b|import[ \t]+(?:[\w.]+[ \t]*,[ \t]*)*http\.server\b|from[ \t]+http[ \t]+import[ \t]+(?:[\w,][\w, \t]*[ \t,])?server\b)'
+      - regex: '\bclass\s+\w+\s*\(\s*(?:[\w.]+\s*,\s*)*(?:[\w.]+\.)?(?:Base|Simple|CGI)HTTPRequestHandler\s*[,)]'
+  examples:
+    match:
+      - {path: server.py, content: "from http.server import BaseHTTPRequestHandler, HTTPServer"}
+      - path: h.py
+        content: |-
+          import http.server
+          server = http.server.HTTPServer(('', 8080), Handler)
+      - path: handler.py
+        content: |-
+          class MyHandler(BaseHTTPRequestHandler):
+              def do_GET(self): pass
+      - {path: static.py, content: "from http.server import SimpleHTTPRequestHandler"}
+      - path: s.py
+        content: |
+          import socketserver, http.server
+      - {path: s.py, content: "\uFEFFimport http.server\n"}
+      - path: handler.py
+        content: |-
+          class Handler(ThreadingMixIn, BaseHTTPRequestHandler):
+              pass
+      - path: s.py
+        content: |-
+          from http import server
+          server.HTTPServer(('', 0), H)
+    no_match:
+      - {path: requirements.txt, content: "http.server"}
+      - {path: other.py, content: "print('hello')"}
+      - path: util.py
+        content: |-
+          """Utilities.
+
+          To preview the generated docs locally run:
+
+              python -m http.server 8000
+          """
+
+          def add(a, b):
+              return a + b
+      - path: main.py
+        content: |-
+          import tornado.web
+          from tornado.httpserver import HTTPServer
+
+          server = HTTPServer(tornado.web.Application([]))
+
+Litestar:
+  key: python_litestar
+  files: {extensions: [.py]}
+  match:
+    contains: ['from litestar', 'import litestar']
+  examples:
+    match:
+      - {path: app.py, content: "from litestar import Litestar, get"}
+      - {path: app.py, content: "import litestar"}
+    no_match:
+      - {path: app.py, content: "from fastapi import FastAPI"}
+      - {path: app.txt, content: "from litestar import Litestar"}
+
+Masonite:
+  key: python_masonite
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: masonite
+      - any:
+          - regex: '(^|\n)\s*from\s+masonite(\.|\s+import\s+)'
+          - regex: '(^|\n)\s*import\s+masonite(\s|,|\.|$)'
+  examples:
+    match:
+      - {path: routes/web.py, content: "from masonite.routes import Route"}
+      - {path: app/controllers/WelcomeController.py, content: "from masonite.controllers import Controller"}
+      - {path: Kernel.py, content: "import masonite.foundation"}
+    no_match:
+      - {path: app.py, content: "from flask import Flask"}
+      - {path: routes/web.txt, content: "from masonite.routes import Route"}
+
+Pyramid:
+  key: python_pyramid
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: pyramid
+      - any:
+          - regex: '(^|\n)\s*from\s+pyramid(\.|\s+import\s+)'
+          - regex: '(^|\n)\s*import\s+pyramid(\s|,|\.|$)'
+  examples:
+    match:
+      - {path: app.py, content: "from pyramid.config import Configurator"}
+      - {path: app.py, content: "from pyramid.view import view_config"}
+      - {path: app.py, content: "import pyramid"}
+    no_match:
+      - {path: app.py, content: "from flask import Flask"}
+      - {path: app.txt, content: "from pyramid.config import Configurator"}
+
+Quart:
+  key: python_quart
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: quart
+      - any:
+          - regex: '(^|\n)\s*from\s+quart(\.[A-Za-z_][A-Za-z0-9_]*)?\s+import\s+'
+          - regex: '(^|\n)\s*import\s+quart(\s|,|$)'
+  examples:
+    match:
+      - {path: app.py, content: "from quart import Quart"}
+      - {path: app.py, content: "from quart.views import MethodView"}
+      - {path: app.py, content: "import quart"}
+    no_match:
+      - {path: app.py, content: "import quartz"}
+      - {path: requirements.txt, content: "from quart import Quart"}
+
+Robyn:
+  key: python_robyn
+  files: {extensions: [.py]}
+  match:
+    contains: ['from robyn', 'import robyn']
+  examples:
+    match:
+      - {path: app.py, content: "from robyn import Robyn"}
+      - {path: app.py, content: "import robyn"}
+    no_match:
+      - {path: requirements.txt, content: "robyn==0.60.0"}
+      - {path: app.py, content: "from flask import Flask"}
+
+Sanic:
+  key: python_sanic
+  files: {extensions: [.py]}
+  match:
+    contains: 'from sanic'
+  examples:
+    match:
+      - {path: app.py, content: "from sanic import Sanic"}
+    no_match:
+      - {path: app.py, content: "# unrelated framework"}
+
+Starlette:
+  key: python_starlette
+  files: {extensions: [.py]}
+  match:
+    contains: ['from starlette', 'import starlette']
+  examples:
+    match:
+      - {path: app.py, content: "from starlette.applications import Starlette"}
+      - {path: app.py, content: "import starlette"}
+    no_match:
+      - {path: app.py, content: "from fastapi import FastAPI"}
+      - {path: app.txt, content: "from starlette import"}
+
+Tornado:
+  key: python_tornado
+  files: {extensions: [.py]}
+  match:
+    contains: ['import tornado', 'from tornado']
+  examples:
+    match:
+      - {path: app.py, content: "import tornado"}
+      - {path: app.py, content: "from tornado import web"}
+      - {path: app.py, content: "from tornado.web import Application"}
+    no_match:
+      - {path: app.py, content: "from flask import Flask"}
+      - {path: app.js, content: "import tornado"}

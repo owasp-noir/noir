@@ -1,0 +1,60 @@
+Absinthe:
+  key: elixir_absinthe
+  gate: {extensions: [.ex, .exs]}
+  match:
+    all:
+      - contains: Absinthe.Schema
+      - regex: '(?ms)^\s*use\s+Absinthe\.Schema\b'
+  examples:
+    match:
+      - path: lib/blog_web/schema.ex
+        content: |-
+          defmodule BlogWeb.Schema do
+            use Absinthe.Schema
+            query do
+            end
+          end
+      - path: lib/blog_web/schema/content_types.ex
+        content: |-
+          defmodule BlogWeb.Schema.ContentTypes do
+            use Absinthe.Schema.Notation
+          end
+    no_match:
+      - path: lib/blog_web/router.ex
+        content: |-
+          defmodule BlogWeb.Router do
+            # Mounts the schema built with `use Absinthe.Schema`.
+            forward "/api", Absinthe.Plug, schema: BlogWeb.Schema
+          end
+
+PhoenixChannel:
+  key: elixir_phoenix_channel
+  files: {extensions: [.ex, .exs]}
+  match:
+    regex: '\buse\s+Phoenix\.Channel\b|\buse\s+[A-Z][\w.]*\s*,\s*:channel\b|\bchannel\s+["''][^"'']+["'']\s*,\s*[A-Z]'
+  examples:
+    match:
+      - path: lib/my_app_web/channels/room_channel.ex
+        content: |-
+          defmodule MyAppWeb.RoomChannel do
+            use Phoenix.Channel
+            def handle_in("ping", _p, socket), do: {:reply, :pong, socket}
+          end
+      - path: lib/my_app_web/channels/notice_channel.ex
+        content: |-
+          defmodule MyAppWeb.NoticeChannel do
+            use MyAppWeb, :channel
+          end
+      - path: lib/my_app_web/channels/user_socket.ex
+        content: |-
+          defmodule MyAppWeb.UserSocket do
+            use Phoenix.Socket
+            channel "room:*", MyAppWeb.RoomChannel
+          end
+    no_match:
+      - path: lib/my_app_web/controllers/page_controller.ex
+        content: |-
+          defmodule MyAppWeb.PageController do
+            use MyAppWeb, :controller
+            def index(conn, _params), do: render(conn, "index.html")
+          end

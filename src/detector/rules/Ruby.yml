@@ -1,0 +1,154 @@
+ActionCable:
+  key: ruby_actioncable
+  files: {extensions: [.rb, .ru]}
+  match:
+    regex: '<\s*ApplicationCable::Channel\b|<\s*ActionCable::Channel::Base\b|<\s*ActionCable::Connection::Base\b|\bmount\s+ActionCable\.server\b'
+  examples:
+    match:
+      - path: app/channels/chat_channel.rb
+        content: |-
+          class ChatChannel < ApplicationCable::Channel
+            def speak(data)
+            end
+          end
+      - path: config/routes.rb
+        content: |-
+          Rails.application.routes.draw do
+            mount ActionCable.server => "/cable"
+          end
+      - path: app/channels/application_cable/connection.rb
+        content: |-
+          module ApplicationCable
+            class Connection < ActionCable::Connection::Base
+            end
+          end
+    no_match:
+      - path: app/controllers/foo_controller.rb
+        content: |-
+          class FooController < ApplicationController
+          end
+
+Graphql:
+  key: ruby_graphql
+  files: {extensions: [.rb]}
+  match:
+    regex: '<\s*(?:::)?GraphQL::Schema\b'
+  examples:
+    match:
+      - path: app/graphql/app_schema.rb
+        content: |-
+          class AppSchema < GraphQL::Schema
+            query Types::QueryType
+          end
+      - path: app/graphql/types/base_object.rb
+        content: |-
+          module Types
+            class BaseObject < ::GraphQL::Schema::Object
+            end
+          end
+    no_match:
+      - path: lib/github.rb
+        content: |-
+          require "graphql/client"
+          Schema = GraphQL::Client.load_schema(HTTP)
+          Client = GraphQL::Client.new(schema: Schema, execute: HTTP)
+      - {path: schema.py, content: "class AppSchema < GraphQL::Schema"}
+
+Hanami:
+  key: ruby_hanami
+  gate: {extensions: [.rb, .ru, .gemspec], basenames: [Gemfile, Gemfile.lock]}
+  match:
+    ruby_dependency: hanami
+  examples:
+    match:
+      - {path: Gemfile, content: "gem 'hanami'"}
+      - {path: Gemfile, content: "gem \"hanami\""}
+      - path: my_app.gemspec
+        content: |-
+          Gem::Specification.new do |s|
+            s.add_dependency 'hanami', '~> 2.0'
+          end
+    no_match:
+      - path: hanami.gemspec
+        content: |-
+          Gem::Specification.new do |spec|
+            spec.name = "hanami"
+            spec.add_dependency 'dry-system'
+          end
+
+Sinatra:
+  key: ruby_sinatra
+  gate: {extensions: [.rb, .ru, .gemspec], basenames: [Gemfile, Gemfile.lock]}
+  match:
+    ruby_dependency: sinatra
+  examples:
+    match:
+      - {path: Gemfile, content: "gem 'sinatra'"}
+      - {path: Gemfile, content: "gem \"sinatra\""}
+      - path: gollum.gemspec
+        content: |-
+          Gem::Specification.new do |s|
+            s.add_dependency 'sinatra', '~> 4.0'
+          end
+      - path: foo.gemspec
+        content: |-
+          Gem::Specification.new do |spec|
+            spec.add_runtime_dependency "sinatra", ">= 2.0"
+          end
+      - path: geminabox.gemspec
+        content: |-
+          Gem::Specification.new do |s|
+            s.add_dependency('sinatra', "~> 4.0")
+          end
+      - {path: Gemfile, content: "gem('sinatra', '~> 4.0')"}
+    no_match:
+      - path: foo.gemspec
+        content: |-
+          Gem::Specification.new do |s|
+            s.add_dependency 'rails'
+          end
+      - path: foo.gemspec
+        content: |-
+          Gem::Specification.new do |s|
+            s.add_dependency 'sinatra-contrib'
+          end
+
+Webrick:
+  key: ruby_webrick
+  files: {extensions: [.rb, .ru]}
+  match:
+    contains: [WEBrick, webrick, mount_proc, AbstractServlet]
+  examples:
+    match:
+      - path: server.rb
+        content: |-
+          require 'webrick'
+          server = WEBrick::HTTPServer.new
+      - {path: app.rb, content: "require \"webrick\""}
+      - path: srv.rb
+        content: |-
+          server = WEBrick::HTTPServer.new(Port: 8080)
+          server.mount_proc '/' do |req, res|
+          end
+      - {path: p.rb, content: "server.mount_proc('/api') do |req, res| end"}
+      - path: handler.rb
+        content: |-
+          class MyHandler < WEBrick::HTTPServlet::AbstractServlet
+            def do_GET(req, res); end
+          end
+      - path: h.rb
+        content: |-
+          require 'webrick'
+          class MyHandler < HTTPServlet::AbstractServlet
+            def do_POST(req, res); end
+          end
+      - path: doc.rb
+        content: |-
+          # use webrick for the server
+          # WEBrick::HTTPServer
+    no_match:
+      - {path: Gemfile, content: "gem 'webrick'"}
+      - path: plain.rb
+        content: |-
+          puts 'hello'
+          class Foo; end

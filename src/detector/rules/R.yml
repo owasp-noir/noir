@@ -1,0 +1,34 @@
+Plumber:
+  key: r_plumber
+  files: {extensions: [.R, .r]}
+  match:
+    any:
+      - regex: 'library\s*\(\s*plumber\s*\)'
+      - regex: 'require\s*\(\s*plumber\s*\)'
+      - regex: '(?msi)^\s*#\*\s*@(?:get|post|put|delete|patch|head|options|apiTitle|apiDescription|param|serializer)\b'
+      - regex: '(?i)\bpr_(?:get|post|put|delete|patch|head|options|handle|mount)\b'
+      - contains: 'plumber::'
+  examples:
+    match:
+      - path: api.R
+        content: |-
+          library(plumber)
+          library(ggplot2)
+      - path: api.R
+        content: |-
+          #* @get /echo
+          #* @param msg The message to echo
+          function(msg = "") {
+            msg
+          }
+      - path: app.R
+        content: |-
+          pr() %>%
+            pr_get("/hello", function() "Hello") %>%
+            pr_run()
+    no_match:
+      - path: script.R
+        content: |-
+          print("Hello World")
+          x <- 1:10
+          mean(x)

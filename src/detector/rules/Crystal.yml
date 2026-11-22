@@ -1,0 +1,89 @@
+Amber:
+  key: crystal_amber
+  gate: {extensions: [.cr], basenames: [shard.yml, shard.lock]}
+  files: {path_segments: [shard.yml]}
+  match:
+    contains: amberframework/amber
+  examples:
+    match:
+      - {path: shard.yml, content: "amberframework/amber"}
+    no_match:
+      - path: shard.yml
+        content: |-
+          dependencies:
+            other: {github: example/other}
+
+Grip:
+  key: crystal_grip
+  gate: {extensions: [.cr], basenames: [shard.yml, shard.lock]}
+  files: {path_segments: [shard.yml]}
+  match:
+    contains: grip-framework/grip
+  examples:
+    match:
+      - {path: shard.yml, content: "grip-framework/grip"}
+    no_match:
+      - path: shard.yml
+        content: |-
+          dependencies:
+            other: {github: example/other}
+
+Http:
+  key: crystal_http
+  gate: {extensions: [.cr], basenames: [shard.yml, shard.lock]}
+  files: {extensions: [.cr]}
+  match:
+    contains: [http/server, 'HTTP::Server']
+  examples:
+    match:
+      - path: src/app.cr
+        content: |-
+          require "http/server"
+          server = HTTP::Server.new do |ctx| end
+      - {path: handler.cr, content: "server = HTTP::Server.new { |context| }"}
+    no_match:
+      - {path: shard.yml, content: "http/server"}
+      - {path: other.cr, content: "puts hello"}
+
+Kemal:
+  key: crystal_kemal
+  gate: {extensions: [.cr], basenames: [shard.yml, shard.lock]}
+  files: {path_segments: [shard.yml]}
+  match:
+    contains: kemalcr/kemal
+  examples:
+    match:
+      - {path: shard.yml, content: "kemalcr/kemal"}
+    no_match:
+      - {path: other.cr, content: "kemalcr/kemal"}
+      - {path: shard.yml, content: "other/lib"}
+
+Lucky:
+  key: crystal_lucky
+  gate: {extensions: [.cr], basenames: [shard.yml, shard.lock]}
+  files: {path_segments: [shard.yml]}
+  match:
+    contains: luckyframework/lucky
+  examples:
+    match:
+      - {path: shard.yml, content: "luckyframework/lucky"}
+    no_match:
+      - path: shard.yml
+        content: |-
+          dependencies:
+            other: {github: example/other}
+
+Marten:
+  key: crystal_marten
+  gate: {extensions: [.cr], basenames: [shard.yml, shard.lock]}
+  files: {path_segments: [shard.yml]}
+  match:
+    contains: martenframework/marten
+  examples:
+    match:
+      - {path: shard.yml, content: "martenframework/marten"}
+    no_match:
+      - path: shard.yml
+        content: |-
+          dependencies:
+            other: {github: example/other}
