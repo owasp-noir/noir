@@ -416,7 +416,7 @@ class OutputBuilderHtml < OutputBuilder
 
     expand_synthetic_http_methods(endpoint.method).join("\n") do |method|
       CurlCommand.for_endpoint(method, baked, endpoint.params)
-    end
+    end.presence
   end
 
   # Bucket key for the path-grouped endpoint list: authority plus first path

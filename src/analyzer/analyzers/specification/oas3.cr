@@ -1,6 +1,5 @@
 require "../../engines/specification_engine"
 require "../../../utils/yaml"
-require "../../../utils/http_symbols"
 require "uri"
 
 module Analyzer::Specification
@@ -244,24 +243,15 @@ module Analyzer::Specification
       pointer
     end
 
-    private def oas_additional_method?(name : String) : Bool
-      method = name.upcase
-      ALLOWED_HTTP_METHODS.includes?(method) || SYNTHETIC_ENDPOINT_METHODS.includes?(method)
-    end
-
     # Standard Path Item operations, plus OAS 3.2 `additionalOperations`, of
     # a JSON or YAML path item.
-    # A name outside the HTTP and synthetic verb lists is skipped: the
-    # optimizer would rewrite it to GET.
     private def each_path_operation(path_item : Hash, &)
       path_item.each do |method, method_obj|
         key = method.to_s
         if key.downcase == "additionaloperations"
           next unless ops = method_obj.as_h?
           ops.each do |name, op|
-            op_name = name.to_s
-            next unless oas_additional_method?(op_name)
-            yield op_name, op
+            yield name.to_s, op
           end
         elsif HTTP_METHODS.includes?(key.downcase)
           yield key, method_obj
@@ -545,7 +535,7 @@ module Analyzer::Specification
           apply_security(effective_security, schemes, params)
 
           op_details = operation_details(details, line_index, ["paths", path, method])
-          push_operation(join_base_path(op_base, path), method.upcase, params, op_details, effective_security,
+          push_operation(join_base_path(op_base, path), method.upcase(:ascii), params, op_details, effective_security,
             !declares_security?(method_obj), defined_schemes)
         rescue e
           record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)
@@ -612,7 +602,7 @@ module Analyzer::Specification
           apply_security(effective_security, schemes, params)
 
           op_details = operation_details(details, line_index, ["paths", path.to_s, method.to_s])
-          push_operation(join_base_path(op_base, path.to_s), method.to_s.upcase, params, op_details, effective_security,
+          push_operation(join_base_path(op_base, path.to_s), method.upcase(:ascii), params, op_details, effective_security,
             !declares_security?(method_obj), defined_schemes)
         rescue e
           record_skipped_entry(doc.path, "#{method.to_s.upcase} #{path}", e)

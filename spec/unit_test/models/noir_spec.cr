@@ -88,17 +88,16 @@ describe "HTTP method validation" do
     endpoints.find! { |endpoint| endpoint.url == "/also-valid" }.method.should eq("POST")
   end
 
-  it "converts invalid HTTP methods to GET" do
+  it "preserves syntactically valid extension methods" do
     endpoints = optimizer.optimize_endpoints([
-      Endpoint.new("/invalid-method", "INVALID"),
-      Endpoint.new("/another-invalid", "test"),
+      Endpoint.new("/extension", "INVALID"),
+      Endpoint.new("/another-extension", "test"),
     ])
 
-    endpoints.each do |endpoint|
-      if endpoint.url.includes?("invalid")
-        endpoint.method.should eq("GET")
-      end
-    end
+    endpoints.map { |endpoint| {endpoint.url, endpoint.method} }.sort!.should eq([
+      {"/another-extension", "TEST"},
+      {"/extension", "INVALID"},
+    ])
   end
 
   it "preserves all valid HTTP methods" do

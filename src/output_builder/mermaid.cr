@@ -196,7 +196,7 @@ class OutputBuilderMermaid < OutputBuilder
       # word, NOT `[websocket]` — in a mindmap `[...]` is node-shape syntax,
       # so `GET [websocket]` renders as a square node showing only
       # "websocket" with the method silently dropped.
-      endpoint_label = endpoint.method
+      endpoint_label = sanitize_label(endpoint.method)
       endpoint_label += " websocket" if endpoint.protocol == "ws"
       ob_puts "#{indent_str}#{endpoint_label}"
 

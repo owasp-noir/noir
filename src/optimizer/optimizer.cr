@@ -143,12 +143,11 @@ class EndpointOptimizer
     @logger.sub "➔ Removing duplicated endpoints and params."
     final_map = {} of RouteKey => Endpoint
     duplicate_count = 0
-    allowed_methods = get_allowed_methods
     @python_split_roots = split_python_app_roots(endpoints)
-    endpoints = endpoints.map { |endpoint| record_origin(endpoint) }
+    endpoints = endpoints.map { |endpoint| record_origin(normalize_method(endpoint)) }
     endpoints = fold_ai_into_static(endpoints)
-    declaration_scopes = infer_declaration_scopes(endpoints, allowed_methods)
-    cross_tech_keys = cross_technology_duplicate_keys(endpoints, allowed_methods, declaration_scopes)
+    declaration_scopes = infer_declaration_scopes(endpoints)
+    cross_tech_keys = cross_technology_duplicate_keys(endpoints, declaration_scopes)
     code_paths = code_route_paths(endpoints)
     held = [] of {RouteKey, Endpoint}
 
@@ -167,22 +166,6 @@ class EndpointOptimizer
 
     ordered_endpoints.each do |endpoint|
       tiny_tmp = endpoint
-
-      # Normalize the HTTP method to upper case. This makes the dedup
-      # key case-insensitive (`get` and `GET` for the same URL are one
-      # endpoint, not two) and keeps the emitted method canonical.
-      # Unknown verbs fall back to GET.
-      upcased_method = tiny_tmp.method.upcase
-      if tiny_tmp.cli?
-        # CLI endpoints carry the synthetic "CLI" verb, not an HTTP method;
-        # keep it intact instead of coercing the "unknown verb" to GET.
-        tiny_tmp.method = upcased_method
-      elsif allowed_methods.includes?(upcased_method)
-        tiny_tmp.method = upcased_method
-      else
-        @logger.debug_sub "  - Invalid HTTP method: '#{tiny_tmp.method}' for '#{tiny_tmp.url}', defaulting to GET"
-        tiny_tmp.method = "GET"
-      end
 
       # Drop param names that cannot be sent as-is: one containing a space,
       # and one that is blank. A blank name renders as `--cookie '='` in the
@@ -262,7 +245,7 @@ class EndpointOptimizer
       # Placeholder spellings are unified only where another technology
       # reports the route too (code + spec/collection). Within one analyzer,
       # `/users/{id}` and `/users/{user}` are kept as it reported them.
-      scope = route_scope(tiny_tmp, tiny_tmp.method, unified_url, declaration_scopes)
+      scope = route_scope(tiny_tmp, unified_url, declaration_scopes)
       dedup_url = unified_url if cross_tech_keys.includes?({tiny_tmp.method, unified_url, scope})
       # A lone SDL file falls back to `/graphql`; Django mounts the same
       # schema at `graphql/`. One operation either way.
@@ -377,21 +360,19 @@ class EndpointOptimizer
 
   # A project-less API document can describe a single implementation at the
   # matching address. An unscoped implementation is itself a distinct scope.
-  private def infer_declaration_scopes(endpoints : Array(Endpoint), allowed_methods : Array(String)) : Hash({String, String}, String)
+  private def infer_declaration_scopes(endpoints : Array(Endpoint)) : Hash({String, String}, String)
     scopes = Hash({String, String}, Set(String)).new
     endpoints.each do |endpoint|
       next unless declaration_for_scope?(endpoint) && origin_scope(endpoint)[0].empty?
-      method = normalized_dedup_method(endpoint.method, allowed_methods)
       url = unify_path_placeholders(normalized_dedup_url(endpoint)).sub("/#", "#")
-      scopes[{method, url}] ||= Set(String).new
+      scopes[{endpoint.method, url}] ||= Set(String).new
     end
     return {} of {String, String} => String if scopes.empty?
 
     endpoints.each do |endpoint|
       next if endpoint.non_http? || source_document_endpoint?(endpoint)
-      method = normalized_dedup_method(endpoint.method, allowed_methods)
       url = unify_path_placeholders(normalized_dedup_url(endpoint)).sub("/#", "#")
-      if candidates = scopes[{method, url}]?
+      if candidates = scopes[{endpoint.method, url}]?
         candidates << origin_scope(endpoint)[0]
       end
     end
@@ -402,10 +383,10 @@ class EndpointOptimizer
     result
   end
 
-  private def route_scope(endpoint : Endpoint, method : String, url : String, inferred : Hash({String, String}, String)) : RouteScope
+  private def route_scope(endpoint : Endpoint, url : String, inferred : Hash({String, String}, String)) : RouteScope
     scope = origin_scope(endpoint)
     return scope unless scope[0].empty? && declaration_for_scope?(endpoint)
-    {inferred[{method, url.sub("/#", "#")}]? || "", nil, nil, nil}
+    {inferred[{endpoint.method, url.sub("/#", "#")}]? || "", nil, nil, nil}
   end
 
   # A repository can carry an API document because it implements it or
@@ -458,7 +439,7 @@ class EndpointOptimizer
 
   private def ai_fold_key(endpoint : Endpoint) : {String, String, RouteScope}
     segments = comparable_path_segments(endpoint.url.sub(URL_AUTHORITY_RE, ""))
-    {endpoint.method.upcase, "/" + segments.map { |seg| seg.matches?(AI_FOLD_PLACEHOLDER_RE) ? "{}" : seg }.join('/'), origin_scope(endpoint)}
+    {endpoint.method, "/" + segments.map { |seg| seg.matches?(AI_FOLD_PLACEHOLDER_RE) ? "{}" : seg }.join('/'), origin_scope(endpoint)}
   end
 
   private def merge_params(target : Endpoint, source : Endpoint, drop_collection_noise : Bool = false, skip_path : Bool = false) : Nil
@@ -931,7 +912,7 @@ class EndpointOptimizer
     target
   end
 
-  private def cross_technology_duplicate_keys(endpoints : Array(Endpoint), allowed_methods : Array(String),
+  private def cross_technology_duplicate_keys(endpoints : Array(Endpoint),
                                               inferred : Hash({String, String}, String)) : Set({String, String, RouteScope})
     technologies_by_key = Hash({String, String, RouteScope}, Set(String)).new
     urls_by_key_technology = Hash(Tuple(Tuple(String, String, RouteScope), String), Set(String)).new
@@ -940,8 +921,7 @@ class EndpointOptimizer
       shaped_url = normalized_dedup_url(endpoint)
       next if shaped_url.empty?
       url = endpoint.non_http? ? shaped_url : unify_path_placeholders(shaped_url)
-      method = normalized_dedup_method(endpoint.method, allowed_methods)
-      key = {method, url, route_scope(endpoint, method, url, inferred)}
+      key = {endpoint.method, url, route_scope(endpoint, url, inferred)}
       technology = endpoint.details.technology || ""
       (technologies_by_key[key] ||= Set(String).new) << technology
       (urls_by_key_technology[{key, technology}] ||= Set(String).new) << shaped_url
@@ -955,15 +935,6 @@ class EndpointOptimizer
       keys << key
     end
     keys
-  end
-
-  private def normalized_dedup_method(method : String, allowed_methods : Array(String)) : String
-    upcased_method = method.upcase
-    # CLI endpoints use the synthetic "CLI" verb; keep it so their cross-tech
-    # dedup key matches the method preserved in the main loop (which exempts
-    # cli? from the GET fallback) instead of being coerced to "GET".
-    return upcased_method if upcased_method == "CLI"
-    allowed_methods.includes?(upcased_method) ? upcased_method : "GET"
   end
 
   private def normalized_dedup_url(endpoint : Endpoint) : String
@@ -1243,11 +1214,17 @@ class EndpointOptimizer
     false
   end
 
-  # Get allowed HTTP methods. AsyncAPI verbs (`PUBLISH`, `SUBSCRIBE`,
-  # `SEND`, `RECEIVE`) ride along so the optimizer leaves event-driven
-  # endpoints alone — DAST consumers route on these, and downgrading
-  # them to `GET` would collapse publish + subscribe into one row.
-  private def get_allowed_methods : Array(String)
-    ALLOWED_HTTP_METHODS + SYNTHETIC_ENDPOINT_METHODS
+  # Normalize before any route keys are built, including the AI and spec folds.
+  private def normalize_method(endpoint : Endpoint) : Endpoint
+    if endpoint.method.matches?(HTTP_METHOD_TOKEN_RE)
+      endpoint.method = endpoint.method.upcase(:ascii)
+    else
+      @logger.debug_sub "  - Invalid HTTP method #{endpoint.method.inspect} for #{endpoint.url.inspect} (#{endpoint.details.technology || "unknown"})"
+      # A space keeps this label distinct from every possible extension method.
+      endpoint.method = "UNKNOWN METHOD"
+      marks = {"method" => Endpoint::RESOLUTION_UNRESOLVED}
+      endpoint.resolution = endpoint.resolution.try(&.merge(marks)) || marks
+    end
+    endpoint
   end
 end

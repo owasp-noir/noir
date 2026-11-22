@@ -1,12 +1,15 @@
 require "../../func_spec.cr"
 
-# OAS 3.2 additionalOperations plus discriminator subtypes. LINK is not an
-# allowed or synthetic method, so it must not come back as GET.
+# OAS 3.2 additionalOperations inherit path-level parameters.
 FunctionalTester.new("fixtures/specification/oas3/oas32/", {
   :techs     => 1,
-  :endpoints => 5,
+  :endpoints => 6,
 }, [
   Endpoint.new("/trips/{id}", "SUBSCRIBE", [
+    Param.new("id", "", "path"),
+    Param.new("verbose", "", "query"),
+  ]),
+  Endpoint.new("/trips/{id}", "LINK", [
     Param.new("id", "", "path"),
     Param.new("verbose", "", "query"),
   ]),

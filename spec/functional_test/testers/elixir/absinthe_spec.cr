@@ -50,11 +50,12 @@ FunctionalTester.new("fixtures/elixir/absinthe/", {
 ]).perform_tests
 
 # `adapter: Absinthe.Adapter.Passthrough` keeps snake_case names; Plug.Router's
-# `forward "/gql", to: Absinthe.Plug` sets the mount. GET /gql is Plug's row.
+# `forward "/gql", to: Absinthe.Plug` sets the mount. ANY /gql is Plug's mount.
 FunctionalTester.new("fixtures/elixir/absinthe_passthrough/", {
   :techs     => 2,
   :endpoints => 2,
 }, [
+  Endpoint.new("/gql", "ANY"),
   Endpoint.new("/gql#Query.list_items", "POST", [
     Param.new("page_size", "", "json"),
     Param.new("graphql_query_list_items", "", "json"),
@@ -67,6 +68,7 @@ FunctionalTester.new("fixtures/elixir/absinthe_multi_app/", {
   :techs     => 2,
   :endpoints => 3,
 }, [
+  Endpoint.new("/gql", "ANY"),
   Endpoint.new("/gql#Query.list_items", "POST", [
     Param.new("page_size", "", "json"),
     Param.new("graphql_query_list_items", "", "json"),
