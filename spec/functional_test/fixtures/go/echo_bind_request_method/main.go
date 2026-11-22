@@ -17,6 +17,10 @@ func (r *loginRequest) bind(c echo.Context) error {
 	return nil
 }
 
+type unusedRequest struct{ Other string }
+
+func (r *unusedRequest) bind(c echo.Context) error { return c.Bind(r) }
+
 func Login(c echo.Context) error {
 	req := &loginRequest{}
 	if err := req.bind(c); err != nil {
@@ -33,9 +37,26 @@ func Direct(c echo.Context) error {
 	return nil
 }
 
+type resource struct{ fresh func() any }
+type draft struct {
+	Title string `json:"title"`
+}
+type reply struct {
+	Text string `json:"text"`
+}
+
+func (res *resource) create(c echo.Context) error {
+	value := res.fresh()
+	return c.Bind(value)
+}
+
 func main() {
 	e := echo.New()
 	e.POST("/login", Login)
 	e.POST("/direct", Direct)
+	drafts := &resource{fresh: func() any { return &draft{} }}
+	replies := &resource{fresh: func() any { return &reply{} }}
+	e.POST("/drafts", drafts.create)
+	e.POST("/replies", replies.create)
 	e.Start(":8080")
 }

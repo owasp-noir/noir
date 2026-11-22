@@ -1166,10 +1166,10 @@ module Analyzer::Go
     # imports (`handlers.List`). Not gated on callees: the handler body is
     # where the route's request params are read. Packages are parsed only
     # when a route names a handler outside its own file.
-    def named_handler_scope(file_contents : Hash(String, String)) : Noir::GoNamedHandler::Scope
+    def named_handler_scope(file_contents : Hash(String, String), infer_module : Bool = false) : Noir::GoNamedHandler::Scope
       import_dirs = Hash(String, String).new
       modules = collect_go_modules
-      unless modules.empty?
+      if infer_module || !modules.empty?
         file_contents.each_key.map { |path| File.dirname(path) }.to_set.each do |dir|
           if import_path = import_path_for_dir(dir, modules)
             import_dirs[import_path] ||= dir
@@ -1279,17 +1279,32 @@ module Analyzer::Go
       end
     end
 
-    STDLIB_BODY_READ = /json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode|(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/
+    # Framework-specific accessors remain in the adapter. Binding and helper
+    # traversal use the same language-level resolver as net/http and chi.
+    def add_binding_params(lines, file, endpoints, resolver)
+      recv = lines.first?.try(&.match(Noir::GoNamedHandler::RECEIVER_RE)).try(&.[1]?)
+      factory = recv && lines.any?(&.matches?(/:=\s*#{Regex.escape(recv)}\.\w+\(\)/))
+      endpoints.reject(&.url.empty?).group_by do |ep|
+        args = Noir::GoBinding::Arguments.new
+        if factory && recv && (handler = ep.handler) && (site = ep.details.code_paths.first?) &&
+           (row = site.line)
+          args = resolver.receiver_factories(site.path, row - 1, handler.name, recv)
+        end
+        {ep.method, args}
+      end.each do |(method, args), eps|
+        Noir::GoRequestParamExtractor.binding_params(lines, file, method, resolver, args).each do |param|
+          eps.each do |ep|
+            next if param.param_type == "path" && !GoEngine.path_slot?(ep.url, param.name) && param.tags.empty?
+            add_param_to_endpoint(param, ep)
+          end
+        end
+      end
+    end
 
-    # The `*http.Request` reads on a line credited to `endpoint` (see
-    # `GoRequestParamExtractor.line_params`), and the generic body marker
-    # for a body read when no decoded field reached the endpoint.
+    # Body reads are handled per call by GoRequestParamExtractor.
     def add_request_line_params(line : String, endpoint : Endpoint)
       return if endpoint.url.empty?
       Noir::GoRequestParamExtractor.line_params(line, endpoint.method).each { |param| add_param_to_endpoint(param, endpoint) }
-      if line.matches?(STDLIB_BODY_READ) && endpoint.params.none? { |param| param.param_type == "json" }
-        add_param_to_endpoint(Param.new("body", "", "json"), endpoint)
-      end
     end
 
     # A handler shared by `/short` and `/short/:word` reads `word` on both,

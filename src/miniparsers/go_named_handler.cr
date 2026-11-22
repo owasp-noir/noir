@@ -413,6 +413,7 @@ class Noir::GoNamedHandler
          (handler.ends_with?(')') && !handler_definition?(body) && !@closure_rows.has_key?(handler))
         @heuristic_handlers << handler
       end
+      @direct_refs[handler] = ((@refs[handler]? || [] of Key) + [key]).uniq
       # One hop further: the functions the handler body calls.
       calls = body.source.scan(CALL_RE).map(&.[1]).uniq!
       keys = (@refs[handler]? || [] of Key).concat([key]).concat(keys_for.call(calls, File.dirname(body.file_path), key))
@@ -825,8 +826,14 @@ class Noir::GoNamedHandler
     @mounts.includes?(route.line)
   end
 
+  @direct_refs = Hash(String, Array(Key)).new
+  @direct_targets = Hash(Key, Array(Endpoint)).new
+
   def bind(route : Noir::TreeSitterGoRouteExtractor::Route, endpoint : Endpoint)
     return if @refs.empty?
+    handler_args(route).flat_map { |h| @direct_refs[h.strip]? || @refs[h.strip]? || [] of Key }.uniq!.each do |key|
+      (@direct_targets[key] ||= [] of Endpoint) << endpoint
+    end
     handler_args(route).flat_map { |handler| @refs[handler.strip]? || [] of Key }.uniq!.each do |key|
       (@targets[key] ||= [] of Endpoint) << endpoint
     end
@@ -888,9 +895,9 @@ class Noir::GoNamedHandler
   # A middleware body is yielded once per endpoint, with path reads the URL
   # does not slot removed, so a shared `c.Params("userId")` is not a path
   # param of `/v1/users/`.
-  def each_bound_body(& : String, Array(String), Array(Endpoint) ->)
+  def each_bound_body(direct_only : Bool = false, & : String, Array(String), Array(Endpoint) ->)
     @lines.each do |key, lines|
-      eps = @targets[key]? || next
+      eps = (direct_only ? @direct_targets : @targets)[key]? || next
       if @middleware_keys.includes?(key)
         eps.each do |ep|
           yield key[0], lines.map { |line| scrub_unslotted_path_reads(line, ep.url) }, [ep]

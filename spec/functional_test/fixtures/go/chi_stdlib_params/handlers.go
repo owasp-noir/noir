@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 )
 
@@ -43,4 +44,18 @@ func updateOrder(w http.ResponseWriter, r *http.Request) {
 func searchOrders(w http.ResponseWriter, r *http.Request) {
 	from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
 	_, _ = from, to
+}
+
+func (order *CreateOrder) Bind(r *http.Request) error { return nil }
+
+func payload(r *http.Request) ([]byte, error) {
+	_ = r.Header.Get("X-Codec")
+	src := r.Body
+	b, err := io.ReadAll(src)
+	return b, err
+}
+
+func unpack[T any](r *http.Request, dst *T) {
+	raw, _ := payload(r)
+	_ = json.Unmarshal(raw, dst)
 }
