@@ -1,0 +1,56 @@
+name: Route accuracy scoreboard
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scoreboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install just
+        run: sudo apt-get update && sudo apt-get install -y just
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.22.0
+      - name: Cache shards
+        uses: actions/cache@v6
+        with:
+          path: |
+            lib
+            .shards.info
+          key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
+      - name: Cache tree-sitter objects
+        uses: actions/cache@v6
+        id: tree-sitter
+        with:
+          path: |
+            src/ext/tree_sitter/runtime/lib.o
+            src/ext/tree_sitter/grammars/*/*.o
+          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/**/*.c', 'src/ext/tree_sitter/grammars/**/*.h') }}
+      - if: steps.tree-sitter.outputs.cache-hit == 'true'
+        run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
+      - run: shards install
+      - name: Measure default branch
+        run: |
+          cp scripts/scoreboard/results.json "$RUNNER_TEMP/committed.json"
+          just scoreboard
+      - name: Compare with committed snapshot
+        run: |
+          python3 scripts/scoreboard/summary.py "$RUNNER_TEMP/committed.json" \
+            scripts/scoreboard/results.json tmp/scoreboard >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload row reports and audit samples
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scoreboard
+          path: tmp/scoreboard/

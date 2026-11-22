@@ -9,6 +9,8 @@
       "recall": 1.0,
       "agreement": 1.0,
       "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "cs_aspnet_core_minimal_api",
@@ -41,7 +43,57 @@
         "recall": 1.0,
         "agreement": 1.0
       },
-      "repositories": 1
+      "repositories": 1,
+      "audit": {
+        "matched": 16,
+        "spec_only": 0,
+        "code_only": 0,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 264,
@@ -50,6 +102,8 @@
       "recall": 0.8655737704918033,
       "agreement": 0.5146198830409356,
       "marked": 21,
+      "marked_matched": 0,
+      "marked_code_only": 21,
       "marked_share": 0.04093567251461988,
       "claims": {
         "handler:heuristic": {
@@ -92,7 +146,57 @@
         "recall": 0.9438202247191011,
         "agreement": 0.8195121951219512
       },
-      "repositories": 2
+      "repositories": 2,
+      "audit": {
+        "matched": 264,
+        "spec_only": 41,
+        "code_only": 249,
+        "marked_matched": 0,
+        "marked_code_only": 21,
+        "code_sample": {
+          "sampled": 17,
+          "labelled": 17,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 17,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 2,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 8,
+          "labelled": 8,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 2,
+            "wrong_address": 0,
+            "covered": 6,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 17,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 8,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 153,
@@ -101,6 +205,8 @@
       "recall": 0.8895348837209303,
       "agreement": 0.5708955223880597,
       "marked": 5,
+      "marked_matched": 0,
+      "marked_code_only": 5,
       "marked_share": 0.018656716417910446,
       "claims": {
         "prefix:heuristic": {
@@ -144,7 +250,57 @@
         "recall": 0.997289972899729,
         "agreement": 0.5993485342019544
       },
-      "repositories": 1
+      "repositories": 1,
+      "audit": {
+        "matched": 153,
+        "spec_only": 19,
+        "code_only": 115,
+        "marked_matched": 0,
+        "marked_code_only": 5,
+        "code_sample": {
+          "sampled": 13,
+          "labelled": 13,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 5,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 8
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 12,
+          "labelled": 12,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 4,
+            "wrong_address": 8,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 5,
+          "unlabelled": 0,
+          "cannot_tell": 8
+        },
+        "estimated_recall": {
+          "value": 0.9235412474849095,
+          "sample_size": 12,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 238,
@@ -153,6 +309,8 @@
       "recall": 0.9875518672199171,
       "agreement": 0.8439716312056738,
       "marked": 230,
+      "marked_matched": 198,
+      "marked_code_only": 32,
       "marked_share": 0.8156028368794326,
       "claims": {
         "handler:heuristic": {
@@ -196,7 +354,57 @@
         "recall": 0.9532163742690059,
         "agreement": 0.4110970996216898
       },
-      "repositories": 2
+      "repositories": 2,
+      "audit": {
+        "matched": 238,
+        "spec_only": 3,
+        "code_only": 44,
+        "marked_matched": 198,
+        "marked_code_only": 32,
+        "code_sample": {
+          "sampled": 22,
+          "labelled": 22,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 22,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 11,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 3,
+          "labelled": 3,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 3,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 22,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 3,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 26,
@@ -205,6 +413,8 @@
       "recall": 0.9629629629629629,
       "agreement": 0.22807017543859648,
       "marked": 108,
+      "marked_matched": 26,
+      "marked_code_only": 82,
       "marked_share": 0.9473684210526315,
       "claims": {
         "prefix:heuristic": {
@@ -245,7 +455,57 @@
         "recall": null,
         "agreement": null
       },
-      "repositories": 1
+      "repositories": 1,
+      "audit": {
+        "matched": 26,
+        "spec_only": 1,
+        "code_only": 88,
+        "marked_matched": 26,
+        "marked_code_only": 82,
+        "code_sample": {
+          "sampled": 24,
+          "labelled": 24,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 21,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 3
+          },
+          "marked_by_verdict": {
+            "real": 19,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 3
+          }
+        },
+        "spec_sample": {
+          "sampled": 1,
+          "labelled": 1,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 1,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 21,
+          "unlabelled": 0,
+          "cannot_tell": 3
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 1,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 182,
@@ -254,6 +514,8 @@
       "recall": 0.9891304347826086,
       "agreement": 0.8666666666666667,
       "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "java_spring",
@@ -285,7 +547,57 @@
         "recall": 0.849438202247191,
         "agreement": 0.8076923076923077
       },
-      "repositories": 1
+      "repositories": 1,
+      "audit": {
+        "matched": 182,
+        "spec_only": 2,
+        "code_only": 28,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 23,
+          "labelled": 23,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 23,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 2,
+          "labelled": 2,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 2,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 23,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 2,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 411,
@@ -294,6 +606,8 @@
       "recall": 0.9535962877030162,
       "agreement": 0.6088888888888889,
       "marked": 228,
+      "marked_matched": 108,
+      "marked_code_only": 120,
       "marked_share": 0.3377777777777778,
       "claims": {
         "prefix:heuristic": {
@@ -339,7 +653,57 @@
         "recall": 0.8913043478260869,
         "agreement": 0.6748971193415638
       },
-      "repositories": 2
+      "repositories": 2,
+      "audit": {
+        "matched": 411,
+        "spec_only": 20,
+        "code_only": 264,
+        "marked_matched": 108,
+        "marked_code_only": 120,
+        "code_sample": {
+          "sampled": 17,
+          "labelled": 17,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 15,
+            "false_positive": 1,
+            "wrong_address": 1,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 3,
+            "false_positive": 1,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 8,
+          "labelled": 8,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 1,
+            "wrong_address": 1,
+            "covered": 6,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 0.9167078189300413,
+          "sample_size": 17,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 0.9939540507859734,
+          "sample_size": 8,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 235,
@@ -348,6 +712,8 @@
       "recall": 1.0,
       "agreement": 0.4392523364485981,
       "marked": 1,
+      "marked_matched": 0,
+      "marked_code_only": 1,
       "marked_share": 0.001869158878504673,
       "claims": {
         "prefix:unresolved": {
@@ -390,7 +756,57 @@
         "recall": 0.8675496688741722,
         "agreement": 0.9492753623188406
       },
-      "repositories": 2
+      "repositories": 2,
+      "audit": {
+        "matched": 235,
+        "spec_only": 0,
+        "code_only": 300,
+        "marked_matched": 0,
+        "marked_code_only": 1,
+        "code_sample": {
+          "sampled": 25,
+          "labelled": 25,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 25,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 25,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 348,
@@ -399,6 +815,8 @@
       "recall": 0.997134670487106,
       "agreement": 0.7532467532467533,
       "marked": 21,
+      "marked_matched": 19,
+      "marked_code_only": 2,
       "marked_share": 0.045454545454545456,
       "claims": {
         "prefix:heuristic": {
@@ -438,7 +856,57 @@
         "recall": 0.9236641221374046,
         "agreement": 0.968
       },
-      "repositories": 2
+      "repositories": 2,
+      "audit": {
+        "matched": 348,
+        "spec_only": 1,
+        "code_only": 114,
+        "marked_matched": 19,
+        "marked_code_only": 2,
+        "code_sample": {
+          "sampled": 24,
+          "labelled": 24,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 24,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 1,
+          "labelled": 1,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 1,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 24,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 1,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 287,
@@ -447,6 +915,8 @@
       "recall": 1.0,
       "agreement": 0.944078947368421,
       "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "ts_nestjs",
@@ -480,7 +950,57 @@
         "recall": 0.9939393939393939,
         "agreement": 0.9979716024340771
       },
-      "repositories": 1
+      "repositories": 1,
+      "audit": {
+        "matched": 287,
+        "spec_only": 0,
+        "code_only": 17,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 17,
+          "labelled": 17,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 17,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 17,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     }
   ],
   "repositories": [
@@ -491,6 +1011,8 @@
       "recall": 0.9962264150943396,
       "agreement": 0.9887640449438202,
       "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "InvokeAI",
@@ -534,7 +1056,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "python_fastapi"
+      "technology": "python_fastapi",
+      "audit": {
+        "matched": 264,
+        "spec_only": 1,
+        "code_only": 3,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 3,
+          "labelled": 3,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 3,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 1,
+          "labelled": 1,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 1,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 3,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 1,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 358,
@@ -543,6 +1115,8 @@
       "recall": 0.9470899470899471,
       "agreement": 0.5859247135842881,
       "marked": 228,
+      "marked_matched": 108,
+      "marked_code_only": 120,
       "marked_share": 0.37315875613747956,
       "claims": {
         "prefix:heuristic": {
@@ -599,7 +1173,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "js_express"
+      "technology": "js_express",
+      "audit": {
+        "matched": 358,
+        "spec_only": 20,
+        "code_only": 253,
+        "marked_matched": 108,
+        "marked_code_only": 120,
+        "code_sample": {
+          "sampled": 9,
+          "labelled": 9,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 7,
+            "false_positive": 1,
+            "wrong_address": 1,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 3,
+            "false_positive": 1,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 8,
+          "labelled": 8,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 1,
+            "wrong_address": 1,
+            "covered": 6,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 0.9079832696853974,
+          "sample_size": 9,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 0.9930651872399445,
+          "sample_size": 8,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 196,
@@ -608,6 +1232,8 @@
       "recall": 0.9849246231155779,
       "agreement": 0.8521739130434782,
       "marked": 228,
+      "marked_matched": 196,
+      "marked_code_only": 32,
       "marked_share": 0.991304347826087,
       "claims": {
         "handler:heuristic": {
@@ -660,7 +1286,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "go_gin"
+      "technology": "go_gin",
+      "audit": {
+        "matched": 196,
+        "spec_only": 3,
+        "code_only": 34,
+        "marked_matched": 196,
+        "marked_code_only": 32,
+        "code_sample": {
+          "sampled": 12,
+          "labelled": 12,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 12,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 11,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 3,
+          "labelled": 3,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 3,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 12,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 3,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 23,
@@ -669,6 +1345,8 @@
       "recall": 0.359375,
       "agreement": 0.27710843373493976,
       "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "auth",
@@ -713,7 +1391,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "go_chi"
+      "technology": "go_chi",
+      "audit": {
+        "matched": 23,
+        "spec_only": 41,
+        "code_only": 60,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 9,
+          "labelled": 9,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 9,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 8,
+          "labelled": 8,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 2,
+            "wrong_address": 0,
+            "covered": 6,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 9,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 8,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 53,
@@ -722,6 +1450,8 @@
       "recall": 1.0,
       "agreement": 0.828125,
       "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "dvws-node",
@@ -766,7 +1496,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "js_express"
+      "technology": "js_express",
+      "audit": {
+        "matched": 53,
+        "spec_only": 0,
+        "code_only": 11,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 8,
+          "labelled": 8,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 8,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 8,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 16,
@@ -775,6 +1555,8 @@
       "recall": 1.0,
       "agreement": 1.0,
       "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "eShop",
@@ -818,7 +1600,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "cs_aspnet_core_minimal_api"
+      "technology": "cs_aspnet_core_minimal_api",
+      "audit": {
+        "matched": 16,
+        "spec_only": 0,
+        "code_only": 0,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 182,
@@ -827,6 +1659,8 @@
       "recall": 0.9891304347826086,
       "agreement": 0.8666666666666667,
       "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "flowable-engine",
@@ -869,7 +1703,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "java_spring"
+      "technology": "java_spring",
+      "audit": {
+        "matched": 182,
+        "spec_only": 2,
+        "code_only": 28,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 23,
+          "labelled": 23,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 23,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 2,
+          "labelled": 2,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 2,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 23,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 2,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 42,
@@ -878,6 +1762,8 @@
       "recall": 1.0,
       "agreement": 0.8076923076923077,
       "marked": 2,
+      "marked_matched": 2,
+      "marked_code_only": 0,
       "marked_share": 0.038461538461538464,
       "claims": {
         "handler:heuristic": {
@@ -929,7 +1815,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "go_gin"
+      "technology": "go_gin",
+      "audit": {
+        "matched": 42,
+        "spec_only": 0,
+        "code_only": 10,
+        "marked_matched": 2,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 10,
+          "labelled": 10,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 10,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 10,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 287,
@@ -938,6 +1874,8 @@
       "recall": 1.0,
       "agreement": 0.944078947368421,
       "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "immich",
@@ -981,7 +1919,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "ts_nestjs"
+      "technology": "ts_nestjs",
+      "audit": {
+        "matched": 287,
+        "spec_only": 0,
+        "code_only": 17,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 17,
+          "labelled": 17,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 17,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 17,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 84,
@@ -990,6 +1978,8 @@
       "recall": 1.0,
       "agreement": 0.4307692307692308,
       "marked": 21,
+      "marked_matched": 19,
+      "marked_code_only": 2,
       "marked_share": 0.1076923076923077,
       "claims": {
         "prefix:heuristic": {
@@ -1039,7 +2029,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "python_fastapi"
+      "technology": "python_fastapi",
+      "audit": {
+        "matched": 84,
+        "spec_only": 0,
+        "code_only": 111,
+        "marked_matched": 19,
+        "marked_code_only": 2,
+        "code_sample": {
+          "sampled": 21,
+          "labelled": 21,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 21,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 21,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 241,
@@ -1048,6 +2088,8 @@
       "recall": 1.0,
       "agreement": 0.5604651162790698,
       "marked": 21,
+      "marked_matched": 0,
+      "marked_code_only": 21,
       "marked_share": 0.04883720930232558,
       "claims": {
         "handler:heuristic": {
@@ -1100,7 +2142,57 @@
         "automatic_only": 0,
         "skipped": 1
       },
-      "technology": "go_chi"
+      "technology": "go_chi",
+      "audit": {
+        "matched": 241,
+        "spec_only": 0,
+        "code_only": 189,
+        "marked_matched": 0,
+        "marked_code_only": 21,
+        "code_sample": {
+          "sampled": 8,
+          "labelled": 8,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 8,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 2,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 8,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 26,
@@ -1109,6 +2201,8 @@
       "recall": 0.9629629629629629,
       "agreement": 0.22807017543859648,
       "marked": 108,
+      "marked_matched": 26,
+      "marked_code_only": 82,
       "marked_share": 0.9473684210526315,
       "claims": {
         "prefix:heuristic": {
@@ -1159,7 +2253,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "go_mux"
+      "technology": "go_mux",
+      "audit": {
+        "matched": 26,
+        "spec_only": 1,
+        "code_only": 88,
+        "marked_matched": 26,
+        "marked_code_only": 82,
+        "code_sample": {
+          "sampled": 24,
+          "labelled": 24,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 21,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 3
+          },
+          "marked_by_verdict": {
+            "real": 19,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 3
+          }
+        },
+        "spec_sample": {
+          "sampled": 1,
+          "labelled": 1,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 1,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 21,
+          "unlabelled": 0,
+          "cannot_tell": 3
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 1,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 102,
@@ -1168,6 +2312,8 @@
       "recall": 1.0,
       "agreement": 1.0,
       "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "pokeapi",
@@ -1215,7 +2361,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "python_django"
+      "technology": "python_django",
+      "audit": {
+        "matched": 102,
+        "spec_only": 0,
+        "code_only": 0,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 133,
@@ -1224,6 +2420,8 @@
       "recall": 1.0,
       "agreement": 0.3071593533487298,
       "marked": 1,
+      "marked_matched": 0,
+      "marked_code_only": 1,
       "marked_share": 0.0023094688221709007,
       "claims": {
         "prefix:unresolved": {
@@ -1271,7 +2469,57 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "python_django"
+      "technology": "python_django",
+      "audit": {
+        "matched": 133,
+        "spec_only": 0,
+        "code_only": 300,
+        "marked_matched": 0,
+        "marked_code_only": 1,
+        "code_sample": {
+          "sampled": 25,
+          "labelled": 25,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 25,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 25,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     },
     {
       "matched": 153,
@@ -1280,6 +2528,8 @@
       "recall": 0.8895348837209303,
       "agreement": 0.5708955223880597,
       "marked": 5,
+      "marked_matched": 0,
+      "marked_code_only": 5,
       "marked_share": 0.018656716417910446,
       "claims": {
         "prefix:heuristic": {
@@ -1333,7 +2583,107 @@
         "automatic_only": 0,
         "skipped": 0
       },
-      "technology": "go_echo"
+      "technology": "go_echo",
+      "audit": {
+        "matched": 153,
+        "spec_only": 19,
+        "code_only": 115,
+        "marked_matched": 0,
+        "marked_code_only": 5,
+        "code_sample": {
+          "sampled": 13,
+          "labelled": 13,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 5,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 8
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 12,
+          "labelled": 12,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 4,
+            "wrong_address": 8,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 5,
+          "unlabelled": 0,
+          "cannot_tell": 8
+        },
+        "estimated_recall": {
+          "value": 0.9235412474849095,
+          "sample_size": 12,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
     }
-  ]
+  ],
+  "total": {
+    "matched": 2160,
+    "spec_only": 87,
+    "code_only": 1219,
+    "marked_matched": 351,
+    "marked_code_only": 263,
+    "code_sample": {
+      "sampled": 182,
+      "labelled": 182,
+      "unlabelled": 0,
+      "stale": 0,
+      "verdicts": {
+        "real": 169,
+        "false_positive": 1,
+        "wrong_address": 1,
+        "cannot_tell": 11
+      },
+      "marked_by_verdict": {
+        "real": 35,
+        "false_positive": 1,
+        "wrong_address": 0,
+        "cannot_tell": 3
+      }
+    },
+    "spec_sample": {
+      "sampled": 35,
+      "labelled": 35,
+      "unlabelled": 0,
+      "stale": 0,
+      "verdicts": {
+        "miss": 0,
+        "not_served": 11,
+        "wrong_address": 9,
+        "covered": 15,
+        "cannot_tell": 0
+      }
+    },
+    "estimated_precision": {
+      "value": 0.983361283746013,
+      "sample_size": 171,
+      "unlabelled": 0,
+      "cannot_tell": 11
+    },
+    "estimated_recall": {
+      "value": 0.9930273542257299,
+      "sample_size": 35,
+      "unlabelled": 0,
+      "cannot_tell": 0
+    }
+  }
 }

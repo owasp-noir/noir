@@ -35,6 +35,8 @@ describe Scoreboard do
     result["recall"].as_f.should eq(0.5)
     result["agreement"].as_f.should eq(1.0 / 3)
     result["marked"].as_i.should eq(2)
+    result["marked_matched"].should eq(1)
+    result["marked_code_only"].should eq(1)
     result["marked_share"].as_f.should eq(2.0 / 3)
     result["claims"]["handler:heuristic"]["count"].as_i.should eq(2)
     result["claims"]["prefix:unresolved"]["count"].as_i.should eq(1)
@@ -211,5 +213,66 @@ describe Scoreboard do
       {"header", "authorization"}, {"header", "x-api-key"}, {"cookie", "Access_Token"}, {"query", "token"},
     })
     Scoreboard.credential_params([JSON.parse("{}")]).should be_empty
+  end
+end
+
+private def audit_repo(name, matched, code, doc)
+  JSON.parse({name: name, technology: "go_chi", commit: "a" * 40, matched: matched, code_only: code,
+              spec_only: doc, marked_matched: 0, marked_code_only: 0}.to_json)
+end
+
+private def audit_row(side, url, repo = "one", marked = false)
+  JSON.parse({repository: repo, method: "GET", side: side, url: url, marked: marked}.to_json)
+end
+
+private def audit_label(side, url, verdict, repo = "one", pin = "a" * 40)
+  Scoreboard::Label.new(repo, "go_chi", pin, side, "GET", url, verdict)
+end
+
+describe "Scoreboard route audit" do
+  it "weights each repository's decided share by its population and keeps incomplete coverage visible" do
+    repos = [audit_repo("one", 10, 100, 6), audit_repo("two", 0, 2, 0)]
+    code = "code-only"
+    doc = "spec-only"
+    rows = [audit_row(code, "/a", marked: true), audit_row(code, "/b"), audit_row(code, "/c"),
+            audit_row(code, "/extra"), audit_row(code, "/a", "two", marked: true),
+            audit_row(doc, "/x"), audit_row(doc, "/y"), audit_row(doc, "/z")]
+    labels = [audit_label(code, "/a", "real"), audit_label(code, "/b", "false_positive"),
+              audit_label(code, "/c", "cannot_tell"), audit_label(code, "/a", "wrong_address", "two"),
+              audit_label(doc, "/x", "wrong_address"), audit_label(doc, "/y", "miss"), audit_label(doc, "/z", "covered")]
+    audit = Scoreboard.audit_summary(repos, {"go_chi" => rows}, labels)
+    audit["estimated_precision"].should eq(JSON.parse({value: 60.0 / 112, sample_size: 3, unlabelled: 1, cannot_tell: 1}.to_json))
+    audit["estimated_recall"]["value"].as_f.should eq(10.0 / 14)
+    audit["code_sample"]["labelled"].should eq(4)
+    audit["code_sample"]["marked_by_verdict"].should eq(JSON.parse(%({"real":1,"false_positive":0,"wrong_address":1,"cannot_tell":0})))
+    rows[3]["verdict"].raw.should be_nil
+  end
+
+  it "keeps stale pins, sides, methods, slash differences and ambiguous addresses out of the estimate" do
+    code = "code-only"
+    doc = "spec-only"
+    rows = [audit_row(code, "/same"), audit_row(code, "/same"), audit_row(code, "/slash/"),
+            audit_row(code, "/method"), audit_row(code, "/pin"), audit_row(code, "/side")]
+    labels = [audit_label(code, "/same", "real"), audit_label(code, "/slash", "real"),
+              Scoreboard::Label.new("one", "go_chi", "a" * 40, code, "POST", "/method", "real"),
+              audit_label(code, "/pin", "real", pin: "b" * 40), audit_label(doc, "/side", "miss")]
+    audit = Scoreboard.audit_summary([audit_repo("one", 5, 6, 0)], {"go_chi" => rows}, labels)
+    audit["code_sample"]["stale"].should eq(4)
+    audit["spec_sample"]["stale"].should eq(1)
+    audit["estimated_precision"]["value"].raw.should be_nil
+    audit["estimated_precision"]["unlabelled"].should eq(6)
+    audit["estimated_recall"]["value"].should eq(1.0)
+    empty = Scoreboard.audit_summary([audit_repo("two", 0, 0, 0)], {"go_chi" => rows}, labels)
+    empty["estimated_recall"]["value"].raw.should be_nil
+    empty["estimated_precision"]["value"].raw.should be_nil
+  end
+
+  it "rejects duplicate labels, invalid side verdicts and missing evidence" do
+    header = %w[repository technology commit side method url verdict source evidence].join('\t') + "\n"
+    row = ["one", "go_chi", "a" * 40, "spec-only", "GET", "/route", "miss", "app.go:4", "Registers the handler."].join('\t') + "\n"
+    Scoreboard.read_labels(IO::Memory.new(header + row)).size.should eq(1)
+    [row + row, row.sub("miss", "real"), row.sub("app.go:4", "app.go"), row.sub("Registers the handler.", "")].each do |invalid|
+      expect_raises(Exception) { Scoreboard.read_labels(IO::Memory.new(header + invalid)) }
+    end
   end
 end

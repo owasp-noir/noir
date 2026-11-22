@@ -43,6 +43,35 @@ A technology measured on one repository is a single data point.
 | pretalx | 133 | 0 | 300 | 100.0% | 30.7% | 1 (0.2%) |
 | vikunja | 153 | 19 | 115 | 89.0% | 57.1% | 5 (1.9%) |
 
+| Scope | Estimated precision | Estimated recall | Marked matched / code-only |
+| --- | ---: | ---: | ---: |
+| cs_aspnet_core_minimal_api | 100.0% (n=0, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| go_chi | 100.0% (n=17, 0 unlabelled, 0 undecided) | 100.0% (n=8, 0 unlabelled, 0 undecided) | 0 / 21 |
+| go_echo | 100.0% (n=5, 0 unlabelled, 8 undecided) | 92.4% (n=12, 0 unlabelled, 0 undecided) | 0 / 5 |
+| go_gin | 100.0% (n=22, 0 unlabelled, 0 undecided) | 100.0% (n=3, 0 unlabelled, 0 undecided) | 198 / 32 |
+| go_mux | 100.0% (n=21, 0 unlabelled, 3 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 26 / 82 |
+| java_spring | 100.0% (n=23, 0 unlabelled, 0 undecided) | 100.0% (n=2, 0 unlabelled, 0 undecided) | 0 / 0 |
+| js_express | 91.7% (n=17, 0 unlabelled, 0 undecided) | 99.4% (n=8, 0 unlabelled, 0 undecided) | 108 / 120 |
+| python_django | 100.0% (n=25, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 1 |
+| python_fastapi | 100.0% (n=24, 0 unlabelled, 0 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 19 / 2 |
+| ts_nestjs | 100.0% (n=17, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| InvokeAI | 100.0% (n=3, 0 unlabelled, 0 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 0 / 0 |
+| NodeBB | 90.8% (n=9, 0 unlabelled, 0 undecided) | 99.3% (n=8, 0 unlabelled, 0 undecided) | 108 / 120 |
+| answer | 100.0% (n=12, 0 unlabelled, 0 undecided) | 100.0% (n=3, 0 unlabelled, 0 undecided) | 196 / 32 |
+| auth | 100.0% (n=9, 0 unlabelled, 0 undecided) | 100.0% (n=8, 0 unlabelled, 0 undecided) | 0 / 0 |
+| dvws-node | 100.0% (n=8, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| eShop | 100.0% (n=0, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| flowable-engine | 100.0% (n=23, 0 unlabelled, 0 undecided) | 100.0% (n=2, 0 unlabelled, 0 undecided) | 0 / 0 |
+| gotify | 100.0% (n=10, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 2 / 0 |
+| immich | 100.0% (n=17, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| langflow | 100.0% (n=21, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 19 / 2 |
+| owncast | 100.0% (n=8, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 21 |
+| podinfo | 100.0% (n=21, 0 unlabelled, 3 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 26 / 82 |
+| pokeapi | 100.0% (n=0, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| pretalx | 100.0% (n=25, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 1 |
+| vikunja | 100.0% (n=5, 0 unlabelled, 8 undecided) | 92.4% (n=12, 0 unlabelled, 0 undecided) | 0 / 5 |
+| Total | 98.3% (n=171, 0 unlabelled, 11 undecided) | 99.3% (n=35, 0 unlabelled, 0 undecided) | 351 / 263 |
+
 | Technology | Detected / repositories | Other technologies detected | Forced-only rows | Automatic-only rows |
 | --- | ---: | --- | ---: | ---: |
 | cs_aspnet_core_minimal_api | 1 / 1 | http_file, oas3 | 0 | 0 |
@@ -180,11 +209,19 @@ Flowable declares `spec_prefix: "/flowable-rest/service"` for its process-contro
 
 Owncast is different: `webserver/router/router.go:93` mounts the generated API at `/api/`. Its spec's `/api` is in the source and is retained. Only Supabase Auth and Flowable have prefix adjustments. Noir's own normalization still handles placeholder spellings; this recipe adds no case, slash, `ANY`, wildcard, constant-prefix or gateway-rewrite matching. Gateway technologies are excluded because coverage rules are not one-to-one API operations.
 
-### Source audit
+### Source-labelled estimates
+
+Each technology contributes at most 25 unmatched rows **across both sides combined**. The sampler shares those slots among repositories and sides, then takes evenly spaced rows from each sorted list. A conditional registration counts as real when the code shows a configuration that serves it. A method the router registers also counts as real when the handler it reaches then rejects that method itself, as the runtime comparison below does: the router dispatches the request. A documented spelling already served by a correctly reported pattern is `covered`. The original join still shows both spellings.
+
+Estimated precision is (matched + estimated real code-only rows) / all reported rows. Estimated recall is matched / (matched + estimated document-only misses and wrong addresses). Each repository projects its decided sample share onto its own unmatched count before the scoreboard sums across repositories. Both estimates assume matched rows are valid. The deterministic sample gives no confidence interval and cannot measure routes absent from both sources. Each estimate includes its decided sample size, unlabelled count and `cannot_tell` count. A nonempty side with no decided sample makes the corresponding estimate unavailable. In the JSON, compare `marked_by_verdict` with each code verdict count to see how often resolution marks identify errors or appear on real routes.
+
+To label a row, open the technology’s `*-audit-sample.json` in the scoreboard artifact. Trace the handler and its mounts in the pinned source. Add one tab-separated line to `scripts/scoreboard/labels.tsv` with the repository, technology, application commit, exact side, method, URL, verdict, relative `file:line` and a sentence of evidence. Use `real`, `false_positive` or `wrong_address` on the code side and `miss`, `not_served`, `covered` or `wrong_address` on the document side. Use `cannot_tell` on either side and record what the source leaves unresolved. A changed pin or sample can leave a label stale. Check the new evidence before updating it.
+
+### Historical source audits
 
 The dated table below records a manual audit of the measured snapshot. The initial audit sampled up to 25 unmatched rows per technology. Slots are allocated across repository/side buckets, then evenly spaced positions are taken within each sorted bucket. These are sample counts, not estimated totals. An operation can appear on both unmatched sides.
 
-Classifications are analyzer miss, analyzer false positive, stale or wrong spec, undocumented route, prefix/method/slash difference that is not an analyzer error, and other. They do not change the ratios. Per-row evidence is not committed. Re-audit changed rows and update this dated table before publishing a new measurement; the recipe regenerates metrics, not the manual audit.
+Classifications are analyzer miss, analyzer false positive, stale or wrong spec, undocumented route, prefix/method/slash difference that is not an analyzer error, and other. They do not change the ratios. These historical counts predate the checked-in row labels.
 
 <!-- AUDIT -->
 
@@ -230,7 +267,7 @@ bash docs/scripts/check_doc_parity.sh
 hwaro build -i docs
 ```
 
-The recipe is on demand and depends on `build-release`, through the compile gate. It needs git, tar, and network access for uncached pins. Checkouts and exports live under `$TMPDIR/noir-codex-scoreboard/` (or `/tmp/noir-codex-scoreboard/`). Per-repository matched/spec-only/code-only lists and per-technology audit samples are written to ignored `tmp/scoreboard/`; they are not committed.
+The weekly and manually dispatched scoreboard workflow runs this recipe on the default branch. It uploads the row reports and flags repositories with fewer matches or more document-only rows than the committed snapshot. The recipe uses `build-release` through the compile gate. It needs git, tar, and network access for uncached pins. Checkouts and exports live under `$TMPDIR/noir-codex-scoreboard/` (or `/tmp/noir-codex-scoreboard/`). Per-repository matched/spec-only/code-only lists and per-technology audit samples are written to ignored `tmp/scoreboard/`; they are not committed.
 
 The compact regression snapshot is [`scripts/scoreboard/results.json`](https://github.com/owasp-noir/noir/blob/main/scripts/scoreboard/results.json). It contains counts, ratios, marks, repository pins, date and analyzer revision. The snapshot date is preserved when analyzer revision and corpus pins are unchanged. Commit analyzer/dependency changes before running; dirty or untracked `src` files and modified shard manifests are rejected. Output is sorted and excludes durations and absolute scratch paths.
 
