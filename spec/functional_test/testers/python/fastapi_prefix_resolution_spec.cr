@@ -1,6 +1,8 @@
 require "../../func_spec.cr"
 
 expected_endpoints = [
+  Endpoint.new("/ops/v2/constant/path", "GET"),
+  Endpoint.new("/ops/uptime", "GET"),
   Endpoint.new("/public/entry", "GET"),
   Endpoint.new("/verified/entry", "GET"),
   Endpoint.new("/literal/path", "GET"),
@@ -34,6 +36,7 @@ describe "FastAPI prefix resolution", tags: "functional" do
   it "marks unread prefixes and keeps only safe slash-rooted tails" do
     marked = tester.endpoints.select(&.resolution).map { |ep| "#{ep.method} #{ep.url}" }.sort!
     marked.should eq([
+      "GET /api/v1/path",
       "GET /call",
       "GET /cross/outer/nested/external/item",
       "GET /env-v1/env",
@@ -43,6 +46,8 @@ describe "FastAPI prefix resolution", tags: "functional" do
       "GET /include-v1/include",
       "GET /leading-runtime",
       "GET /nested/mount/child/nested-path",
+      "GET /ops/uptime",
+      "GET /ops/v2/constant/path",
       "GET /public/entry",
       "GET /relative",
       "GET /router-v1/router",
@@ -51,7 +56,8 @@ describe "FastAPI prefix resolution", tags: "functional" do
       "GET /variable",
     ])
     tester.endpoints.select(&.resolution).each do |endpoint|
-      expected = endpoint.url == "/public/entry" ? Endpoint::RESOLUTION_HEURISTIC : Endpoint::RESOLUTION_UNRESOLVED
+      heuristic = %w[/api/v1/path /env-v1/env /include-v1/include /nested/mount/child/nested-path /ops/uptime /ops/v2/constant/path /public/entry /router-v1/router]
+      expected = heuristic.includes?(endpoint.url) ? Endpoint::RESOLUTION_HEURISTIC : Endpoint::RESOLUTION_UNRESOLVED
       evidence = {"prefix" => expected}
       # Both routers are defined in main.py and omitted from its includes.
       evidence["registration"] = "unresolved" if endpoint.url.in?("/variable", "/leading-runtime")
@@ -59,8 +65,8 @@ describe "FastAPI prefix resolution", tags: "functional" do
     end
   end
 
-  it "leaves literal, imported and resolved settings prefixes unmarked" do
+  it "leaves exact literal and imported prefixes unmarked" do
     resolved = tester.endpoints.reject(&.resolution).map(&.url).sort!
-    resolved.should eq(["/api/v1/path", "/constant/path", "/health", "/literal/path", "/nested/health", "/verified/entry"])
+    resolved.should eq(["/constant/path", "/health", "/literal/path", "/nested/health", "/verified/entry"])
   end
 end

@@ -255,6 +255,17 @@ module Noir
         @handler_args = @handler_args.map { |arg| element.texts[arg]? || arg }
       end
 
+      # Keep the handler, table row and parameter attribution of this registration.
+      def under_field_prefix(prefix : String) : self
+        path = Noir::TreeSitterGoRouteExtractor.group_join(prefix, @path)
+        placed = Route.new(@router_name, @verb, path, @raw_path, @handler, @line,
+          @query_params, @handler_args, offset: @offset, prefix_unresolved: @prefix_unresolved)
+        placed.prefix_heuristic = true if prefix_heuristic?
+        placed.handler_row = @handler_row
+        placed.file = @file
+        placed
+      end
+
       # Marks the route (see `GoEngine#unread_builder_routes`).
       def unresolve_prefix! : self
         @prefix_unresolved = true
@@ -931,6 +942,7 @@ module Noir
       calls = [] of Tuple(String, String, String, Int32, String?)
       return calls if builders.empty?
       Noir::TreeSitter.parse_go(source) do |root|
+        values = nil
         scope_groups = builder_param_groups(root, source, scopes)
         Noir::TreeSitter.walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
@@ -956,7 +968,8 @@ module Noir
           first_seen = false
           arg_text = nil
           Noir::TreeSitter.each_named_arg(args) do |arg|
-            text = builder_arg_text(arg, source, call_groups)
+            values ||= collect_string_values(root, source) if Noir::TreeSitter.node_type(arg) == "call_expression"
+            text = builder_arg_text(arg, source, call_groups, values)
             text = scoped[text]? || text if scoped && text && Noir::TreeSitter.node_type(arg) == "identifier"
             unless first_seen
               first_seen = true
@@ -1123,9 +1136,10 @@ module Noir
     # `router.Group("/v1")` / `r.PathPrefix("/v1").Subrouter()` builds
     # (stacked on the receiver's prefix when `groups` knows it). An unread
     # Group prefix keeps only the route path tail `route_path_text` allows.
-    private def builder_arg_text(arg : LibTreeSitter::TSNode, source : String, groups : Hash(String, String)) : String?
+    private def builder_arg_text(arg : LibTreeSitter::TSNode, source : String, groups : Hash(String, String), values : Hash(String, String)? = nil) : String?
       return Noir::TreeSitter.node_text(arg, source) if Noir::TreeSitter.node_type(arg) == "identifier"
       return unless Noir::TreeSitter.node_type(arg) == "call_expression"
+      strings = values || Hash(String, String).new
       gfn = Noir::TreeSitter.field(arg, "function")
       return unless gfn && Noir::TreeSitter.node_type(gfn) == "selector_expression"
       operand = Noir::TreeSitter.field(gfn, "operand")
@@ -1135,18 +1149,18 @@ module Noir
         return unless gargs
         lit = nil
         Noir::TreeSitter.each_named_child(gargs) do |ga|
-          if (text = string_expr_text(ga, source, {} of String => String)) && text.starts_with?("/")
+          if (text = path_expr_text(ga, source, strings)) && text.starts_with?("/")
             lit = text
             break
           end
         end
-        if lit.nil? && (first = Noir::TreeSitter.first_named_arg(gargs)) && string_expr_text(first, source, {} of String => String).nil?
-          lit = unread_group_prefix(first, source, {} of String => String)
+        if lit.nil? && (first = Noir::TreeSitter.first_named_arg(gargs)) && string_expr_text(first, source, strings).nil?
+          lit = unread_group_prefix(first, source, strings)
         end
         parent = operand && groups[Noir::TreeSitter.node_text(operand, source)]?
         lit && parent ? group_join(parent, lit) : lit
       when "Subrouter"
-        operand.try { |chain| subrouter_chain_prefix(chain, source, groups, {} of String => String) }
+        operand.try { |chain| subrouter_chain_prefix(chain, source, groups, strings) }
       end
     end
 
@@ -1849,6 +1863,7 @@ module Noir
 
     private def collect_string_values(root : LibTreeSitter::TSNode, source : String, seed : Hash(String, String)? = nil) : Hash(String, String)
       values = seed ? seed.dup : Hash(String, String).new
+      collect_environment_defaults(root, source, values) if source.includes?("Getenv")
       ambiguous = Set(String).new
       loop do
         changed = false
@@ -2973,7 +2988,11 @@ module Noir
       when "interpreted_string_literal", "raw_string_literal"
         decode_string_literal(node, source)
       when "identifier"
-        values[Noir::TreeSitter.node_text(node, source)]?
+        name = Noir::TreeSitter.node_text(node, source)
+        if values.has_key?(ENV_BINDINGS) && values.has_key?("env:#{name}") && (scoped = environment_binding(node, name, source, values))
+          return scoped
+        end
+        values[name]?
       when "binary_expression"
         left = Noir::TreeSitter.field(node, "left")
         right = Noir::TreeSitter.field(node, "right")
@@ -3006,6 +3025,21 @@ module Noir
         # `path.Join(uriAdmin, "/lists")`: the stdlib join, every element
         # resolved, joined with `/` and cleaned of doubled and trailing ones.
         fn_text = Noir::TreeSitter.node_text(function, source)
+        if values.has_key?(ENV_BINDINGS)
+          if fallback = values["env:#{fn_text}()"]?
+            return fallback
+          end
+          if index = values["env-arg:#{fn_text}()"]?
+            position = 0
+            Noir::TreeSitter.each_named_arg(args) do |arg|
+              if position == index.to_i
+                fallback = string_expr_text(arg, source, values, depth + 1)
+                return fallback.try { |path| "#{path}#{HEURISTIC_PREFIX}" }
+              end
+              position += 1
+            end
+          end
+        end
         if fn_text == "path.Join"
           parts = [] of String
           Noir::TreeSitter.each_named_arg(args) do |a|
@@ -3534,7 +3568,7 @@ module Noir
     # An empty path is the group's own path (`api.GET("", h)` serves
     # `/api`, not `/api/`): gin, Echo and Fiber all join it that way.
     # An unread prefix on either side stays in front (`UNREAD_PREFIX`).
-    private def group_join(prefix : String, path : String) : String
+    def group_join(prefix : String, path : String) : String
       if prefix.includes?(UNREAD_PREFIX) || path.includes?(UNREAD_PREFIX)
         return "#{UNREAD_PREFIX}#{group_join(prefix.delete(UNREAD_PREFIX), path.delete(UNREAD_PREFIX))}"
       end

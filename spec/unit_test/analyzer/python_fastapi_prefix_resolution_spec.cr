@@ -188,7 +188,7 @@ describe "FastAPI prefix resolution" do
     runner.analyze
 
     by_url = runner.endpoints.to_h { |endpoint| {endpoint.url, endpoint} }
-    by_url["/v1/route"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
+    by_url["/v1/route"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_HEURISTIC})
     by_url["/route"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
     by_url["/f-v1/fstring"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED, "registration" => Endpoint::RESOLUTION_UNRESOLVED})
     by_url["/variable"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
@@ -196,9 +196,10 @@ describe "FastAPI prefix resolution" do
     by_url["/env"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
     by_url["/call"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
     by_url["/include-unread"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
-    by_url["/parent/mount/child/route"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
-    by_url["/mount/outer/nested/external/route"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
-    ["/literal/route", "/constant/route", "/api/v1/route", "/parent/route", "/health"].each do |url|
+    by_url["/parent/mount/child/route"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_HEURISTIC})
+    by_url["/mount/outer/nested/external/route"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_HEURISTIC})
+    by_url["/api/v1/route"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_HEURISTIC})
+    ["/literal/route", "/constant/route", "/parent/route", "/health"].each do |url|
       by_url[url].resolution.should be_nil
     end
   ensure

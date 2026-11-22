@@ -141,3 +141,14 @@ def subapp_health():
 app.include_router(public_router, prefix="/public")
 app.include_router(public_router, prefix="/verified")
 app.include_router(actual_router, prefix="/verified")
+
+service = FastAPI()
+service.include_router(constant_router, prefix="/v2")
+
+
+@service.get("/uptime", include_in_schema=False)
+def uptime():
+    return {}
+
+
+app.mount(settings.service_path, service)
