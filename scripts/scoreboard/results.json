@@ -1,6 +1,6 @@
 {
   "measured_on": "2026-11-22",
-  "analyzer_revision": "bd9e6c936808b26689f5b1939676db1876aab621",
+  "analyzer_revision": "733a55018000278fefdd741e357229a0e6bbe8bb",
   "technologies": [
     {
       "matched": 16,
@@ -86,18 +86,18 @@
         "spec_open_code_guarded": 133
       },
       "params": {
-        "both": 31,
-        "spec_only": 27,
-        "code_only": 88,
-        "recall": 0.5344827586206896,
-        "agreement": 0.2605042016806723
+        "both": 56,
+        "spec_only": 2,
+        "code_only": 94,
+        "recall": 0.9655172413793104,
+        "agreement": 0.37333333333333335
       },
       "body_fields": {
-        "both": 16,
-        "spec_only": 162,
-        "code_only": 4,
-        "recall": 0.0898876404494382,
-        "agreement": 0.8
+        "both": 43,
+        "spec_only": 135,
+        "code_only": 22,
+        "recall": 0.24157303370786518,
+        "agreement": 0.6615384615384615
       },
       "repositories": 2
     },
@@ -129,23 +129,23 @@
       },
       "guards": {
         "both_guarded": 131,
-        "both_open": 11,
+        "both_open": 9,
         "spec_guarded_code_open": 1,
-        "spec_open_code_guarded": 6
+        "spec_open_code_guarded": 8
       },
       "params": {
-        "both": 128,
-        "spec_only": 69,
-        "code_only": 0,
-        "recall": 0.649746192893401,
-        "agreement": 1.0
+        "both": 197,
+        "spec_only": 0,
+        "code_only": 52,
+        "recall": 1.0,
+        "agreement": 0.7911646586345381
       },
       "body_fields": {
-        "both": 0,
-        "spec_only": 364,
-        "code_only": 0,
-        "recall": 0.0,
-        "agreement": null
+        "both": 363,
+        "spec_only": 1,
+        "code_only": 246,
+        "recall": 0.9972527472527473,
+        "agreement": 0.5960591133004927
       },
       "repositories": 1
     },
@@ -186,18 +186,18 @@
         "spec_open_code_guarded": 10
       },
       "params": {
-        "both": 35,
-        "spec_only": 106,
-        "code_only": 5,
-        "recall": 0.24822695035460993,
-        "agreement": 0.875
+        "both": 130,
+        "spec_only": 11,
+        "code_only": 122,
+        "recall": 0.9219858156028369,
+        "agreement": 0.5158730158730159
       },
       "body_fields": {
-        "both": 35,
-        "spec_only": 307,
-        "code_only": 1,
-        "recall": 0.1023391812865497,
-        "agreement": 0.9722222222222222
+        "both": 326,
+        "spec_only": 16,
+        "code_only": 467,
+        "recall": 0.9532163742690059,
+        "agreement": 0.4110970996216898
       },
       "repositories": 2
     },
@@ -207,9 +207,14 @@
       "code_only": 88,
       "recall": 0.9629629629629629,
       "agreement": 0.22807017543859648,
-      "marked": 0,
-      "marked_share": 0.0,
-      "claims": {},
+      "marked": 108,
+      "marked_share": 0.9473684210526315,
+      "claims": {
+        "prefix:unresolved": {
+          "count": 108,
+          "share": 0.9473684210526315
+        }
+      },
       "name": "go_mux",
       "detection": {
         "detected_repositories": 1,
@@ -341,9 +346,14 @@
       "code_only": 300,
       "recall": 1.0,
       "agreement": 0.4392523364485981,
-      "marked": 0,
-      "marked_share": 0.0,
-      "claims": {},
+      "marked": 1,
+      "marked_share": 0.001869158878504673,
+      "claims": {
+        "prefix:unresolved": {
+          "count": 1,
+          "share": 0.001869158878504673
+        }
+      },
       "name": "python_django",
       "detection": {
         "detected_repositories": 2,
@@ -366,18 +376,18 @@
         "spec_open_code_guarded": 5
       },
       "params": {
-        "both": 331,
-        "spec_only": 297,
-        "code_only": 73,
-        "recall": 0.5270700636942676,
-        "agreement": 0.8193069306930693
+        "both": 609,
+        "spec_only": 19,
+        "code_only": 381,
+        "recall": 0.9697452229299363,
+        "agreement": 0.6151515151515151
       },
       "body_fields": {
-        "both": 311,
-        "spec_only": 142,
-        "code_only": 10,
-        "recall": 0.6865342163355408,
-        "agreement": 0.9688473520249221
+        "both": 393,
+        "spec_only": 60,
+        "code_only": 21,
+        "recall": 0.8675496688741722,
+        "agreement": 0.9492753623188406
       },
       "repositories": 2
     },
@@ -387,9 +397,14 @@
       "code_only": 114,
       "recall": 0.997134670487106,
       "agreement": 0.7532467532467533,
-      "marked": 0,
-      "marked_share": 0.0,
-      "claims": {},
+      "marked": 21,
+      "marked_share": 0.045454545454545456,
+      "claims": {
+        "prefix:heuristic": {
+          "count": 21,
+          "share": 0.045454545454545456
+        }
+      },
       "name": "python_fastapi",
       "detection": {
         "detected_repositories": 2,
@@ -416,11 +431,11 @@
         "agreement": 0.980561555075594
       },
       "body_fields": {
-        "both": 360,
-        "spec_only": 33,
-        "code_only": 42,
-        "recall": 0.916030534351145,
-        "agreement": 0.8955223880597015
+        "both": 363,
+        "spec_only": 30,
+        "code_only": 12,
+        "recall": 0.9236641221374046,
+        "agreement": 0.968
       },
       "repositories": 2
     },
@@ -451,18 +466,18 @@
         "spec_open_code_guarded": 0
       },
       "params": {
-        "both": 245,
-        "spec_only": 102,
-        "code_only": 6,
-        "recall": 0.7060518731988472,
-        "agreement": 0.9760956175298805
+        "both": 312,
+        "spec_only": 35,
+        "code_only": 2,
+        "recall": 0.899135446685879,
+        "agreement": 0.9936305732484076
       },
       "body_fields": {
-        "both": 221,
-        "spec_only": 274,
+        "both": 492,
+        "spec_only": 3,
         "code_only": 1,
-        "recall": 0.44646464646464645,
-        "agreement": 0.9954954954954955
+        "recall": 0.9939393939393939,
+        "agreement": 0.9979716024340771
       },
       "repositories": 1
     }
@@ -495,11 +510,11 @@
         "agreement": 0.9776536312849162
       },
       "body_fields": {
-        "both": 264,
-        "spec_only": 18,
-        "code_only": 28,
-        "recall": 0.9361702127659575,
-        "agreement": 0.9041095890410958
+        "both": 265,
+        "spec_only": 17,
+        "code_only": 5,
+        "recall": 0.9397163120567376,
+        "agreement": 0.9814814814814815
       },
       "guards": {
         "both_guarded": 258,
@@ -610,18 +625,18 @@
         "docs/swagger.json"
       ],
       "params": {
-        "both": 9,
-        "spec_only": 104,
-        "code_only": 5,
-        "recall": 0.07964601769911504,
-        "agreement": 0.6428571428571429
+        "both": 104,
+        "spec_only": 9,
+        "code_only": 122,
+        "recall": 0.9203539823008849,
+        "agreement": 0.46017699115044247
       },
       "body_fields": {
-        "both": 1,
-        "spec_only": 307,
-        "code_only": 0,
-        "recall": 0.003246753246753247,
-        "agreement": 1.0
+        "both": 292,
+        "spec_only": 16,
+        "code_only": 454,
+        "recall": 0.948051948051948,
+        "agreement": 0.3914209115281501
       },
       "guards": {
         "both_guarded": 130,
@@ -665,16 +680,16 @@
       "params": {
         "both": 23,
         "spec_only": 1,
-        "code_only": 88,
+        "code_only": 94,
         "recall": 0.9583333333333334,
-        "agreement": 0.2072072072072072
+        "agreement": 0.19658119658119658
       },
       "body_fields": {
-        "both": 16,
-        "spec_only": 49,
-        "code_only": 4,
-        "recall": 0.24615384615384617,
-        "agreement": 0.8
+        "both": 43,
+        "spec_only": 22,
+        "code_only": 22,
+        "recall": 0.6615384615384615,
+        "agreement": 0.6615384615384615
       },
       "guards": {
         "both_guarded": 12,
@@ -890,9 +905,9 @@
       "body_fields": {
         "both": 34,
         "spec_only": 0,
-        "code_only": 1,
+        "code_only": 13,
         "recall": 1.0,
-        "agreement": 0.9714285714285714
+        "agreement": 0.723404255319149
       },
       "guards": {
         "both_guarded": 32,
@@ -933,18 +948,18 @@
         "open-api/immich-openapi-specs.json"
       ],
       "params": {
-        "both": 245,
-        "spec_only": 102,
-        "code_only": 6,
-        "recall": 0.7060518731988472,
-        "agreement": 0.9760956175298805
+        "both": 312,
+        "spec_only": 35,
+        "code_only": 2,
+        "recall": 0.899135446685879,
+        "agreement": 0.9936305732484076
       },
       "body_fields": {
-        "both": 221,
-        "spec_only": 274,
+        "both": 492,
+        "spec_only": 3,
         "code_only": 1,
-        "recall": 0.44646464646464645,
-        "agreement": 0.9954954954954955
+        "recall": 0.9939393939393939,
+        "agreement": 0.9979716024340771
       },
       "guards": {
         "both_guarded": 268,
@@ -971,9 +986,14 @@
       "code_only": 111,
       "recall": 1.0,
       "agreement": 0.4307692307692308,
-      "marked": 0,
-      "marked_share": 0.0,
-      "claims": {},
+      "marked": 21,
+      "marked_share": 0.1076923076923077,
+      "claims": {
+        "prefix:heuristic": {
+          "count": 21,
+          "share": 0.1076923076923077
+        }
+      },
       "name": "langflow",
       "url": "https://github.com/langflow-ai/langflow",
       "commit": "e8bbae8eeb8729abd650f07bfc55957cbdbc1636",
@@ -992,11 +1012,11 @@
         "agreement": 0.9904761904761905
       },
       "body_fields": {
-        "both": 96,
-        "spec_only": 15,
-        "code_only": 14,
-        "recall": 0.8648648648648649,
-        "agreement": 0.8727272727272727
+        "both": 98,
+        "spec_only": 13,
+        "code_only": 7,
+        "recall": 0.8828828828828829,
+        "agreement": 0.9333333333333333
       },
       "guards": {
         "both_guarded": 67,
@@ -1047,10 +1067,10 @@
         "openapi.yaml"
       ],
       "params": {
-        "both": 8,
-        "spec_only": 26,
+        "both": 33,
+        "spec_only": 1,
         "code_only": 0,
-        "recall": 0.23529411764705882,
+        "recall": 0.9705882352941176,
         "agreement": 1.0
       },
       "body_fields": {
@@ -1090,9 +1110,14 @@
       "code_only": 88,
       "recall": 0.9629629629629629,
       "agreement": 0.22807017543859648,
-      "marked": 0,
-      "marked_share": 0.0,
-      "claims": {},
+      "marked": 108,
+      "marked_share": 0.9473684210526315,
+      "claims": {
+        "prefix:unresolved": {
+          "count": 108,
+          "share": 0.9473684210526315
+        }
+      },
       "name": "podinfo",
       "url": "https://github.com/stefanprodan/podinfo",
       "commit": "fd3a834ed8d14b80ea334cf8a2fddd4597924da6",
@@ -1158,11 +1183,11 @@
         "openapi.yml"
       ],
       "params": {
-        "both": 95,
-        "spec_only": 100,
+        "both": 195,
+        "spec_only": 0,
         "code_only": 54,
-        "recall": 0.48717948717948717,
-        "agreement": 0.6375838926174496
+        "recall": 1.0,
+        "agreement": 0.7831325301204819
       },
       "body_fields": {
         "both": 0,
@@ -1200,9 +1225,14 @@
       "code_only": 300,
       "recall": 1.0,
       "agreement": 0.3071593533487298,
-      "marked": 0,
-      "marked_share": 0.0,
-      "claims": {},
+      "marked": 1,
+      "marked_share": 0.0023094688221709007,
+      "claims": {
+        "prefix:unresolved": {
+          "count": 1,
+          "share": 0.0023094688221709007
+        }
+      },
       "name": "pretalx",
       "url": "https://github.com/pretalx/pretalx",
       "commit": "1510dea9aafd580d1b2d7b8466736a09cd0298ec",
@@ -1214,18 +1244,18 @@
         "doc/api/schema.yml"
       ],
       "params": {
-        "both": 236,
-        "spec_only": 197,
-        "code_only": 19,
-        "recall": 0.5450346420323325,
-        "agreement": 0.9254901960784314
+        "both": 414,
+        "spec_only": 19,
+        "code_only": 327,
+        "recall": 0.9561200923787528,
+        "agreement": 0.5587044534412956
       },
       "body_fields": {
-        "both": 311,
-        "spec_only": 142,
-        "code_only": 10,
-        "recall": 0.6865342163355408,
-        "agreement": 0.9688473520249221
+        "both": 393,
+        "spec_only": 60,
+        "code_only": 21,
+        "recall": 0.8675496688741722,
+        "agreement": 0.9492753623188406
       },
       "guards": {
         "both_guarded": 0,
@@ -1270,24 +1300,24 @@
         "pkg/swagger/swagger.json"
       ],
       "params": {
-        "both": 128,
-        "spec_only": 69,
-        "code_only": 0,
-        "recall": 0.649746192893401,
-        "agreement": 1.0
+        "both": 197,
+        "spec_only": 0,
+        "code_only": 52,
+        "recall": 1.0,
+        "agreement": 0.7911646586345381
       },
       "body_fields": {
-        "both": 0,
-        "spec_only": 364,
-        "code_only": 0,
-        "recall": 0.0,
-        "agreement": null
+        "both": 363,
+        "spec_only": 1,
+        "code_only": 246,
+        "recall": 0.9972527472527473,
+        "agreement": 0.5960591133004927
       },
       "guards": {
         "both_guarded": 131,
-        "both_open": 11,
+        "both_open": 9,
         "spec_guarded_code_open": 1,
-        "spec_open_code_guarded": 6
+        "spec_open_code_guarded": 8
       },
       "detection": {
         "detected": true,
