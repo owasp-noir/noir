@@ -1,0 +1,10 @@
+apex_salesforce:
+  framework: "Salesforce (REST, Aura, SOAP)"
+  language: "Apex"
+  similar: ["apex", "salesforce", "sfdx", "apex-rest", "apex_rest", "apex_salesforce"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false

@@ -48,6 +48,23 @@ describe "Supported metadata schema" do
   end
 end
 
+# Library consumers compile against the raw literal's inferred type.
+private module CatalogContract
+  alias Flags = Hash(Symbol, Bool)
+  alias Supported = Hash(Symbol, Bool | Flags)
+  alias Implementation = Hash(Symbol, Array(String) | Bool | Supported)
+  alias Framework = Hash(Symbol, Array(String) | String | Supported)
+  alias WithImplementationContext = Hash(Symbol, Array(String) | Bool | Supported | Flags)
+  alias WithFrameworkContext = Hash(Symbol, Array(String) | String | Supported | Flags)
+  alias Catalog = Hash(Symbol, Implementation | Framework | WithImplementationContext | WithFrameworkContext)
+end
+
+describe "catalog type" do
+  it "preserves the inferred type exposed to library consumers" do
+    typeof(NoirTechs.techs).to_s.should eq(CatalogContract::Catalog.to_s)
+  end
+end
+
 describe "Get Techs" do
   techs = NoirTechs.techs
   techs.each do |k, v|

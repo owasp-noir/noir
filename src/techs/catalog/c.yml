@@ -1,0 +1,35 @@
+c_civetweb:
+  framework: "CivetWeb"
+  language: "C"
+  similar: ["civetweb", "civet", "c-civetweb", "c_civetweb", "civetserver"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: true
+  context: {callee: true}
+
+c_libmicrohttpd:
+  framework: "libmicrohttpd"
+  language: "C"
+  similar: ["libmicrohttpd", "microhttpd", "mhd", "gnu-libmicrohttpd", "c-libmicrohttpd", "c_libmicrohttpd"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+c_mongoose:
+  framework: "Mongoose"
+  language: "C"
+  similar: ["mongoose", "cesanta-mongoose", "c-mongoose", "c_mongoose", "mongoose.ws"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: true
+  context: {callee: true}

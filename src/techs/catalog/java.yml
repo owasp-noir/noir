@@ -1,0 +1,250 @@
+java_armeria:
+  framework: "Armeria"
+  language: "Java"
+  similar: ["armeria", "java-armeria", "java_armeria"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+java_camel:
+  framework: "Apache Camel"
+  language: "Java"
+  similar: ["camel", "apache-camel", "apache_camel", "java-camel", "java_camel"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+
+java_cli:
+  framework: "CLI (picocli / args4j / JCommander / commons-cli / airline / JOpt Simple)"
+  language: "Java"
+  similar: ["java-cli", "java_cli", "picocli", "args4j", "jcommander", "commons-cli", "airline", "jopt-simple", "joptsimple"]
+  supported:
+    endpoint: true
+    method: false
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+
+java_dropwizard:
+  framework: "Dropwizard"
+  language: "Java"
+  similar: ["dropwizard", "java-dropwizard", "java_dropwizard"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+# Helidon ships two unrelated routing models under one project, so it
+# gets two techs rather than one — same precedent as
+# `csharp_aspnet_mvc` / `csharp_aspnet_core_mvc`:
+#
+#   * SE  — the functional `HttpRouting`/`HttpService` builder DSL,
+#     walked by a dedicated tree-sitter analyzer
+#     (`Analyzer::Java::HelidonSe`). Query/header/cookie/body params
+#     are scanned from the handler body; path params come from the
+#     shared `{name}` optimizer pass.
+#   * MP  — MicroProfile: plain JAX-RS resource classes. There is no
+#     Helidon-specific routing shape here, so `Analyzer::Java::HelidonMp`
+#     just drives the shared JAX-RS extractor (same relationship
+#     Quarkus has to JAX-RS) — the fuller JAX-RS param surface
+#     (matrix/form/etc.) applies.
+java_helidon_mp:
+  framework: "Helidon MP"
+  language: "Java"
+  similar: ["helidon-mp", "helidon_mp", "java-helidon-mp", "java_helidon_mp"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+java_helidon_se:
+  framework: "Helidon SE"
+  language: "Java"
+  similar: ["helidon", "helidon-se", "helidon_se", "java-helidon-se", "java_helidon_se"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+java_httpserver:
+  framework: "JDK HttpServer"
+  language: "Java"
+  similar: ["jdk-httpserver", "java-httpserver", "java_httpserver", "com.sun.net.httpserver", "jdk.httpserver"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+java_javalin:
+  framework: "Javalin"
+  language: "Java"
+  similar: ["javalin", "java-javalin", "java_javalin"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+java_jaxrs:
+  framework: "JAX-RS"
+  language: "Java"
+  similar: ["jaxrs", "jax-rs", "jakarta-rest", "java-jaxrs", "java_jaxrs"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+java_jsp:
+  framework: "JSP"
+  language: "Java"
+  similar: ["jsp", "java-jsp", "java_jsp"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+    static_path: true
+    websocket: false
+  context: {guards: true}
+
+java_micronaut:
+  framework: "Micronaut"
+  language: "Java"
+  similar: ["micronaut", "java-micronaut", "java_micronaut"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+java_play:
+  framework: "Play Framework"
+  language: "Java"
+  similar: ["play", "play-framework", "java-play", "java_play"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+java_quarkus:
+  framework: "Quarkus"
+  language: "Java"
+  similar: ["quarkus", "java-quarkus", "java_quarkus"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+java_spark:
+  framework: "Spark Java"
+  language: "Java"
+  similar: ["spark", "spark-java", "java-spark", "java_spark"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+java_spring:
+  framework: "Spring"
+  language: "Java"
+  similar: ["spring", "java-spring", "java_spring"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+  tier: "core"
+
+java_spring_data_rest:
+  framework: "Spring Data REST"
+  language: "Java"
+  similar: ["spring-data-rest", "spring data rest", "java-spring-data-rest", "java_spring_data_rest"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: false
+
+java_struts2:
+  framework: "Apache Struts 2"
+  language: "Java"
+  similar: ["struts", "struts2", "apache-struts", "apache-struts2", "java-struts2", "java_struts2"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+java_vaadin:
+  framework: "Vaadin"
+  language: "Java"
+  similar: ["vaadin", "vaadin-flow", "hilla", "java-vaadin", "java_vaadin"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: false
+
+java_vertx:
+  framework: "Vert.x"
+  language: "Java"
+  similar: ["vertx", "vert.x", "java-vertx", "java_vertx"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+java_wicket:
+  framework: "Apache Wicket"
+  language: "Java"
+  similar: ["wicket", "apache-wicket", "apache wicket", "java-wicket", "java_wicket"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: true
+    websocket: false
+  context: {callee: true}

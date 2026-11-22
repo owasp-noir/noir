@@ -1,0 +1,543 @@
+apache_httpd:
+  view: "gateway"
+  format: ["CONF"]
+  similar: ["apache", "apache httpd", "httpd", "htaccess", "apache2"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+apigee:
+  view: "gateway"
+  format: ["XML"]
+  similar: ["apigee", "apigee edge", "apigee x", "apiproxy"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+apisix:
+  view: "gateway"
+  format: ["JSON", "YAML"]
+  similar: ["apisix", "apache apisix", "apache-apisix", "apache_apisix"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: true, cookie: false}
+
+appwrite:
+  implementation: true
+  format: ["JSON"]
+  similar: ["appwrite", "appwrite-config", "appwrite_config", "appwrite.json"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+
+asyncapi:
+  view: "spec"
+  format: ["JSON", "YAML"]
+  similar: ["asyncapi", "async-api", "async_api"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}
+
+aws_cdk:
+  view: "gateway"
+  format: ["TS", "JS", "PY"]
+  similar: ["aws cdk", "aws-cdk-lib", "@aws-cdk", "cdk", "aws_cdk"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+aws_cloudformation:
+  view: "gateway"
+  format: ["YAML", "JSON"]
+  similar: ["aws cloudformation", "aws sam", "cloudformation", "sam", "template.yaml", "template.yml", "aws::serverless::function", "aws::apigateway::resource"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+azure_functions:
+  implementation: true
+  format: ["JSON", "CS", "PY", "JS", "TS"]
+  similar: ["azure functions", "azure-functions", "function.json", "azure"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+bruno:
+  view: "traffic"
+  format: ["BRU"]
+  similar: ["bruno", "bru"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+
+burp:
+  view: "traffic"
+  format: ["XML"]
+  similar: ["burp", "burpsuite", "burp-suite", "burp_suite", "burp-sitemap"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: true}
+
+caddy:
+  view: "gateway"
+  format: ["CADDYFILE", "JSON"]
+  similar: ["caddy", "caddyfile", "caddy.json"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+caido:
+  view: "traffic"
+  format: ["JSON"]
+  similar: ["caido", "caido-export", "caido_export"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: true}
+
+cloudflare_wrangler:
+  view: "gateway"
+  format: ["TOML", "JSON"]
+  similar: ["cloudflare", "cloudflare workers", "wrangler", "wrangler.toml", "wrangler.json", "wrangler.jsonc"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+directus:
+  implementation: true
+  format: ["YAML", "JSON"]
+  similar: ["directus", "directus-snapshot", "directus_snapshot", "directus schema"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+
+envoy:
+  view: "gateway"
+  format: ["JSON", "YAML"]
+  similar: ["envoy", "envoy-proxy", "envoy_proxy", "istio-envoy"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+# The client half of the GraphQL surface: `query Foo { … }` /
+# `mutation Bar { … }` documents shipped as `.graphql` / `.gql` files,
+# as opposed to the `type Query { … }` SDL schema `graphql_sdl` reads.
+#
+# It had no catalog entry until now because the analyzer behind it was
+# a `FileAnalyzer` hook rather than a registered tech analyzer: its
+# endpoints came out with `"technology": null`, and because the hook ran
+# outside the tech registry, `--only-techs <anything>` returned them as
+# well. Naming the technology is what lets a report group them and
+# `--only-techs graphql_operation` / `--exclude-techs graphql_operation`
+# address them.
+#
+# `"graphql"` and `".graphql"` are deliberately NOT claimed here — they
+# are `graphql_sdl`'s aliases and moving them would silently repoint
+# every existing `-t graphql` at a different analyzer.
+graphql_operation:
+  view: "traffic"
+  format: ["GRAPHQL"]
+  similar: ["graphql_operation", "graphql-operation", "graphql_operations", "graphql-operations", "graphql_document", "graphql-document"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}
+
+# `:graphql` used to sit here with no analyzer and no detector behind it
+# — a catalog entry that advertised support nothing could deliver, and
+# whose `"graphql"` / `".graphql"` aliases resolved to that dead end
+# instead of to the analyzer that really reads those files. The aliases
+# moved onto `graphql_sdl`, whose detector already claims `.graphql`
+# (see `Detector::Specification::GraphqlSdl#applicable?`), so `-t
+# graphql` now selects a tech that produces endpoints.
+graphql_sdl:
+  view: "spec"
+  format: ["GRAPHQL_SDL"]
+  similar: ["graphql_sdl", "graphql-sdl", "graphql_schema", ".graphqls", "graphql", ".graphql"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}
+
+grpc:
+  view: "spec"
+  format: ["PROTOBUF"]
+  similar: ["grpc", "protobuf", "proto", "grpc-gateway"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+  # Guards: the Go interceptor's procedure allow-list (`go_auth`).
+  context: {guards: true}
+
+haproxy:
+  view: "gateway"
+  format: ["CFG"]
+  similar: ["haproxy", "haproxy.cfg"]
+  supported:
+    endpoint: true
+    method: false
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+har:
+  view: "traffic"
+  format: ["JSON"]
+  similar: ["har"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+
+hasura:
+  implementation: true
+  format: ["YAML"]
+  similar: ["hasura", "hasura-metadata", "hasura_metadata", "hasura graphql engine"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: true, header: false, cookie: false}
+
+hoppscotch:
+  view: "traffic"
+  format: ["JSON"]
+  similar: ["hoppscotch", "hoppscotch-collection"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+
+http_file:
+  view: "traffic"
+  format: ["HTTP", "REST"]
+  similar: ["http_file", "rest-client", "rest_client", "http-client", "http_client", ".http", ".rest"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+
+hurl:
+  view: "traffic"
+  format: ["HURL"]
+  similar: ["hurl", ".hurl"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+
+insomnia:
+  view: "traffic"
+  format: ["JSON", "YAML"]
+  similar: ["insomnia", "insomnia collection", "insomnia export"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+
+istio_virtualservice:
+  view: "gateway"
+  format: ["YAML"]
+  similar: ["istio", "virtualservice", "networking.istio.io"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+k8s_gateway_api:
+  view: "gateway"
+  format: ["YAML"]
+  similar: ["kubernetes gateway api", "k8s gateway api", "httproute", "gateway.networking.k8s.io"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+k8s_ingress:
+  view: "gateway"
+  format: ["YAML"]
+  similar: ["kubernetes ingress", "k8s ingress", "kubernetes.io/ingress", "networking.k8s.io/v1"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+kamal:
+  view: "gateway"
+  format: ["YAML"]
+  similar: ["kamal", "kamal deploy", "kamal-deploy", "kamal proxy", "deploy.yml"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+kong:
+  view: "gateway"
+  format: ["YAML"]
+  similar: ["kong", "kong declarative", "deck", "kong ingress controller", "kic"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+krakend:
+  view: "gateway"
+  format: ["JSON"]
+  similar: ["krakend", "krakend.json", "krakend api gateway"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: false, header: true, cookie: false}
+
+mitmproxy:
+  view: "traffic"
+  format: ["TNETSTRING"]
+  similar: ["mitmproxy", "mitm", "mitmdump", "flow", "flows"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+
+netlify:
+  view: "gateway"
+  format: ["TXT", "TOML"]
+  similar: ["netlify", "_redirects", "netlify.toml"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+nginx:
+  view: "gateway"
+  format: ["CONF"]
+  similar: ["nginx", "nginx.conf", "sites-enabled", "conf.d"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+oas2:
+  view: "spec"
+  format: ["JSON", "YAML"]
+  similar: ["oas 2.0", "oas_2_0", "swagger 2.0", "swagger_2_0", "swagger"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+
+oas3:
+  view: "spec"
+  format: ["JSON", "YAML"]
+  similar: ["oas 3.0", "oas_3_0"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+
+ocelot:
+  view: "gateway"
+  format: ["JSON"]
+  similar: ["ocelot", "ocelot.json", "ocelot api gateway"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+
+odata:
+  view: "spec"
+  format: ["XML"]
+  similar: ["odata", "edmx", "csdl"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+
+openrpc:
+  view: "spec"
+  format: ["JSON"]
+  similar: ["openrpc", "open-rpc", "open_rpc", "jsonrpc", "json-rpc", "json_rpc"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}
+
+payload_cms:
+  implementation: true
+  format: ["TS", "JS"]
+  similar: ["payload", "payloadcms", "payload-cms", "payload_cms", "payload cms"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+
+postman:
+  view: "traffic"
+  format: ["JSON"]
+  similar: ["postman", "postman collection"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+
+raml:
+  view: "spec"
+  format: ["YAML"]
+  similar: ["raml"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+
+serverless_framework:
+  view: "gateway"
+  format: ["YAML", "JSON"]
+  similar: ["serverless framework", "serverless.yml", "serverless.yaml", "serverless.json", "aws lambda"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+smithy:
+  view: "spec"
+  format: ["SMITHY"]
+  similar: ["smithy", "smithy-idl"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+
+spring_cloud_gateway:
+  view: "gateway"
+  format: ["YAML", "PROPERTIES"]
+  similar: ["spring cloud gateway", "spring-cloud-gateway", "scg"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+
+strapi:
+  implementation: true
+  format: ["JSON", "TS", "JS"]
+  similar: ["strapi", "strapi5", "strapi-cms", "strapi_cms", "strapi v4", "strapi v5"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+
+supabase:
+  implementation: true
+  format: ["SQL"]
+  similar: ["supabase", "postgrest", "supabase-migrations", "supabase_migrations", "pgrst"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: false}
+
+terraform:
+  view: "gateway"
+  format: ["TF", "JSON"]
+  similar: ["terraform", "tf", "hcl", "opentofu", "tofu", "aws_api_gateway", "aws_apigatewayv2", "aws_apigatewayv2_route"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+thrift:
+  view: "spec"
+  format: ["THRIFT"]
+  similar: ["thrift", "apache-thrift", "thrift-idl"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}
+
+thunder_client:
+  view: "traffic"
+  format: ["JSON"]
+  similar: ["thunder_client", "thunder-client", "thunderclient", "thunder-tests"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+
+traefik:
+  view: "gateway"
+  format: ["YAML", "TOML"]
+  similar: ["traefik", "traefik dynamic config", "ingressroute"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+tyk:
+  view: "gateway"
+  format: ["JSON", "YAML"]
+  similar: ["tyk", "tyk gateway", "tyk api definition", "tyk operator"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+
+typespec:
+  view: "spec"
+  format: ["TYPESPEC"]
+  similar: ["typespec", "tsp", "cadl"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+
+vercel:
+  view: "gateway"
+  format: ["JSON"]
+  similar: ["vercel", "vercel.json", "now.json"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+
+wsdl:
+  view: "spec"
+  format: ["XML"]
+  similar: ["wsdl", "soap"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: true, cookie: false}
+
+yarp:
+  view: "gateway"
+  format: ["JSON", "C#"]
+  similar: ["yarp", "yarp.reverseproxy", "yet another reverse proxy"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: false, header: true, cookie: false}
+
+# The analyzer walks the exported node tree and emits `url` + `method`,
+# plus the `data` string split into `form` params. The query string is
+# dropped with the rest of the URI (only `uri.path` is kept), and the
+# export carries no header or cookie record — hence body-only params.
+#
+# No bare `"zap"` alias: `zig_zap` already owns it, and a duplicate
+# would resolve by TECHS iteration order rather than by intent.
+zap_sites_tree:
+  view: "traffic"
+  format: ["YAML"]
+  similar: ["zap_sites_tree", "zap-sites-tree", "zap-sitemap", "zap_sitemap", "zaproxy", "owasp-zap"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}

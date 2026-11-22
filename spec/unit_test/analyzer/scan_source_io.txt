@@ -14,6 +14,8 @@ src/cli/commands/config.cr: File.read(path)
 src/cli/commands/rules.cr: rule_files = glob_under(path, "**/*.{yml,yaml}")
 src/cli/inspect.cr: text = File.read(path)
 src/cli_validation.cr: content = File.read(path)
+src/compile_time/yaml_files.cr: names = Dir.children(dir).select { |name| name.ends_with?(".yml") || name.ends_with?(".yaml") }.sort!
+src/compile_time/yaml_files.cr: names.map { |name| yield name, File.read(File.join(dir, name)) }
 src/config_initializer.cr: File.read(@config_file)
 src/detector/detectors/java/jaxrs.cr: files = %w[src/main/java/**/*.java src/main/kotlin/**/*.kt].flat_map { |glob| glob_under(root, glob) }
 src/detector/detectors/java/jaxrs.cr: files.empty? ? %w[**/*.java **/*.kt].flat_map { |glob| glob_under(root, glob) } : files
@@ -33,8 +35,6 @@ src/passive_scan/rules.cr: documents = YAML.parse_all(File.read(file))
 src/tagger/framework_taggers/java/spring_auth.cr: Dir.children(dir).sort!
 src/tagger/rule_tagger.cr: glob_under(path, "**/*.{yml,yaml}").sort!
 src/tagger/rule_tagger.cr: parse(File.read(file), file)
-src/tagger/rules/embed.cr: names = Dir.children(dir).select { |name| name.ends_with?(".yml") || name.ends_with?(".yaml") }.sort!
-src/tagger/rules/embed.cr: entries = names.map { |name| "{#{name.inspect}, #{File.read(File.join(dir, name)).inspect}}" }
 src/utils/dir_listing.cr: Dir.each_child(dir) do |name|
 src/utils/media_filter.cr: File.open(file_path) do |io|
 src/utils/read_pool.cr: content = preloaded || Noir::TextFile.read(path)

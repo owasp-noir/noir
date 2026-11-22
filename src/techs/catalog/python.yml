@@ -1,0 +1,319 @@
+python_aiohttp:
+  framework: "aiohttp"
+  language: "Python"
+  similar: ["aiohttp", "python-aiohttp", "python_aiohttp"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: true
+  context: {callee: true}
+
+python_aws_lambda_powertools:
+  framework: "AWS Lambda Powertools"
+  language: "Python"
+  similar: ["aws-lambda-powertools", "aws_lambda_powertools", "python-aws-lambda-powertools", "python_aws_lambda_powertools"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_bottle:
+  framework: "Bottle"
+  language: "Python"
+  similar: ["bottle", "bottlepy", "python-bottle", "python_bottle"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_chalice:
+  framework: "Chalice"
+  language: "Python"
+  similar: ["chalice", "aws-chalice", "python-chalice", "python_chalice"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_cherrypy:
+  framework: "CherryPy"
+  language: "Python"
+  similar: ["cherrypy", "cherry-py", "python-cherrypy", "python_cherrypy"]
+  supported:
+    endpoint: true
+    # CherryPy's default dispatcher is object-traversal, not explicit
+    # route registration, so the HTTP method for a plain `@expose`d
+    # method is inferred (GET, matching every other analyzer's
+    # no-explicit-method convention) rather than declared in source.
+    # `MethodDispatcher`-style classes (uppercase GET/POST/PUT/DELETE
+    # methods) give a real, explicit method signal.
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_cli:
+  framework: "CLI (argparse / click / typer / fire / docopt / getopt / absl / cleo)"
+  language: "Python"
+  similar: ["python-cli", "python_cli", "argparse", "click", "typer", "fire", "docopt", "absl", "abseil", "cleo"]
+  supported:
+    endpoint: true
+    # CLI endpoints carry the synthetic "CLI" verb, not an HTTP method,
+    # and their inputs are flag/argument/env params, outside the HTTP
+    # query/path/body/header/cookie buckets the docs table tracks.
+    method: false
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+
+python_django:
+  framework: "Django"
+  language: "Python"
+  similar: ["django", "python-django", "python_django"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: true
+  context: {callee: true, guards: true}
+  tier: "core"
+
+python_django_ninja:
+  framework: "Django Ninja"
+  language: "Python"
+  similar: ["django-ninja", "django_ninja", "python-django-ninja", "python_django_ninja", "ninja"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_falcon:
+  framework: "Falcon"
+  language: "Python"
+  similar: ["falcon", "falconframework", "python-falcon", "python_falcon"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_fastapi:
+  framework: "FastAPI"
+  language: "Python"
+  similar: ["fastapi", "python-fastapi", "python_fastapi"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+  tier: "core"
+
+python_fasthtml:
+  framework: "FastHTML"
+  language: "Python"
+  similar: ["fasthtml", "python-fasthtml", "python_fasthtml"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_fastmcp:
+  framework: "FastMCP"
+  language: "Python"
+  similar: ["fastmcp", "python-fastmcp", "python_fastmcp"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_flask:
+  framework: "Flask"
+  language: "Python"
+  similar: ["flask", "python-flask", "python_flask"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+python_frappe:
+  framework: "Frappe"
+  language: "Python"
+  similar: ["frappe", "erpnext", "python-frappe", "python_frappe"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_graphene:
+  framework: "Graphene"
+  language: "Python"
+  similar: ["graphene", "graphene-django", "graphene_django", "python-graphene", "python_graphene"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: true
+
+python_http_server:
+  framework: "http.server"
+  language: "Python"
+  similar: ["http.server", "python-http-server", "python_http_server", "BaseHTTPRequestHandler", "HTTPServer", "SimpleHTTPRequestHandler", "wsgiref.simple_server"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_litestar:
+  framework: "Litestar"
+  language: "Python"
+  similar: ["litestar", "starlite", "python-litestar", "python_litestar"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: true
+  context: {callee: true, guards: true}
+
+python_masonite:
+  framework: "Masonite"
+  language: "Python"
+  similar: ["masonite", "python-masonite", "python_masonite"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: false, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+
+python_odoo:
+  framework: "Odoo"
+  language: "Python"
+  similar: ["odoo", "openerp", "python-odoo", "python_odoo"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_pyramid:
+  framework: "Pyramid"
+  language: "Python"
+  similar: ["pyramid", "python-pyramid", "python_pyramid"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_quart:
+  framework: "Quart"
+  language: "Python"
+  similar: ["quart", "python-quart", "python_quart"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: true
+  context: {callee: true, guards: true}
+
+python_robyn:
+  framework: "Robyn"
+  language: "Python"
+  similar: ["robyn", "python-robyn", "python_robyn"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: true
+  context: {callee: true}
+
+python_sanic:
+  framework: "Sanic"
+  language: "Python"
+  similar: ["sanic", "python-sanic", "python_sanic"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: true
+  context: {callee: true, guards: true}
+
+python_starlette:
+  framework: "Starlette"
+  language: "Python"
+  similar: ["starlette", "python-starlette", "python_starlette"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+python_strawberry:
+  framework: "Strawberry GraphQL"
+  language: "Python"
+  similar: ["strawberry", "strawberry-graphql", "strawberry_graphql", "python-strawberry", "python_strawberry"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: true
+
+python_tornado:
+  framework: "Tornado"
+  language: "Python"
+  similar: ["tornado", "python-tornado", "python_tornado"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: true
+  context: {callee: true, guards: true}
