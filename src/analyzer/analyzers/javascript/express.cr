@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/js_body_flow"
 require "../../../utils/url_path"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
@@ -135,6 +136,8 @@ module Analyzer::Javascript
           result << endpoint
         end
       end
+      body_flow = Noir::JSBodyFlow.new { |path| read_file_content(path) }
+      result.each { |endpoint| body_flow.apply(endpoint) }
       result.map! { |endpoint| drop_undeclared_path_params(Noir::JSMountPrefix.finish(endpoint)) }
       clear_ambiguous_template_handlers(result)
 

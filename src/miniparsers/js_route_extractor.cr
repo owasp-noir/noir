@@ -1660,10 +1660,18 @@ module Noir
         next if target_path == path && target_line == line
         followed += 1
         text = target_path == path ? content : stripped_source(target_path)
-        name = definition_params(text, target_line).try(&.[position]?) || next
+        formals = definition_params(text, target_line) || next
+        name = formals[position]? || next
         # `fromRemote({ session }, client)`: no name to read through.
         next if name.empty?
         reads = definition_body(text, target_line)
+        # A request-shaped name in another slot can hold an unrelated object.
+        # Hide that binding before normalizing the actual request receiver.
+        formals.each_with_index do |formal, i|
+          next unless formal.matches?(REQUEST_RECEIVER_NAME)
+          next if args[i]?.try(&.matches?(REQUEST_RECEIVER_NAME))
+          reads = reads.gsub(/(?<![\w$.])#{formal}\b/, "otherObject")
+        end
         reads = reads.gsub(/(?<![\w$.])#{Regex.escape(name)}(?=\s*\??\.)/, "req") unless name.matches?(REQUEST_RECEIVER_NAME)
         extract_body_params(reads, context)
         extract_query_params(reads, context)
