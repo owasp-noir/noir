@@ -520,27 +520,41 @@ jobs:
       # cross-half dependency has to fail here rather than only on a
       # contributor's machine.
       #
-      # Every run is single-threaded and takes ~0.3GB, so all four go at once
-      # and the full randomized run (~18s) sets the wall time. Each writes to
-      # its own file, replayed in a collapsed group afterwards, because runners
-      # sharing a stdout interleave their progress dots and their failure
-      # reports.
+      # The run in definition order goes on one Crystal version only. It is
+      # the deterministic check for state a unit example leaves behind for a
+      # later functional one: the tagged halves are separate processes and the
+      # randomized run may happen to order the pair the other way. That check
+      # does not depend on the compiler version, so running it on both legs
+      # made every example run three times on each.
+      #
+      # Every run is single-threaded and takes under 1 GB, so they all go at
+      # once and a whole-suite run sets the wall time (2:49 on a runner in
+      # November 2026, when the suite had 46,085 examples). Each writes to
+      # its own file, replayed in a collapsed group afterwards, because
+      # runners sharing a stdout interleave their progress dots and their
+      # failure reports.
       - name: Run the suite
+        env:
+          DEFINITION_ORDER: ${{ matrix.crystal-version == '1.22.0' }}
         run: |
           # Top-level spec code shares one `__crystal_main` frame, which has
           # reached the 8 MB default main stack (see `spec_stack_flags` in the
           # justfile); Linux takes the main stack size from the limit.
           ulimit -s 65536
-          ./bin/noir_spec > /tmp/spec-default.log 2>&1 & pid_default=$!
+          runs="random functional unit"
+          if [ "$DEFINITION_ORDER" = "true" ]; then
+            runs="default $runs"
+            ./bin/noir_spec > /tmp/spec-default.log 2>&1 & pid_default=$!
+          fi
           ./bin/noir_spec --order random > /tmp/spec-random.log 2>&1 & pid_random=$!
           ./bin/noir_spec --tag functional > /tmp/spec-functional.log 2>&1 & pid_functional=$!
           ./bin/noir_spec --tag '~functional' > /tmp/spec-unit.log 2>&1 & pid_unit=$!
           failed=0
-          for name in default random functional unit; do
+          for name in $runs; do
             pid_var="pid_$name"
             wait "${!pid_var}" || failed=1
           done
-          for name in default random functional unit; do
+          for name in $runs; do
             echo "::group::bin/noir_spec ($name)"
             cat "/tmp/spec-$name.log"
             echo "::endgroup::"
