@@ -2,32 +2,33 @@ require "../../func_spec.cr"
 
 expected_endpoints = [
   # Java DSL (RestRoutes.java) — rest routes sit under contextPath("/api").
-  Endpoint.new("/api/users/{id}", "GET"),
+  Endpoint.new("/api/users/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/users", "POST", [Param.new("body", "User", "json")]),
-  Endpoint.new("/api/users/{id}", "DELETE"),
+  Endpoint.new("/api/users/{id}", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/hello", "GET"),
   Endpoint.new("/api/orders", "GET", [Param.new("status", "", "query")]),
   Endpoint.new("/api/orders/{id}", "PUT", [
     Param.new("X-Token", "", "header"),
     Param.new("body", "Order", "json"),
+    Param.new("id", "", "path"),
   ]),
   # Generic `verb(method, path?)`; an unresolvable or non-HTTP method is dropped.
-  Endpoint.new("/api/files/{name}", "OPTIONS"),
+  Endpoint.new("/api/files/{name}", "OPTIONS", [Param.new("name", "", "path")]),
   Endpoint.new("/api/files", "PATCH", [Param.new("mode", "", "query")]),
   Endpoint.new("/api/ping", "GET"),
   Endpoint.new("/legacy", "ANY"),
   Endpoint.new("/upload", "POST"),
   Endpoint.new("/upload", "PUT"),
   # XML DSL (camel-context.xml)
-  Endpoint.new("/api/xml/items/{id}", "GET"),
+  Endpoint.new("/api/xml/items/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/xml/items", "POST", [
     Param.new("dryRun", "", "query"),
     Param.new("body", "Item", "json"),
   ]),
-  Endpoint.new("/api/xml/items/{id}", "OPTIONS"),
+  Endpoint.new("/api/xml/items/{id}", "OPTIONS", [Param.new("id", "", "path")]),
   Endpoint.new("/xml/health", "GET"),
   # YAML DSL (routes.camel.yaml)
-  Endpoint.new("/api/yaml/books/{isbn}", "GET"),
+  Endpoint.new("/api/yaml/books/{isbn}", "GET", [Param.new("isbn", "", "path")]),
   Endpoint.new("/api/yaml/books", "POST", [
     Param.new("X-Trace", "", "header"),
     Param.new("body", "Book", "json"),

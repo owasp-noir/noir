@@ -12,15 +12,15 @@ expected_endpoints = [
   # content-format suffix is stripped.
   Endpoint.new("/image/:imageId", "GET", [Param.new("imageId", "", "path")]),
   # `action = [GET: 'show', PUT: 'update']` → one endpoint per verb.
-  Endpoint.new("/api/v1/widget/:id", "GET"),
-  Endpoint.new("/api/v1/widget/:id", "PUT"),
+  Endpoint.new("/api/v1/widget/:id", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v1/widget/:id", "PUT", [Param.new("id", "", "path")]),
   # `(resources: 'book')` shortcut → six REST endpoints.
   Endpoint.new("/api/v1/books", "GET"),
   Endpoint.new("/api/v1/books", "POST"),
-  Endpoint.new("/api/v1/books/:id", "GET"),
-  Endpoint.new("/api/v1/books/:id", "PUT"),
-  Endpoint.new("/api/v1/books/:id", "PATCH"),
-  Endpoint.new("/api/v1/books/:id", "DELETE"),
+  Endpoint.new("/api/v1/books/:id", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v1/books/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v1/books/:id", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v1/books/:id", "DELETE", [Param.new("id", "", "path")]),
   # `"404"`/`"500"` response-code mappings are error pages, not endpoints.
 ]
 

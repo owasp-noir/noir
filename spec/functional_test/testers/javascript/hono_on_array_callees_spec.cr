@@ -1,22 +1,22 @@
 require "../../func_spec.cr"
 
 expected_endpoints = [
-  Endpoint.new("/items/:id", "GET").tap do |ep|
+  Endpoint.new("/items/:id", "GET", [Param.new("id", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("c.req.param", line: 10))
     ep.push_callee(Callee.new("c.json", line: 11))
     ep.push_callee(Callee.new("itemService.lookup", line: 11))
   end,
-  Endpoint.new("/items/:id", "POST").tap do |ep|
+  Endpoint.new("/items/:id", "POST", [Param.new("id", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("c.req.param", line: 10))
     ep.push_callee(Callee.new("c.json", line: 11))
     ep.push_callee(Callee.new("itemService.lookup", line: 11))
   end,
-  Endpoint.new("/users/:userId", "PUT").tap do |ep|
+  Endpoint.new("/users/:userId", "PUT", [Param.new("userId", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("c.req.param", line: 16))
     ep.push_callee(Callee.new("c.json", line: 17))
     ep.push_callee(Callee.new("UserService.update", line: 17))
   end,
-  Endpoint.new("/users/:userId", "PATCH").tap do |ep|
+  Endpoint.new("/users/:userId", "PATCH", [Param.new("userId", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("c.req.param", line: 16))
     ep.push_callee(Callee.new("c.json", line: 17))
     ep.push_callee(Callee.new("UserService.update", line: 17))

@@ -20,10 +20,10 @@ expected_endpoints = [
     Param.new("sku", "", "path"),
   ]),
   # Same `match` alias declared in two blocks for different patterns.
-  Endpoint.new("/orders/:id", "GET"),
-  Endpoint.new("/invoices/:id", "POST"),
+  Endpoint.new("/orders/:id", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/invoices/:id", "POST", [Param.new("id", "", "path")]),
   # Negated `if (!m)` guard followed by a method branch.
-  Endpoint.new("/carts/:id", "DELETE"),
+  Endpoint.new("/carts/:id", "DELETE", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/javascript/deno/", {

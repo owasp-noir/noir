@@ -39,7 +39,7 @@ expected_endpoints = [
     ep.push_callee(Callee.new("audit_log", db_path, 5))
   end,
 
-  Endpoint.new("/orders/{order_id}", "DELETE").tap do |ep|
+  Endpoint.new("/orders/{order_id}", "DELETE", [Param.new("order_id", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("audit_log", db_path, 5))
   end,
 
@@ -63,7 +63,10 @@ expected_endpoints = [
   #    column 0). The handler body (and its callees) used to be
   #    dropped because parse_code_block treated the signature closer
   #    as the end of the block.
-  Endpoint.new("/reports", "GET").tap do |ep|
+  Endpoint.new("/reports", "GET", [
+    Param.new("limit", "", "query"),
+    Param.new("offset", "", "query"),
+  ]).tap do |ep|
     ep.push_callee(Callee.new("save_user", db_path, 1))
     ep.push_callee(Callee.new("audit_log", db_path, 5))
   end,

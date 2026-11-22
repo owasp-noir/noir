@@ -28,7 +28,7 @@ expected_endpoints = [
 
   # GET /orders/<order_id> — same helpers as POST /users (verifies the
   # callee list is per-handler, not deduped across endpoints).
-  Endpoint.new("/orders/<order_id>", "GET").tap do |ep|
+  Endpoint.new("/orders/<order_id>", "GET", [Param.new("order_id", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("build_user_query", helpers_path, 1))
     ep.push_callee(Callee.new("run_sql_query", helpers_path, 5))
     ep.push_callee(Callee.new("jsonify"))

@@ -24,11 +24,11 @@ expected_endpoints = [
 
   # From userRoutes mounted at /users (router FIRST, middleware after)
   Endpoint.new("/users/list", "GET"),
-  Endpoint.new("/users/create", "POST"),
+  Endpoint.new("/users/create", "POST", [Param.new("name", "", "json")]),
 
   # From orderRoutes mounted at /orders (middleware FIRST, router after)
   Endpoint.new("/orders/pending", "GET"),
-  Endpoint.new("/orders/create", "POST"),
+  Endpoint.new("/orders/create", "POST", [Param.new("product", "", "json")]),
 
   # From subRouter mounted at /nested/sub (router first, middleware after)
   Endpoint.new("/nested/sub/items", "GET"),

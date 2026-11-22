@@ -10,13 +10,23 @@ expected_endpoints = [
   Endpoint.new("/login/", "GET"),
   Endpoint.new("/Customer/Login", "GET"),
   Endpoint.new("/login/", "POST", [Param.new("email", "", "form"), Param.new("password", "", "form")]),
-  Endpoint.new("/Customer/Login", "POST"),
+  Endpoint.new("/Customer/Login", "POST", [
+    Param.new("email", "", "form"),
+    Param.new("password", "", "form"),
+  ]),
   Endpoint.new("/customer/addressdelete", "POST", [Param.new("addressId", "", "form")]),
   Endpoint.new("/Customer/AddressDelete", "POST", [Param.new("addressId", "", "form")]),
   Endpoint.new("/orderdetails/pdf/{orderId}", "GET", [Param.new("orderId", "", "path")]),
   Endpoint.new("/Order/GetPdfInvoice", "GET", [Param.new("orderId", "", "query")]),
-  Endpoint.new("/{SeName}", "GET", [Param.new("SeName", "", "path"), Param.new("updatecartitemid", "", "query")]),
-  Endpoint.new("/Product/ProductDetails", "GET"),
+  Endpoint.new("/{SeName}", "GET", [
+    Param.new("SeName", "", "path"),
+    Param.new("updatecartitemid", "", "query"),
+    Param.new("productId", "", "query"),
+  ]),
+  Endpoint.new("/Product/ProductDetails", "GET", [
+    Param.new("productId", "", "query"),
+    Param.new("updatecartitemid", "", "query"),
+  ]),
   # Admin area: only the area route reaches it.
   Endpoint.new("/Admin/Category/List", "GET"),
   Endpoint.new("/Admin/Category/Edit/{id}", "GET", [Param.new("id", "", "path")]),
@@ -26,10 +36,10 @@ expected_endpoints = [
   Endpoint.new("/news", "GET"),
   Endpoint.new("/News/List", "GET"),
   Endpoint.new("/news/rss/{languageId}", "GET", [Param.new("languageId", "", "path")]),
-  Endpoint.new("/News/ListRss", "GET"),
+  Endpoint.new("/News/ListRss", "GET", [Param.new("languageId", "", "query")]),
   Endpoint.new("/Admin/News/Edit/{id?}", "GET", [Param.new("id", "", "path")]),
-  Endpoint.new("/Admin/NewsAdmin/NewsItemEdit/{id}", "GET"),
-  Endpoint.new("/Admin/NewsAdmin/Delete/{id}", "POST"),
+  Endpoint.new("/Admin/NewsAdmin/NewsItemEdit/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/Admin/NewsAdmin/Delete/{id}", "POST", [Param.new("id", "", "path")]),
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_route_provider/", {

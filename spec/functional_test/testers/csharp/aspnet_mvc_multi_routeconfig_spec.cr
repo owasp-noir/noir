@@ -3,8 +3,16 @@ require "../../func_spec.cr"
 # Each project keeps its own App_Start/RouteConfig.cs; neither may overwrite
 # the other.
 expected_endpoints = [
-  Endpoint.new("/routeA/{controller}/{action}/{id}", "GET"),
-  Endpoint.new("/routeB/{controller}/{action}/{id}", "GET"),
+  Endpoint.new("/routeA/{controller}/{action}/{id}", "GET", [
+    Param.new("action", "", "path"),
+    Param.new("controller", "", "path"),
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/routeB/{controller}/{action}/{id}", "GET", [
+    Param.new("action", "", "path"),
+    Param.new("controller", "", "path"),
+    Param.new("id", "", "path"),
+  ]),
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_mvc_multi_routeconfig/", {

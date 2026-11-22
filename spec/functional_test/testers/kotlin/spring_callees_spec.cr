@@ -67,7 +67,7 @@ expected_endpoints = [
     ep.push_callee(Callee.new("OrderStore.load", line: 25))
   end,
 
-  Endpoint.new("/api/teams/{nation}", "GET").tap do |ep|
+  Endpoint.new("/api/teams/{nation}", "GET", [Param.new("nation", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("searchEngine.getFilteredNames", line: 13))
     ep.push_callee(Callee.new("getTeams", line: 5))
     ep.push_callee(Callee.new("footballTeamsApiHandler.getAllPages", line: 11))
@@ -75,11 +75,11 @@ expected_endpoints = [
     ep.push_callee(Callee.new("restTemplate.getForObject", line: 12))
   end,
 
-  Endpoint.new("/api/webclient/{id}", "GET").tap do |ep|
+  Endpoint.new("/api/webclient/{id}", "GET", [Param.new("id", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("client.get", line: 16))
   end,
 
-  Endpoint.new("/api/cities/{id}", "PUT").tap do |ep|
+  Endpoint.new("/api/cities/{id}", "PUT", [Param.new("id", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("cityService.updateCity", line: 13))
     ep.push_callee(Callee.new("cityRepository.findById", line: 5))
     ep.push_callee(Callee.new("cityRepository.save", line: 6))
@@ -95,7 +95,10 @@ expected_endpoints = [
     ep.push_callee(Callee.new("articleService.findAllArticles", line: 14))
   end,
 
-  Endpoint.new("/graphql#Mutation.createArticle", "POST").tap do |ep|
+  Endpoint.new("/graphql#Mutation.createArticle", "POST", [
+    Param.new("title", "", "json"),
+    Param.new("userId", "", "json"),
+  ]).tap do |ep|
     ep.push_callee(Callee.new("articleService.createArticle", line: 19))
     ep.push_callee(Callee.new("articles.add", line: 34))
   end,

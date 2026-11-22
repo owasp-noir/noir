@@ -9,6 +9,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/users/:id", "GET", [
     Param.new("x-trace", "", "header"),
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/api/v1/health", "GET"),
   Endpoint.new("/api/v1/submit", "POST", [
@@ -17,9 +18,11 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/v1/items/:itemId", "GET", [
     Param.new("category", "", "query"),
+    Param.new("itemId", "", "path"),
   ]),
   Endpoint.new("/sessions/:id", "DELETE", [
     Param.new("session", "", "cookie"),
+    Param.new("id", "", "path"),
   ]),
   # `.all('/health', ...)` fans out to GET / POST / PUT / DELETE / PATCH.
   Endpoint.new("/health", "GET"),

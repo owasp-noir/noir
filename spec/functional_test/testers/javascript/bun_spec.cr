@@ -18,6 +18,8 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/users/:id", "PUT", [
     Param.new("id", "", "path"),
+    Param.new("authorization", "", "header"),
+    Param.new("session", "", "cookie"),
   ]),
   Endpoint.new("/webhook", "POST", [
     Param.new("event", "", "form"),

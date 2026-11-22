@@ -94,6 +94,7 @@ expected_endpoints = [
     Param.new("order_id", "", "path"),
     Param.new("customer_id", "", "json"),
     Param.new("quantity", "1", "json"),
+    Param.new("label", "", "json"),
   ]),
   Endpoint.new("/assets/*", "GET"),
   Endpoint.new("/main", "GET"),

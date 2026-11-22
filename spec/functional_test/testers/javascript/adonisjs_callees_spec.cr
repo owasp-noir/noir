@@ -6,7 +6,7 @@ root.push_callee(Callee.new("HomeController.index"))
 create = Endpoint.new("/api/v1/users", "POST")
 create.push_callee(Callee.new("UsersController.store"))
 
-resource = Endpoint.new("/articles/:id", "DELETE")
+resource = Endpoint.new("/articles/:id", "DELETE", [Param.new("id", "", "path")])
 resource.push_callee(Callee.new("ArticlesController.destroy"))
 
 FunctionalTester.new("fixtures/javascript/adonisjs/", {

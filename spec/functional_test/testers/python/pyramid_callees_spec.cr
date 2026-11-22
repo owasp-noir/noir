@@ -7,7 +7,7 @@ require "../../func_spec.cr"
 db_path = "./spec/functional_test/fixtures/python/pyramid_callees/db.py"
 
 expected_endpoints = [
-  Endpoint.new("/users/{uid}", "GET").tap do |ep|
+  Endpoint.new("/users/{uid}", "GET", [Param.new("uid", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("fetch_user", db_path, 1))
   end,
 ]

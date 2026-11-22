@@ -16,6 +16,7 @@ FunctionalTester.new("fixtures/python/django_drf_nested_router/", {
   ]),
   Endpoint.new("/projects/{parent_lookup_project__slug}/versions/{parent_lookup_version__slug}/builds/", "GET", [
     Param.new("parent_lookup_version__slug", "", "path"),
+    Param.new("parent_lookup_project__slug", "", "path"),
   ]),
   Endpoint.new("/remote/", "GET"),
 ]).perform_tests

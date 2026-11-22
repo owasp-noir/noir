@@ -8,7 +8,7 @@ create = Endpoint.new("/api/users", "POST")
 create.push_callee(Callee.new("req.json"))
 create.push_callee(Callee.new("JSON.stringify"))
 
-show = Endpoint.new("/users/{id}", "GET")
+show = Endpoint.new("/users/{id}", "GET", [Param.new("id", "", "path")])
 show.push_callee(Callee.new("ctx.render"))
 
 FunctionalTester.new("fixtures/javascript/fresh/", {

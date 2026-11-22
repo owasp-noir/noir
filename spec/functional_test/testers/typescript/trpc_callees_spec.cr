@@ -3,7 +3,10 @@ require "../../func_spec.cr"
 list = Endpoint.new("/custom-trpc/user.list", "GET")
 list.push_callee(Callee.new("UserService.list", line: 5))
 
-create = Endpoint.new("/custom-trpc/user.create", "POST")
+create = Endpoint.new("/custom-trpc/user.create", "POST", [
+  Param.new("email", "", "body"),
+  Param.new("name", "", "body"),
+])
 create.push_callee(Callee.new("AuditLog.write", line: 12))
 create.push_callee(Callee.new("UserService.create", line: 13))
 

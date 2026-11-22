@@ -25,7 +25,10 @@ expected_endpoints = [
     Param.new("id", "", "path"),
   ]),
   # Added endpoints
-  Endpoint.new("/products", "GET"),
+  Endpoint.new("/products", "GET", [
+    Param.new("category", "", "query"),
+    Param.new("limit", "", "query"),
+  ]),
   Endpoint.new("/products", "POST", [
     Param.new("title", "", "json"),
     Param.new("price", "", "json"),
@@ -49,7 +52,10 @@ expected_endpoints = [
   ]),
   # Dynamic path endpoints (from dynamic_paths.js)
   Endpoint.new("/api/users", "GET"),
-  Endpoint.new("/api/login", "POST"),
+  Endpoint.new("/api/login", "POST", [
+    Param.new("password", "", "json"),
+    Param.new("username", "", "json"),
+  ]),
   # router.all expanded to all HTTP methods
   Endpoint.new("/api/catchall", "GET"),
   Endpoint.new("/api/catchall", "POST"),
@@ -60,18 +66,19 @@ expected_endpoints = [
   Endpoint.new("/api/catchall", "OPTIONS"),
   Endpoint.new("/api/v2/users/:id", "PUT", [
     Param.new("id", "", "path"),
+    Param.new("name", "", "json"),
   ]),
   Endpoint.new("/api/v2/items/:itemId", "DELETE", [
     Param.new("itemId", "", "path"),
   ]),
   # More router.all endpoints
-  Endpoint.new("/api/admin", "GET"),
-  Endpoint.new("/api/admin", "POST"),
-  Endpoint.new("/api/admin", "PUT"),
-  Endpoint.new("/api/admin", "DELETE"),
-  Endpoint.new("/api/admin", "PATCH"),
-  Endpoint.new("/api/admin", "HEAD"),
-  Endpoint.new("/api/admin", "OPTIONS"),
+  Endpoint.new("/api/admin", "GET", [Param.new("authorization", "", "header")]),
+  Endpoint.new("/api/admin", "POST", [Param.new("authorization", "", "header")]),
+  Endpoint.new("/api/admin", "PUT", [Param.new("authorization", "", "header")]),
+  Endpoint.new("/api/admin", "DELETE", [Param.new("authorization", "", "header")]),
+  Endpoint.new("/api/admin", "PATCH", [Param.new("authorization", "", "header")]),
+  Endpoint.new("/api/admin", "HEAD", [Param.new("authorization", "", "header")]),
+  Endpoint.new("/api/admin", "OPTIONS", [Param.new("authorization", "", "header")]),
   # Parse Server `this.route('METHOD', '/path', ...)` shape. The
   # `PromiseRouter` base class is used widely across
   # parse-community/parse-server's Routers/* tree.

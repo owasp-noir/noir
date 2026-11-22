@@ -94,7 +94,7 @@ FunctionalTester.new("fixtures/python/graphene_composed/", {
   :endpoints => 12,
 }, [
   Endpoint.new("/graphql#Query.product", "POST", [Param.new("slug", "", "json")]),
-  Endpoint.new("/api/graphql/#Query.allRecipes", "POST"),
+  Endpoint.new("/api/graphql/#Query.allRecipes", "POST", [Param.new("first", "", "json")]),
 ], {
   "only_techs" => YAML::Any.new("python_graphene"),
   "base"       => YAML::Any.new([

@@ -17,9 +17,9 @@ expected_endpoints = [
   # MethodView - UserAPI
   Endpoint.new("/api/users", "GET", [Param.new("username", "", "query")]),
   Endpoint.new("/api/users", "POST", [Param.new("username", "", "form"), Param.new("email", "", "json")]),
-  Endpoint.new("/api/users/<int:user_id>", "GET", [Param.new("username", "", "query")]),
-  Endpoint.new("/api/users/<int:user_id>", "PUT"),
-  Endpoint.new("/api/users/<int:user_id>", "DELETE"),
+  Endpoint.new("/api/users/<int:user_id>", "GET", [Param.new("username", "", "query"), Param.new("user_id", "", "path")]),
+  Endpoint.new("/api/users/<int:user_id>", "PUT", [Param.new("user_id", "", "path")]),
+  Endpoint.new("/api/users/<int:user_id>", "DELETE", [Param.new("user_id", "", "path")]),
 
   # MethodView - ItemAPI
   Endpoint.new("/api/items", "GET", [Param.new("page", "", "query")]),
@@ -29,7 +29,7 @@ expected_endpoints = [
   Endpoint.new("/api/get-json", "POST", [Param.new("action", "", "json")]),
 
   # Nested blueprint registration
-  Endpoint.new("/mounted/child/reports/<int:report_id>", "GET", [Param.new("mode", "", "query")]),
+  Endpoint.new("/mounted/child/reports/<int:report_id>", "GET", [Param.new("mode", "", "query"), Param.new("report_id", "", "path")]),
 
   # MethodView - ItemAPI (inferred methods, no explicit methods= arg)
   Endpoint.new("/api/items-inferred", "GET", [Param.new("page", "", "query")]),
