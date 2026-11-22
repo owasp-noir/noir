@@ -1,79 +1,10 @@
 require "json"
-require "./catalog/**"
 
 module NoirTechs
-  # The whole technology catalog, derived from whatever sits under
-  # `NoirTechs::Catalog` rather than from a hand-maintained list.
-  #
-  # This used to be a 31-line `.merge` chain naming each per-language bundle.
-  # `src/techs/techs.cr` has been touched by 164 of the last 1730 commits
-  # because of it: every new language meant editing this file, and — worse —
-  # two contributors could claim the same tech key in different language files
-  # and the chain would silently keep the last one.
-  #
-  # ## Shape
-  #
-  # Every constant under `Catalog` is a **language module** holding one
-  # constant per technology —
-  # `module NoirTechs::Catalog::Kotlin; SPRING = {:kotlin_spring => {...}}`
-  # in `catalog/kotlin/spring.cr`. Adding a technology is a new file and never
-  # an edit to a shared list.
-  #
-  # ## Why the entries are spliced rather than merged
-  #
-  # The macro reads each constant's *literal* and emits one hash literal, so
-  # the compiler sees the same source shape a single hand-written catalog
-  # would produce. Generating a `.merge` chain instead would infer a different
-  # (and much wider) value union, and `typeof(TECHS)` is what every consumer
-  # of `NoirTechs.techs` is typed against. Verified identical before and after
-  # the derivation — treat the splice as load-bearing, not stylistic.
-  #
-  # ## Order
-  #
-  # Both levels are sorted, so iteration order is a property of the names
-  # rather than of `require` mechanics — it cannot silently drift the way it
-  # did when the monolithic catalog was first split (see
-  # `AMBIGUOUS_ALIAS_WINNERS`, which exists to clean up after exactly that).
-  # Nothing may depend on this order: alias resolution is pinned, and
-  # `spec/unit_test/techs/alias_resolution_spec.cr` keeps it that way.
-  {% begin %}
-    {% entries = {} of Object => Object %}
-    {% owners = {} of Object => Object %}
-
-    {% for const_name in Catalog.constants.sort %}
-      {% node = Catalog.constant(const_name) %}
-      {% unless node.is_a?(TypeNode) %}
-        {% raise "NoirTechs::Catalog::#{const_name} must be a language module. Put a technology's metadata " \
-                 "in `module NoirTechs::Catalog::<Language>` inside src/techs/catalog/<language>/<framework>.cr." %}
-      {% end %}
-      {% bundles = [] of Object %}
-      {% for tech_const in node.constants.sort %}
-        {% bundles << {"NoirTechs::Catalog::#{const_name}::#{tech_const}", node.constant(tech_const)} %}
-      {% end %}
-
-      {% for bundle in bundles %}
-        {% origin = bundle[0] %}
-        {% literal = bundle[1] %}
-        {% unless literal.is_a?(HashLiteral) %}
-          {% raise "#{origin} must be a Hash literal of catalog entries, keyed by tech symbol." %}
-        {% end %}
-        {% for tech in literal.keys %}
-          {% if owners[tech] %}
-            {% raise "duplicate tech key #{tech}: declared by both #{owners[tech]} and #{origin}. " \
-                     "A tech name may be claimed once." %}
-          {% end %}
-          {% owners[tech] = origin %}
-          {% entries[tech] = literal[tech] %}
-        {% end %}
-      {% end %}
-    {% end %}
-
-    TECHS = {
-      {% for tech in entries.keys %}
-        {{ tech }} => {{ entries[tech] }},
-      {% end %}
-    }
-  {% end %}
+  # Emit one literal so library callers of `techs` keep its inferred type.
+  # Sorted language filenames and the order within each file determine the
+  # catalog order. The generator rejects duplicate keys across all entries.
+  TECHS = {{ run("./catalog_literal.cr", __DIR__ + "/catalog") }}
 
   # Resolve the default outside the raw entries. Some implementation entries
   # have no String values, and inserting "extended" would widen typeof(TECHS).

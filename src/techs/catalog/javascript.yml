@@ -1,0 +1,460 @@
+js_adonisjs:
+  framework: "AdonisJS"
+  language: "JavaScript"
+  similar: ["adonisjs", "adonis", "js-adonisjs", "js_adonisjs"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+js_apollo:
+  framework: "Apollo Server"
+  language: "JavaScript"
+  similar: ["apollo", "apollo-server", "apollo_server", "js-apollo", "@apollo/server"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: true
+  context: {callee: true}
+
+js_astro:
+  framework: "Astro"
+  language: "JavaScript"
+  similar: ["astro", "js-astro", "js_astro"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_bun:
+  framework: "Bun.serve"
+  language: "JavaScript"
+  similar: ["bun", "js-bun", "js_bun", "bun.serve", "bun-serve"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+
+js_cli:
+  framework: "CLI (parseArgs / commander / yargs / cac / sade / meow / minimist / citty / arg / command-line-args / getopts)"
+  language: "JavaScript"
+  similar: ["js-cli", "js_cli", "commander", "yargs", "cac", "meow", "minimist", "oclif", "clipanion", "sade", "citty", "arg", "command-line-args", "getopts"]
+  supported:
+    endpoint: true
+    method: false
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+
+js_cloudflare_pages:
+  framework: "Cloudflare Pages Functions"
+  language: "JavaScript"
+  similar: ["cloudflare pages", "cloudflare-pages", "pages functions", "js-cloudflare-pages", "js_cloudflare_pages"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_convex:
+  framework: "Convex"
+  language: "JavaScript"
+  similar: ["convex", "js-convex"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+
+js_deno:
+  framework: "Deno.serve"
+  language: "JavaScript"
+  similar: ["deno", "js-deno", "js_deno", "deno.serve", "deno-serve"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+
+js_egg:
+  framework: "Egg.js"
+  language: "JavaScript"
+  similar: ["egg", "eggjs", "egg.js", "js-egg"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_elysia:
+  framework: "Elysia"
+  language: "JavaScript"
+  similar: ["elysia", "js-elysia", "js_elysia", "bun-elysia"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_expo_router:
+  framework: "Expo Router"
+  language: "JavaScript"
+  similar: ["expo-router", "expo_router", "js-expo-router", "js_expo_router"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_express:
+  framework: "Express"
+  language: "JavaScript"
+  similar: ["express", "js-express", "js_express"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+  tier: "core"
+
+js_fastify:
+  framework: "Fastify"
+  language: "JavaScript"
+  similar: ["fastify", "js-fastify"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+
+js_feathers:
+  framework: "Feathers"
+  language: "JavaScript"
+  similar: ["feathers", "feathersjs", "feathers.js", "js-feathers", "js_feathers", "@feathersjs/feathers"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_firebase_functions:
+  framework: "Firebase Functions"
+  language: "JavaScript"
+  similar: ["firebase", "firebase-functions", "firebase_functions", "cloud functions", "js-firebase-functions"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+
+js_fresh:
+  framework: "Fresh"
+  language: "JavaScript"
+  similar: ["fresh", "js-fresh", "js_fresh", "deno-fresh"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_graphql_yoga:
+  framework: "GraphQL Yoga"
+  language: "JavaScript"
+  similar: ["graphql-yoga", "graphql_yoga", "yoga", "js-graphql-yoga", "@graphql-yoga/node"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: true
+
+js_hapi:
+  framework: "Hapi"
+  language: "JavaScript"
+  similar: ["hapi", "js-hapi", "js_hapi", "@hapi/hapi"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_hono:
+  framework: "Hono"
+  language: "JavaScript"
+  similar: ["hono", "js-hono"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+
+js_honox:
+  framework: "HonoX"
+  language: "JavaScript"
+  similar: ["honox", "js-honox", "js_honox"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_http:
+  framework: "Node.js http/https"
+  language: "JavaScript"
+  similar: ["js-http", "js_http", "node-http", "node-https", "nodejs-http", "nodejs-https", "node:http", "node:https"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+
+js_koa:
+  framework: "Koa"
+  language: "JavaScript"
+  similar: ["koa", "js-koa"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+
+js_medusa:
+  framework: "Medusa"
+  language: "JavaScript"
+  similar: ["medusa", "medusajs", "js-medusa", "js_medusa", "@medusajs/medusa"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {guards: true}
+
+js_moleculer:
+  framework: "Moleculer"
+  language: "JavaScript"
+  similar: ["moleculer", "moleculer-web", "js-moleculer"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: false
+
+js_nestjs:
+  framework: "NestJS"
+  language: "JavaScript"
+  similar: ["nestjs", "nest", "js-nestjs", "js_nestjs"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+
+js_netlify_functions:
+  framework: "Netlify Functions"
+  language: "JavaScript"
+  similar: ["netlify functions", "netlify-functions", "js-netlify-functions", "js_netlify_functions"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_nextjs:
+  framework: "Next.js"
+  language: "JavaScript"
+  similar: ["nextjs", "next.js", "next", "js-nextjs", "js_nextjs"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+js_nitro:
+  framework: "Nitro"
+  language: "JavaScript"
+  similar: ["nitro", "nitrojs", "nitropack", "js-nitro", "js_nitro"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_nuxtjs:
+  framework: "NuxtJS"
+  language: "JavaScript"
+  similar: ["nuxtjs", "nuxt", "js-nuxtjs", "js_nuxtjs"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+js_oak:
+  framework: "Oak"
+  language: "JavaScript"
+  similar: ["oak", "deno-oak", "js-oak", "@oak/oak"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+js_qwik_city:
+  framework: "Qwik City"
+  language: "JavaScript"
+  similar: ["qwik-city", "qwikcity", "qwik_city", "js-qwik-city", "js_qwik_city", "@builder.io/qwik-city"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_react_router:
+  framework: "React Router"
+  language: "JavaScript"
+  similar: ["react-router", "react_router", "js-react-router", "js_react_router", "@react-router/dev"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_remix:
+  framework: "Remix"
+  language: "JavaScript"
+  similar: ["remix", "remix-run", "js-remix", "js_remix"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_restify:
+  framework: "Restify"
+  language: "JavaScript"
+  similar: ["restify", "js-restify"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+
+js_sails:
+  framework: "Sails.js"
+  language: "JavaScript"
+  similar: ["sails", "sailsjs", "js-sails"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: false, guards: false}
+
+js_socketio:
+  framework: "Socket.IO"
+  language: "JavaScript"
+  similar: ["socket.io", "socketio", "socket-io", "js-socketio", "js_socketio"]
+  supported:
+    endpoint: true
+    method: false
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: true
+  context: {guards: true}
+
+js_solidstart:
+  framework: "SolidStart"
+  language: "JavaScript"
+  similar: ["solidstart", "solid-start", "js-solidstart", "js_solidstart", "@solidjs/start"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_sveltekit:
+  framework: "SvelteKit"
+  language: "JavaScript"
+  similar: ["sveltekit", "svelte-kit", "js-sveltekit", "js_sveltekit"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: true, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+js_vercel_functions:
+  framework: "Vercel Functions"
+  language: "JavaScript"
+  similar: ["vercel functions", "vercel-functions", "js-vercel-functions", "js_vercel_functions"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}

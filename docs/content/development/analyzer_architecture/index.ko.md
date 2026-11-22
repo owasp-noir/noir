@@ -183,35 +183,21 @@ end
 
 **수정할 등록 목록은 없습니다.** 분석기와 detector 레지스트리는 클래스에서 바로 만들어집니다. `initialize_analyzers`(`src/analyzer/analyzer.cr`)와 `build_detector_list`(`src/detector/detector.cr`)가 각각 `all_subclasses`를 훑어 `analyzer_for` / `detector_for`에서 이름을 읽습니다. 예전에는 두 목록을 손으로 관리했는데, 항목을 빠뜨리면 에러도 실패하는 스펙도 없이 그 컴포넌트가 실행되지 않을 뿐이었습니다.
 
-남은 일은 카탈로그 항목 하나입니다. 분석기, detector와 같은 상대 경로에 새 파일로 만듭니다.
+해당 언어의 YAML 카탈로그에 분석기의 기술 키를 추가합니다. 선택 항목인 `context`에는 호출 대상(callee)과 가드 지원 여부를 지정합니다.
 
-```crystal
-# src/techs/catalog/go/hertz.cr
-#
-# 디렉터리는 언어, 파일명은 분석기 파일명과 같고, 상수는 그 파일명을
-# 대문자화한 것입니다. `NoirTechs::TECHS`는 `NoirTechs::Catalog` 아래 모든
-# 상수에서 매크로로 파생되므로 덧붙일 목록이 없고, 두 사람이 프레임워크를
-# 추가해도 같은 파일을 건드리지 않습니다.
-module NoirTechs::Catalog::Go
-  HERTZ = {
-    :go_hertz => {
-      :framework => "Hertz",
-      :language  => "Go",
-      :similar   => ["hertz", "go-hertz", "go_hertz", "cloudwego"],
-      :supported => {
-        :endpoint => true,
-        :method   => true,
-        :params   => { :query => true, :path => true, :body => true, :header => true, :cookie => true },
-        :static_path => false,
-        :websocket   => false,
-      },
-      # 선택 사항. 이 tech가 지원하는 AI 컨텍스트 기능을 선언합니다.
-      # CALLEE_SUPPORTED_TECHS와 AI_CONTEXT_GUARD_SUPPORTED_TECHS는
-      # 손으로 나열하는 대신 이 플래그에서 파생됩니다.
-      :context => { :callee => true, :guards => true },
-    },
-  }
-end
+```yaml
+# src/techs/catalog/go.yml
+go_hertz:
+  framework: "Hertz"
+  language: "Go"
+  similar: ["hertz", "go-hertz", "go_hertz", "cloudwego"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
 ```
 
 `spec/unit_test/techs/registry_integrity_spec.cr`가 세 요소의 연결을 양방향으로 검사합니다. 모든 분석기와 detector에 카탈로그 항목이 있어야 하고, 모든 카탈로그 항목에는 분석기와 detector가 둘 다 있어야 합니다. 카탈로그 항목이 빠지면 런타임이 아니라 이 스펙에서 실패합니다.

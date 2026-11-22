@@ -1,0 +1,176 @@
+ts_effect:
+  framework: "Effect HttpApi"
+  language: "TypeScript"
+  similar: ["effect", "effect-httpapi", "ts-effect", "ts_effect", "@effect/platform"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+
+ts_encore:
+  framework: "Encore"
+  language: "TypeScript"
+  similar: ["encore.ts", "ts-encore", "ts_encore"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: true
+
+ts_inversify:
+  framework: "inversify-express-utils"
+  language: "TypeScript"
+  similar: ["inversify", "inversify-express-utils", "ts-inversify", "ts_inversify"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+ts_loopback:
+  framework: "LoopBack"
+  language: "TypeScript"
+  similar: ["loopback", "loopback4", "loopback-next", "lb4", "ts-loopback", "ts_loopback"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+ts_midway:
+  framework: "Midway"
+  language: "TypeScript"
+  similar: ["midway", "midwayjs", "ts-midway", "ts_midway"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true}
+
+ts_n8n:
+  framework: "n8n"
+  language: "TypeScript"
+  similar: ["n8n", "ts-n8n", "ts_n8n", "n8n-decorators"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+ts_nestjs:
+  framework: "NestJS"
+  language: "TypeScript"
+  similar: ["typescript-nestjs", "ts-nestjs", "ts_nestjs"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+  tier: "core"
+
+ts_orpc:
+  framework: "oRPC"
+  language: "TypeScript"
+  similar: ["orpc", "ts-orpc", "ts_orpc", "@orpc/server", "@orpc/contract"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: false
+
+ts_routing_controllers:
+  framework: "routing-controllers"
+  language: "TypeScript"
+  similar: ["routing-controllers", "routing_controllers", "ts-routing-controllers", "ts_routing_controllers"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+ts_tanstack_router:
+  framework: "TanStack Router"
+  language: "TypeScript"
+  similar: ["tanstack-router", "tanstack_router", "ts-tanstack-router", "ts_tanstack_router", "@tanstack/router", "@tanstack/react-router"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true}
+
+ts_trpc:
+  framework: "tRPC"
+  language: "TypeScript"
+  similar: ["trpc", "ts-trpc", "ts_trpc", "@trpc/server", "@trpc/next"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: false, cookie: false}
+    static_path: true
+    websocket: true
+  context: {callee: true}
+
+ts_tsed:
+  framework: "Ts.ED"
+  language: "TypeScript"
+  similar: ["tsed", "ts.ed", "ts-tsed", "ts_tsed"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+ts_tsoa:
+  framework: "tsoa"
+  language: "TypeScript"
+  similar: ["tsoa", "ts-tsoa", "ts_tsoa"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+ts_tsrest:
+  framework: "ts-rest"
+  language: "TypeScript"
+  similar: ["ts-rest", "tsrest", "ts_rest", "@ts-rest/core"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: false}
+    static_path: false
+    websocket: false
+
+ts_wasp:
+  framework: "Wasp"
+  language: "TypeScript"
+  similar: ["wasp", "wasp-lang", "ts-wasp", "ts_wasp"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true}

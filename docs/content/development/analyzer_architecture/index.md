@@ -183,35 +183,21 @@ What to take from this example:
 
 There is **no registration list to edit**. The analyzer and detector registries come from the classes themselves: `initialize_analyzers` (`src/analyzer/analyzer.cr`) and `build_detector_list` (`src/detector/detector.cr`) each sweep `all_subclasses` and read the name off `analyzer_for` / `detector_for`. Both lists used to be hand-maintained, and a forgotten entry produced no error and no failing spec, just a component that never ran.
 
-What's left is the catalog entry: a new file at the same relative path as the analyzer and the detector.
+Add the analyzer’s technology key to the YAML catalog for its language. The optional `context` flags declare callee and guard support.
 
-```crystal
-# src/techs/catalog/go/hertz.cr
-#
-# The directory is the language, the filename matches the analyzer's, and the
-# constant is that filename upcased. `NoirTechs::TECHS` is macro-derived from
-# every constant under `NoirTechs::Catalog`, so there is no list to append to
-# and two people adding frameworks never touch the same file.
-module NoirTechs::Catalog::Go
-  HERTZ = {
-    :go_hertz => {
-      :framework => "Hertz",
-      :language  => "Go",
-      :similar   => ["hertz", "go-hertz", "go_hertz", "cloudwego"],
-      :supported => {
-        :endpoint => true,
-        :method   => true,
-        :params   => { :query => true, :path => true, :body => true, :header => true, :cookie => true },
-        :static_path => false,
-        :websocket   => false,
-      },
-      # Optional. Declares which AI-context capabilities this tech supports;
-      # CALLEE_SUPPORTED_TECHS and AI_CONTEXT_GUARD_SUPPORTED_TECHS are derived
-      # from these flags rather than hand-listed.
-      :context => { :callee => true, :guards => true },
-    },
-  }
-end
+```yaml
+# src/techs/catalog/go.yml
+go_hertz:
+  framework: "Hertz"
+  language: "Go"
+  similar: ["hertz", "go-hertz", "go_hertz", "cloudwego"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
 ```
 
 `spec/unit_test/techs/registry_integrity_spec.cr` checks the three-way link in both directions: every analyzer and detector has a catalog entry, and every catalog entry is backed by both. A missing catalog entry fails there rather than at runtime.

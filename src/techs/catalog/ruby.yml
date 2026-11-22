@@ -1,0 +1,128 @@
+ruby_actioncable:
+  framework: "Action Cable"
+  language: "Ruby"
+  similar: ["actioncable", "action-cable", "action_cable", "rails-actioncable", "ruby-actioncable", "ruby_actioncable"]
+  supported:
+    endpoint: true
+    method: false
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: true
+
+ruby_cli:
+  framework: "CLI (OptionParser / Thor / GLI / Slop / TTY::Option / commander / Optimist / Clamp / dry-cli)"
+  language: "Ruby"
+  similar: ["ruby-cli", "ruby_cli", "thor", "optparse", "optionparser", "gli", "slop", "tty-option", "optimist", "clamp", "dry-cli"]
+  supported:
+    endpoint: true
+    method: false
+    params: {query: false, path: false, body: false, header: false, cookie: false}
+    static_path: false
+    websocket: false
+
+ruby_grape:
+  framework: "Grape"
+  language: "Ruby"
+  similar: ["grape", "ruby-grape", "ruby_grape"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+ruby_graphql:
+  framework: "GraphQL Ruby"
+  language: "Ruby"
+  similar: ["graphql-ruby", "graphql_ruby", "ruby-graphql"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: false, path: false, body: true, header: false, cookie: false}
+    static_path: false
+    websocket: true
+
+ruby_hanami:
+  framework: "Hanami"
+  language: "Ruby"
+  similar: ["hanami", "ruby-hanami", "ruby_hanami"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+ruby_padrino:
+  # Padrino apps carry Sinatra's own route-registration DSL (every
+  # `Padrino::Application` is a `Sinatra::Base` subclass), so the
+  # Sinatra detector/analyzer legitimately fire on every Padrino
+  # project too — same shape as Lumen/Laravel and Drupal/Symfony.
+  # When Padrino is the actual framework, the Sinatra report is
+  # redundant noise: `Analyzer::Ruby::Padrino` already re-implements
+  # Sinatra's plain `get "/path" do` route matching (so nothing is
+  # lost by dropping the Sinatra analyzer) and additionally resolves
+  # Padrino's `controllers :name do get :index, map: "..." do end end`
+  # named-route DSL and `config/apps.rb` mount-prefix propagation,
+  # which the Sinatra analyzer cannot represent at all.
+  supersedes: ["ruby_sinatra"]
+  framework: "Padrino"
+  language: "Ruby"
+  similar: ["padrino", "ruby-padrino", "ruby_padrino", "padrino-core", "padrino-framework"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+
+ruby_rails:
+  framework: "Rails"
+  language: "Ruby"
+  similar: ["rails", "ruby-rails", "ruby_rails"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+
+ruby_roda:
+  framework: "Roda"
+  language: "Ruby"
+  similar: ["roda", "ruby-roda", "ruby_roda"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: false, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
+
+ruby_sinatra:
+  framework: "Sinatra"
+  language: "Ruby"
+  similar: ["sinatra", "ruby-sinatra", "ruby_sinatra"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: true, body: true, header: true, cookie: true}
+    static_path: true
+    websocket: false
+  context: {callee: true, guards: true}
+
+ruby_webrick:
+  framework: "WEBrick"
+  language: "Ruby"
+  similar: ["webrick", "ruby-webrick", "ruby_webrick", "WEBrick::HTTPServer", "mount_proc", "AbstractServlet"]
+  supported:
+    endpoint: true
+    method: true
+    params: {query: true, path: false, body: true, header: true, cookie: true}
+    static_path: false
+    websocket: false
+  context: {callee: true, guards: true}
