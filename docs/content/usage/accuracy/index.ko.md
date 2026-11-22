@@ -8,15 +8,15 @@ weight = 2
 
 <!-- SCOREBOARD -->
 
-Measured: 2026-11-22. Analyzer source: `a80bec92ba7511a2160c35acd9539e372099a6cc`.
+Measured: 2026-11-22. Analyzer source: `03395ca4ddd53eaa6bc34506ab9f0b4a6e8cc020`.
 
 저장소 하나에서 측정한 기술은 단일 데이터 포인트입니다.
 
 | Technology | Repositories | Matched | Spec-only | Code-only | Recall | Agreement | Marked |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | cs_aspnet_core_minimal_api | 1 | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
-| go_chi | 2 | 264 | 41 | 249 | 86.6% | 51.5% | 262 (51.1%) |
-| go_echo | 1 | 153 | 19 | 115 | 89.0% | 57.1% | 4 (1.5%) |
+| go_chi | 2 | 264 | 41 | 249 | 86.6% | 51.5% | 21 (4.1%) |
+| go_echo | 1 | 153 | 19 | 115 | 89.0% | 57.1% | 5 (1.9%) |
 | go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 230 (81.6%) |
 | go_mux | 1 | 26 | 1 | 88 | 96.3% | 22.8% | 108 (94.7%) |
 | java_spring | 1 | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
@@ -37,16 +37,16 @@ Measured: 2026-11-22. Analyzer source: `a80bec92ba7511a2160c35acd9539e372099a6cc
 | gotify | 42 | 0 | 10 | 100.0% | 80.8% | 2 (3.8%) |
 | immich | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
 | langflow | 84 | 0 | 111 | 100.0% | 43.1% | 21 (10.8%) |
-| owncast | 241 | 0 | 189 | 100.0% | 56.0% | 262 (60.9%) |
+| owncast | 241 | 0 | 189 | 100.0% | 56.0% | 21 (4.9%) |
 | podinfo | 26 | 1 | 88 | 96.3% | 22.8% | 108 (94.7%) |
 | pokeapi | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | pretalx | 133 | 0 | 300 | 100.0% | 30.7% | 1 (0.2%) |
-| vikunja | 153 | 19 | 115 | 89.0% | 57.1% | 4 (1.5%) |
+| vikunja | 153 | 19 | 115 | 89.0% | 57.1% | 5 (1.9%) |
 
 | Technology | Detected / repositories | Other technologies detected | Forced-only rows | Automatic-only rows |
 | --- | ---: | --- | ---: | ---: |
-| cs_aspnet_core_minimal_api | 1 / 1 | cs_aspnet_core_mvc, http_file, oas3 | 0 | 0 |
-| go_chi | 2 / 2 | caddy, go_cli, go_http, js_cli, js_egg, js_http, js_nextjs, oas3, supabase | 0 | 0 |
+| cs_aspnet_core_minimal_api | 1 / 1 | http_file, oas3 | 0 | 0 |
+| go_chi | 2 / 2 | caddy, go_cli, go_http, js_cli, js_http, js_nextjs, oas3 | 0 | 0 |
 | go_echo | 1 / 1 | go_cli, go_http, go_huma, oas2 | 0 | 0 |
 | go_gin | 2 / 2 | go_cli, go_http, k8s_ingress, oas2 | 0 | 0 |
 | go_mux | 1 / 1 | go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2 | 0 | 0 |
@@ -61,14 +61,14 @@ Measured: 2026-11-22. Analyzer source: `a80bec92ba7511a2160c35acd9539e372099a6cc
 | InvokeAI | python_fastapi | true | oas3, python_cli, python_starlette | 0 | 0 |
 | NodeBB | js_express | true | js_cli, js_socketio, oas3 | 0 | 0 |
 | answer | go_gin | true | go_cli, k8s_ingress, oas2 | 0 | 0 |
-| auth | go_chi | true | go_cli, go_http, oas3, supabase | 0 | 0 |
+| auth | go_chi | true | go_cli, go_http, oas3 | 0 | 0 |
 | dvws-node | js_express | true | js_apollo, js_sveltekit, oas3, wsdl | 0 | 0 |
-| eShop | cs_aspnet_core_minimal_api | true | cs_aspnet_core_mvc, http_file, oas3 | 0 | 0 |
+| eShop | cs_aspnet_core_minimal_api | true | http_file, oas3 | 0 | 0 |
 | flowable-engine | java_spring | true | oas2 | 0 | 0 |
 | gotify | go_gin | true | go_cli, go_http, oas2 | 0 | 0 |
 | immich | ts_nestjs | true | js_express, js_socketio, oas3 | 0 | 0 |
 | langflow | python_fastapi | true | oas3, python_cli, python_fastmcp, python_starlette | 0 | 0 |
-| owncast | go_chi | true | caddy, go_cli, go_http, js_cli, js_egg, js_http, js_nextjs, oas3 | 0 | 0 |
+| owncast | go_chi | true | caddy, go_cli, go_http, js_cli, js_http, js_nextjs, oas3 | 0 | 0 |
 | podinfo | go_mux | true | go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2 | 0 | 0 |
 | pokeapi | python_django | true | graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli | 0 | 0 |
 | pretalx | python_django | true | oas3, python_cli | 0 | 0 |
@@ -76,10 +76,10 @@ Measured: 2026-11-22. Analyzer source: `a80bec92ba7511a2160c35acd9539e372099a6cc
 
 | Technology | Inputs on matched rows | Both | Document only | Code only | Recall | Agreement |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| cs_aspnet_core_minimal_api | Parameters | 28 | 16 | 0 | 63.6% | 100.0% |
-| cs_aspnet_core_minimal_api | Body fields | 38 | 1 | 0 | 97.4% | 100.0% |
-| go_chi | Parameters | 56 | 2 | 94 | 96.6% | 37.3% |
-| go_chi | Body fields | 43 | 135 | 22 | 24.2% | 66.2% |
+| cs_aspnet_core_minimal_api | Parameters | 44 | 0 | 0 | 100.0% | 100.0% |
+| cs_aspnet_core_minimal_api | Body fields | 39 | 0 | 0 | 100.0% | 100.0% |
+| go_chi | Parameters | 57 | 1 | 110 | 98.3% | 34.1% |
+| go_chi | Body fields | 168 | 10 | 37 | 94.4% | 82.0% |
 | go_echo | Parameters | 197 | 0 | 52 | 100.0% | 79.1% |
 | go_echo | Body fields | 368 | 1 | 246 | 99.7% | 59.9% |
 | go_gin | Parameters | 130 | 11 | 122 | 92.2% | 51.6% |
@@ -89,7 +89,7 @@ Measured: 2026-11-22. Analyzer source: `a80bec92ba7511a2160c35acd9539e372099a6cc
 | java_spring | Parameters | 544 | 21 | 109 | 96.3% | 83.3% |
 | java_spring | Body fields | 378 | 67 | 90 | 84.9% | 80.8% |
 | js_express | Parameters | 313 | 35 | 80 | 89.9% | 79.6% |
-| js_express | Body fields | 96 | 88 | 19 | 52.2% | 83.5% |
+| js_express | Body fields | 164 | 20 | 79 | 89.1% | 67.5% |
 | python_django | Parameters | 609 | 19 | 381 | 97.0% | 61.5% |
 | python_django | Body fields | 393 | 60 | 21 | 86.8% | 94.9% |
 | python_fastapi | Parameters | 454 | 20 | 9 | 95.8% | 98.1% |
@@ -113,11 +113,11 @@ Measured: 2026-11-22. Analyzer source: `a80bec92ba7511a2160c35acd9539e372099a6cc
 | Technology | Resolution claim | Marked endpoints | Share of code endpoints |
 | --- | --- | ---: | ---: |
 | go_chi | `handler:heuristic` | 21 | 4.1% |
-| go_chi | `prefix:unresolved` | 241 | 47.0% |
+| go_echo | `prefix:heuristic` | 1 | 0.4% |
 | go_echo | `prefix:unresolved` | 4 | 1.5% |
 | go_gin | `handler:heuristic` | 8 | 2.8% |
 | go_gin | `prefix:unresolved` | 228 | 80.9% |
-| go_mux | `prefix:unresolved` | 108 | 94.7% |
+| go_mux | `prefix:heuristic` | 108 | 94.7% |
 | js_express | `prefix:heuristic` | 217 | 32.1% |
 | js_express | `prefix:unresolved` | 11 | 1.6% |
 | python_django | `prefix:unresolved` | 1 | 0.2% |
