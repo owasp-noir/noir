@@ -2,7 +2,6 @@ require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/java_type_model_extractor_ts"
 require "../../../utils/url_path"
-require "../../../detector/detectors/java/vaadin"
 
 module Analyzer::Java
   # Vaadin Flow navigation targets (`@Route` / `@RouteAlias`, prefixed by
@@ -20,7 +19,7 @@ module Analyzer::Java
     VAADIN_GATE    = Regex.union("com.vaadin", "dev.hilla")
     FLOW_ROUTER_RE = Regex.union("com.vaadin.flow.router")
     # `@Endpoint` is also Spring Boot Actuator's; only Hilla's counts.
-    HILLA_RE          = Detector::Java::Vaadin::HILLA_MARKERS
+    HILLA_RE          = Regex.union("com.vaadin.hilla", "dev.hilla", "com.vaadin.flow.server.connect", "com.vaadin.fusion")
     ROUTE_TEMPLATE_RE = /:([A-Za-z_]\w*)(?:\([^)]*\))?[?*]?/
     MAX_LAYOUT_DEPTH  = 8
 

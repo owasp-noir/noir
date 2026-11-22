@@ -1,7 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/js_handler_resolver"
-require "../../../detector/detectors/javascript/socketio"
 
 module Analyzer::Javascript
   # Surfaces Socket.IO real-time attack surface as `ws://` endpoints. A
@@ -18,6 +17,13 @@ module Analyzer::Javascript
   # block the current `socket.on` handlers belong to.
   class SocketIO < JavascriptEngine
     analyzer_for "js_socketio"
+
+    SOCKET_IO_API = Regex.union(
+      /\.\s*of\s*\(\s*['"`]\//,
+      /\.\s*broadcast\s*\.\s*emit\s*\(/,
+      /\.\s*to\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*emit\s*\(/,
+      /\b(?:io|socket)\s*\.\s*emit\s*\(/,
+    )
 
     # `const admin = io.of("/admin")` — binds a variable to a namespace.
     NS_ASSIGN = /\b(\w+)\s*=\s*\w+\.of\(\s*["']([^"']+)["']/
@@ -97,7 +103,7 @@ module Analyzer::Javascript
       return true if content.matches?(/from\s+['"]socket\.io['"]|require\(\s*['"]socket\.io['"]\s*\)/)
       return false unless content.includes?(".on(")
       return true if content.includes?("new Server(")
-      content.matches?(CONNECTION_HANDLER) && content.matches?(Detector::Javascript::SocketIO::SOCKET_IO_API)
+      content.matches?(CONNECTION_HANDLER) && content.matches?(SOCKET_IO_API)
     end
 
     # The events a connection callback registers through a function it hands

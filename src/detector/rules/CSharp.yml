@@ -1,3 +1,252 @@
+Abp:
+  key: cs_abp
+  gate: {extensions: [.cs, .csproj]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.csproj]}
+          - contains: 'Include="Volo.Abp.'
+      - all:
+          - files: {extensions: [.cs]}
+          - any:
+              - contains: 'ConventionalControllers.Create'
+              - all:
+                  - contains: 'Volo.Abp'
+                  - regex: ':\s*(?:Volo\.Abp\.Application\.Services\.)?(?:ApplicationService|(?:Crud|ReadOnly)AppService\s*<)'
+  examples:
+    match:
+      - {path: 'Acme.Application.csproj', content: "<PackageReference Include=\"Volo.Abp.Ddd.Application\" Version=\"8.3.0\" />"}
+      - {path: 'HostModule.cs', content: "options.ConventionalControllers.Create(typeof(AppModule).Assembly);"}
+      - path: 'BookAppService.cs'
+        content: |-
+          using Volo.Abp.Application.Services;
+          public class BookAppService : ApplicationService {}
+      - path: 'AuthorAppService.cs'
+        content: |-
+          using Volo.Abp.Application.Services;
+          public class AuthorAppService : CrudAppService<Author, AuthorDto, Guid> {}
+    no_match:
+      - {path: 'Other.csproj', content: "<PackageReference Include=\"Serilog\" />"}
+      - {path: 'BookAppService.cs', content: "public class BookAppService : ApplicationService {}"}
+      - path: 'HomeController.cs'
+        content: |-
+          using Microsoft.AspNetCore.Mvc;
+          public class HomeController : Controller {}
+
+AspNetCoreMinimalApi:
+  key: cs_aspnet_core_minimal_api
+  files: {extensions: [.cs]}
+  match:
+    all:
+      - not:
+          regex: '\bI?CarterModule\b'
+      - any:
+          - regex: '\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*(?:<[^<>()]*>\s*)?\('
+          - all:
+              - regex: '\.\s*Map(?:HealthChecks|Forwarder)?\s*\('
+              - contains:
+                  - 'WebApplication'
+                  - 'IEndpointRouteBuilder'
+                  - 'RouteGroupBuilder'
+  examples:
+    match:
+      - path: 'Program.cs'
+        content: |-
+          var app = WebApplication.CreateBuilder(args).Build();
+          app.MapGet("/users", () => Results.Ok());
+      - path: 'Routes.cs'
+        content: |-
+          public static IEndpointRouteBuilder MapRoutes(this IEndpointRouteBuilder endpoints)
+          {
+              endpoints.Map("/fallback", () => Results.Ok());
+              return endpoints;
+          }
+      - path: 'Program.cs'
+        content: |-
+          var app = WebApplication.CreateBuilder(args).Build();
+          app.MapControllers();
+          app.MapHealthChecks("/health");
+      - path: 'Program.cs'
+        content: |-
+          var app = WebApplication.CreateBuilder(args).Build();
+          app.MapControllers();
+          app.MapForwarder("/x", "http://y");
+    no_match:
+      - path: 'UsersModule.cs'
+        content: |-
+          public sealed class UsersModule : ICarterModule
+          {
+              public void AddRoutes(IEndpointRouteBuilder app)
+              {
+                  app.MapGet("/users", () => Results.Ok());
+              }
+          }
+      - {path: 'App.csproj', content: "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>"}
+
+AspNetCoreMvc:
+  key: cs_aspnet_core_mvc
+  gate: {extensions: [.cs, .csproj, .vbproj, .sln, .config]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.csproj]}
+          - any:
+              - contains: &aspnet_mvc_packages ['AspNetCore.Mvc', 'Microsoft.AspNetCore.App']
+              - contains: ['Sdk="Microsoft.NET.Sdk.Web"', 'Sdk="Microsoft.NET.Sdk.Razor"']
+      - all:
+          - files: {extensions: [Program.cs, Startup.cs]}
+          - any:
+              - contains: *aspnet_mvc_packages
+              - contains: [AddControllers, 'AddMvc(', AddMvcCore, MapControllerRoute, MapDefaultControllerRoute, MapControllers]
+      - all:
+          - files: {extensions: [.cs]}
+          - files: {path_segments: [Controller]}
+          - contains: *aspnet_mvc_packages
+  examples:
+    match:
+      - {path: MyApp.csproj, content: "<PackageReference Include=\"Microsoft.AspNetCore.Mvc\" />"}
+      - {path: MyApp.csproj, content: "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>"}
+      - {path: Program.cs, content: "var builder = WebApplication.CreateBuilder(args);\napp.MapControllerRoute(name: \"default\", pattern: \"{controller=Home}/{action=Index}/{id?}\");"}
+      - {path: Program.cs, content: "app.MapControllers();"}
+      - {path: Program.cs, content: "builder.Services.AddMvc();"}
+      - {path: myProgram.CS, content: "app.MapControllers();"}
+    no_match:
+      - {path: Routes.cs, content: "app.MapControllers();"}
+
+Carter:
+  key: cs_carter
+  gate: {extensions: [.cs, .csproj, .props, .targets]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.csproj, .props, .targets]}
+          - contains:
+              - 'Include="Carter"'
+              - 'Include=''Carter'''
+              - '"Carter.'
+      - all:
+          - files: {extensions: [.cs]}
+          - any:
+              - contains: 'using Carter'
+              - regex: '\bI?CarterModule\b'
+  examples:
+    match:
+      - {path: 'CarterDemo.csproj', content: "<PackageReference Include=\"Carter\" Version=\"8.0.0\" />"}
+      - path: 'Modules/UsersModule.cs'
+        content: |-
+          using Carter;
+          public class UsersModule : ICarterModule {}
+      - {path: 'Modules/UsersModule.cs', content: "public class UsersModule : ICarterModule {}"}
+    no_match:
+      - {path: 'Other.csproj', content: "<PackageReference Include=\"Cartography\" />"}
+      - {path: 'Controllers/HomeController.cs', content: "public class HomeController : Controller {}"}
+
+Cli:
+  key: cs_cli
+  files: {extensions: [.cs]}
+  match:
+    any:
+      - regex:
+          - '\busing\s+(?:System\.CommandLine|CommandLine|CliFx|Spectre\.Console\.Cli|McMaster\.Extensions\.CommandLineUtils|Cocona)\b'
+          - '\bnew\s+RootCommand\s*\(|\bnew\s+CommandApp\b|\bCliApplicationBuilder\s*\(|\bParser\.Default\.ParseArguments\b|\[\s*Verb\s*\(|\[\s*CommandOption\s*\(|\[\s*CommandArgument\s*\(|\bCommandLineApplication\.Execute\b|\[\s*Subcommand\s*\(|\bCoconaApp\.(?:Create|Run)\b'
+      - all:
+          - not:
+              regex: '\bWebApplication\.(?:Create(?:Builder|SlimBuilder|EmptyBuilder)?|CreateDefault)\b|\bnew\s+HttpListener\b|\.MapGet\s*\(|\.MapPost\s*\(|\.MapControllers\s*\(|\[\s*ApiController\s*\]|:\s*ControllerBase\b|\bHost\.CreateDefaultBuilder\b'
+          - regex:
+              - '\bstatic\s+(?:async\s+)?(?:int|void|Task(?:<int>)?)\s+Main\s*\(\s*string\s*\[\s*\]\s+\w+\s*\)'
+              - '\bEnvironment\.GetCommandLineArgs\s*\('
+  examples:
+    match:
+      - {path: 'app.cs', content: "using System.CommandLine;"}
+    no_match:
+      - {path: 'app.cs', content: "var app = WebApplication.CreateBuilder(args); var argv = Environment.GetCommandLineArgs();"}
+
+FastEndpoints:
+  key: cs_fastendpoints
+  gate: {extensions: [.cs, .csproj]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.csproj]}
+          - contains: 'FastEndpoints'
+      - all:
+          - files: {extensions: [.cs]}
+          - contains:
+              - 'using FastEndpoints'
+              - 'FastEndpoints.'
+              - 'AddFastEndpoints'
+              - 'UseFastEndpoints'
+  examples:
+    match:
+      - {path: 'MyApp.csproj', content: "<PackageReference Include=\"FastEndpoints\" Version=\"5.30.0\" />"}
+      - {path: 'Program.cs', content: "builder.Services.AddFastEndpoints();"}
+      - {path: 'Program.cs', content: "app.UseFastEndpoints();"}
+      - path: 'Endpoint.cs'
+        content: |-
+          using FastEndpoints;
+          public class X : Endpoint<R> { }
+    no_match:
+      - {path: 'Other.cs', content: "namespace X { class Y { } }"}
+
+HotChocolate:
+  key: cs_hotchocolate
+  gate: {extensions: [.cs, .csproj, .props, .targets]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.cs]}
+          - regex: '\busing\s+(?:static\s+)?HotChocolate\b|\bAddGraphQLServer\s*\('
+      - all:
+          - not:
+              files: {extensions: [.cs]}
+          - regex: 'Include\s*=\s*["'']HotChocolate\b'
+  examples:
+    match:
+      - path: 'Query.cs'
+        content: |-
+          using HotChocolate.Types;
+          [QueryType]
+          public static class Q {}
+      - {path: 'Program.cs', content: "builder.Services.AddGraphQLServer().AddQueryType<Query>();"}
+      - {path: 'Api.csproj', content: "<PackageReference Include=\"HotChocolate.AspNetCore\" Version=\"15.0.0\" />"}
+    no_match:
+      - {path: 'Query.cs', content: "public class Query { public string GetReport(int id) => \"r\"; }"}
+      - {path: 'Api.csproj', content: "<PackageReference Include=\"GraphQL.Server\" />"}
+      - {path: 'Test.cs', content: "<PackageReference Include=\"HotChocolate\" />"}
+
+HttpListener:
+  key: cs_httplistener
+  files: {extensions: [.cs]}
+  match:
+    all:
+      - contains: 'HttpListener'
+      - any:
+          - regex:
+              - '\bnew\s+HttpListener\s*\('
+              - '\bnew\s+System\.Net\.HttpListener\s*\('
+          - contains:
+              - '.Prefixes.Add'
+              - '.GetContext'
+              - 'GetContextAsync'
+  examples:
+    match:
+      - path: 'Program.cs'
+        content: |-
+          using System.Net;
+
+          var listener = new HttpListener();
+          listener.Prefixes.Add("http://localhost:8080/");
+          listener.Start();
+          var context = await listener.GetContextAsync();
+      - path: 'Program.cs'
+        content: |-
+          var listener = new System.Net.HttpListener();
+          listener.Prefixes.Add("http://localhost:8080/");
+    no_match:
+      - {path: 'Handler.cs', content: "void Handle(HttpListenerContext context) { }"}
+      - {path: 'Errors.cs', content: "catch (HttpListenerException ex) { Console.WriteLine(ex); }"}
+      - {path: 'notes.txt', content: "var listener = new HttpListener(); listener.Prefixes.Add(\"http://localhost:8080/\");"}
+
 Razor:
   key: cs_razor
   gate: {extensions: [.cshtml, .razor]}
@@ -24,6 +273,47 @@ Razor:
           </style>
       - {path: Shared/_Layout.cshtml, content: "<body>@RenderBody()</body>"}
 
+ServiceStack:
+  key: cs_servicestack
+  gate: {extensions: [.cs, .csproj]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.csproj]}
+          - contains:
+              - 'Include="ServiceStack"'
+              - 'Include=''ServiceStack'''
+              - '"ServiceStack.'
+      - all:
+          - files: {extensions: [.cs]}
+          - contains:
+              - 'using ServiceStack'
+              - ': IReturn<'
+              - ', IReturn<'
+              - 'IReturnVoid'
+              - 'Routes.Add<'
+              - 'Routes.AddFromAssembly'
+  examples:
+    match:
+      - {path: 'ServiceStackDemo.csproj', content: "<PackageReference Include=\"ServiceStack\" Version=\"8.0.0\" />"}
+      - {path: 'ServiceStackDemo.csproj', content: "<PackageReference Include=\"ServiceStack.Kestrel\" Version=\"8.0.0\" />"}
+      - path: 'ServiceModel/Hello.cs'
+        content: |-
+          using ServiceStack;
+          [Route("/hello")]
+          public class Hello : IReturn<HelloResponse> {}
+      - {path: 'ServiceModel/Hello.cs', content: "public class Hello : IReturn<HelloResponse> {}"}
+      - {path: 'ServiceModel/Ping.cs', content: "public class Ping : IReturnVoid {}"}
+      - {path: 'AppHost.cs', content: "public override void Configure(Container c) { Routes.Add<Hello>(\"/hello\"); }"}
+      - {path: 'AppHost.cs', content: "Routes.AddFromAssembly(typeof(MyServices).Assembly);"}
+    no_match:
+      - {path: 'Other.csproj', content: "<PackageReference Include=\"Serilog\" />"}
+      - path: 'Controllers/HomeController.cs'
+        content: |-
+          [Route("api/[controller]")]
+          public class HomeController : Controller {}
+      - {path: 'Models/User.cs', content: "public class User { public string Name { get; set; } }"}
+
 SignalR:
   key: cs_signalr
   files: {extensions: [.cs]}
@@ -48,3 +338,58 @@ SignalR:
       - {path: Foo.cs, content: "public class Foo { public int X; }"}
     inapplicable:
       - Program.fs
+
+Wcf:
+  key: cs_wcf
+  gate: {extensions: [.cs]}
+  match:
+    all:
+      - contains: 'OperationContract'
+      - regex: '[\[,]\s*(?:[\w.]+\.)?Web(Get|Invoke)(?:Attribute)?\s*(?=[(\],])'
+  examples:
+    match:
+      - path: 'IOrderService.cs'
+        content: |-
+          [OperationContract]
+          [WebGet(UriTemplate = "orders")]
+          string Get();
+      - path: 'IOrderService.cs'
+        content: |-
+          [OperationContract, WebInvoke(Method = "PUT")]
+          void Put();
+    no_match:
+      - path: 'IOrderService.cs'
+        content: |-
+          [ServiceContract]
+          interface I { [OperationContract] string Get(); }
+      - {path: 'Client.cs', content: "var x = new WebGet();"}
+
+Wolverine:
+  key: cs_wolverine
+  gate: {extensions: [.cs, .csproj]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.csproj]}
+          - contains: 'WolverineFx.Http'
+      - all:
+          - not:
+              files: {extensions: [.csproj]}
+          - contains:
+              - 'using Wolverine.Http;'
+              - 'MapWolverineEndpoints('
+  examples:
+    match:
+      - {path: 'Api.csproj', content: "<PackageReference Include=\"WolverineFx.Http\" Version=\"3.6.0\" />"}
+      - path: 'OrderEndpoints.cs'
+        content: |-
+          using Wolverine.Http;
+          public static class E {}
+      - {path: 'Program.cs', content: "app.MapWolverineEndpoints();"}
+    no_match:
+      - {path: 'Api.csproj', content: "<PackageReference Include=\"WolverineFx\" Version=\"3.6.0\" />"}
+      - path: 'Program.cs'
+        content: |-
+          using Wolverine;
+          builder.Host.UseWolverine();
+      - {path: 'App.csproj', content: "using Wolverine.Http;"}

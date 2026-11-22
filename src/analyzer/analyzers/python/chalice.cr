@@ -1,12 +1,14 @@
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 require "./mounted_router_support"
-require "../../../detector/detectors/python/chalice"
+require "../../../detector/rule_detector"
 
 module Analyzer::Python
   class Chalice < PythonEngine
     include MountedRouterSupport
     analyzer_for "python_chalice"
+
+    include RuleDetector::SourceCheck
 
     # Reference: https://aws.github.io/chalice/topics/routing.html
     #
@@ -31,7 +33,7 @@ module Analyzer::Python
 
     private def scan_file(path : ::String, base_path : ::String) : FileScan?
       source = read_file_content(path)
-      return unless source.includes?("chalice") && source.matches?(Detector::Python::Chalice::IMPORT_RE)
+      return unless source_detector.detect(path, source)
 
       # `register_blueprint(blueprint, name_prefix=None, url_prefix=None)`
       mounts = collect_mounts(source, path, base_path, "register_blueprint", "blueprint", "url_prefix", 2)

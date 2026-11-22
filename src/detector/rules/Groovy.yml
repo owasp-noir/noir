@@ -1,0 +1,10 @@
+Cli:
+  key: groovy_cli
+  files: {extensions: [.groovy]}
+  match:
+    regex: '\bnew\s+CliBuilder\b|\bCliBuilder\s*\(|@picocli|@Command\b|\bimport\s+com\.beust\.jcommander\b|\bnew\s+JCommander\s*\(|\bJCommander\.newBuilder\s*\(|\bimport\s+org\.apache\.commons\.cli\b|\bOption\.builder\s*\('
+  examples:
+    match:
+      - {path: 'app.groovy', content: "def cli = new CliBuilder()"}
+    no_match:
+      - {path: 'app.groovy', content: "def cli = new StringBuilder()"}

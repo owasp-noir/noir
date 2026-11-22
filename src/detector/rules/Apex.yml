@@ -1,0 +1,34 @@
+Salesforce:
+  key: apex_salesforce
+  gate: {extensions: [.cls], basenames: [sfdx-project.json]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [sfdx-project.json]}
+          - contains: 'packageDirectories'
+      - all:
+          - not:
+              files: {extensions: [sfdx-project.json]}
+          - all:
+              - regex: '(?i)@(?:RestResource|AuraEnabled)\b|\bwebservice\s+static\b|\bstatic\s+webservice\b'
+              - regex: '(?i)\b(?:public|global)\b[\w\s]*\bclass\s+\w+'
+  examples:
+    match:
+      - {path: 'proj/sfdx-project.json', content: "{\"packageDirectories\": [{\"path\": \"force-app\"}]}"}
+      - path: 'classes/AccountRest.cls'
+        content: |-
+          @RestResource(urlMapping='/Account/*')
+          global with sharing class AccountRest {
+              @HttpGet global static Account doGet() { return null; }
+          }
+      - {path: 'A.cls', content: "public class A { @AuraEnabled public static String x() { return ''; } }"}
+      - {path: 'B.cls', content: "global class B { webservice static Id y() { return null; } }"}
+    no_match:
+      - path: 'article.cls'
+        content: |-
+          \NeedsTeXFormat{LaTeX2e}
+          \ProvidesClass{article}
+          \LoadClass{report}
+      - {path: 'Util.cls', content: "public class Util { public static Integer add(Integer a) { return a; } }"}
+      - {path: 'sfdx-project.json', content: "{}"}
+      - {path: 'sfdx-project.json', content: "@RestResource global class Orders {}"}

@@ -1,6 +1,5 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/apex_extractor"
-require "../../../detector/detectors/apex/salesforce"
 
 module Analyzer::Apex
   # Salesforce Apex entry points declared in `.cls` files:
@@ -23,6 +22,8 @@ module Analyzer::Apex
   class Salesforce < Analyzer
     analyzer_for "apex_salesforce"
 
+    ENTRY_RE = /@(?:RestResource|AuraEnabled)\b|\bwebservice\s+static\b|\bstatic\s+webservice\b/i
+
     TAGGER     = "apex_analyzer"
     REST_VERBS = {"httpget" => "GET", "httppost" => "POST", "httpput" => "PUT", "httppatch" => "PATCH", "httpdelete" => "DELETE"}
     BODYLESS   = Set{"GET", "DELETE"}
@@ -41,7 +42,7 @@ module Analyzer::Apex
 
     private def analyze_file(path : String) : Array(Endpoint)?
       source = read_file_content(path)
-      return unless source.matches?(Detector::Apex::Salesforce::ENTRY_RE)
+      return unless source.matches?(ENTRY_RE)
       klass = Noir::ApexExtractor.parse(source) || return
       return if klass.annotations.includes?("istest")
 

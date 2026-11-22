@@ -55,7 +55,7 @@ module Analyzer::Java
 
     # JCommander's API, not its `com.beust.jcommander.internal.*` collections
     # helpers (`Maps`, `Lists`) that other code imports on their own.
-    # Mirrored in Detector::Java::Cli.
+    # Mirrored in the Java CLI detector rule.
     JCOMMANDER_IMPORT_RE = /\bimport\s+com\.beust\.jcommander\.(?:\*|JCommander|Parameters?)\s*;/
     # `Parameter` is JCommander's when imported by name, or through the
     # wildcard unless another library's `Parameter` is imported by name.

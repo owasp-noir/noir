@@ -1,3 +1,245 @@
+Adonisjs:
+  key: js_adonisjs
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json, ace]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [package.json]}
+          - contains:
+              - '@adonisjs/core'
+              - '"adonis-'
+      - all:
+          - files: {extensions: [.ts, .js, .mjs], basenames: [ace.js, ace]}
+          - contains:
+              - '@adonisjs/core'
+              - '@ioc:Adonis'
+  examples:
+    match:
+      - path: 'ace'
+        content: |-
+          #!/usr/bin/env node
+          const { Ignitor } = require('@adonisjs/core/build/standalone')
+          new Ignitor(__dirname).ace().handle(process.argv.slice(2))
+      - path: './ace'
+        content: |-
+          #!/usr/bin/env node
+          const { Ignitor } = require('@adonisjs/core/build/standalone')
+          new Ignitor(__dirname).ace().handle(process.argv.slice(2))
+      - path: 'bin/ace'
+        content: |-
+          #!/usr/bin/env node
+          const { Ignitor } = require('@adonisjs/core/build/standalone')
+          new Ignitor(__dirname).ace().handle(process.argv.slice(2))
+      - path: 'ace.js'
+        content: |-
+          import 'reflect-metadata'
+          import { Ignitor, prettyPrintError } from '@adonisjs/core'
+          const APP_ROOT = new URL('./', import.meta.url)
+          new Ignitor(APP_ROOT).ace().handle(process.argv.splice(2))
+      - {path: 'package.json', content: "{\"dependencies\": {\"@adonisjs/core\": \"^6.0.0\"}}"}
+      - {path: 'package.json', content: "{\"dependencies\": {\"adonis-auth\": \"^3.0.0\"}}"}
+      - {path: 'start/routes.ts', content: "import router from '@adonisjs/core/services/router';"}
+      - {path: 'start/routes.js', content: "const Route = use('@ioc:Adonis/Core/Route');"}
+      - {path: 'start/routes.mjs', content: "import router from '@adonisjs/core/services/router';"}
+    no_match:
+      - path: 'ace.js'
+        content: |-
+          define("ace/ace", ["require", "exports", "module"], function(require, exports, module) {
+            "use strict";
+            var ace = exports;
+            ace.edit = function(el) { return new Editor(el); };
+          });
+      - path: 'public/js/ace.js'
+        content: |-
+          define("ace/ace", ["require", "exports", "module"], function(require, exports, module) {
+            "use strict";
+            var ace = exports;
+            ace.edit = function(el) { return new Editor(el); };
+          });
+      - {path: 'vendor/ace/ace.js', content: "/** Ace Editor v1.4.12 */ window.ace = {};"}
+      - {path: 'package.json', content: "{\"dependencies\": {\"express\": \"^4.0.0\"}}"}
+      - {path: 'app.js', content: "console.log('hello');"}
+    applicable:
+      - 'ace'
+      - './ace'
+      - 'bin/ace'
+      - 'ace.js'
+      - 'ace.js'
+      - 'package.json'
+      - 'start/routes.ts'
+      - 'start/routes.js'
+      - 'start/routes.mjs'
+    inapplicable:
+      - 'app.py'
+
+Apollo:
+  key: js_apollo
+  files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx]}
+  match:
+    all:
+      - contains:
+          - 'apollo'
+          - 'Apollo'
+      - regex:
+          - 'from\s+[''"]@apollo/server(?:/[^''"]*)?[''"]'
+          - 'require\([''"]@apollo/server(?:/[^''"]*)?[''"]\)'
+          - 'from\s+[''"]apollo-server(?:-[a-z]+)?[''"]'
+          - 'require\([''"]apollo-server(?:-[a-z]+)?[''"]\)'
+          - '\bnew\s+ApolloServer\s*\('
+  examples:
+    match:
+      - {path: 'server.ts', content: "import { ApolloServer } from '@apollo/server'"}
+      - {path: 'server.ts', content: "import { startStandaloneServer } from '@apollo/server/standalone'"}
+      - {path: 'server.js', content: "import { ApolloServer } from 'apollo-server'"}
+      - {path: 'server.js', content: "const { ApolloServer } = require('apollo-server-express')"}
+      - {path: 'server.ts', content: "const server = new ApolloServer({ typeDefs, resolvers });"}
+      - {path: 'server.tsx', content: "import { ApolloServer } from '@apollo/server'"}
+      - {path: 'server.jsx', content: "import { ApolloServer } from '@apollo/server'"}
+      - {path: 'server.mjs', content: "import { ApolloServer } from '@apollo/server'"}
+      - {path: 'server.cjs', content: "import { ApolloServer } from '@apollo/server'"}
+    no_match:
+      - {path: 'server.ts', content: "import express from 'express'"}
+      - {path: 'schema.graphql', content: "type Query { hello: String }"}
+
+Astro:
+  key: js_astro
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx, .astro], basenames: [package.json]}
+  match:
+    any:
+      - files: {extensions: [.astro], basenames: [astro.config.mjs, astro.config.ts, astro.config.js, astro.config.cjs]}
+      - all:
+          - files: {basenames: [package.json]}
+          - contains: '"astro"'
+  examples:
+    match:
+      - path: 'src/pages/index.astro'
+        content: |-
+          ---
+          const title = 'Home';
+          ---
+          <html><body>{title}</body></html>
+      - {path: 'astro.config.mjs', content: "export default defineConfig({});"}
+      - {path: 'astro.config.ts', content: "export default defineConfig({});"}
+      - {path: 'astro.config.js', content: "module.exports = {};"}
+      - {path: 'astro.config.cjs', content: "module.exports = {};"}
+      - {path: 'package.json', content: "{\"dependencies\": {\"astro\": \"^4.0.0\"}}"}
+    no_match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"express\": \"^4.0.0\"}}"}
+      - {path: 'app.js', content: "console.log('hello')"}
+    applicable:
+      - 'src/pages/index.astro'
+      - 'astro.config.mjs'
+      - 'astro.config.ts'
+      - 'astro.config.js'
+      - 'astro.config.cjs'
+      - 'package.json'
+    inapplicable:
+      - 'app.py'
+
+Bun:
+  key: js_bun
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .tsx]}
+  match:
+    all:
+      - contains: 'Bun.serve'
+      - regex: '\b(?:routes|static)\s*[:,}]|\.\s*pathname\b|\bURLPattern\b|\.\s*method\b'
+  examples:
+    match:
+      - path: 'server.ts'
+        content: |-
+          Bun.serve({
+            routes: { "/api/status": new Response("OK") },
+          });
+      - path: 'server.js'
+        content: |-
+          Bun.serve({
+            fetch(req) {
+              const url = new URL(req.url);
+              if (url.pathname === "/health") return new Response("ok");
+            },
+          });
+    no_match:
+      - path: 'server.ts'
+        content: |-
+          import { Hono } from "hono";
+          const app = new Hono();
+          Bun.serve({ port: 3000, fetch: app.fetch });
+
+Cli:
+  key: js_cli
+  files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx]}
+  match:
+    regex:
+      - '(?:require\s*\(\s*|from\s+)[''"](?:commander|yargs(?:/(?:yargs|helpers))?|cac|meow|minimist|mri|arg|clipanion|@oclif/(?:core|command)|sade|gluegun|command-line-args|getopts|citty)[''"]'
+      - '\bparseArgs\s*\(\s*\{'
+      - '\bDeno\.args\b'
+      - '\bBun\.argv\b'
+      - '\bprocess\.argv\.slice\s*\(\s*2\s*\)'
+  examples:
+    match:
+      - {path: 'app.js', content: "const args = process.argv.slice(2)"}
+    no_match:
+      - {path: 'app.js', content: "const args = process.argv.length"}
+
+Convex:
+  key: js_convex
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json]}
+  match:
+    all:
+      - contains: 'convex'
+      - regex: '"convex"\s*:|(?:\bfrom\s*|\brequire\s*\(\s*)[''"]convex/server[''"]'
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"convex\": \"^1.17.0\"}}"}
+      - {path: 'convex/http.ts', content: "import { httpRouter } from \"convex/server\";"}
+    no_match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"convex-helpers\": \"^0.1.0\"}}"}
+      - {path: 'index.ts', content: "import { ConvexHttpClient } from \"convex/browser\";"}
+
+Deno:
+  key: js_deno
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .tsx]}
+  match:
+    all:
+      - contains: 'Deno.serve'
+      - regex: '\.\s*pathname\b|\bURLPattern\b|\.\s*method\b'
+  examples:
+    match:
+      - path: 'main.ts'
+        content: |-
+          const BOOK_ROUTE = new URLPattern({ pathname: "/books/:id" });
+          Deno.serve((req) => {
+            const match = BOOK_ROUTE.exec(req.url);
+            return new Response(match ? "book" : "missing");
+          });
+      - path: 'main.ts'
+        content: |-
+          Deno.serve({ port: 8000 }, (req) => {
+            if (req.method === "POST") return new Response("created");
+            return new Response("ok");
+          });
+    no_match:
+      - path: 'main.ts'
+        content: |-
+          import { Hono } from "jsr:@hono/hono";
+          const app = new Hono();
+          Deno.serve(app.fetch);
+
+Egg:
+  key: js_egg
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json]}
+  match:
+    regex: '"(?:egg|egg-core|egg-bin|@eggjs/bin)"\s*:|(?:\brequire\s*\(\s*|\bfrom\s+)[''"]egg[''"]'
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"egg\": \"^3.17.0\"}}"}
+      - {path: 'package.json', content: "{\"devDependencies\": {\"@eggjs/bin\": \"^7.0.0\"}}"}
+      - {path: 'package.json', content: "{\"egg\": {\"typescript\": true}}"}
+      - {path: 'app/controller/home.ts', content: "import { Controller } from 'egg';"}
+    no_match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"egg-mysql\": \"^4.0.0\"}}"}
+      - {path: 'index.js', content: "const egg = require('eggplant');"}
+
 Express:
   key: js_express
   files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx]}
@@ -60,6 +302,128 @@ Fastify:
     no_match:
       - {path: server.js, content: "# unrelated framework"}
 
+Feathers:
+  key: js_feathers
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [package.json]}
+          - regex: '"@feathersjs/[\w-]+"\s*:'
+      - all:
+          - files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx]}
+          - contains:
+              - 'feathers'
+              - 'app.service'
+          - regex:
+              - '(?:require\(|from\s)[''"]@feathersjs/[\w./-]+[''"]'
+              - '\bfeathers\s*\(\s*\)'
+              - '\bapp\.service\s*\(\s*[''"][^''"]*[''"]\s*\)'
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"@feathersjs/feathers\": \"^5.0.0\"}}"}
+      - {path: 'package.json', content: "{\"dependencies\": {\"@feathersjs/express\": \"^5.0.0\"}}"}
+      - {path: 'app.js', content: "const { feathers } = require('@feathersjs/feathers')"}
+      - {path: 'app.js', content: "const { feathers } = require(\"@feathersjs/feathers\")"}
+      - {path: 'app.ts', content: "import { feathers } from '@feathersjs/feathers'"}
+      - {path: 'app.js', content: "const express = require('@feathersjs/express')"}
+      - {path: 'app.js', content: "const { rest } = require('@feathersjs/express/rest')"}
+      - {path: 'app.js', content: "const { koa } = require('@feathersjs/koa')"}
+      - {path: 'app.js', content: "const app = feathers()"}
+      - {path: 'services.js', content: "app.service('messages').hooks({})"}
+    no_match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"express\": \"^4.18.0\"}}"}
+      - {path: 'controllers/article.js', content: "const svc = strapi.service('api::article.article')"}
+      - {path: 'bootstrap.js', content: "strapi.plugin('upload').service('upload')"}
+      - path: 'app.js'
+        content: |-
+          const express = require('express')
+          const app = express()
+      - {path: 'index.js', content: "console.log('hello world')"}
+      - {path: 'readme.md', content: "require('@feathersjs/feathers')"}
+
+FirebaseFunctions:
+  key: js_firebase_functions
+  files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx]}
+  match:
+    all:
+      - contains: 'firebase-functions'
+      - regex: '(?:\bfrom\s*|\brequire\s*\(\s*)[''"]firebase-functions(?:/[^''"]*)?[''"]'
+  examples:
+    match:
+      - {path: 'index.js', content: "const functions = require(\"firebase-functions\");"}
+      - {path: 'index.ts', content: "import { onRequest } from \"firebase-functions/v2/https\";"}
+    no_match:
+      - {path: 'index.js', content: "const admin = require(\"firebase-admin\");"}
+      - {path: 'package.json', content: "\"firebase-functions\": \"^6.0.0\""}
+
+Fresh:
+  key: js_fresh
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json, deno.json, deno.jsonc]}
+  match:
+    any:
+      - files: {basenames: [fresh.config.ts, fresh.config.js]}
+      - all:
+          - files: {extensions: [.ts, .tsx, .js, .jsx], basenames: [main.ts, deno.json, deno.jsonc]}
+          - regex: '\$fresh/|@fresh/'
+  examples:
+    match:
+      - {path: 'deno.json', content: "{\"imports\": {\"$fresh/\": \"https://deno.land/x/fresh@1.6.8/\"}}"}
+      - {path: 'deno.jsonc', content: "{\"imports\": {\"$fresh/\": \"https://deno.land/x/fresh@1.6.8/\"}}"}
+      - {path: 'deno.json', content: "{\"imports\": {\"fresh\": \"jsr:@fresh/core@^2.1.1\", \"preact\": \"npm:preact@^10.27.2\"}}"}
+      - {path: 'fresh.config.ts', content: "import { defineConfig } from '$fresh/server.ts';"}
+      - {path: 'fresh.config.js', content: "export default {};"}
+      - {path: 'main.ts', content: "import { start } from \"$fresh/server.ts\";"}
+      - {path: 'routes/index.tsx', content: "import { Handlers } from \"$fresh/server.ts\";"}
+      - {path: 'routes/api/users.ts', content: "import { FreshContext } from \"$fresh/server.ts\";"}
+      - {path: 'routes/index.js', content: "import { Handlers } from \"$fresh/server.ts\";"}
+      - {path: 'routes/index.jsx', content: "import { Handlers } from \"$fresh/server.ts\";"}
+    no_match:
+      - {path: 'deno.json', content: "{\"imports\": {\"@std/http\": \"jsr:@std/http@^1.0.0\"}}"}
+      - {path: 'deno.json', content: "{\"tasks\": {\"start\": \"deno run main.ts\"}}"}
+      - {path: 'main.ts', content: "console.log('hello');"}
+      - {path: 'app.js', content: "console.log('hello')"}
+    applicable:
+      - 'deno.json'
+      - 'deno.jsonc'
+      - 'fresh.config.ts'
+      - 'fresh.config.js'
+      - 'main.ts'
+      - 'routes/index.tsx'
+      - 'routes/api/users.ts'
+      - 'routes/index.js'
+      - 'routes/index.jsx'
+    inapplicable:
+      - 'main.py'
+
+GraphqlYoga:
+  key: js_graphql_yoga
+  files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx]}
+  match:
+    all:
+      - contains:
+          - 'yoga'
+          - 'Yoga'
+      - regex:
+          - 'from\s+[''"]graphql-yoga(?:/[^''"]*)?[''"]'
+          - 'require\([''"]graphql-yoga(?:/[^''"]*)?[''"]\)'
+          - 'from\s+[''"]@graphql-yoga/[^''"]+[''"]'
+          - 'require\([''"]@graphql-yoga/[^''"]+[''"]\)'
+          - '\bcreateYoga\s*\('
+  examples:
+    match:
+      - {path: 'server.ts', content: "import { createYoga, createSchema } from 'graphql-yoga';"}
+      - {path: 'server.ts', content: "import { useDeferStream } from '@graphql-yoga/plugin-defer-stream';"}
+      - {path: 'server.js', content: "const { createYoga } = require('graphql-yoga')"}
+      - {path: 'server.ts', content: "export const yoga = createYoga({ schema });"}
+      - {path: 'server.tsx', content: "import { createYoga } from 'graphql-yoga'"}
+      - {path: 'server.jsx', content: "import { createYoga } from 'graphql-yoga'"}
+      - {path: 'server.mjs', content: "import { createYoga } from 'graphql-yoga'"}
+      - {path: 'server.cjs', content: "import { createYoga } from 'graphql-yoga'"}
+    no_match:
+      - {path: 'server.ts', content: "import express from 'express'"}
+      - {path: 'schema.graphql', content: "type Query { hello: String }"}
+
 Hono:
   key: js_hono
   gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx], basenames: [package.json]}
@@ -98,6 +462,85 @@ Hono:
     no_match:
       - {path: index.js, content: "require('express')"}
       - {path: index.py, content: "import { Hono } from 'hono'"}
+
+Honox:
+  key: js_honox
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json]}
+  match:
+    regex: '"honox"|[''"]honox/'
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"hono\": \"^4.6.0\", \"honox\": \"^0.1.26\"}}"}
+      - {path: 'app/routes/index.tsx', content: "import { createRoute } from 'honox/factory'"}
+    no_match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"hono\": \"^4.6.0\", \"@hono/node-server\": \"^1.13.0\"}}"}
+      - {path: 'src/index.ts', content: "import { Hono } from \"hono\""}
+    applicable:
+      - 'package.json'
+
+Http:
+  key: js_http
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .tsx], basenames: [package.json]}
+  files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .tsx]}
+  match:
+    all:
+      - contains: 'createServer'
+      - regex:
+          - 'require\s*\(\s*[''"](?:node:)?https?[''"]\s*\)'
+          - 'from\s+[''"](?:node:)?https?[''"]'
+          - 'import\s+[A-Za-z_$]\w*\s*=\s*require\s*\(\s*[''"](?:node:)?https?[''"]\s*\)'
+      - regex: '\bcreateServer\b|\.\s*createServer\s*\('
+      - regex:
+          - '\b[A-Za-z_$]\w*\s*\.\s*method\b'
+          - '(?:===|==)\s*[''"`]/|[''"`]/[^''"`]*[''"`]\s*(?:===|==)|\.\s*startsWith\s*\(\s*[''"`]/|\bcase\s+[''"`]/'
+      - regex: '\b[A-Za-z_$]\w*\s*\.\s*url\b|new\s+URL\s*\('
+      - regex: '[''"`]/[^''"`]*[''"`]'
+  examples:
+    match:
+      - path: 'server.js'
+        content: |-
+          const http = require('http');
+          http.createServer((req, res) => {
+            if (req.method === 'GET' && req.url === '/api/users') res.end();
+          });
+      - path: 'server.js'
+        content: |-
+          const http = require('http');
+          http.createServer((req, res) => {
+            if (req.method === 'QUERY' && req.url === '/search') res.end();
+          });
+      - path: 'server.ts'
+        content: |-
+          import { createServer as createHttpsServer } from 'node:https';
+          createHttpsServer((request: IncomingMessage, response: ServerResponse) => {
+            const parsed = new URL(request.url ?? '/', 'https://localhost');
+            if (request.method === 'POST' && parsed.pathname === '/submit') response.end();
+          });
+      - path: 'server.cjs'
+        content: |-
+          require('node:http').createServer(function (req, res) {
+            if (req.method == 'DELETE' && req.url == '/items') res.end();
+          });
+      - path: 'server.js'
+        content: |-
+          const http = require('node:http');
+          http.createServer((req, res) => {
+            const u = new URL(req.url, 'http://localhost');
+            if (u.pathname === '/status') return res.end('ok');
+          });
+    no_match:
+      - path: 'server.ts'
+        content: |-
+          import { createYoga } from 'graphql-yoga';
+          import { createServer } from 'node:http';
+
+          const yoga = createYoga({ schema });
+          createServer(yoga).listen(4000);
+      - path: 'client.js'
+        content: |-
+          const http = require('http');
+          http.get('http://example.com/users', res => {});
+      - {path: 'package.json', content: "{\"type\":\"module\",\"engines\":{\"node\":\">=20\"}}"}
 
 Koa:
   key: js_koa
@@ -140,3 +583,329 @@ Koa:
       - {path: index.js, content: "const bodyParser = require(\"koa-bodyparser\")"}
     no_match:
       - {path: index.js, content: "# unrelated framework"}
+
+Moleculer:
+  key: js_moleculer
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json]}
+  match:
+    all:
+      - contains: 'moleculer'
+      - regex: '"moleculer(?:-web)?"\s*:|(?:\bfrom\s*|\brequire\s*\(\s*)[''"]moleculer(?:-web)?[''"]'
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"moleculer\": \"^0.14.33\"}}"}
+      - {path: 'package.json', content: "{\"dependencies\": {\"moleculer-web\": \"^0.10.7\"}}"}
+      - {path: 'services/api.service.js', content: "const ApiGateway = require(\"moleculer-web\");"}
+      - {path: 'services/users.service.ts', content: "import { ServiceBroker } from \"moleculer\";"}
+    no_match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"moleculer-db\": \"^0.8.0\"}}"}
+
+Nestjs:
+  key: js_nestjs
+  files: {extensions: [.js, .mjs, .cjs, .jsx]}
+  match:
+    all:
+      - contains:
+          - '@nestjs'
+          - '@Controller'
+          - '@Module'
+          - 'NestFactory'
+      - regex:
+          - 'require\([''"]@nestjs/core[''"]\)'
+          - 'require\([''"]@nestjs/common[''"]\)'
+          - 'import.*from [''"]@nestjs/core[''"]'
+          - 'import.*from [''"]@nestjs/common[''"]'
+          - '@Controller\s*\('
+          - '@Module\s*\('
+          - 'NestFactory\.create\s*\('
+  examples:
+    match:
+      - {path: 'app.js', content: "require('@nestjs/core')"}
+      - {path: 'app.js', content: "require(\"@nestjs/core\")"}
+      - {path: 'controller.js', content: "require('@nestjs/common')"}
+      - {path: 'controller.js', content: "require(\"@nestjs/common\")"}
+      - {path: 'main.js', content: "import { NestFactory } from '@nestjs/core'"}
+      - {path: 'main.js', content: "import { NestFactory } from \"@nestjs/core\""}
+      - {path: 'controller.js', content: "import { Controller, Get } from '@nestjs/common'"}
+      - {path: 'controller.js', content: "import { Controller, Get } from \"@nestjs/common\""}
+      - {path: 'user.controller.js', content: "@Controller('users')"}
+      - {path: 'app.module.js', content: "@Module({ imports: [] })"}
+      - {path: 'main.js', content: "const app = await NestFactory.create(AppModule);"}
+      - {path: 'app.js', content: "import { NestFactory } from '@nestjs/core'"}
+      - {path: 'component.jsx', content: "@Controller('api')"}
+      - {path: 'app.mjs', content: "import { NestFactory } from '@nestjs/core'"}
+      - {path: 'app.cjs', content: "require('@nestjs/core')"}
+    no_match:
+      - {path: 'component.ts', content: "@Controller('api')"}
+      - {path: 'component.tsx', content: "@Controller('api')"}
+      - {path: 'component.mts', content: "@Controller('api')"}
+      - {path: 'component.cts', content: "@Controller('api')"}
+      - {path: 'app.js', content: "import express from 'express'"}
+      - {path: 'app.py', content: "@Controller('users')"}
+    applicable:
+      - 'app.mjs'
+      - 'app.cjs'
+    inapplicable:
+      - 'component.ts'
+      - 'component.tsx'
+      - 'component.mts'
+      - 'component.cts'
+      - 'package.json'
+
+Nitro:
+  key: js_nitro
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json]}
+  match:
+    any:
+      - files: {extensions: [nitro.config.js, nitro.config.ts]}
+      - all:
+          - files: {extensions: [.js, .mjs, .ts, .cjs]}
+          - contains:
+              - 'nitropack'
+              - 'defineNitroConfig'
+          - regex:
+              - 'require\([''"]nitropack[''"]\)'
+              - 'from [''"]nitropack[''"]'
+              - 'defineNitroConfig\s*\('
+  examples:
+    match:
+      - {path: 'nitro.config.ts', content: "export default defineNitroConfig({})"}
+      - {path: 'nitro.config.js', content: "export default defineNitroConfig({})"}
+      - {path: 'index.js', content: "require('nitropack')"}
+      - {path: 'index.js', content: "require(\"nitropack\")"}
+      - {path: 'index.js', content: "import { defineNitroConfig } from 'nitropack'"}
+      - {path: 'index.js', content: "import { defineNitroConfig } from \"nitropack\""}
+      - {path: 'nitro.config.ts', content: "defineNitroConfig({ compatibilityDate: '2025-01-01' })"}
+      - {path: 'nitro.config.ts', content: "import { defineNitroConfig } from 'nitropack'"}
+      - {path: 'index.mjs', content: "import { defineNitroConfig } from 'nitropack'"}
+      - {path: 'index.cjs', content: "require('nitropack')"}
+    no_match:
+      - {path: 'index.js', content: "require('express')"}
+      - {path: 'index.py', content: "import { defineNitroConfig } from 'nitropack'"}
+
+Nuxtjs:
+  key: js_nuxtjs
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx, .mts, .cts], basenames: [package.json]}
+  match:
+    any:
+      - files: {basenames: [nuxt.config.js, nuxt.config.ts, nuxt.config.mjs, nuxt.config.mts, nuxt.config.cjs]}
+      - all:
+          - files: {basenames: [package.json]}
+          - regex: '"nuxt"\s*:'
+      - all:
+          - files: {extensions: [.js, .mjs, .ts]}
+          - contains:
+              - 'nuxt'
+              - 'Nuxt'
+              - '#app'
+          - regex:
+              - 'require\([''"]nuxt[''"]\)'
+              - 'import.*from [''"]nuxt[''"]'
+              - 'defineNuxtConfig\s*\('
+              - 'from [''"]#app[''"]'
+              - 'from [''"]@nuxt/'
+  examples:
+    match:
+      - {path: 'nuxt.config.js', content: "export default defineNuxtConfig({})"}
+      - {path: 'nuxt.config.ts', content: "export default defineNuxtConfig({})"}
+      - {path: 'nuxt.config.mjs', content: "export default defineNuxtConfig({})"}
+      - {path: 'app.ts', content: "import { defineNuxtConfig } from 'nuxt';"}
+      - {path: 'app.ts', content: "import { useAppConfig } from '#app';"}
+      - {path: 'app.ts', content: "import { defineNuxtModule } from '@nuxt/kit';"}
+      - {path: 'app.mjs', content: "import { defineNuxtConfig } from 'nuxt';"}
+      - {path: 'app.js', content: "const nuxt = require('nuxt');"}
+      - {path: 'package.json', content: "{\"devDependencies\":{\"nuxt\":\"^3.11.0\"}}"}
+    no_match:
+      - {path: 'package.json', content: "{\"dependencies\":{\"nitropack\":\"2.9.0\"}}"}
+      - {path: 'package.json', content: "{\"keywords\":[\"nuxt\"],\"dependencies\":{\"nitropack\":\"2.9.0\"}}"}
+      - {path: '/server/api/users.ts', content: "export default defineEventHandler((event) => { return []; });"}
+      - {path: '/server/routes/test.mjs', content: "export default defineEventHandler((event) => { return []; });"}
+      - {path: 'nitro.config.ts', content: "export default defineNitroConfig({})"}
+      - {path: 'app.js', content: "console.log('hello');"}
+    applicable:
+      - 'nuxt.config.js'
+      - 'nuxt.config.ts'
+      - 'nuxt.config.mjs'
+      - 'app.ts'
+      - 'app.mjs'
+      - 'app.js'
+      - 'package.json'
+    inapplicable:
+      - 'app.py'
+
+Oak:
+  key: js_oak
+  files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json, deno.json, deno.jsonc, import_map.json]}
+  match:
+    all:
+      - contains: 'oak'
+      - regex:
+          - '["'']@oak/oak["'']'
+          - '["'']jsr:@oak/oak["'']'
+          - '["''](?:https?://)?deno\.land/x/oak(?:[@/][^"'']*)?["'']'
+  examples:
+    match:
+      - {path: 'main.ts', content: "import { Router } from '@oak/oak'"}
+      - {path: 'main.ts', content: "import { Router } from \"@oak/oak\""}
+      - {path: 'main.ts', content: "import { Router } from 'jsr:@oak/oak'"}
+      - {path: 'main.ts', content: "import { Router } from \"jsr:@oak/oak\""}
+      - {path: 'main.ts', content: "const { Router } = require(\"@oak/oak\")"}
+      - {path: 'main.ts', content: "import { Router } from \"https://deno.land/x/oak/mod.ts\""}
+      - {path: 'main.ts', content: "import { Router } from \"https://deno.land/x/oak@v12.6.1/mod.ts\""}
+      - {path: 'main.ts', content: "import { Router } from \"deno.land/x/oak/mod.ts\""}
+      - {path: 'deno.json', content: "{\"imports\": {\"@oak/oak\": \"jsr:@oak/oak@^17.1.0\"}}"}
+      - {path: 'deno.jsonc', content: "{\"imports\": {\"oak/\": \"https://deno.land/x/oak@v12.6.1/\"}}"}
+      - {path: 'import_map.json', content: "{\"imports\": {\"@oak/oak\": \"jsr:@oak/oak@^17.1.0\"}}"}
+      - {path: 'main.js', content: "import { Router } from \"@oak/oak\";"}
+    no_match:
+      - {path: 'main.ts', content: "import { Router } from 'koa-router'"}
+      - {path: 'main.ts', content: "import { serve } from \"https://deno.land/std/http/server.ts\""}
+      - {path: 'main.ts', content: "console.log('hello world')"}
+      - {path: 'package.json', content: "{\"name\": \"some-app\"}"}
+      - {path: 'main.py', content: "from oak import Router"}
+
+QwikCity:
+  key: js_qwik_city
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json]}
+  match:
+    regex: '@builder\.io/qwik-city\b|@qwik\.dev/router\b'
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"devDependencies\": {\"@builder.io/qwik-city\": \"^1.12.0\"}}"}
+      - {path: 'package.json', content: "{\"devDependencies\": {\"@qwik.dev/router\": \"^2.0.0\"}}"}
+      - {path: 'vite.config.ts', content: "import { qwikCity } from \"@builder.io/qwik-city/vite\";"}
+    no_match:
+      - {path: 'package.json', content: "{\"devDependencies\": {\"@builder.io/qwik\": \"^1.12.0\"}}"}
+    applicable:
+      - 'package.json'
+
+Restify:
+  key: js_restify
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx], basenames: [package.json]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.js]}
+          - contains:
+              - 'require(''restify'')'
+              - 'require("restify")'
+      - all:
+          - files: {extensions: [.ts, .mts, .cts]}
+          - regex: 'require\("restify"\)'
+  examples:
+    match:
+      - {path: 'index.js', content: "require('restify')"}
+      - {path: 'index.js', content: "require(\"restify\")"}
+    no_match:
+      - {path: 'index.js', content: "require('restify-errors')"}
+
+Sails:
+  key: js_sails
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [package.json]}
+          - regex: '"sails"\s*:\s*"'
+      - all:
+          - files: {extensions: [.js, .mjs, .cjs, .ts]}
+          - contains: 'sails'
+          - contains:
+              - 'require(''sails'')'
+              - 'require("sails")'
+              - 'from ''sails'''
+              - 'from "sails"'
+              - 'sails.lift('
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"sails\": \"^1.5.4\"}}"}
+      - {path: 'package.json', content: "{\"devDependencies\": {\"sails\": \"^1.5.4\"}}"}
+      - {path: 'app.js', content: "var sails = require('sails');"}
+      - {path: 'app.js', content: "var sails = require(\"sails\");"}
+      - {path: 'app.js', content: "import sails from 'sails';"}
+      - {path: 'app.js', content: "import sails from \"sails\";"}
+      - {path: 'app.js', content: "sails.lift({}, function (err) {});"}
+    no_match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"express\": \"^4.19.2\"}}"}
+      - {path: 'app.js', content: "const express = require('express');"}
+      - {path: 'README.md', content: "require('sails')"}
+
+SocketIO:
+  key: js_socketio
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx], basenames: [package.json]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [package.json]}
+          - regex: '"socket\.io"\s*:'
+      - all:
+          - files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .mts, .cts, .tsx]}
+          - contains:
+              - 'socket.io'
+              - 'new Server('
+          - any:
+              - regex:
+                  - 'from\s+[''"]socket\.io[''"]'
+                  - 'require\(\s*[''"]socket\.io[''"]\s*\)'
+              - all:
+                  - regex: 'new Server\('
+                  - regex:
+                      - '\.\s*of\s*\(\s*[''"`]/'
+                      - '\.\s*broadcast\s*\.\s*emit\s*\('
+                      - '\.\s*to\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*emit\s*\('
+                      - '\b(?:io|socket)\s*\.\s*emit\s*\('
+  examples:
+    match:
+      - path: 'server.js'
+        content: |-
+          const { Server } = require("socket.io");
+          const io = new Server(3000);
+          io.on("connection", (s) => s.on("msg", () => {}));
+      - {path: 'server.ts', content: "import { Server } from 'socket.io';"}
+      - {path: 'package.json', content: "{\"dependencies\": {\"socket.io\": \"^4.7.0\"}}"}
+      - path: 'server.js'
+        content: |-
+          const io = new Server(httpServer);
+          io.on("connection", (socket) => {
+            socket.on("msg", (m) => io.emit("msg", m));
+          });
+      - path: 'server.js'
+        content: |-
+          const io = new Server(httpServer);
+          io.to(roomFor(id)).emit("update", payload);
+      - path: 'server.js'
+        content: |-
+          const io = new Server(httpServer);
+          const admin = io.of("/admin");
+          admin.on("connection", (socket) => socket.on("ban", () => {}));
+    no_match:
+      - {path: 'client.js', content: "import { io } from 'socket.io-client';"}
+      - {path: 'app.js', content: "const express = require('express'); const app = express();"}
+      - path: 'server.js'
+        content: |-
+          const { Server } = require('ws');
+
+          const wss = new Server({ port: 8080 });
+          wss.on('connection', (socket) => {
+            socket.on('message', (data) => socket.send(data));
+          });
+      - path: 'server.ts'
+        content: |-
+          import { Server, ServerCredentials } from '@grpc/grpc-js';
+
+          const server = new Server();
+          process.on('SIGTERM', () => server.tryShutdown(() => {}));
+
+Solidstart:
+  key: js_solidstart
+  gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json]}
+  match:
+    regex: '@solidjs/start\b|"solid-start"'
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"@solidjs/start\": \"^1.1.0\"}}"}
+      - {path: 'app.config.ts', content: "import { defineConfig } from \"@solidjs/start/config\";"}
+    no_match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"solid-js\": \"^1.9.0\", \"@solidjs/router\": \"^0.15.0\"}}"}
+    applicable:
+      - 'package.json'

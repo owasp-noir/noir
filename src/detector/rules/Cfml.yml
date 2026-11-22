@@ -1,0 +1,96 @@
+Fw1:
+  key: cfml_fw1
+  files: {extensions: [.cfc]}
+  match:
+    regex:
+      - '(?i)extends\s*=\s*["'']framework\.one["'']'
+      - '(?i)\bvariables\s*\.\s*framework\s*=\s*\{'
+      - '(?i)\broutes\s*[:=]\s*\[[\s\S]{0,400}?["'']\$(?:GET|POST|PUT|PATCH|DELETE|RESOURCES)'
+  examples:
+    match:
+      - path: 'Application.cfc'
+        content: |-
+          component extends="framework.one" {
+            this.name = "todoapp";
+          }
+      - path: 'Application.cfc'
+        content: |-
+          component {
+            variables.framework = {
+              routes = [
+                { "$GET/todo/:id" = "/main/get/id/:id" }
+              ]
+            };
+          }
+    no_match:
+      - {path: 'Application.cfm', content: "component extends=\"framework.one\" {}"}
+      - path: 'Service.cfc'
+        content: |-
+          <cfcomponent output="false">
+            <cffunction name="getData"></cffunction>
+          </cfcomponent>
+
+Pure:
+  key: cfml_pure
+  files: {extensions: [.cfm, .cfc, .cfml]}
+  match:
+    regex:
+      - '(?i)<cf(?:component|function|argument|script|set|output|query|param|return|invoke|http|location|include)\b'
+      - '(?i)\bcomponent\b[^{;]*\{'
+      - '(?i)\b(?:remote|public|private|package)\s+(?:\w+\s+)?function\s+\w+\s*\('
+  examples:
+    match:
+      - path: 'Service.cfc'
+        content: |-
+          <cfcomponent output="false">
+            <cffunction name="index" access="remote">
+              <cfargument name="id" type="numeric" required="true">
+            </cffunction>
+          </cfcomponent>
+      - path: 'total.cfm'
+        content: |-
+          <CFSET total = 1>
+          <CFOUTPUT>#total#</CFOUTPUT>
+      - path: 'Proxy.cfc'
+        content: |-
+          component extends="framework.Proxy" {
+            remote string function echo( required string text ) {
+              return arguments.text;
+            }
+          }
+    no_match:
+      - {path: 'Service.java', content: "<cfcomponent><cffunction name=\"index\"></cffunction></cfcomponent>"}
+      - path: 'index.cfm'
+        content: |-
+          <html>
+            <body><h1>Static page</h1></body>
+          </html>
+
+Taffy:
+  key: cfml_taffy
+  files: {extensions: [.cfc, .cfm]}
+  match:
+    regex:
+      - '(?i)taffy[_:]uri\s*=\s*["'']'
+      - '(?i)extends\s*=\s*["''](?:taffy\.core\.resource|core\.resource)["'']'
+      - '(?i)taffy\.core\.api'
+  examples:
+    match:
+      - path: 'Artists.cfc'
+        content: |-
+          <cfcomponent extends="taffy.core.resource" taffy_uri="/artists">
+            <cffunction name="get" access="public"></cffunction>
+          </cfcomponent>
+      - path: 'Echo.cfc'
+        content: |-
+          component extends="taffy.core.resource" taffy:uri="/echo" output="false" {
+            function get() {}
+          }
+      - {path: 'index.cfm', content: "<cfset application.taffy = createObject(\"component\", \"taffy.core.api\") />"}
+    no_match:
+      - path: 'Service.cfc'
+        content: |-
+          <cfcomponent output="false">
+            <cffunction name="getData" access="public"></cffunction>
+          </cfcomponent>
+      - {path: 'Echo.java', content: "component extends=\"taffy.core.resource\" taffy:uri=\"/echo\" {}"}

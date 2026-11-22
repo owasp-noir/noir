@@ -14,6 +14,29 @@ Effect:
       - {path: src/client.ts, content: "import { HttpClient, FileSystem } from \"@effect/platform\""}
       - {path: src/notes.ts, content: "// HttpApiEndpoint is from Effect"}
 
+Encore:
+  key: ts_encore
+  gate: {extensions: [.ts, .mts, .cts], basenames: [package.json]}
+  match:
+    all:
+      - contains: 'encore.dev'
+      - any:
+          - all:
+              - files: {basenames: [package.json]}
+              - contains: '"encore.dev"'
+          - all:
+              - not:
+                  files: {basenames: [package.json]}
+              - regex: 'from\s*[''"]encore\.dev/'
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"encore.dev\": \"^1.41.0\"}}"}
+      - {path: 'hello/hello.ts', content: "import { api } from \"encore.dev/api\";"}
+    no_match:
+      - {path: 'notes.ts', content: "// ported from encore.dev examples"}
+      - {path: 'package.json', content: "{\"homepage\": \"https://encore.dev\"}"}
+      - {path: 'package.json', content: "from 'encore.dev/api'"}
+
 Inversify:
   key: ts_inversify
   gate: {extensions: [.ts], basenames: [package.json]}
@@ -26,6 +49,90 @@ Inversify:
     no_match:
       - {path: container.ts, content: "import { Container } from 'inversify';"}
       - {path: package.json, content: "{\"dependencies\": {\"inversify\": \"^6.0.0\"}}"}
+
+Loopback:
+  key: ts_loopback
+  gate: {extensions: [.ts, .tsx, .cts, .mts], basenames: [package.json]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [package.json]}
+          - contains:
+              - '"@loopback/core"'
+              - '"@loopback/rest"'
+      - all:
+          - files: {extensions: [.ts, .tsx, .cts, .mts]}
+          - contains: '@loopback'
+          - regex:
+              - 'from\s*[''"]@loopback/rest[''"]'
+              - 'from\s*[''"]@loopback/core[''"]'
+              - 'require\(\s*[''"]@loopback/rest[''"]\s*\)'
+              - 'require\(\s*[''"]@loopback/core[''"]\s*\)'
+  examples:
+    match:
+      - {path: 'user.controller.ts', content: "import {get, post} from '@loopback/rest'"}
+      - {path: 'user.controller.ts', content: "import {get, post} from \"@loopback/rest\""}
+      - path: 'application.ts'
+        content: |-
+          import {RestApplication} from '@loopback/rest'
+          import {BootMixin} from '@loopback/core'
+      - path: 'user.controller.ts'
+        content: |-
+          import {
+            get,
+            post,
+            param,
+          } from '@loopback/rest';
+      - {path: 'app.ts', content: "require('@loopback/rest')"}
+      - {path: 'app.ts', content: "require(\"@loopback/rest\")"}
+      - {path: 'app.ts', content: "require('@loopback/core')"}
+      - {path: 'app.ts', content: "require(\"@loopback/core\")"}
+      - {path: 'package.json', content: "{\"dependencies\": {\"@loopback/core\": \"4.0.0\"}}"}
+      - {path: 'package.json', content: "{\"dependencies\": {\"@loopback/rest\": \"12.0.0\"}}"}
+      - {path: 'component.tsx', content: "import {get} from '@loopback/rest'"}
+    no_match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"express\": \"4.18.0\"}}"}
+      - {path: 'app.ts', content: "import express from 'express'"}
+      - path: 'other.controller.ts'
+        content: |-
+          @get('/x')
+          class X {}
+      - {path: 'app.js', content: "import {get} from '@loopback/rest'"}
+      - {path: 'app.py', content: "import {get} from '@loopback/rest'"}
+
+Midway:
+  key: ts_midway
+  gate: {extensions: [.ts], basenames: [package.json]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [package.json]}
+          - contains:
+              - '"@midwayjs/core"'
+              - '"@midwayjs/decorator"'
+      - all:
+          - files: {extensions: [.ts]}
+          - regex: '(?:from\s*|require\(\s*)[''"]@midwayjs/'
+  examples:
+    match:
+      - {path: 'user.controller.ts', content: "import { Controller, Get } from '@midwayjs/core';"}
+      - {path: 'home.controller.ts', content: "import { Controller, Get, Provide } from \"@midwayjs/decorator\";"}
+      - path: 'user.controller.ts'
+        content: |-
+          import {
+            Controller,
+            Get,
+          } from '@midwayjs/core';
+      - {path: 'app.ts', content: "const { Controller } = require('@midwayjs/core');"}
+      - {path: 'package.json', content: "{\"dependencies\": {\"@midwayjs/core\": \"^3.12.0\"}}"}
+      - {path: 'package.json', content: "{\"dependencies\": {\"@midwayjs/decorator\": \"^2.3.0\"}}"}
+    no_match:
+      - path: 'user.controller.ts'
+        content: |-
+          import { Controller, Get } from '@nestjs/common';
+          @Controller('api')
+      - {path: 'package.json', content: "{\"dependencies\": {\"@nestjs/core\": \"^10.0.0\"}}"}
+      - {path: 'app.js', content: "import { Controller } from '@midwayjs/core';"}
 
 N8n:
   key: ts_n8n
@@ -44,6 +151,100 @@ N8n:
         content: |-
           import { Controller } from '@nestjs/common';
           @Controller('users')
+
+Nestjs:
+  key: ts_nestjs
+  files: {extensions: [.ts, .tsx, .cts, .mts]}
+  match:
+    all:
+      - contains:
+          - '@nestjs'
+          - '@Controller'
+          - '@Module'
+          - 'NestFactory'
+      - not:
+          regex: '@midwayjs/|(?:\bfrom|\brequire\s*\()\s*[''"](?:routing-controllers[''"]|@tsed/(?:common|schema|di|platform-))'
+      - regex:
+          - 'require\([''"]@nestjs/core[''"]\)'
+          - 'require\([''"]@nestjs/common[''"]\)'
+          - 'import.*from [''"]@nestjs/core[''"]'
+          - 'import.*from [''"]@nestjs/common[''"]'
+          - '@Controller\s*\('
+          - '@Module\s*\('
+          - 'NestFactory\.create\s*\('
+  examples:
+    match:
+      - {path: 'app.ts', content: "require('@nestjs/core')"}
+      - {path: 'app.ts', content: "require(\"@nestjs/core\")"}
+      - {path: 'controller.ts', content: "require('@nestjs/common')"}
+      - {path: 'controller.ts', content: "require(\"@nestjs/common\")"}
+      - {path: 'main.ts', content: "import { NestFactory } from '@nestjs/core'"}
+      - {path: 'main.ts', content: "import { NestFactory } from \"@nestjs/core\""}
+      - {path: 'controller.ts', content: "import { Controller, Get } from '@nestjs/common'"}
+      - {path: 'controller.ts', content: "import { Controller, Get } from \"@nestjs/common\""}
+      - {path: 'user.controller.ts', content: "@Controller('users')"}
+      - {path: 'app.module.ts', content: "@Module({ imports: [] })"}
+      - {path: 'main.ts', content: "const app = await NestFactory.create(AppModule);"}
+      - {path: 'component.tsx', content: "@Controller('api')"}
+      - {path: 'app.mts', content: "import { NestFactory } from '@nestjs/core'"}
+      - {path: 'app.cts', content: "require('@nestjs/core')"}
+      - path: 'users.controller.ts'
+        content: |-
+          import { Controller } from '@nestjs/common';
+          import { Logger } from '@tsed/logger';
+          @Controller('users')
+    no_match:
+      - {path: 'app.ts', content: "import express from 'express'"}
+      - {path: 'app.js', content: "import { NestFactory } from '@nestjs/core'"}
+      - {path: 'app.jsx', content: "@Controller('api')"}
+      - {path: 'app.mjs', content: "@Controller('api')"}
+      - {path: 'app.cjs', content: "@Controller('api')"}
+      - path: 'user.controller.ts'
+        content: |-
+          import { Controller, Get } from '@midwayjs/core';
+          @Controller('/api')
+      - path: 'HealthController.ts'
+        content: |-
+          import { Controller, Get } from 'routing-controllers';
+          @Controller()
+      - path: 'CalendarsController.ts'
+        content: |-
+          import { Controller } from "@tsed/di";
+          @Controller("/calendars")
+      - {path: 'app.py', content: "@Controller('users')"}
+    applicable:
+      - 'app.mts'
+      - 'app.cts'
+    inapplicable:
+      - 'app.js'
+      - 'app.jsx'
+      - 'app.mjs'
+      - 'app.cjs'
+      - 'package.json'
+      - 'tsconfig.json'
+
+Orpc:
+  key: ts_orpc
+  gate: {extensions: [.ts, .tsx, .mts, .cts, .js, .jsx, .mjs, .cjs], basenames: [package.json]}
+  match:
+    all:
+      - contains: '@orpc/'
+      - any:
+          - all:
+              - files: {basenames: [package.json]}
+              - regex: '"@orpc/(?:server|contract)"'
+          - all:
+              - not:
+                  files: {basenames: [package.json]}
+              - regex: '(?:from\s*|require\(\s*)[''"]@orpc/(?:server|contract)[''"]'
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"@orpc/server\": \"^1.9.0\"}}"}
+      - {path: 'src/router.ts', content: "import { os } from '@orpc/server';"}
+      - {path: 'src/contract.ts', content: "import { oc } from \"@orpc/contract\";"}
+    no_match:
+      - {path: 'src/client.ts', content: "import { createORPCClient } from '@orpc/client';"}
+      - {path: 'package.json', content: "from '@orpc/server'"}
 
 RoutingControllers:
   key: ts_routing_controllers
@@ -65,6 +266,121 @@ RoutingControllers:
           import { Controller, Get } from '@nestjs/common';
           @Controller('users')
       - {path: app.js, content: "import { Get } from 'routing-controllers';"}
+
+TRPC:
+  key: ts_trpc
+  gate: {extensions: [.ts, .tsx, .cts, .mts, .js, .jsx, .cjs, .mjs], basenames: [package.json]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [package.json]}
+          - contains:
+              - '"@trpc/server"'
+              - '"@trpc/next"'
+      - all:
+          - files: {extensions: [.ts, .tsx, .cts, .mts, .js, .jsx, .cjs, .mjs]}
+          - contains:
+              - 'trpc'
+              - 'TRPC'
+              - 'fetchRequestHandler'
+              - 'createNextApiHandler'
+          - regex:
+              - 'import[^''"`]+from\s+[''"`]@trpc/server(?:/[^''"`]*)?[''"`]'
+              - 'require\(\s*[''"`]@trpc/server(?:/[^''"`]*)?[''"`]\s*\)'
+              - 'import[^''"`]+from\s+[''"`]@trpc/next[''"`]'
+              - 'initTRPC\b'
+              - 'createTRPCRouter\s*\('
+              - 'fetchRequestHandler\s*\('
+              - 'createNextApiHandler\s*\('
+              - 'trpcExpress\.createExpressMiddleware\s*\('
+  examples:
+    match:
+      - {path: 'app.ts', content: "import { initTRPC } from '@trpc/server'"}
+    no_match:
+      - {path: 'app.ts', content: "import { router } from '@trpc/client'"}
+
+TanstackRouter:
+  key: ts_tanstack_router
+  gate: {extensions: [.ts, .tsx, .cts, .mts, .js, .jsx, .cjs, .mjs], basenames: [package.json, tsconfig.json]}
+  files: {extensions: [.ts, .tsx]}
+  match:
+    all:
+      - contains:
+          - '@tanstack'
+          - 'Route'
+      - regex:
+          - 'from\s*[''"]@tanstack/(?:[a-z]+-)?router[''"]'
+          - 'require\(\s*[''"]@tanstack/(?:[a-z]+-)?router[''"]\s*\)'
+          - '\bcreateFileRoute\s*\('
+          - '\bcreateLazyFileRoute\s*\('
+          - '\bcreateRootRoute(?:WithContext)?\s*[(<]'
+  examples:
+    match:
+      - {path: 'routes.ts', content: "import { createFileRoute } from '@tanstack/react-router'"}
+      - {path: 'routes.ts', content: "import { createFileRoute } from \"@tanstack/react-router\""}
+      - {path: 'routes.ts', content: "import { createRoute } from '@tanstack/router'"}
+      - {path: 'routes.ts', content: "import { createRoute } from \"@tanstack/router\""}
+      - {path: 'routes.ts', content: "require('@tanstack/react-router')"}
+      - {path: 'routes.ts', content: "require(\"@tanstack/react-router\")"}
+      - {path: 'routes.ts', content: "require('@tanstack/router')"}
+      - {path: 'routes.ts', content: "require(\"@tanstack/router\")"}
+      - {path: 'posts.tsx', content: "export const Route = createFileRoute('/posts')({})"}
+      - {path: 'root.tsx', content: "export const rootRoute = createRootRoute({})"}
+      - {path: 'routes.ts', content: "import { createRoute } from '@tanstack/solid-router'"}
+      - {path: 'root.tsx', content: "const rootRoute = createRootRouteWithContext<Ctx>()({})"}
+      - path: 'routes.ts'
+        content: |-
+          import {
+            createRoute,
+            createRouter,
+          } from '@tanstack/react-router'
+
+          const postsRoute = createRoute({ path: '/posts' })
+      - {path: 'route.tsx', content: "createFileRoute('/api')"}
+    no_match:
+      - {path: 'app.ts', content: "import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'"}
+      - path: 'router.ts'
+        content: |-
+          import { createRouter, createWebHistory } from 'vue-router'
+
+          export default createRouter({
+            history: createWebHistory(),
+            routes: [{ path: '/', component: Home }],
+          })
+      - path: 'createRouter.ts'
+        content: |-
+          import * as trpc from '@trpc/server'
+
+          export function createRouter() {
+            return trpc.router<Context>()
+          }
+      - {path: 'routes.ts', content: "const postsRoute = createRoute({ path: '/posts' })"}
+      - {path: 'app.ts', content: "import express from 'express'"}
+      - {path: 'app.js', content: "import { createFileRoute } from '@tanstack/react-router'"}
+      - {path: 'app.py', content: "createFileRoute('/posts')"}
+
+TsRest:
+  key: ts_tsrest
+  gate: {extensions: [.ts, .tsx, .mts, .cts, .js, .jsx, .mjs, .cjs], basenames: [package.json]}
+  match:
+    all:
+      - contains: '@ts-rest/core'
+      - any:
+          - all:
+              - files: {basenames: [package.json]}
+              - contains: '"@ts-rest/core"'
+          - all:
+              - not:
+                  files: {basenames: [package.json]}
+              - regex: '(?:from\s*|require\(\s*)[''"]@ts-rest/core[''"]'
+  examples:
+    match:
+      - {path: 'package.json', content: "{\"dependencies\": {\"@ts-rest/core\": \"^3.52.0\"}}"}
+      - {path: 'src/contract.ts', content: "import { initContract } from '@ts-rest/core';"}
+    no_match:
+      - {path: 'src/main.ts', content: "import { createExpressEndpoints } from '@ts-rest/express';"}
+      - {path: 'notes.ts', content: "// see @ts-rest/core docs"}
+      - {path: 'package.json', content: "from '@ts-rest/core'"}
 
 Tsed:
   key: ts_tsed

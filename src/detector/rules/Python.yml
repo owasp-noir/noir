@@ -15,6 +15,38 @@ Aiohttp:
       - {path: app.js, content: "from aiohttp import web"}
       - {path: app.py, content: "from flask import Flask"}
 
+AwsLambdaPowertools:
+  key: python_aws_lambda_powertools
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: 'aws_lambda_powertools'
+      - regex: '(?ms)^\s*(?:from\s+aws_lambda_powertools\.event_handler(?:\.[\w.]+)?\s+import\b|import\s+aws_lambda_powertools\.event_handler\b)'
+      - regex:
+          - '\b(?:APIGateway(?:Rest|Http)Resolver|ALBResolver|LambdaFunctionUrlResolver|VPCLattice(?:V2)?Resolver|BedrockAgentResolver)\b'
+          - '(?ms)^\s*from\s+aws_lambda_powertools\.event_handler(?:\.api_gateway|\.router)?\s+import\s*(?:\([^)]*|[^\n]*)\bRouter\b'
+  examples:
+    match:
+      - {path: 'app.py', content: "from aws_lambda_powertools.event_handler import APIGatewayRestResolver"}
+      - {path: 'routes/todos.py', content: "from aws_lambda_powertools.event_handler.api_gateway import Router"}
+      - path: 'app.py'
+        content: |-
+          from aws_lambda_powertools.event_handler import (
+              ALBResolver,
+              Response,
+          )
+      - path: 'app.py'
+        content: |-
+          from aws_lambda_powertools.event_handler import (
+              Response,
+              Router,
+          )
+    no_match:
+      - {path: 'app.py', content: "from aws_lambda_powertools import Logger, Tracer"}
+      - {path: 'app.py', content: "from aws_lambda_powertools.event_handler import AppSyncResolver"}
+      - {path: 'app.py', content: "from aws_lambda_powertools.event_handler.appsync import Router"}
+      - {path: 'app.txt', content: "from aws_lambda_powertools.event_handler import APIGatewayRestResolver"}
+
 Bottle:
   key: python_bottle
   files: {extensions: [.py]}
@@ -31,6 +63,28 @@ Bottle:
     no_match:
       - {path: app.py, content: "import bottleneck"}
       - {path: requirements.txt, content: "from bottle import route"}
+
+Chalice:
+  key: python_chalice
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: 'chalice'
+      - regex: '(?ms)^\s*(?:from\s+chalice(?:\.[\w.]+)?\s+import\b|import\s+chalice\b)'
+  examples:
+    match:
+      - path: 'app.py'
+        content: |-
+          from chalice import Chalice
+          app = Chalice(app_name='x')
+      - {path: 'chalicelib/api.py', content: "from chalice import Blueprint"}
+      - {path: 'app.py', content: "import chalice"}
+    no_match:
+      - path: 'app.py'
+        content: |-
+          # ported from chalice import style
+          import flask
+      - {path: 'app.txt', content: "from chalice import Chalice"}
 
 CherryPy:
   key: python_cherrypy
@@ -49,6 +103,17 @@ CherryPy:
     no_match:
       - {path: app.py, content: "from flask import Flask"}
       - {path: app.txt, content: "import cherrypy"}
+
+Cli:
+  key: python_cli
+  files: {extensions: [.py]}
+  match:
+    regex: '(?:^|\n)\s*(?:import|from)\s+(?:argparse|click|typer|fire|docopt|getopt|absl|cleo)\b'
+  examples:
+    match:
+      - {path: 'app.py', content: "from argparse import ArgumentParser"}
+    no_match:
+      - {path: 'app.py', content: "# import argparse"}
 
 Django:
   key: python_django
@@ -122,6 +187,51 @@ FastAPI:
     no_match:
       - {path: settings.py, content: "# unrelated framework"}
 
+FastHTML:
+  key: python_fasthtml
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: 'fasthtml'
+      - regex: '(?ms)^\s*(?:from\s+fasthtml(?:\.[\w.]+)?\s+import\b|import\s+fasthtml\b)'
+  examples:
+    match:
+      - path: 'main.py'
+        content: |-
+          from fasthtml.common import *
+          app, rt = fast_app()
+      - {path: 'app.py', content: "from fasthtml import FastHTML"}
+      - {path: 'app.py', content: "import fasthtml"}
+    no_match:
+      - path: 'app.py'
+        content: |-
+          # ported from fasthtml
+          from starlette.applications import Starlette
+      - {path: 'main.txt', content: "from fasthtml.common import *"}
+
+FastMCP:
+  key: python_fastmcp
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: 'fastmcp'
+      - regex: '(?ms)^\s*(?:from\s+(?:fastmcp|mcp\.server\.fastmcp)(?:\.[\w.]+)?\s+import\b|import\s+fastmcp\b)'
+  examples:
+    match:
+      - path: 'server.py'
+        content: |-
+          from fastmcp import FastMCP
+          mcp = FastMCP("demo")
+      - {path: 'auth.py', content: "from fastmcp.server.auth.providers.jwt import JWTVerifier"}
+      - {path: 'server.py', content: "from mcp.server.fastmcp import FastMCP"}
+      - {path: 'server.py', content: "import fastmcp"}
+    no_match:
+      - path: 'app.py'
+        content: |-
+          # a fastmcp server lives elsewhere
+          from starlette.applications import Starlette
+      - {path: 'server.txt', content: "from fastmcp import FastMCP"}
+
 Flask:
   key: python_flask
   files: {extensions: [.py]}
@@ -138,6 +248,46 @@ Flask:
       - {path: app.py, content: "from flask_appbuilder.api import expose"}
     no_match:
       - {path: app.py, content: "# unrelated framework"}
+
+Frappe:
+  key: python_frappe
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: 'frappe'
+      - regex: '(?ms)^\s*(?:from\s+frappe(?:\.[\w.]+)?\s+import\b|import\s+frappe\b)'
+  examples:
+    match:
+      - {path: 'library_app/api.py', content: "import frappe"}
+      - {path: 'book.py', content: "from frappe.model.document import Document"}
+    no_match:
+      - path: 'app.py'
+        content: |-
+          # ported from frappe import helpers
+          import flask
+      - {path: 'api.txt', content: "import frappe"}
+
+Graphene:
+  key: python_graphene
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: 'graphene'
+      - regex: '(?ms)^\s*(?:from\s+graphene(?:_\w+)?(?:\.[\w.]+)?\s+import\b|import\s+graphene(?:_\w+)?\b)'
+  examples:
+    match:
+      - path: 'schema.py'
+        content: |-
+          import graphene
+
+          class Query(graphene.ObjectType): ...
+      - {path: 'urls.py', content: "from graphene_django.views import GraphQLView"}
+    no_match:
+      - path: 'app.py'
+        content: |-
+          # graphene sheets
+          import flask
+      - {path: 'schema.txt', content: "import graphene"}
 
 HttpServer:
   key: python_http_server
@@ -222,6 +372,28 @@ Masonite:
       - {path: app.py, content: "from flask import Flask"}
       - {path: routes/web.txt, content: "from masonite.routes import Route"}
 
+Odoo:
+  key: python_odoo
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains:
+          - 'odoo'
+          - 'openerp'
+      - regex: '(?ms)^\s*(?:from\s+(?:odoo|openerp)(?:\.[\w.]+)?\s+import\b|import\s+(?:odoo|openerp)\b)'
+  examples:
+    match:
+      - {path: 'controllers/main.py', content: "from odoo import http"}
+      - {path: 'controllers/rpc.py', content: "from odoo.http import Controller, route"}
+      - {path: 'controllers/main.py', content: "from odoo.addons.website.controllers.main import Website"}
+      - {path: 'controllers.py', content: "from openerp import http"}
+    no_match:
+      - path: 'app.py'
+        content: |-
+          # migrated from odoo import scripts
+          import flask
+      - {path: 'main.txt', content: "from odoo import http"}
+
 Pyramid:
   key: python_pyramid
   files: {extensions: [.py]}
@@ -294,6 +466,30 @@ Starlette:
     no_match:
       - {path: app.py, content: "from fastapi import FastAPI"}
       - {path: app.txt, content: "from starlette import"}
+
+Strawberry:
+  key: python_strawberry
+  files: {extensions: [.py]}
+  match:
+    all:
+      - contains: 'strawberry'
+      - regex: '(?ms)^\s*(?:from\s+strawberry(?:_django)?(?:\.[\w.]+)?\s+import\b|import\s+strawberry(?:_django)?\b)'
+  examples:
+    match:
+      - path: 'schema.py'
+        content: |-
+          import strawberry
+
+          @strawberry.type
+          class Query: ...
+      - {path: 'main.py', content: "from strawberry.fastapi import GraphQLRouter"}
+      - {path: 'types.py', content: "import strawberry_django"}
+    no_match:
+      - path: 'app.py'
+        content: |-
+          # strawberry jam
+          import flask
+      - {path: 'schema.txt', content: "import strawberry"}
 
 Tornado:
   key: python_tornado

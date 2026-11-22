@@ -1,10 +1,12 @@
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
-require "../../../detector/detectors/python/fasthtml"
+require "../../../detector/rule_detector"
 
 module Analyzer::Python
   class FastHTML < PythonEngine
     analyzer_for "python_fasthtml"
+
+    include RuleDetector::SourceCheck
 
     # Reference: https://www.fastht.ml/docs/explains/routes.html
     #
@@ -34,7 +36,7 @@ module Analyzer::Python
 
     private def analyze_file(path : ::String, base_path : ::String) : Array(Endpoint)?
       source = read_file_content(path)
-      return unless source.includes?("fasthtml") && source.matches?(Detector::Python::FastHTML::IMPORT_RE)
+      return unless source_detector.detect(path, source)
 
       rt_names = ["rt"]
       source.scan(RT_NAME_RE) { |m| rt_names << m[1] }

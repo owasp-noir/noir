@@ -15,6 +15,17 @@ Akka:
       - {path: test.scala, content: "import scala.concurrent.Future"}
       - {path: test.java, content: "import akka.http.scaladsl.server.Directives._"}
 
+Cli:
+  key: scala_cli
+  files: {extensions: [.scala, .sc]}
+  match:
+    regex: '\bscopt\b|\bOParser\b|\bcom\.monovore\.decline\b|\bimport\s+com\.monovore\.decline|\bOpts\.(?:option|flag|argument|arguments)\b|\bmainargs\b|@main\b|\borg\.rogach\.scallop\b|\bScallopConf\b|\bcom\.twitter\.app\b'
+  examples:
+    match:
+      - {path: 'app.scala', content: "import scopt.OParser"}
+    no_match:
+      - {path: 'app.scala', content: "object Main extends App"}
+
 Finatra:
   key: scala_finatra
   gate: {extensions: [.scala], basenames: [build.sbt]}
@@ -48,6 +59,46 @@ Http4s:
       - {path: Server.scala, content: "import org.http4s.HttpRoutes"}
     no_match:
       - {path: Server.scala, content: "# unrelated framework"}
+
+Play:
+  key: scala_play
+  gate: {extensions: [.scala, .sbt, routes, routes.conf], basenames: [build.sbt]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.scala]}
+          - contains:
+              - 'play.api.mvc'
+              - 'play.api.routing'
+              - 'play.api.libs.json'
+              - 'BaseController'
+              - 'AbstractController'
+      - all:
+          - files: {extensions: [routes, routes.conf]}
+          - regex: '(?ms)^\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+'
+          - contains: 'Option['
+  examples:
+    match:
+      - {path: 'routes', content: "GET /users controllers.Users.list(page: Option[Int])"}
+      - {path: 'routes.conf', content: "POST /users/:id controllers.Users.update(id: Long, name: Option[String] ?= None)"}
+      - {path: 'test.scala', content: "import play.api.mvc._"}
+      - {path: 'test.scala', content: "class Users extends BaseController"}
+      - {path: 'test.scala', content: "class Users extends AbstractController"}
+      - {path: 'test.scala', content: "import play.api.routing.Router"}
+    no_match:
+      - {path: 'test.scala', content: "import scala.concurrent.Future"}
+      - {path: 'test.java', content: "import play.api.mvc._"}
+      - {path: 'routes', content: "# Just comments"}
+      - {path: 'conf/routes', content: "GET /clients controllers.Clients.list(page: Int ?= 1, label: String ?= \"new,hot\")"}
+    applicable:
+      - 'conf/routes'
+      - 'conf/admin.routes'
+      - 'conf/routes.conf'
+      - 'routes'
+      - 'build.sbt'
+      - 'app/controllers/HomeController.scala'
+    inapplicable:
+      - 'app/controllers/HomeController.java'
 
 Scalatra:
   key: scala_scalatra

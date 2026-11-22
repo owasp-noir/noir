@@ -1,0 +1,126 @@
+Cli:
+  key: cpp_cli
+  files: {extensions: [.cpp, .cc, .cxx, .c++, .hpp, .hh, .hxx]}
+  match:
+    regex:
+      - '\bCLI::App\b|include\s*[<"]CLI/CLI\.hpp'
+      - '\bgetopt(?:_long)?\s*\(|\bstruct\s+option\b'
+      - '\bcxxopts::'
+      - '\bprogram_options\b'
+      - '\bDEFINE_(?:string|int32|int64|bool|double|uint32|uint64)\s*\('
+      - '\bABSL_FLAG\s*\('
+      - '\bargparse::ArgumentParser\b'
+  examples:
+    match:
+      - {path: 'app.cpp', content: "CLI::App app;"}
+    no_match:
+      - {path: 'app.cpp', content: "#include <iostream>"}
+
+Crow:
+  key: cpp_crow
+  gate: {extensions: [.cpp, .cc, .cxx, .c, .h, .hpp, .hxx]}
+  files: {extensions: [.cpp, .cc, .cxx, .h, .hpp, .hxx]}
+  match:
+    contains:
+      - '#include "crow.h"'
+      - '#include <crow.h>'
+      - '#include "crow/crow.h"'
+      - '#include <crow/crow.h>'
+      - '#include <crow/app.h>'
+      - '#include "crow/app.h"'
+      - 'crow::SimpleApp'
+      - 'CROW_ROUTE('
+  examples:
+    match:
+      - {path: 'app.cpp', content: "#include \"crow.h\""}
+      - {path: 'app.cpp', content: "#include <crow.h>"}
+      - {path: 'server.cc', content: "#include <crow/app.h>"}
+      - {path: 'main.cxx', content: "CROW_ROUTE(app, \"/\")([](){ return \"ok\"; });"}
+      - {path: 'main.hpp', content: "crow::SimpleApp app;"}
+    no_match:
+      - path: 'main.cpp'
+        content: |-
+          #include <iostream>
+          int main(){return 0;}
+      - {path: 'app.py', content: "#include \"crow.h\""}
+
+Drogon:
+  key: cpp_drogon
+  gate: {extensions: [.cpp, .cc, .cxx, .c, .h, .hpp, .hxx]}
+  files: {extensions: [.cpp, .cc, .cxx, .h, .hpp], path_segments: [CMakeLists.txt, conanfile, vcpkg.json]}
+  match:
+    contains:
+      - 'drogon/drogon.h'
+      - 'drogon/HttpController.h'
+      - 'drogon/HttpSimpleController.h'
+      - 'app().registerHandler'
+      - 'PATH_LIST_BEGIN'
+      - 'find_package(Drogon'
+      - 'find_package(drogon'
+  examples:
+    match:
+      - path: 'main.cpp'
+        content: |-
+          #include <drogon/drogon.h>
+          int main() { app().run(); }
+      - {path: 'UsersController.h', content: "#include \"drogon/HttpController.h\""}
+      - {path: 'routes.cc', content: "app().registerHandler(\"/ping\", handler, {Get});"}
+      - path: 'controller.cpp'
+        content: |-
+          PATH_LIST_BEGIN
+          PATH_ADD("/x", Get);
+          PATH_LIST_END
+    no_match:
+      - path: 'main.cpp'
+        content: |-
+          #include <iostream>
+          int main() { return 0; }
+    inapplicable:
+      - CMakeLists.txt
+
+Httplib:
+  key: cpp_httplib
+  files: {extensions: [.cpp, .cc, .cxx, .h, .hpp, .hxx]}
+  match:
+    contains:
+      - 'httplib.h'
+      - 'httplib.hpp'
+      - 'httplib::'
+      - 'using namespace httplib'
+  examples:
+    match:
+      - {path: 'app.cpp', content: "#include <httplib.h>"}
+      - {path: 'main.cc', content: "#include <utility/httplib.h>"}
+      - {path: 'server.hpp', content: "#include \"httplib/httplib.hpp\""}
+      - {path: 'main.cxx', content: "httplib::Server svr;"}
+      - path: 'main.cpp'
+        content: |-
+          using namespace httplib;
+          Server svr;
+    no_match:
+      - path: 'main.cpp'
+        content: |-
+          #include <iostream>
+          int main(){return 0;}
+      - {path: 'app.py', content: "#include <httplib.h>"}
+
+Oatpp:
+  key: cpp_oatpp
+  files: {extensions: [.cpp, .cc, .cxx, .h, .hpp, .hxx]}
+  match:
+    contains:
+      - 'oatpp::web::server::api::ApiController'
+      - 'OATPP_CODEGEN_BEGIN(ApiController)'
+      - '#include "oatpp/'
+      - '#include <oatpp/'
+  examples:
+    match:
+      - {path: 'UserController.hpp', content: "class C : public oatpp::web::server::api::ApiController {"}
+      - {path: 'Controller.hpp', content: "#include OATPP_CODEGEN_BEGIN(ApiController)"}
+      - {path: 'main.cpp', content: "#include \"oatpp/web/server/HttpConnectionHandler.hpp\""}
+    no_match:
+      - path: 'main.cpp'
+        content: |-
+          #include <iostream>
+          int main(){return 0;}
+      - {path: 'app.py', content: "oatpp::web::server::api::ApiController"}

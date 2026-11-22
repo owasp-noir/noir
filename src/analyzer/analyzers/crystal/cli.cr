@@ -2,7 +2,7 @@ require "yaml"
 require "../../../models/analyzer"
 require "../../engines/cli_endpoint_support"
 require "../../../miniparsers/crystal_callee_extractor"
-require "../../../detector/detectors/crystal/cli"
+require "../../../detector/rule_detector"
 
 module Analyzer::Crystal
   # Surfaces the command-line attack surface of Crystal programs as `cli://`
@@ -11,6 +11,8 @@ module Analyzer::Crystal
   # merged by URL. Line-scan; subclasses Analyzer directly.
   class Cli < Analyzer
     analyzer_for "crystal_cli"
+
+    include RuleDetector::SourceCheck
 
     include CliEndpointSupport
 
@@ -46,8 +48,7 @@ module Analyzer::Crystal
     GUARD_ASSIGN = /^\s*([a-z_]\w*)\s*=\s*ARGV(?:\s*\[\s*0\s*\]\??|\.first\??)\s*==\s*"[^"]+"\s*(?:&&(?!.*\s\?\s)(?:\([^()]*\)|[^|()])*)?$/
     GUARD_BRANCH = /^\s*(?:if|elsif)\s+([a-z_]\w*)(?:\s*&&[^|]*)?(?:\s+then)?\s*$/
 
-    MARKERS = Detector::Crystal::Cli::MARKERS
-    WEB_RE  = /\brequire\s+"(?:kemal|amber|lucky|grip|marten)"|HTTP::Server\.new|\bKemal\b|Amber::Server/
+    WEB_RE = /\brequire\s+"(?:kemal|amber|lucky|grip|marten)"|HTTP::Server\.new|\bKemal\b|Amber::Server/
 
     def analyze
       endpoints = {} of String => Endpoint
@@ -59,7 +60,7 @@ module Analyzer::Crystal
           # example is not the program reading input.
           lines = read_file_content(path).lines.map { |line| Noir::CrystalCalleeExtractor.strip_comment(line) }
           content = lines.join('\n')
-          next unless content.matches?(MARKERS)
+          next unless source_detector.detect(path, content)
           root_url = "cli://#{cli_binary_name(path)}"
           emit_env = !content.matches?(WEB_RE)
           scan(lines, path, root_url, endpoints, emit_env)

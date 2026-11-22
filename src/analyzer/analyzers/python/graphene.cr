@@ -1,11 +1,13 @@
 require "../../../miniparsers/python_graphql_extractor_ts"
 require "../../engines/python_engine"
 require "../specification/graphql_sdl_parser"
-require "../../../detector/detectors/python/graphene"
+require "../../../detector/rule_detector"
 
 module Analyzer::Python
   class Graphene < PythonEngine
     analyzer_for "python_graphene"
+
+    include RuleDetector::SourceCheck
 
     # Reference: https://docs.graphene-python.org/en/latest/types/schema/
     #
@@ -34,7 +36,7 @@ module Analyzer::Python
     def analyze
       outlines = ordered_parallel_analyze(python_source_files) do |path|
         source = read_file_content(path)
-        X.outline(path, source, source.includes?("graphene") && source.matches?(Detector::Python::Graphene::IMPORT_RE))
+        X.outline(path, source, source_detector.detect(path, source))
       end
       index = X::Index.new(outlines)
 

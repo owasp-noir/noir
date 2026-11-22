@@ -38,6 +38,33 @@ Axum:
           [dependencies]
           serde = "1"
 
+Cli:
+  key: rust_cli
+  gate: {extensions: [.rs], basenames: [Cargo.toml]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [Cargo.toml]}
+          - contains: 'dependencies'
+          - regex: '(?m)^\s*(?:clap|structopt|argh|bpaf|pico\-args|getopts)\b'
+      - all:
+          - files: {extensions: [.rs]}
+          - any:
+              - regex:
+                  - '#\[\s*derive\s*\([^)]*\b(?:Parser|Subcommand|Args)\b'
+                  - '#\[\s*derive\s*\([^)]*\bStructOpt\b'
+                  - '#\[\s*derive\s*\([^)]*\bFromArgs\b'
+                  - '\buse\s+(?:clap|structopt|argh|bpaf|pico_args|getopts)\b|\b(?:clap|structopt|argh|bpaf|pico_args|getopts)::'
+                  - '\b(?:std::)?env::args(?:_os)?\s*\('
+              - all:
+                  - contains: 'clap'
+                  - regex: '\bCommand::new\s*\('
+  examples:
+    match:
+      - {path: 'app.rs', content: "use clap::Parser;"}
+    no_match:
+      - {path: 'app.rs', content: "let cmd = Command::new(\"sh\");"}
+
 Dioxus:
   key: rust_dioxus
   files: {basenames: [Cargo.toml]}

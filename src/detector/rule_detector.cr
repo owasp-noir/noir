@@ -81,6 +81,9 @@ module Noir::DetectorRules
       else
         ->(d : Detector, p : String, s : String) { children.any?(&.call(d, p, s)) }
       end
+    when "not"
+      child = condition(value)
+      ->(d : Detector, p : String, s : String) { !child.call(d, p, s) }
     when "files"
       gate = Gate.parse(value)
       ->(_d : Detector, p : String, _s : String) { gate.matches?(p) }
@@ -131,6 +134,15 @@ module Noir::DetectorRules
 end
 
 class RuleDetector < Detector
+  # Analyzers that use their entire technology check as a per-file filter
+  # can reuse the compiled rule, including when the user forces --techs.
+  module SourceCheck
+    private getter source_detector : RuleDetector do
+      rule = Noir::DetectorRules::BUILTIN.find! { |entry| entry.key == tech }
+      RuleDetector.new(@raw_options, rule)
+    end
+  end
+
   def initialize(options, @rule : Noir::DetectorRules::Rule)
     super(options)
   end

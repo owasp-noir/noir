@@ -1,3 +1,30 @@
+Cli:
+  key: kotlin_cli
+  files: {extensions: [.kt]}
+  match:
+    any:
+      - contains:
+          - 'com.github.ajalt.clikt'
+          - 'kotlinx.cli'
+          - 'picocli.CommandLine'
+      - regex: ':\s*CliktCommand\b|\bArgParser\s*\('
+  examples:
+    match:
+      - {path: 'app.kt', content: "import kotlinx.cli.ArgParser"}
+    no_match:
+      - {path: 'app.kt', content: "fun main() = println(\"hi\")"}
+
+Http4k:
+  key: kotlin_http4k
+  files: {extensions: [.kt]}
+  match:
+    contains: 'org.http4k'
+  examples:
+    match:
+      - {path: 'app.kt', content: "import org.http4k.core.HttpHandler"}
+    no_match:
+      - {path: 'app.kt', content: "import io.ktor.server.routing.*"}
+
 Ktor:
   key: kotlin_ktor
   files: {extensions: [.kt]}

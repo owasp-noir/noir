@@ -1,0 +1,142 @@
+Cli:
+  key: haskell_cli
+  files: {extensions: [.hs, .lhs]}
+  match:
+    regex:
+      - '\bimport\s+(?:qualified\s+)?Options\.Applicative\b|\b(?:execParser|customExecParser|strOption|subparser|hsubparser)\b|\bimport\s+(?:qualified\s+)?System\.Console\.(?:GetOpt|CmdArgs)\b|\bimport\s+(?:qualified\s+)?System\.Environment\b'
+      - '\bimport\s+(?:qualified\s+)?Turtle\.Options\b|\bimport\s+(?:qualified\s+)?Turtle\b\s*\([^)]*\boptions\b[^)]*\)'
+  examples:
+    match:
+      - {path: 'app.hs', content: "import Options.Applicative"}
+    no_match:
+      - {path: 'app.hs', content: "import Turtle"}
+
+Scotty:
+  key: haskell_scotty
+  gate: {extensions: [.hs, .lhs, .cabal, .dhall], basenames: [stack.yaml, package.yaml]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.cabal], basenames: [package.yaml]}
+          - regex: '(^|[\s,])scotty(?:-[A-Za-z0-9]+)*(?=$|[\s,<>=:])'
+      - all:
+          - files: {extensions: [.hs, .lhs]}
+          - any:
+              - regex:
+                  - '(?ms)^\s*import\s+(qualified\s+)?Web\.Scotty(\.|\s|$)'
+                  - '\bscotty\s+\d+\s+\$'
+                  - '\bscottyApp\s'
+              - contains: 'scottyOpts'
+  examples:
+    match:
+      - path: 'package.yaml'
+        content: |-
+          dependencies:
+            - scotty
+            - warp
+      - {path: 'sample.cabal', content: "build-depends: base, scotty, warp"}
+      - path: 'src/Main.hs'
+        content: |-
+          import Web.Scotty
+          main = pure ()
+      - {path: 'src/Main.hs', content: "main = scotty 3000 $ do { get \"/\" $ text \"hi\" }"}
+      - path: 'src/Main.lhs'
+        content: |-
+          import Web.Scotty
+          main = pure ()
+    no_match:
+      - {path: 'src/Main.hs', content: "main = putStrLn \"hello\""}
+    applicable:
+      - 'src/Main.lhs'
+      - 'src/Main.hs'
+    inapplicable:
+      - 'src/Main.rs'
+
+Servant:
+  key: haskell_servant
+  gate: {extensions: [.hs, .lhs, .cabal, .dhall], basenames: [stack.yaml, package.yaml]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.cabal], basenames: [package.yaml]}
+          - regex: '(^|[\s,])servant(?:-[A-Za-z0-9]+)*(?=$|[\s,<>=:])'
+      - all:
+          - files: {extensions: [.hs, .lhs]}
+          - any:
+              - regex:
+                  - '(?ms)^\s*import\s+(qualified\s+)?Servant(\s|\.|$)'
+                  - ':>\s*\(?\s*(Get|Post|Put|Delete|Patch|Head|Options|Verb)\b'
+              - all:
+                  - contains: ':<|>'
+                  - contains: ':>'
+  examples:
+    match:
+      - path: 'package.yaml'
+        content: |-
+          dependencies:
+            - servant
+            - servant-server
+      - {path: 'sample.cabal', content: "build-depends: base, servant, servant-server"}
+      - path: 'src/Api.hs'
+        content: |-
+          import Servant
+          main = pure ()
+      - path: 'src/Api.hs'
+        content: |-
+          import qualified Servant.API as S
+          main = pure ()
+      - {path: 'src/Api.hs', content: "type API = \"users\" :> Get '[JSON] [User]"}
+      - {path: 'src/Api.hs', content: "type API = Foo :<|> Bar :> Baz"}
+      - path: 'src/Api.lhs'
+        content: |-
+          import Servant
+          main = pure ()
+    no_match:
+      - {path: 'src/Main.hs', content: "main = putStrLn \"hello\""}
+    applicable:
+      - 'src/Api.lhs'
+      - 'src/Api.hs'
+    inapplicable:
+      - 'src/Api.rs'
+
+Yesod:
+  key: haskell_yesod
+  gate: {extensions: [.hs, .lhs, .cabal, .dhall], basenames: [stack.yaml, package.yaml]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.cabal], basenames: [package.yaml]}
+          - regex: '(^|[\s,])yesod(?:-[A-Za-z0-9]+)*(?=$|[\s,<>=:])'
+      - all:
+          - files: {extensions: [.hs, .lhs]}
+          - contains:
+              - 'import Yesod'
+              - 'import Yesod.Core'
+              - 'mkYesod'
+              - 'mkYesodData'
+              - 'parseRoutes'
+              - 'parseRoutesFile'
+  examples:
+    match:
+      - path: 'package.yaml'
+        content: |-
+          dependencies:
+            - yesod
+            - warp
+      - {path: 'sample.cabal', content: "build-depends: base, yesod-core, yesod"}
+      - path: 'src/Foundation.hs'
+        content: |-
+          import Yesod
+          main = pure ()
+      - {path: 'src/Foundation.hs', content: "mkYesodData \"App\" [parseRoutes|/ HomeR GET|]"}
+      - path: 'src/Foundation.lhs'
+        content: |-
+          import Yesod
+          main = pure ()
+    no_match:
+      - {path: 'src/Main.hs', content: "main = putStrLn \"hello\""}
+    applicable:
+      - 'src/Foundation.lhs'
+      - 'src/Foundation.hs'
+    inapplicable:
+      - 'src/Foundation.rs'

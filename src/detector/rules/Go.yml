@@ -20,6 +20,34 @@ Chi:
     no_match:
       - {path: go.mod, content: "github.com/go-chi/chi // indirect"}
 
+Cli:
+  key: go_cli
+  gate: {extensions: [.go], basenames: [go.mod]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [go.mod]}
+          - go_dependency: &cli_modules 'github\.com/(?:spf13/(?:cobra|pflag)|urfave/cli|alexflint/go-arg|jessevdk/go-flags|alecthomas/(?:kong|kingpin)|mitchellh/cli)|gopkg\.in/alecthomas/kingpin\.v2'
+      - all:
+          - files: {extensions: [.go]}
+          - any:
+              - regex: *cli_modules
+              - all:
+                  - not:
+                      regex: '\b(?:http|fasthttp)\.ListenAndServe(?:TLS)?\s*\(|\.(?:ListenAndServe|RunTLS)\s*\('
+                  - any:
+                      - all:
+                          - regex: '"flag"'
+                          - regex: '\bflag\.(?:Parse|Args?|NArg|String(?:Var)?|Int(?:64)?(?:Var)?|Uint(?:64)?(?:Var)?|Bool(?:Var)?|Float64(?:Var)?|Duration(?:Var)?|Var)\s*\('
+                      - regex: '\bos\.Args\s*\['
+  examples:
+    match:
+      - {path: 'app.go', content: "if len(os.Args[1:]) > 0 {}"}
+      - {path: go.mod, content: "require github.com/spf13/cobra v1.8.0"}
+    no_match:
+      - {path: 'app.go', content: "func main() { http.ListenAndServe(os.Args[1], nil) }"}
+      - {path: go.mod, content: "require github.com/spf13/cobra v1.8.0 // indirect"}
+
 ConnectRpc:
   key: go_connect_rpc
   gate: {extensions: [.go], path_segments: [go.mod]}
@@ -150,6 +178,45 @@ Echo:
           package main
 
           import "github.com/labstack/echo/v4"
+
+Encore:
+  key: go_encore
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.go]}
+          - regex: &encore_signal '\bencore\.dev\s+v\d|"encore\.dev/|(?m:^//encore:api\b)'
+      - all:
+          - files: {path_segments: [go.mod]}
+          - go_dependency: *encore_signal
+  examples:
+    match:
+      - {path: go.mod, content: "module encore.app\n\nrequire encore.dev v1.41.0"}
+      - {path: hello/hello.go, content: "import \"encore.dev/rlog\""}
+      - {path: hello/hello.go, content: "package hello\n\n//encore:api public\nfunc Ping() {}"}
+    no_match:
+      - {path: main.go, content: "// see https://encore.dev for docs\npackage main"}
+      - {path: go.mod, content: "require encore.dev v1.41.0 // indirect"}
+
+Fasthttp:
+  key: go_fasthttp
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    all:
+      - go_mod_dependency: 'github.com/valyala/fasthttp'
+      - not:
+          contains: 'github.com/gofiber/fiber'
+  examples:
+    match:
+      - {path: 'go.mod', content: "github.com/valyala/fasthttp"}
+    no_match:
+      - path: 'go.mod'
+        content: |-
+          github.com/valyala/fasthttp
+          github.com/gofiber/fiber
+      - {path: 'go.mod', content: "github.com/gin-gonic/gin"}
+      - {path: 'main.go', content: "github.com/valyala/fasthttp"}
 
 Fiber:
   key: go_fiber

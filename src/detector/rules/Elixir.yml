@@ -27,6 +27,102 @@ Absinthe:
             forward "/api", Absinthe.Plug, schema: BlogWeb.Schema
           end
 
+Bandit:
+  key: elixir_bandit
+  gate: {extensions: [.ex, .exs], basenames: [mix.exs]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [mix.exs]}
+          - contains:
+              - '{:bandit,'
+              - '{ :bandit,'
+              - '{:bandit_phoenix,'
+              - 'Bandit.PhoenixAdapter'
+      - all:
+          - files: {extensions: [.ex, .exs]}
+          - not:
+              files: {basenames: [mix.exs]}
+          - contains:
+              - 'Bandit.PhoenixAdapter'
+              - '{Bandit,'
+              - '{ Bandit,'
+              - 'Bandit.start_link'
+              - 'plug: Bandit'
+  examples:
+    match:
+      - {path: 'app.ex', content: "Bandit.start_link(plug: MyApp)"}
+    no_match:
+      - {path: 'mix.exs', content: "Bandit.start_link()"}
+
+Cli:
+  key: elixir_cli
+  files: {extensions: [.ex, .exs]}
+  match:
+    regex: '\bOptionParser\.(?:parse|parse!|next)\b|\bSystem\.argv\b|\bOptimus\.new!?\b|\buse\s+Optimus\b'
+  examples:
+    match:
+      - {path: 'app.ex', content: "OptionParser.parse(System.argv())"}
+    no_match:
+      - {path: 'app.ex', content: "IO.puts(\"ready\")"}
+
+Phoenix:
+  key: elixir_phoenix
+  gate: {extensions: [.ex, .exs], basenames: [mix.exs]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [mix.exs]}
+          - contains:
+              - '{:phoenix,'
+              - '{ :phoenix,'
+      - all:
+          - files: {extensions: [.ex, .exs]}
+          - not:
+              files: {basenames: [mix.exs]}
+          - any:
+              - contains: 'Phoenix.Router'
+              - regex: '\buse\s+[A-Z]\w*(?:\.[A-Z]\w*)*\s*,\s*:router\b'
+  examples:
+    match:
+      - path: 'mix.exs'
+        content: |-
+          defp deps do
+            [
+              {:phoenix, "~> 1.7.1"},
+              {:phoenix_ecto, "~> 4.4"},
+              {:plug_cowboy, "~> 2.5"}
+            ]
+          end
+      - path: 'lib/my_app_web/router.ex'
+        content: |-
+          defmodule MyAppWeb.Router do
+            use MyAppWeb, :router
+
+            scope "/", MyAppWeb do
+              get "/", PageController, :index
+            end
+          end
+      - path: 'lib/my_app_web/router.ex'
+        content: |-
+          defmodule MyAppWeb.Router do
+            use Phoenix.Router
+          end
+    no_match:
+      - path: 'mix.exs'
+        content: |-
+          defp deps do
+            [
+              {:phoenix_html, "~> 3.3"},
+              {:phoenix_live_view, "~> 0.18"}
+            ]
+          end
+      - path: 'lib/my_app/foo.ex'
+        content: |
+          defmodule Foo do
+          end
+      - {path: 'mix.exs', content: "use Phoenix.Router"}
+
 PhoenixChannel:
   key: elixir_phoenix_channel
   files: {extensions: [.ex, .exs]}
@@ -58,3 +154,127 @@ PhoenixChannel:
             use MyAppWeb, :controller
             def index(conn, _params), do: render(conn, "index.html")
           end
+
+Plug:
+  key: elixir_plug
+  gate: {extensions: [.ex, .exs], basenames: [mix.exs]}
+  match:
+    any:
+      - all:
+          - files: {path_segments: [mix.exs]}
+          - contains:
+              - '{:plug,'
+              - 'plug:'
+      - all:
+          - files: {extensions: [.ex, .exs]}
+          - not:
+              files: {path_segments: [mix.exs]}
+          - any:
+              - contains:
+                  - 'use Plug.Router'
+                  - 'plug :match'
+                  - 'plug :dispatch'
+                  - 'Plug.Router'
+                  - 'import Plug.'
+              - regex: '(?:^|\n)[ \t]*forward[ \t(]+["''][^"''\n]*["''][^\n]*\bto:'
+  examples:
+    match:
+      - path: 'mix.exs'
+        content: |-
+          defmodule MyApp.MixProject do
+            use Mix.Project
+
+            def project do
+              [
+                app: :my_app,
+                version: "0.1.0",
+                elixir: "~> 1.12",
+                deps: deps()
+              ]
+            end
+
+            defp deps do
+              [
+                {:plug, "~> 1.14"},
+                {:plug_cowboy, "~> 2.5"}
+              ]
+            end
+          end
+      - path: 'mix.exs'
+        content: |-
+          defmodule MyApp.MixProject do
+            use Mix.Project
+
+            defp deps do
+              [
+                plug: "~> 1.14"
+              ]
+            end
+          end
+      - path: 'lib/router.ex'
+        content: |-
+          defmodule MyApp.Router do
+            use Plug.Router
+
+            plug :match
+            plug :dispatch
+
+            get "/hello" do
+              send_resp(conn, 200, "Hello World!")
+            end
+
+            match _ do
+              send_resp(conn, 404, "Not found")
+            end
+          end
+      - path: 'lib/handler.ex'
+        content: |-
+          defmodule MyApp.Handler do
+            import Plug.Conn
+
+            def call(conn, _opts) do
+              send_resp(conn, 200, "OK")
+            end
+          end
+      - path: 'lib/router.ex'
+        content: |-
+          defmodule MyApp.Router do
+            use Plug.Router
+
+            forward "/api", to: MyApp.API
+
+            get "/health", do: send_resp(conn, 200, "OK")
+          end
+      - path: 'lib/router.ex'
+        content: |-
+          defmodule MyApp.Router do
+            forward "/api", to: MyApp.API
+          end
+      - path: 'lib/router.ex'
+        content: |-
+          defmodule MyApp.Router do
+            forward "/", host: "api.", to: MyApp.API
+          end
+    no_match:
+      - path: 'lib/accounts.ex'
+        content: |-
+          defmodule App.Accounts do
+            import Ecto.Query, warn: false
+            alias App.Repo
+
+            def list_users, do: Repo.all(User)
+
+            def forward_invite(user, opts \\ []) do
+              forward = Keyword.get(opts, :forward, true)
+              if forward, do: Mailer.deliver(user), else: :skip
+            end
+          end
+      - path: 'lib/utils.ex'
+        content: |-
+          defmodule MyApp.Utils do
+            def hello do
+              "Hello World"
+            end
+          end
+      - {path: 'mix.exs', content: "# Just a comment"}
+      - {path: 'mix.exs/lib/app.ex', content: "use Plug.Router"}

@@ -3,7 +3,7 @@ require "../../engines/java_engine"
 require "../../../miniparsers/java_type_model_extractor_ts"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../utils/url_path"
-require "../../../detector/detectors/java/spring_data_rest"
+require "../../../detector/rule_detector"
 
 module Analyzer::Java
   # Spring Data REST exports every public repository interface as a CRUD +
@@ -11,6 +11,8 @@ module Analyzer::Java
   # *types*: `@RepositoryRestResource(path=)` only renames them.
   class SpringDataRest < Analyzer
     analyzer_for "java_spring_data_rest"
+
+    include RuleDetector::SourceCheck
 
     include JavaEngine
 
@@ -62,7 +64,7 @@ module Analyzer::Java
         get_files_by_basename(name).each do |file|
           isolating_file_errors(file) do
             dir = File.dirname(file) + "/"
-            build_dirs[dir] = build_dirs[dir] || content_matches?(read_file_content(file), Detector::Java::SpringDataRest::BUILD_MARKERS)
+            build_dirs[dir] = build_dirs[dir] || source_detector.detect(file, read_file_content(file))
           end
         end
       end

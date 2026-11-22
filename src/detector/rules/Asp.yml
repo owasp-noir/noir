@@ -1,0 +1,32 @@
+Classic:
+  key: asp_classic
+  files: {extensions: [.asp, .asa, .inc]}
+  match:
+    any:
+      - regex:
+          - '(?i)<%@\s*[\s\S]{0,200}?language\s*=\s*"?(?:vbscript|jscript)"?'
+          - '(?i)<script\b[^>]*\brunat\s*=\s*["'']?server["'']?'
+      - all:
+          - regex: '<%[=@]?'
+          - regex: '(?i)\b(?:Request|Response|Server|Session|Application)\s*\.\s*(?:QueryString|Form|Cookies|ServerVariables|Write|Redirect|CreateObject|MapPath|Contents)'
+  examples:
+    match:
+      - path: 'default.asp'
+        content: |-
+          <%@LANGUAGE="VBSCRIPT" CODEPAGE="65001"%>
+          <html><body>hello</body></html>
+      - path: 'view.asp'
+        content: |-
+          <%
+          dim id : id = Request.QueryString("id")
+          Response.Write id
+          %>
+      - path: 'global.asa'
+        content: |-
+          <script runat="server" language="vbscript">
+          sub Application_onStart
+          end sub
+          </script>
+    no_match:
+      - {path: 'Default.aspx', content: "<% dim id : id = Request.QueryString(\"id\") %>"}
+      - {path: 'index.asp', content: "<html><body><h1>Static page</h1></body></html>"}
