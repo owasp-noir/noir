@@ -46,7 +46,10 @@ end
 
 describe "echo_fmt_group route resolution", tags: "functional" do
   it "records the evidence for each reported route" do
-    tester.endpoints.find! { |ep| ep.url == "/status" }.resolution.should eq({"prefix" => "unresolved"})
+    tester.endpoints.find! { |ep| ep.url == "/status" }.resolution.should eq({"prefix" => "heuristic"})
+    tester.endpoints.select(&.url.starts_with?("/admin/entity/")).each do |ep|
+      ep.resolution.should eq({"prefix" => "unresolved"})
+    end
     tester.endpoints.find! { |ep| ep.url == "/" }.resolution.should be_nil
   end
 end

@@ -13,7 +13,7 @@ module Analyzer::Go
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
       # Other packages' exported string constants (`e.Group(apiv2.GroupPrefix)`).
-      string_seed = go_string_seed(mark_wrappers: true)
+      string_seed = go_string_seed
       package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER, string_seed: string_seed)
       # Pre-pass for cross-file identifier-handler resolution. Built
       # once per analyze() so each per-file callee pass only does an

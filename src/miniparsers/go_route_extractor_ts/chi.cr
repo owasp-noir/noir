@@ -21,9 +21,9 @@ module Noir
     # 0-based row: the `r.Route("/api/v1", func(r chi.Router) {...})`
     # closures around it. The mount's own path is not part of it.
     def extract_chi_mount_scopes(source : String,
-                                 external_string_values : Hash(String, String) = Hash(String, String).new) : Hash(Int32, String)
+                                 external_string_values : Hash(String, String) = Hash(String, String).new) : Hash(Int32, Route)
       config = ScopedConfig.new(net_http_methods: true, mount_method: "Mount")
-      extract_scoped_routes(source, config, Set(String).new, external_string_values).select(&.verb.==("BIND")).to_h { |site| {site.line, site.path} }
+      extract_scoped_routes(source, config, Set(String).new, external_string_values).select(&.verb.==("BIND")).to_h { |site| {site.line, site} }
     end
 
     # Exposes the closure-scoped walker against an arbitrary node
@@ -594,7 +594,7 @@ module Noir
           Noir::TreeSitter.each_named_arg(args) do |arg|
             if path.nil?
               # A path not read in full mounts as an unread prefix.
-              path = string_expr_text(arg, source, string_values) || unread_group_prefix(arg, source, string_values) || ""
+              path = path_expr_text(arg, source, string_values) || unread_group_prefix(arg, source, string_values) || ""
             elsif Noir::TreeSitter.node_type(arg) == "identifier"
               child = Noir::TreeSitter.node_text(arg, source)
             end
@@ -975,7 +975,7 @@ module Noir
         # down (e.g. `const apiBase = "/api/v2"` used as `r.Route(apiBase,
         # ...)`). With an empty `string_values` map this still only
         # matches literals, preserving the original behaviour.
-        if s = string_expr_text(arg, source, string_values)
+        if s = path_expr_text(arg, source, string_values)
           return s
         end
       end

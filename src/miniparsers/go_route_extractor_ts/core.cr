@@ -181,6 +181,9 @@ module Noir
     # noncharacter, so no path a Go source spells can hold it.
     UNREAD_PREFIX = '\u{FDD0}'
 
+    # Travels with a path read from one of several wrapper returns.
+    HEURISTIC_PREFIX = '\u{FDD2}'
+
     # Whether a group prefix was not read in full (see `UNREAD_PREFIX`).
     def self.unread_prefix?(prefix : String) : Bool
       prefix.includes?(UNREAD_PREFIX)
@@ -222,8 +225,14 @@ module Noir
                      *, @prefix_unresolved : Bool = false)
         if path.includes?(UNREAD_PREFIX)
           path = path.delete(UNREAD_PREFIX)
+          @raw_path = @raw_path.delete(UNREAD_PREFIX)
           path = "/" if path.empty?
           @prefix_unresolved = true
+        end
+        if path.includes?(HEURISTIC_PREFIX)
+          path = path.delete(HEURISTIC_PREFIX)
+          @raw_path = @raw_path.delete(HEURISTIC_PREFIX)
+          @prefix_heuristic = true
         end
         @path = path
       end
@@ -380,9 +389,17 @@ module Noir
         # groups derived from the mounted app inherit it.
         collect_mounts(root, source, group_prefixes, mount_methods, string_values) unless mount_methods.empty?
 
+        # The whole-file map may select another function's local with the
+        # same name. Keep that reported placement, with its by-name evidence.
+        declarations = Hash(UInt32, String).new
+        first_prefix = Hash(String, String).new
+        conflicting = Set(String).new
         Noir::TreeSitter.walk(root) do |node|
           next unless group_assignment_node?(node)
-          collect_group(node, source, group_prefixes, group_method, group_aliases, string_values, extra_group_methods)
+          name = collect_group(node, source, group_prefixes, group_method, group_aliases, string_values, extra_group_methods)
+          next unless name && (prefix = group_prefixes[name]?)
+          declarations[LibTreeSitter.ts_node_start_byte(node)] = prefix
+          conflicting << name if first_prefix.put_if_absent(name) { prefix } != prefix
         end
 
         # Closure-scoped groups (Iris `Party("/x", func(p){...})` /
@@ -431,6 +448,15 @@ module Noir
           if found.empty? && !tables.empty?
             found = table_routes(node, source, tables, string_values) { |values| decode.call(node, values) }
           end
+          found.map! do |route|
+            name = route.router_name
+            if conflicting.includes?(name) && (binding = Noir::GoBinding.local(name, node, source)) &&
+               (local = declarations[LibTreeSitter.ts_node_start_byte(binding.declaration)]?) && local != group_prefixes[name]? &&
+               !closure_prefix_for(closure_groups, LibTreeSitter.ts_node_start_byte(node), name)
+              route.prefix_heuristic = true
+            end
+            route
+          end unless conflicting.empty?
           routes.concat(found)
         end
       end
@@ -456,7 +482,7 @@ module Noir
         app = nil
         Noir::TreeSitter.each_named_arg(args) do |arg|
           if prefix.nil?
-            prefix = string_expr_text(arg, source, string_values)
+            prefix = path_expr_text(arg, source, string_values)
             break if prefix.nil?
           elsif app.nil? && Noir::TreeSitter.node_type(arg) == "identifier"
             app = Noir::TreeSitter.node_text(arg, source)
@@ -1938,6 +1964,7 @@ module Noir
         parent_name = Noir::TreeSitter.node_text(parent_node, source)
         if parent_prefix = groups[parent_name]?
           groups[var_name] ||= parent_prefix
+          return var_name
         end
         return
       end
@@ -1958,8 +1985,10 @@ module Noir
       if group_method == "Subrouter" && Noir::TreeSitter.node_type(parent_node) == "call_expression"
         if prefix = subrouter_chain_prefix(parent_node, source, groups, string_values)
           groups[var_name] = prefix
+          return var_name
         elsif !groups.has_key?(var_name) && (prefix = subrouter_chain_prefix(parent_node, source, groups, string_values, unread: true))
           groups[var_name] = prefix
+          return var_name
         end
         return
       end
@@ -1969,7 +1998,7 @@ module Noir
 
       prefix = nil
       Noir::TreeSitter.each_named_arg(args) do |arg|
-        prefix = string_expr_text(arg, source, string_values)
+        prefix = path_expr_text(arg, source, string_values)
         next unless prefix
         break
       end
@@ -1982,6 +2011,7 @@ module Noir
       end
 
       groups[var_name] = prefix
+      var_name
     end
 
     # The prefix a mux `<chain>.Subrouter()` is scoped to, from the
@@ -2012,7 +2042,7 @@ module Noir
           return unless inner_args
           segment = nil
           Noir::TreeSitter.each_named_child(inner_args) do |arg|
-            segment = string_expr_text(arg, source, string_values)
+            segment = path_expr_text(arg, source, string_values)
             break if segment
           end
           segment ||= unread_group_prefix(Noir::TreeSitter.first_named_arg(inner_args), source, string_values) if unread
@@ -2362,7 +2392,7 @@ module Noir
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
         Noir::TreeSitter.each_named_arg(args) do |arg|
-          prefix = string_expr_text(arg, source, string_values) || ""
+          prefix = path_expr_text(arg, source, string_values) || ""
           break unless prefix.empty?
         end
         if prefix.empty? && (first = Noir::TreeSitter.first_named_arg(args)) && string_expr_text(first, source, string_values).nil?
@@ -2954,6 +2984,9 @@ module Noir
         child = Noir::TreeSitter.first_named_child(node)
         child ? string_expr_text(child, source, values, depth + 1, partial) : nil
       when "selector_expression"
+        if values.has_key?(BOUND_SELECTORS) && (bound = values[selector_binding_key(node)]?)
+          return bound
+        end
         # Another package's constant (`config.ApiUri`), when the analyzer
         # seeded it (see `extract_string_exports`).
         values[Noir::TreeSitter.node_text(node, source)]?
@@ -3018,7 +3051,14 @@ module Noir
           partial = false if type == "interpreted_string_literal" || type == "raw_string_literal"
         end
       end
-      string_expr_text(arg, source, values, partial: partial)
+      path_expr_text(arg, source, values, partial: partial)
+    end
+
+    # Keep the spelling supplied by a partial wrapper template. Its readable
+    # return is a candidate, even when the argument itself is a literal.
+    private def path_expr_text(arg, source, values, partial : Bool = false) : String?
+      text = string_expr_text(arg, source, values, partial: partial) || return
+      uses_unread_wrapper?(arg, source, values) ? "#{text}#{HEURISTIC_PREFIX}" : text
     end
 
     # A group registration can sandwich a runtime name between two literal
@@ -3048,7 +3088,7 @@ module Noir
     # tail. The strict read needs every operand and is the partial one
     # everywhere else, so it fails exactly where the tail was kept.
     private def unread_base?(arg : LibTreeSitter::TSNode, source : String, values : Hash(String, String)) : Bool
-      string_expr_text(arg, source, values).nil? || uses_unread_wrapper?(arg, source, values)
+      string_expr_text(arg, source, values).nil?
     end
 
     # A wrapper may contribute its literal default while another return
@@ -3227,7 +3267,7 @@ module Noir
       name = safe_placeholder(placeholder_name(node, source))
       n = seen[name]?
       seen[name] = (n || 0) + 1
-      "{#{n ? "#{name}#{n + 1}" : name}}"
+      "{#{n ? "#{name}#{n + 1}" : name}}#{UNREAD_PREFIX}"
     end
 
     # The identifier a dynamic segment is named for: the variable, the
@@ -3297,7 +3337,7 @@ module Noir
     # wrapper that only adds a runtime-configured prefix reads as its
     # default. One whose computable returns disagree, or with none, maps to
     # nil, so the caller can drop a name defined both ways.
-    def extract_string_exports(source : String, mark_wrappers : Bool = false) : Hash(String, String?)
+    def extract_string_exports(source : String) : Hash(String, String?)
       exports = Hash(String, String?).new
       Noir::TreeSitter.parse_go(source) do |root|
         values = collect_string_values(root, source)
@@ -3326,7 +3366,7 @@ module Noir
             key = "#{Noir::TreeSitter.node_text(name, source)}()"
             template, incomplete = wrapper_template(body, source, values.merge({param => WRAPPER_ARG}))
             exports[key] = template
-            exports["#{UNREAD_PREFIX}#{key}"] = "" if mark_wrappers && template && incomplete
+            exports["#{UNREAD_PREFIX}#{key}"] = "" if template && incomplete
           end
         end
       end
@@ -3490,6 +3530,9 @@ module Noir
     private def group_join(prefix : String, path : String) : String
       if prefix.includes?(UNREAD_PREFIX) || path.includes?(UNREAD_PREFIX)
         return "#{UNREAD_PREFIX}#{group_join(prefix.delete(UNREAD_PREFIX), path.delete(UNREAD_PREFIX))}"
+      end
+      if prefix.includes?(HEURISTIC_PREFIX) || path.includes?(HEURISTIC_PREFIX)
+        return "#{group_join(prefix.delete(HEURISTIC_PREFIX), path.delete(HEURISTIC_PREFIX))}#{HEURISTIC_PREFIX}"
       end
       return prefix if path.empty? && !prefix.empty?
       "#{prefix.rstrip('/')}/#{path.lstrip('/')}"

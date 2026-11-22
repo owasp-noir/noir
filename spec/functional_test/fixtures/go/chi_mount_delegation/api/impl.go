@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -21,4 +22,9 @@ func healthRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {})
 	return r
+}
+
+// The same target receives a runtime value through this mount.
+func Configured(si ServerInterface) http.Handler {
+	return HandlerWithOptions(si, ChiServerOptions{BaseURL: os.Getenv("API_BASE")})
 }

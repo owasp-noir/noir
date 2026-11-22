@@ -32,6 +32,9 @@ end
 it "marks the local closure's proximity binding, leaving inline definitions unmarked (#3567)", tags: "functional" do
   marked = tester.endpoints.select { |ep| ep.resolution.try(&.["handler"]?) }
   marked.map(&.url).should eq(["/livez"])
-  marked.first.resolution.should eq({"handler" => "heuristic"})
-  tester.endpoints.find! { |ep| ep.url == "/api/v1/photos/:uid" }.resolution.should be_nil
+  marked.first.resolution.should eq({"handler" => "heuristic", "prefix" => "heuristic"})
+  ["/api/v1/photos/:uid", "/api/v1/version", "/s/:token"].each do |url|
+    tester.endpoints.find! { |ep| ep.url == url }.resolution.should eq({"prefix" => "heuristic"})
+  end
+  tester.endpoints.find! { |ep| ep.url == "/v2/status" }.resolution.should be_nil
 end

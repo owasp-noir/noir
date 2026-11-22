@@ -8,12 +8,21 @@ require "../../func_spec.cr"
 # `Unmounted` delegates the same way but is never mounted, so `/health`
 # stays at the root.
 expected_endpoints = [
+  Endpoint.new("/api/dynamic", "GET"),
+  Endpoint.new("/configured/dynamic", "GET"),
+  Endpoint.new("/tenant/nested/dynamic", "GET"),
   Endpoint.new("/api/status", "GET"),
   Endpoint.new("/api/items", "GET"),
   Endpoint.new("/api/items", "POST"),
   Endpoint.new("/v2/emoji", "GET"),
   Endpoint.new("/v2/chat", "GET"),
   Endpoint.new("/health", "GET"),
+  Endpoint.new("/tenant/nested/status", "GET"),
+  Endpoint.new("/tenant/nested/items", "GET"),
+  Endpoint.new("/tenant/nested/items", "POST"),
+  Endpoint.new("/configured/status", "GET"),
+  Endpoint.new("/configured/items", "GET"),
+  Endpoint.new("/configured/items", "POST"),
 ]
 
 tester = FunctionalTester.new("fixtures/go/chi_mount_delegation/", {
@@ -22,10 +31,14 @@ tester = FunctionalTester.new("fixtures/go/chi_mount_delegation/", {
 }, expected_endpoints)
 tester.perform_tests
 
-# The mount prefix is read; the generated base between it and the tail is
-# not, so the mark survives the Mount expansion (#3567).
 describe "chi mount delegation prefix resolution", tags: "functional" do
-  it "keeps the mark on mounted generated routes, and not on a literal one" do
-    tester.endpoints.reject(&.resolution).map { |ep| "#{ep.method} #{ep.url}" }.should eq(["GET /health"])
+  it "reads the empty string field only on the mounts that pass it" do
+    tester.endpoints.each do |ep|
+      if ep.url.starts_with?("/configured/") || ep.url.starts_with?("/tenant/") || ep.url.ends_with?("/dynamic")
+        ep.resolution.should eq({"prefix" => "unresolved"})
+      else
+        ep.resolution.should be_nil
+      end
+    end
   end
 end
