@@ -1,6 +1,6 @@
 {
   "measured_on": "2026-11-22",
-  "analyzer_revision": "a80bec92ba7511a2160c35acd9539e372099a6cc",
+  "analyzer_revision": "03395ca4ddd53eaa6bc34506ab9f0b4a6e8cc020",
   "technologies": [
     {
       "matched": 16,
@@ -15,7 +15,6 @@
       "detection": {
         "detected_repositories": 1,
         "other_technologies": [
-          "cs_aspnet_core_mvc",
           "http_file",
           "oas3"
         ],
@@ -29,17 +28,17 @@
         "spec_open_code_guarded": 0
       },
       "params": {
-        "both": 28,
-        "spec_only": 16,
+        "both": 44,
+        "spec_only": 0,
         "code_only": 0,
-        "recall": 0.6363636363636364,
+        "recall": 1.0,
         "agreement": 1.0
       },
       "body_fields": {
-        "both": 38,
-        "spec_only": 1,
+        "both": 39,
+        "spec_only": 0,
         "code_only": 0,
-        "recall": 0.9743589743589743,
+        "recall": 1.0,
         "agreement": 1.0
       },
       "repositories": 1
@@ -50,16 +49,12 @@
       "code_only": 249,
       "recall": 0.8655737704918033,
       "agreement": 0.5146198830409356,
-      "marked": 262,
-      "marked_share": 0.5107212475633528,
+      "marked": 21,
+      "marked_share": 0.04093567251461988,
       "claims": {
         "handler:heuristic": {
           "count": 21,
           "share": 0.04093567251461988
-        },
-        "prefix:unresolved": {
-          "count": 241,
-          "share": 0.4697855750487329
         }
       },
       "name": "go_chi",
@@ -70,11 +65,9 @@
           "go_cli",
           "go_http",
           "js_cli",
-          "js_egg",
           "js_http",
           "js_nextjs",
-          "oas3",
-          "supabase"
+          "oas3"
         ],
         "forced_only": 0,
         "automatic_only": 0
@@ -86,18 +79,18 @@
         "spec_open_code_guarded": 133
       },
       "params": {
-        "both": 56,
-        "spec_only": 2,
-        "code_only": 94,
-        "recall": 0.9655172413793104,
-        "agreement": 0.37333333333333335
+        "both": 57,
+        "spec_only": 1,
+        "code_only": 110,
+        "recall": 0.9827586206896551,
+        "agreement": 0.3413173652694611
       },
       "body_fields": {
-        "both": 43,
-        "spec_only": 135,
-        "code_only": 22,
-        "recall": 0.24157303370786518,
-        "agreement": 0.6615384615384615
+        "both": 168,
+        "spec_only": 10,
+        "code_only": 37,
+        "recall": 0.9438202247191011,
+        "agreement": 0.8195121951219512
       },
       "repositories": 2
     },
@@ -107,9 +100,13 @@
       "code_only": 115,
       "recall": 0.8895348837209303,
       "agreement": 0.5708955223880597,
-      "marked": 4,
-      "marked_share": 0.014925373134328358,
+      "marked": 5,
+      "marked_share": 0.018656716417910446,
       "claims": {
+        "prefix:heuristic": {
+          "count": 1,
+          "share": 0.0037313432835820895
+        },
         "prefix:unresolved": {
           "count": 4,
           "share": 0.014925373134328358
@@ -210,7 +207,7 @@
       "marked": 108,
       "marked_share": 0.9473684210526315,
       "claims": {
-        "prefix:unresolved": {
+        "prefix:heuristic": {
           "count": 108,
           "share": 0.9473684210526315
         }
@@ -336,11 +333,11 @@
         "agreement": 0.7964376590330788
       },
       "body_fields": {
-        "both": 96,
-        "spec_only": 88,
-        "code_only": 19,
-        "recall": 0.5217391304347826,
-        "agreement": 0.8347826086956521
+        "both": 164,
+        "spec_only": 20,
+        "code_only": 79,
+        "recall": 0.8913043478260869,
+        "agreement": 0.6748971193415638
       },
       "repositories": 2
     },
@@ -579,11 +576,11 @@
         "agreement": 0.7989130434782609
       },
       "body_fields": {
-        "both": 66,
-        "spec_only": 81,
-        "code_only": 18,
-        "recall": 0.4489795918367347,
-        "agreement": 0.7857142857142857
+        "both": 129,
+        "spec_only": 18,
+        "code_only": 77,
+        "recall": 0.8775510204081632,
+        "agreement": 0.6262135922330098
       },
       "guards": {
         "both_guarded": 0,
@@ -688,16 +685,16 @@
       "params": {
         "both": 23,
         "spec_only": 1,
-        "code_only": 94,
+        "code_only": 102,
         "recall": 0.9583333333333334,
-        "agreement": 0.19658119658119658
+        "agreement": 0.184
       },
       "body_fields": {
-        "both": 43,
-        "spec_only": 22,
-        "code_only": 22,
-        "recall": 0.6615384615384615,
-        "agreement": 0.6615384615384615
+        "both": 63,
+        "spec_only": 2,
+        "code_only": 23,
+        "recall": 0.9692307692307692,
+        "agreement": 0.7325581395348837
       },
       "guards": {
         "both_guarded": 12,
@@ -710,8 +707,7 @@
         "other_technologies": [
           "go_cli",
           "go_http",
-          "oas3",
-          "supabase"
+          "oas3"
         ],
         "forced_only": 0,
         "automatic_only": 0,
@@ -746,11 +742,11 @@
         "agreement": 0.76
       },
       "body_fields": {
-        "both": 30,
-        "spec_only": 7,
-        "code_only": 1,
-        "recall": 0.8108108108108109,
-        "agreement": 0.967741935483871
+        "both": 35,
+        "spec_only": 2,
+        "code_only": 2,
+        "recall": 0.9459459459459459,
+        "agreement": 0.9459459459459459
       },
       "guards": {
         "both_guarded": 8,
@@ -793,17 +789,17 @@
         "src/Catalog.API/Catalog.API_v2.json"
       ],
       "params": {
-        "both": 28,
-        "spec_only": 16,
+        "both": 44,
+        "spec_only": 0,
         "code_only": 0,
-        "recall": 0.6363636363636364,
+        "recall": 1.0,
         "agreement": 1.0
       },
       "body_fields": {
-        "both": 38,
-        "spec_only": 1,
+        "both": 39,
+        "spec_only": 0,
         "code_only": 0,
-        "recall": 0.9743589743589743,
+        "recall": 1.0,
         "agreement": 1.0
       },
       "guards": {
@@ -815,7 +811,6 @@
       "detection": {
         "detected": true,
         "other_technologies": [
-          "cs_aspnet_core_mvc",
           "http_file",
           "oas3"
         ],
@@ -1052,16 +1047,12 @@
       "code_only": 189,
       "recall": 1.0,
       "agreement": 0.5604651162790698,
-      "marked": 262,
-      "marked_share": 0.6093023255813953,
+      "marked": 21,
+      "marked_share": 0.04883720930232558,
       "claims": {
         "handler:heuristic": {
           "count": 21,
           "share": 0.04883720930232558
-        },
-        "prefix:unresolved": {
-          "count": 241,
-          "share": 0.5604651162790698
         }
       },
       "name": "owncast",
@@ -1075,18 +1066,18 @@
         "openapi.yaml"
       ],
       "params": {
-        "both": 33,
-        "spec_only": 1,
-        "code_only": 0,
-        "recall": 0.9705882352941176,
-        "agreement": 1.0
+        "both": 34,
+        "spec_only": 0,
+        "code_only": 8,
+        "recall": 1.0,
+        "agreement": 0.8095238095238095
       },
       "body_fields": {
-        "both": 0,
-        "spec_only": 113,
-        "code_only": 0,
-        "recall": 0.0,
-        "agreement": null
+        "both": 105,
+        "spec_only": 8,
+        "code_only": 14,
+        "recall": 0.9292035398230089,
+        "agreement": 0.8823529411764706
       },
       "guards": {
         "both_guarded": 108,
@@ -1101,7 +1092,6 @@
           "go_cli",
           "go_http",
           "js_cli",
-          "js_egg",
           "js_http",
           "js_nextjs",
           "oas3"
@@ -1121,7 +1111,7 @@
       "marked": 108,
       "marked_share": 0.9473684210526315,
       "claims": {
-        "prefix:unresolved": {
+        "prefix:heuristic": {
           "count": 108,
           "share": 0.9473684210526315
         }
@@ -1289,9 +1279,13 @@
       "code_only": 115,
       "recall": 0.8895348837209303,
       "agreement": 0.5708955223880597,
-      "marked": 4,
-      "marked_share": 0.014925373134328358,
+      "marked": 5,
+      "marked_share": 0.018656716417910446,
       "claims": {
+        "prefix:heuristic": {
+          "count": 1,
+          "share": 0.0037313432835820895
+        },
         "prefix:unresolved": {
           "count": 4,
           "share": 0.014925373134328358
