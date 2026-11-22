@@ -5,10 +5,11 @@ require "../../func_spec.cr"
 # under `[itemId].ts` is the path parameter, not a query key.
 tester = FunctionalTester.new("fixtures/javascript/nextjs_verb_params/", {
   :techs     => 1,
-  :endpoints => 3,
+  :endpoints => 4,
 }, [
   Endpoint.new("/api/items/{itemId}", "GET", [Param.new("itemId", "", "path"), Param.new("sort", "", "query")]),
   Endpoint.new("/api/items/{itemId}", "PUT", [Param.new("itemId", "", "path"), Param.new("name", "", "body")]),
+  Endpoint.new("/api/items/{itemId}", "PATCH", [Param.new("itemId", "", "path"), Param.new("force", "", "query"), Param.new("reason", "", "body")]),
   Endpoint.new("/api/items/{itemId}", "DELETE", [Param.new("itemId", "", "path"), Param.new("reason", "", "body")]),
 ])
 
@@ -19,7 +20,10 @@ describe "Next.js Pages Router verb-branch params", tags: "functional" do
     by_method = tester.app.endpoints.to_h { |ep| {ep.method, ep.params.map { |p| "#{p.param_type}:#{p.name}" }.sort!} }
     by_method["GET"].should_not contain("body:name")
     by_method["PUT"].should_not contain("query:sort")
-    by_method["GET"].should contain("body:reason")
+    by_method["GET"].should_not contain("body:reason")
+    by_method["DELETE"].should contain("body:reason")
+    by_method["DELETE"].should_not contain("query:force")
+    by_method["PATCH"].should contain("query:force")
   end
 
   it "does not repeat the dynamic segment as a query parameter" do

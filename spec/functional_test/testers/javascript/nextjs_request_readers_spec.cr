@@ -31,6 +31,7 @@ expected_endpoints = [
     Param.new("name", "", "body"),
   ]),
   Endpoint.new("/api/user/{id}", "GET", [Param.new("id", "", "path"), Param.new("expand", "", "query")]),
+  Endpoint.new("/api/user/{id}", "PATCH", [Param.new("id", "", "path"), Param.new("expand", "", "query"), Param.new("name", "", "body")]),
   Endpoint.new("/api/user/{id}", "PUT", [Param.new("id", "", "path"), Param.new("expand", "", "query"), Param.new("name", "", "body")]),
 ]
 

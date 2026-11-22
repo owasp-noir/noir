@@ -29,12 +29,19 @@ module Analyzer::Javascript
 
         include_callee = callees_needed?
         imports = controller_imports(content)
+        custom_parser = nil.as(Bool?)
         Noir::TreeSitterAdonisJsExtractor.extract_routes(content, include_callee, path).each do |route|
           endpoint = build_endpoint(route, path, include_callee)
           params = route.controller.try do |controller, action|
             action_params(path, controller, action, imports)
           end || route.request_params
           params.each do |name, type|
+            # request.body() has no fields on GET/HEAD with the default
+            # parser. A project-supplied parser can opt those methods in.
+            if type == "json" && endpoint.method.in?("GET", "HEAD")
+              custom_parser = custom_body_parser?(path) if custom_parser.nil?
+              next unless custom_parser
+            end
             location = type == "merged" ? (endpoint.method.in?("GET", "HEAD") ? "query" : "json") : type
             endpoint.push_param(Param.new(name, "", location))
           end
@@ -44,6 +51,13 @@ module Analyzer::Javascript
 
       Fiber.yield
       @result
+    end
+
+    private def custom_body_parser?(path : String) : Bool
+      root = adonis_app_root(path)
+      %w[bodyparser bodyParser].any? do |name|
+        JS_EXTENSIONS.any? { |ext| CodeLocator.instance.source_path?(File.join(root, "config", name + ext)) }
+      end
     end
 
     private def build_endpoint(route : Noir::TreeSitterAdonisJsExtractor::Route, path : String, include_callee : Bool) : Endpoint

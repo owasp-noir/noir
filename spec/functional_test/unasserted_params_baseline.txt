@@ -41,17 +41,6 @@ fixtures/java/spring_data_rest_servlet_path/	PATCH::/shop/app/api/gadgets/{id}
 fixtures/java/spring_data_rest_servlet_path/	POST::/shop/app/api/gadgets
 fixtures/java/spring_data_rest_servlet_path/	PUT::/shop/app/api/gadgets/{id}
 fixtures/java/spring_provided_routes/	GET::/sso/callback/{registrationId}
-fixtures/javascript/adonisjs_controller_params/	GET::/notes/preview
-fixtures/javascript/express_local_router_mount/	GET::/api/v1/users/:userId
-fixtures/javascript/fastify_hapi_sibling/	POST::/api/users
-fixtures/javascript/nextjs/	DELETE::/api/users/{id}
-fixtures/javascript/nextjs/	PATCH::/api/users/{id}
-fixtures/javascript/nextjs/	POST::/api/users/{id}
-fixtures/javascript/nextjs/	PUT::/api/users/{id}
-fixtures/javascript/nextjs_request_readers/	GET::/api/user/{id}
-fixtures/javascript/nextjs_verb_params/	DELETE::/api/items/{itemId}
-fixtures/javascript/nextjs_verb_params/	GET::/api/items/{itemId}
-fixtures/javascript/nextjs_verb_params/	PUT::/api/items/{itemId}
 fixtures/kotlin/spring_message_mapping_stereotype/	SEND::/app/chat
 fixtures/kotlin/spring_message_mapping_stereotype/	SEND::/app/external
 fixtures/kotlin/spring_message_mapping_stereotype/	SEND::/app/lobby

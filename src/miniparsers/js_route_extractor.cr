@@ -1433,9 +1433,10 @@ module Noir
     def self.handler_definition_facts(handler : Handler, include_callees : Bool) : HandlerFacts?
       path = handler.path || return
       line = handler.line || return
-      key = ExtractionResultCache.key(path, "js_handler_facts", line.to_s, include_callees ? "callees" : "")
+      fn = handler.as?(JSHandlerResolver::ExportedFunction).try(&.definition)
+      key = ExtractionResultCache.key(path, "js_handler_facts", line.to_s, fn.try(&.hash).to_s, include_callees ? "callees" : "")
       ExtractionResultCache.fetch(@@handler_facts, key, @@handler_facts_mutex) do
-        read_handler_facts(path, line, include_callees)
+        read_handler_facts(path, line, fn, include_callees)
       end
     rescue
       # Same contract as `named_handler`: never cost the route.
@@ -1521,13 +1522,41 @@ module Noir
       body.matches?(GUARD_REFUSAL_RE) && !body.gsub(GUARD_REFUSAL_RE, "").matches?(RESPONDS_RE)
     end
 
-    private def self.read_handler_facts(path : String, line : Int32, include_callees : Bool) : HandlerFacts
+    private def self.read_handler_facts(path : String, line : Int32, fn : JSHandlerTable::Fn?, include_callees : Bool) : HandlerFacts
       content = stripped_source(path)
       line_start = 0
       (line - 1).times do
         line_start = (content.byte_index('\n', line_start) || return empty_handler_facts) + 1
       end
       line_end = content.byte_index('\n', line_start) || content.bytesize
+      if fn
+        body = strip_js_comments(fn.body)
+        signature_and_body = "(#{strip_js_comments(fn.params)}) => #{body}"
+      else
+        body, signature_and_body = handler_text_at_line(content, line_start, line_end)
+      end
+
+      context = Endpoint.new("", "")
+      extract_body_params(signature_and_body, context)
+      extract_query_params(signature_and_body, context)
+      extract_header_params(signature_and_body, context)
+      extract_cookie_params(signature_and_body, context)
+      extract_path_params(signature_and_body, context)
+
+      guard = guard_definition?(body)
+      request_callee_reads(body, content, path, line, context) unless guard
+      callees = if include_callees && !guard
+                  JSCalleeExtractor.callees_for_function_body(body, path, fn.try(&.body_line) || line)
+                else
+                  [] of JSCalleeExtractor::Entry
+                end
+      responds = body.matches?(RESPONDS_RE) && !body.matches?(BARE_NEXT_RE) && !body.matches?(ROUTER_BODY_RE) && !guard
+      renders_locals = body.matches?(RESPONDS_RE) && body.matches?(LOCALS_READ_RE)
+      HandlerFacts.new(context.params, callees, responds, guard, renders_locals, body.matches?(BARE_NEXT_RE), body.matches?(LOCALS_WRITE_RE),
+        touches_response?(body, fn ? signature_and_body : content, fn ? 1 : line))
+    end
+
+    private def self.handler_text_at_line(content : String, line_start : Int32, line_end : Int32) : Tuple(String, String)
       # The body brace is the one after the last `=>` on the line (or after
       # a `function` signature's closing `)`), so destructured parameters
       # `({ query })` and `Request<{ id: string }>` annotations are not
@@ -1566,24 +1595,7 @@ module Noir
         signature_and_body = body
       end
 
-      context = Endpoint.new("", "")
-      extract_body_params(signature_and_body, context)
-      extract_query_params(signature_and_body, context)
-      extract_header_params(signature_and_body, context)
-      extract_cookie_params(signature_and_body, context)
-      extract_path_params(signature_and_body, context)
-
-      guard = guard_definition?(body)
-      request_callee_reads(body, content, path, line, context) unless guard
-      callees = if include_callees && !guard
-                  JSCalleeExtractor.callees_for_function_body(body, path, line)
-                else
-                  [] of JSCalleeExtractor::Entry
-                end
-      responds = body.matches?(RESPONDS_RE) && !body.matches?(BARE_NEXT_RE) && !body.matches?(ROUTER_BODY_RE) && !guard
-      renders_locals = body.matches?(RESPONDS_RE) && body.matches?(LOCALS_READ_RE)
-      HandlerFacts.new(context.params, callees, responds, guard, renders_locals, body.matches?(BARE_NEXT_RE), body.matches?(LOCALS_WRITE_RE),
-        touches_response?(body, content, line))
+      {body, signature_and_body}
     end
 
     REQUEST_CALL_RE       = /(?<![\w$.])((?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*)\s*\(/

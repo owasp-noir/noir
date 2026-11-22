@@ -3,6 +3,7 @@ require "../models/endpoint"
 require "../models/code_locator"
 require "../utils/text_file"
 require "./import_graph"
+require "./js_handler_table"
 require "./extraction_result_cache"
 require "../utils/js_literal_scanner"
 require "../utils/top_level_split"
@@ -57,6 +58,7 @@ module Noir::JSHandlerResolver
     @@lock.synchronize do
       @@imports.clear
       @@definitions.clear
+      @@packed_exports.clear
       @@local_functions.clear
       @@tsconfig_paths.clear
       @@package_imports.clear
@@ -559,10 +561,46 @@ module Noir::JSHandlerResolver
 
   SPREAD_REQUIRE = /\.\.\.\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)|^[ \t]*export\s*\*\s*from\s*['"]([^'"]+)['"]/m
 
+  # Several exports on one line have the same public path and line. Keep
+  # the exact function for the parameter reader, including for renamed imports.
+  class ExportedFunction < Handler
+    @[JSON::Field(ignore: true)]
+    @[YAML::Field(ignore: true)]
+    getter definition : JSHandlerTable::Fn?
+
+    def initialize(name : String, path : String, definition : JSHandlerTable::Fn)
+      super(name, path, definition.line)
+      @definition = definition
+    end
+  end
+
+  @@packed_exports = Hash(String, Hash(String, JSHandlerTable::Fn)).new
+
+  private def packed_exports(target : String) : Hash(String, JSHandlerTable::Fn)
+    if cached = @@lock.synchronize { @@packed_exports[target]? }
+      return cached
+    end
+    functions = {} of String => JSHandlerTable::Fn
+    if (content = source(target)) && content.matches?(/;[ \t]*(?:module\s*\.\s*)?exports\s*\./)
+      # The table records the first export. Reassignments need the ordinary
+      # resolver's last-definition lookup.
+      writes = Hash(String, Int32).new(0)
+      content.scan(/\bexports\s*\.\s*([A-Za-z_$][\w$]*)\s*=(?!=)/) { |m| writes[m[1]] += 1 }
+      table = JSHandlerTable.for(content, target)
+      unless table.parse_error?
+        table.exports.each { |name, fn| functions[name] = fn if fn.direct && writes[name] == 1 }
+      end
+    end
+    @@lock.synchronize { ExtractionResultCache.store_capped(@@packed_exports, target, functions) }
+  end
+
   # `name` as exported by `target`, through `module.exports = {
   # ...require('./a'), ...require('./b') }` (a later spread wins) when the
   # module does not define it itself.
   private def exported_definition(text : String, target : String, name : String) : Handler
+    if fn = packed_exports(target)[name]?
+      return ExportedFunction.new(text, target, fn)
+    end
     spreads = spread_modules(target)
     if !spreads.empty? && !definition_line(target, name, strict: true)
       spreads.reverse_each do |spread|

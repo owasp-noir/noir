@@ -2,6 +2,7 @@ require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_handler_table"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/js_request_method_scope"
 require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_handler_resolver"
 require "../../../miniparsers/js_serverless_function_extractor"
@@ -210,8 +211,7 @@ module Analyzer::Javascript
       table = Noir::JSHandlerTable.for(sanitized, path, include_callee)
       default_body_info = table.default.try { |fn| fn if fn.direct }
 
-      blocks = verb_blocks(sanitized)
-      scoped = methods.to_h { |method| {method, verb_scoped(sanitized, blocks, method)} }
+      scoped = Noir::JSRequestMethodScope.new(sanitized, methods).sources(path)
 
       catch_all_urls(url, relative).each do |served|
         emit_pages_router_endpoints(path, served, methods, sanitized, scoped, table, default_body_info, result, mutex, include_callee)
@@ -705,98 +705,6 @@ module Analyzer::Javascript
         methods.concat(found)
       end
       methods.uniq
-    end
-
-    # `if (req.method === "GET") { … } else if (req.method === "PUT") { … }`:
-    # the block of one verb is not read for another. Only a condition that
-    # is a single verb test counts; anything else is kept for every verb.
-    VERB_BLOCK_HEAD = /\bif\s*\(\s*((?:req|request)\.)?method\s*===?\s*['"]([A-Z]+)['"]\s*\)\s*\{/
-
-    # The verb blocks of a file as {verb, byte range of the block}, found
-    # once per file. A head whose `if` is blanked by `blank_literals` sits
-    # inside a string and is not one. A bare `method` head counts only
-    # inside the block that binds `method` off the request: a helper's
-    # `method` parameter is not the request's.
-    private def verb_blocks(content : String) : Array({String, Range(Int32, Int32)})
-      blocks = [] of {String, Range(Int32, Int32)}
-      return blocks unless content.includes?("method")
-      masked = Noir::JSLiteralScanner.blank_literals(content)
-      code = masked.to_slice
-      scopes = nil
-      content.scan(VERB_BLOCK_HEAD) do |m|
-        start = m.byte_begin(0)
-        next if code[start] == 0x20_u8
-        unless m[1]?
-          bound = (scopes ||= bare_method_scopes(masked))
-          idx = bound.bsearch_index { |r| r.end > start }
-          next unless idx && bound[idx].begin <= start
-        end
-        open = m.byte_end(0) - 1
-        close = Noir::JSLiteralScanner.find_matching_brace_at_byte(masked, open) || next
-        blocks << {m[2], open...close}
-      end
-      blocks
-    end
-
-    # Disjoint, sorted byte ranges of the blocks that bind a bare `method`
-    # off the request (the whole file for a top-level binding).
-    private def bare_method_scopes(masked : String) : Array(Range(Int32, Int32))
-      binds = [] of Int32
-      masked.scan(METHOD_FROM_REQUEST) { |m| binds << m.byte_begin(0) }
-      masked.scan(DESTRUCTURE_FROM_REQUEST) do |m|
-        binds << m.byte_begin(0) if m[1].gsub(/\{[^{}]*\}/, "").matches?(BARE_METHOD_KEY)
-      end
-      return [] of Range(Int32, Int32) if binds.empty?
-      binds.sort!
-
-      bytes = masked.to_slice
-      openers = Set(Int32).new
-      ranges = [] of Range(Int32, Int32)
-      stack = [] of Int32
-      bi = 0
-      bytes.each_with_index do |byte, i|
-        while bi < binds.size && binds[bi] == i
-          if top = stack.last?
-            openers << top
-          else
-            ranges << (0...bytes.size)
-          end
-          bi += 1
-        end
-        if byte == '{'.ord
-          stack << i
-        elsif byte == '}'.ord && (top = stack.pop?)
-          ranges << (top...i) if openers.includes?(top)
-        end
-      end
-      stack.each { |top| ranges << (top...bytes.size) if openers.includes?(top) }
-
-      ranges.sort_by!(&.begin)
-      merged = [] of Range(Int32, Int32)
-      ranges.each do |r|
-        last = merged.last?
-        if last && r.begin <= last.end
-          merged[-1] = last.begin...Math.max(last.end, r.end)
-        else
-          merged << r
-        end
-      end
-      merged
-    end
-
-    private def verb_scoped(content : String, blocks : Array({String, Range(Int32, Int32)}), method : String) : String
-      cuts = blocks.compact_map { |verb, range| range unless verb == method }
-      return content if cuts.empty?
-      bytes = content.to_slice
-      String.build(bytes.size) do |io|
-        pos = 0
-        cuts.each do |cut|
-          next if cut.begin < pos
-          io.write(bytes[pos, cut.begin - pos])
-          pos = cut.end
-        end
-        io.write(bytes[pos..])
-      end
     end
 
     # The handler's reads through the request reader the serverless
