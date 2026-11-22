@@ -38,7 +38,7 @@ module Analyzer::Go
       # group sets `group:` (`user.DetailHandler(serverCtx)`).
       import_path_function_bodies = collect_import_path_function_bodies(package_function_bodies)
       named_scope = named_handler_scope(file_contents)
-      struct_index = Noir::GoStructFields::Index.new(file_contents, named_scope.import_dirs)
+      struct_index = named_scope.structs
       # Both `.go` files and gozero's `.api` DSL files. The per-path
       # `File.extname` re-check the inlined walk carried is redundant:
       # `get_files_by_extensions` resolves the same `File.extname` index,

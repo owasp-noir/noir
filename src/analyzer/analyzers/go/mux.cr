@@ -63,7 +63,7 @@ module Analyzer::Go
          Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content)}
       end
       named_scope = named_handler_scope(file_contents)
-      resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs)
+      resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs, structs: named_scope.structs)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
         next unless File.exists?(path)

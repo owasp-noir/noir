@@ -1163,6 +1163,17 @@ module Analyzer::Go
       go_route_source_candidate?(content, extra_methods, verb_calls)
     end
 
+    def each_framework_route_file(file_contents, framework_dirs, marker, methods, &block : String, String, String ->)
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if go_test_path?(path)
+        next unless File.exists?(path)
+        content = file_contents[path]? || read_file_content(path)
+        dir = File.dirname(path)
+        next unless framework_route_source_candidate?(content, dir, framework_dirs, marker, methods)
+        Noir::TreeSitter.with_go_tree(content) { block.call(path, content, dir) }
+      end
+    end
+
     # --- Cross-file function body pre-pass --------------------------------
     #
     # Walks every cached `.go` source in `file_contents` and collects
@@ -1373,8 +1384,12 @@ module Analyzer::Go
     # Framework-specific accessors remain in the adapter. Binding and helper
     # traversal use the same language-level resolver as net/http and chi.
     def add_binding_params(lines, file, endpoints, resolver)
+      return if endpoints.empty?
       recv = lines.first?.try(&.match(Noir::GoNamedHandler::RECEIVER_RE)).try(&.[1]?)
-      factory = recv && lines.any?(&.matches?(/:=\s*#{Regex.escape(recv)}\.\w+\(\)/))
+      if recv
+        factory_call = /:=\s*#{Regex.escape(recv)}\.\w+\(\)/
+        factory = lines.any?(&.matches?(factory_call))
+      end
       endpoints.reject(&.url.empty?).group_by do |ep|
         args = Noir::GoBinding::Arguments.new
         if factory && recv && (handler = ep.handler) && (site = ep.details.code_paths.first?) &&

@@ -170,12 +170,14 @@ module Noir::GoCalleeExtractor
   # must not share an entry.
   @@function_bodies_memo = Hash(UInt64, Hash(String, FunctionBody)).new
   @@method_bodies_memo = Hash(UInt64, Hash(String, Array(FunctionBody))).new
+  @@imports_memo = Hash(UInt64, Hash(String, String)).new
   @@bodies_memo_mutex = Mutex.new
 
   Noir::ExtractionResultCache.register_clearer do
     @@bodies_memo_mutex.synchronize do
       @@function_bodies_memo.clear
       @@method_bodies_memo.clear
+      @@imports_memo.clear
     end
   end
 
@@ -199,8 +201,8 @@ module Noir::GoCalleeExtractor
   end
 
   # One parse, both tables, memoized.
-  private def collect_top_level_bodies(source : String,
-                                       file_path : String) : Tuple(Hash(String, FunctionBody), Hash(String, Array(FunctionBody)))
+  def collect_top_level_bodies(source : String,
+                               file_path : String) : Tuple(Hash(String, FunctionBody), Hash(String, Array(FunctionBody)))
     fn_key = Noir::ExtractionResultCache.key(source, "go_fn_bodies", file_path)
     method_key = Noir::ExtractionResultCache.key(source, "go_method_bodies", file_path)
 
@@ -214,6 +216,7 @@ module Noir::GoCalleeExtractor
     methods = Hash(String, Array(FunctionBody)).new
 
     Noir::TreeSitter.parse_go(source) do |root|
+      extract_import_aliases(root, source)
       Noir::TreeSitter.each_named_child(root) do |child|
         node_type = Noir::TreeSitter.node_type(child)
         next unless node_type == "function_declaration" || node_type == "method_declaration"
@@ -799,29 +802,42 @@ module Noir::GoCalleeExtractor
   # chi analyzer can turn `apiv1.Routes()` in a `.Mount(...)` call into
   # the package directory that declares `Routes`.
   def extract_import_aliases(source : String) : Hash(String, String)
-    aliases = {} of String => String
-    Noir::TreeSitter.parse_go(source) { |root| aliases = extract_import_aliases(root, source) }
-    aliases
+    key = Noir::ExtractionResultCache.source_fingerprint(source)
+    Noir::ExtractionResultCache.fetch(@@imports_memo, key, @@bodies_memo_mutex) do
+      aliases = {} of String => String
+      Noir::TreeSitter.parse_go(source) { |root| aliases = read_import_aliases(root, source) }
+      aliases
+    end
   end
 
   def extract_import_aliases(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+    key = Noir::ExtractionResultCache.source_fingerprint(source)
+    Noir::ExtractionResultCache.fetch(@@imports_memo, key, @@bodies_memo_mutex) { read_import_aliases(root, source) }
+  end
+
+  private def read_import_aliases(root, source)
     aliases = {} of String => String
-    Noir::TreeSitter.walk(root) do |node|
-      next unless Noir::TreeSitter.node_type(node) == "import_spec"
-      alias_name : String? = nil
-      import_path : String? = nil
-      Noir::TreeSitter.each_named_child(node) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "package_identifier"
-          alias_name = Noir::TreeSitter.node_text(child, source)
-        when "interpreted_string_literal", "raw_string_literal"
-          import_path = unquote_import_path(Noir::TreeSitter.node_text(child, source))
+    Noir::TreeSitter.each_named_child(root) do |decl|
+      # Imports are top-level. Retain tree-sitter's recovered imports in
+      # malformed declarations too.
+      next unless Noir::TreeSitter.node_type(decl) == "import_declaration" || Noir::TreeSitter.node_has_error?(decl)
+      Noir::TreeSitter.walk(decl) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "import_spec"
+        alias_name : String? = nil
+        import_path : String? = nil
+        Noir::TreeSitter.each_named_child(node) do |child|
+          case Noir::TreeSitter.node_type(child)
+          when "package_identifier"
+            alias_name = Noir::TreeSitter.node_text(child, source)
+          when "interpreted_string_literal", "raw_string_literal"
+            import_path = unquote_import_path(Noir::TreeSitter.node_text(child, source))
+          end
         end
+        next unless path = import_path
+        name = alias_name || default_import_alias(path)
+        next if name.empty? || name == "_" || name == "."
+        aliases[name] = path
       end
-      next unless path = import_path
-      name = alias_name || default_import_alias(path)
-      next if name.empty? || name == "_" || name == "."
-      aliases[name] = path
     end
     aliases
   end
