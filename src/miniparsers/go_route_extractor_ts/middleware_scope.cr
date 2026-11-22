@@ -2,7 +2,21 @@
 # a guard proof must preserve the router value and framework install order.
 module Noir
   module TreeSitterGoRouteExtractor
-    record MiddlewareProof, arg : String, rule : String
+    record MiddlewareProof, arg : String, rule : String, receiver : String = "", row : Int32 = -1, certified : Bool = true, prefix : String? = nil
+
+    # The strict walk can prove a local install even on a router passed in
+    # from elsewhere. Only a chain rooted at a known constructor is complete.
+    record MiddlewareScope, steps : Array(MiddlewareProof), framework : String, complete : Bool
+    alias MiddlewareChains = Hash(Int32, MiddlewareScope)
+
+    alias RouterHandoffs = Hash(Tuple(Int32, String), MiddlewareScope)
+
+    private record GuardWalk, routes : Hash(Int32, Array(GuardRouter)), handoffs : RouterHandoffs?
+
+    private class FiberStack
+      getter steps = [] of MiddlewareProof
+      property? complete = true
+    end
 
     private class GuardRouter
       getter middleware = [] of MiddlewareProof
@@ -10,7 +24,19 @@ module Noir
       getter? group : Bool
       getter framework : String
 
-      def initialize(@group = false, @framework = "")
+      property? complete : Bool
+
+      getter fiber : FiberStack?
+      getter prefix : String
+
+      def initialize(@group = false, @framework = "", @complete = true, @fiber : FiberStack? = nil, @prefix = "")
+        @fiber ||= FiberStack.new if @framework == "fiber"
+      end
+
+      def escape!
+        @complete = false
+        middleware.clear
+        live.clear
       end
 
       def proofs : Array(MiddlewareProof)
@@ -24,7 +50,7 @@ module Noir
     # multiply-bound names stay matched until prefix expansion
     # carries value identity (not just a composed string) across those edges.
     def guard_middleware(root : LibTreeSitter::TSNode, source : String,
-                         imports : Hash(String, String)) : Hash(Int32, Array(MiddlewareProof))
+                         imports : Hash(String, String), chains : MiddlewareChains? = nil, handoffs : RouterHandoffs? = nil) : Hash(Int32, Array(MiddlewareProof))
       result = Hash(Int32, Array(MiddlewareProof)).new
       aliases = Hash(String, String).new
       imports.each do |name, path|
@@ -32,6 +58,9 @@ module Noir
                     when "github.com/gin-gonic/gin"                                 then "gin"
                     when "github.com/go-chi/chi", "github.com/go-chi/chi/v5"        then "chi"
                     when "github.com/labstack/echo", "github.com/labstack/echo/v4"  then "echo"
+                    when "github.com/cloudwego/hertz/pkg/app/server"                then "hertz"
+                    when "github.com/kataras/iris/v12", "github.com/kataras/iris"   then "iris"
+                    when "github.com/julienschmidt/httprouter"                      then "httprouter"
                     when "github.com/gorilla/mux"                                   then "mux"
                     when "github.com/gofiber/fiber/v2"                              then "fiber"
                     when "gitea.dev/modules/web", "code.gitea.io/gitea/modules/web" then "gitea"
@@ -48,24 +77,28 @@ module Noir
         method = Noir::TreeSitter.node_text(field, source)
         args = Noir::TreeSitter.field(call, "arguments") || next
         count = Noir::TreeSitter.named_arg_count(args)
-        route = (HTTP_VERB_METHODS.includes?(method) || {"Handle", "HandleFunc"}.includes?(method)) && count > 1
+        route = (HTTP_VERB_METHODS.includes?(method) || {"Handle", "HandleFunc", "Mount"}.includes?(method)) && count > 1
         route ||= {"Method", "MethodFunc", "Methods", "Add", "Match"}.includes?(method) && count > 2
         registrations[Noir::TreeSitter.node_start_row(call)] += 1 if route
       end
-      pending = Hash(Int32, Array(GuardRouter)).new
+      pending = GuardWalk.new(Hash(Int32, Array(GuardRouter)).new, handoffs)
       Noir::TreeSitter.walk(root) do |function|
         next unless {"function_declaration", "method_declaration"}.includes?(Noir::TreeSitter.node_type(function))
         guard_function(function, source, aliases, Hash(String, GuardRouter).new, pending)
       end
-      pending.each do |row, routers|
+      pending.routes.each do |row, routers|
         # Multiple registrations on a line cannot be distinguished by PathInfo.
-        result[row] = routers.first.proofs if routers.size == 1 && registrations[row] == 1
+        next unless routers.size == 1 && registrations[row] == 1
+        router = routers.first
+        steps = router.proofs
+        result[row] = steps.select(&.certified)
+        chains[row] = MiddlewareScope.new(steps, router.framework, router.complete? && router.live.all?(&.complete?)) if chains
       end
       result
     end
 
     private def guard_function(function : LibTreeSitter::TSNode, source : String, aliases : Hash(String, String),
-                               inherited : Hash(String, GuardRouter), pending : Hash(Int32, Array(GuardRouter)),
+                               inherited : Hash(String, GuardRouter), pending : GuardWalk,
                                framework : String = "")
       body = Noir::TreeSitter.field(function, "body") || return
       bindings = Hash(String, Int32).new(0)
@@ -79,13 +112,13 @@ module Noir
           qualifier, _, name = Noir::TreeSitter.node_text(type, source).lchop('*').rpartition('.')
           kind = aliases[qualifier]? || next
           group = {"gin" => %w[RouterGroup], "echo" => %w[Group]}[kind]?.try(&.includes?(name)) || false
-          root = {"gin" => %w[Engine IRouter IRoutes], "chi" => %w[Router Mux], "echo" => %w[Echo], "mux" => %w[Router], "fiber" => %w[App Router], "gitea" => %w[Router]}[kind].includes?(name)
+          root = {"gin" => %w[Engine IRouter IRoutes], "chi" => %w[Router Mux], "echo" => %w[Echo], "mux" => %w[Router], "fiber" => %w[App Router], "gitea" => %w[Router], "hertz" => %w[Hertz], "iris" => %w[Application Party], "httprouter" => %w[Router]}[kind].includes?(name)
           next unless group || root
           framework = kind
           Noir::TreeSitter.each_named_child(decl) do |id|
             next unless Noir::TreeSitter.node_type(id) == "identifier"
             key = Noir::TreeSitter.node_text(id, source)
-            env[key] = inherited[key]? || GuardRouter.new(group, kind)
+            env[key] = inherited[key]? || GuardRouter.new(group, kind, complete: false)
           end
         end
       end
@@ -157,14 +190,20 @@ module Noir
 
     private def guard_walk(node : LibTreeSitter::TSNode, source : String, aliases : Hash(String, String),
                            env : Hash(String, GuardRouter), bindings : Hash(String, Int32),
-                           pending : Hash(Int32, Array(GuardRouter)), framework : String, first_exit : UInt32)
-      return if LibTreeSitter.ts_node_start_byte(node) > first_exit
+                           pending : GuardWalk, framework : String, first_exit : UInt32)
+      if LibTreeSitter.ts_node_start_byte(node) > first_exit
+        mark_incomplete(node, source, env)
+        return
+      end
       type = Noir::TreeSitter.node_type(node)
       env = env.dup if type == "block"
       # No install in a conditional, loop, deferred/go call or arbitrary
       # closure proves coverage. Dropping their routes too is conservative.
-      return if {"if_statement", "expression_switch_statement", "type_switch_statement", "select_statement",
-                 "for_statement", "func_literal", "go_statement", "defer_statement"}.includes?(type)
+      if {"if_statement", "expression_switch_statement", "type_switch_statement", "select_statement",
+          "for_statement", "func_literal", "go_statement", "defer_statement"}.includes?(type)
+        mark_incomplete(node, source, env)
+        return
+      end
       if group_assignment_node?(node)
         left = Noir::TreeSitter.field(node, type == "var_spec" ? "name" : "left").try { |n| identifier_or_first_child(n) }
         right = Noir::TreeSitter.field(node, type == "var_spec" ? "value" : "right").try { |n| Noir::TreeSitter.first_named_child(n) }
@@ -186,6 +225,7 @@ module Noir
       if type == "call_expression"
         function = Noir::TreeSitter.field(node, "function")
         unless function && Noir::TreeSitter.node_type(function) == "selector_expression"
+          record_router_handoff(node, source, env, pending.handoffs)
           guard_escape(node, source, env)
           return
         end
@@ -198,6 +238,7 @@ module Noir
         end
         value = guard_operand(operand, source, aliases, env, framework)
         unless value
+          record_router_handoff(node, source, env, pending.handoffs)
           guard_escape(node, source, env)
           return
         end
@@ -205,9 +246,23 @@ module Noir
         # These wrapper methods append middleware without replacing the
         # router or clearing its synchronous Group stack (router.go).
         return if kind == "gitea" && {"BeforeRouting", "AfterRouting", "Use"}.includes?(method)
-        if method == "Use" && kind != "gitea"
-          return if kind == "fiber" && (router.group? || guard_args(node, source).size != 1)
-          guard_args(node, source).each { |arg| router.middleware << MiddlewareProof.new(arg, router.group? ? "group Use" : "router Use") }
+        if (method == "Use" || (method == "Pre" && kind == "echo")) && kind != "gitea"
+          if stack = router.fiber
+            args = guard_args(node, source)
+            certified = !router.group? && args.size == 1
+            prefix = router.prefix
+            if first = Noir::TreeSitter.field(node, "arguments").try { |list| Noir::TreeSitter.first_named_child(list) }
+              if Noir::TreeSitter.node_type(first).in?("interpreted_string_literal", "raw_string_literal")
+                prefix = group_join(prefix, decode_string_literal(first, source))
+                args.shift?
+              end
+            end
+            args.each { |arg| stack.steps << MiddlewareProof.new(arg, "router Use", Noir::TreeSitter.node_text(operand, source), Noir::TreeSitter.node_start_row(node), certified, prefix) }
+            return
+          end
+          args = guard_args(node, source)
+          receiver = Noir::TreeSitter.node_text(operand, source)
+          args.each { |arg| router.middleware << MiddlewareProof.new(arg, method == "Pre" ? "Pre" : (router.group? ? "group Use" : "router Use"), receiver, Noir::TreeSitter.node_start_row(node), method == "Use") }
           return
         end
         # Gitea's wrapper synchronously invokes a no-parameter callback
@@ -217,7 +272,7 @@ module Noir
           args = guard_args(node, source)
           params = Noir::TreeSitter.field(closure, "parameters")
           return unless params && Noir::TreeSitter.first_named_child(params).nil? && args.size >= 2
-          child = GuardRouter.new(true, kind)
+          child = GuardRouter.new(true, kind, router.complete?)
           child.middleware.concat(router.proofs)
           args.skip(2).each { |arg| child.middleware << MiddlewareProof.new(arg, "Gitea Group") }
           receiver = Noir::TreeSitter.node_text(operand, source)
@@ -230,20 +285,21 @@ module Noir
         end
         if kind == "chi" && {"Group", "Route"}.includes?(method) && (closure = chi_closure_arg(node))
           return unless guard_args(node, source).size == (method == "Group" ? 1 : 2)
-          child = GuardRouter.new(true, kind)
+          child = GuardRouter.new(true, kind, router.complete?)
           child.middleware.concat(router.proofs)
           param = extract_closure_first_param_name(closure, source) || return
           guard_function(closure, source, aliases, {param => child}, pending, kind)
           return
         end
-        route = HTTP_VERB_METHODS.includes?(method) || {"Handle", "HandleFunc", "Method", "MethodFunc", "Methods", "Add", "Match"}.includes?(method)
+        route = HTTP_VERB_METHODS.includes?(method) || (kind == "chi" && method == "Mount") || {"Handle", "HandleFunc", "Method", "MethodFunc", "Methods", "Add", "Match"}.includes?(method)
         unless route
+          record_router_handoff(node, source, env, pending.handoffs)
           guard_escape(node, source, env)
           name = Noir::TreeSitter.node_text(operand, source)
-          env.delete(name).try { |escaped| escaped.middleware.clear; escaped.live.clear }
+          env.delete(name).try(&.escape!)
           return
         end
-        leaf = GuardRouter.new
+        leaf = GuardRouter.new(framework: kind, complete: router.complete?)
         # Gin/Echo group chains snapshot; Echo instances and mux remain live.
         leaf.middleware.concat(router.middleware)
         leaf.live.concat(router.live)
@@ -252,15 +308,47 @@ module Noir
           leaf.live.clear
           leaf.live << router
         end
+        if stack = router.fiber
+          leaf.middleware.concat(stack.steps)
+          leaf.complete = false unless stack.complete?
+        end
         args = guard_args(node, source)
         path_args = {"Method", "MethodFunc", "Methods", "Add", "Match"}.includes?(method) ? 2 : 1
         handlers = args.skip(path_args)
         middleware = kind == "echo" ? handlers.skip(1) : handlers[0...-1]
         middleware.each { |arg| leaf.middleware << MiddlewareProof.new(arg, "route argument") }
-        (pending[Noir::TreeSitter.node_start_row(node)] ||= [] of GuardRouter) << leaf
+        (pending.routes[Noir::TreeSitter.node_start_row(node)] ||= [] of GuardRouter) << leaf
         return
       end
       Noir::TreeSitter.each_named_child(node) { |child| guard_walk(child, source, aliases, env, bindings, pending, framework, first_exit) }
+    end
+
+    private def mark_incomplete(node, source, env)
+      Noir::TreeSitter.walk(node) do |id|
+        if Noir::TreeSitter.node_type(id) == "identifier"
+          if router = env[Noir::TreeSitter.node_text(id, source)]?
+            router.complete = false
+            router.fiber.try(&.complete=(false))
+          end
+        end
+      end
+    end
+
+    # Snapshot the known part of a router handed to an external registrar.
+    # The engine chooses the builder and prefix; the guard walk owns the
+    # value at the call. Later installs on a live router remain unresolved.
+    private def record_router_handoff(call, source, env, handoffs)
+      return unless handoffs
+      list = Noir::TreeSitter.field(call, "arguments") || return
+      row = Noir::TreeSitter.node_start_row(call)
+      Noir::TreeSitter.each_named_arg(list) do |arg|
+        next unless Noir::TreeSitter.node_type(arg) == "identifier"
+        name = Noir::TreeSitter.node_text(arg, source)
+        router = env[name]? || next
+        steps = router.proofs
+        router.fiber.try { |stack| steps.concat(stack.steps) }
+        handoffs[{row, name}] = MiddlewareScope.new(steps, router.framework, false)
+      end
     end
 
     # ponytail: an unknown call handed a router can mutate it. Stop using
@@ -281,7 +369,7 @@ module Noir
         next unless Noir::TreeSitter.node_type(id) == "identifier"
         name = Noir::TreeSitter.node_text(id, source)
         next if shadowed.includes?(name)
-        env.delete(name).try { |escaped| escaped.middleware.clear; escaped.live.clear }
+        env.delete(name).try(&.escape!)
       end
     end
 
@@ -290,7 +378,7 @@ module Noir
       Noir::TreeSitter.field(call, "arguments").try do |list|
         # Do not flatten spreads: an unread middleware slice can contain
         # handlers that terminate before the candidate guard is reached.
-        Noir::TreeSitter.each_named_arg(list) { |arg| args << (Noir::TreeSitter.node_type(arg) == "func_literal" ? "" : Noir::TreeSitter.node_text(arg, source)) }
+        Noir::TreeSitter.each_named_arg(list) { |arg| args << Noir::TreeSitter.node_text(arg, source) }
       end
       args
     end
@@ -310,28 +398,41 @@ module Noir
       operand = Noir::TreeSitter.field(function, "operand") || return
       method = Noir::TreeSitter.node_text(field, source)
       if Noir::TreeSitter.node_type(operand) == "identifier" && (kind = aliases[Noir::TreeSitter.node_text(operand, source)]?)
-        constructors = {"gin" => %w[New Default], "chi" => %w[NewRouter NewMux], "echo" => %w[New], "mux" => %w[NewRouter], "fiber" => %w[New], "gitea" => %w[NewRouter]}
+        constructors = {"gin" => %w[New Default], "chi" => %w[NewRouter NewMux], "echo" => %w[New], "mux" => %w[NewRouter], "fiber" => %w[New], "gitea" => %w[NewRouter], "hertz" => %w[New Default], "iris" => %w[New Default], "httprouter" => %w[New]}
         return {GuardRouter.new(false, kind), kind} if constructors[kind].includes?(method)
       end
       parent, kind = guard_operand(operand, source, aliases, env, framework, depth + 1) || return
-      if method == "Use" && kind == "gin"
+      if method == "Use" && kind.in?("gin", "hertz", "iris")
         guard_args(node, source).each { |arg| parent.middleware << MiddlewareProof.new(arg, parent.group? ? "group Use" : "router Use") }
         return {parent, kind}
       end
       if kind == "mux" && method == "Subrouter"
-        child = GuardRouter.new(true, kind)
+        child = GuardRouter.new(true, kind, parent.complete?)
         child.live << parent
         return {child, kind}
       end
       if kind == "mux" && {"PathPrefix", "Path", "Host", "Schemes", "Methods", "Headers", "Queries", "NewRoute"}.includes?(method)
         return {parent, kind}
       end
-      if (kind.in?("gin", "echo", "fiber") && method == "Group") || (kind == "chi" && method == "With")
+      if (kind.in?("gin", "echo", "fiber", "hertz") && method == "Group") || (kind == "iris" && method == "Party") || (kind == "chi" && method == "With")
         # Use the same group-chain recognizer as route prefix extraction.
         if method == "Group"
           return unless group_binding(node, source) || group_chain_operand_info(node, source, Hash(String, String).new, "Group", ([] of String), Hash(String, String).new, Set(String).new)
         end
-        child = GuardRouter.new(true, kind)
+        if stack = parent.fiber
+          args = Noir::TreeSitter.field(node, "arguments") || return
+          path = Noir::TreeSitter.first_named_child(args).try { |arg| decode_string_literal(arg, source) if Noir::TreeSitter.node_type(arg).in?("interpreted_string_literal", "raw_string_literal") }
+          unless path
+            stack.complete = false
+            return
+          end
+          prefix = group_join(parent.prefix, path)
+          guard_args(node, source).skip(1).each do |arg|
+            stack.steps << MiddlewareProof.new(arg, "group constructor", Noir::TreeSitter.node_text(operand, source), Noir::TreeSitter.node_start_row(node), false, prefix)
+          end
+          return {GuardRouter.new(true, kind, parent.complete?, stack, prefix), kind}
+        end
+        child = GuardRouter.new(true, kind, parent.complete?)
         if kind == "echo" && !parent.group?
           child.live << parent
         else
@@ -339,9 +440,8 @@ module Noir
           child.live.concat(parent.live)
         end
         args = guard_args(node, source)
-        args = args.skip(1) if method == "Group"
-        args.clear if kind == "fiber" # Group middleware is a path-scoped stack entry.
-        args.each { |arg| child.middleware << MiddlewareProof.new(arg, method == "With" ? "chi With" : "group constructor") }
+        args = args.skip(1) unless method == "With"
+        args.each { |arg| child.middleware << MiddlewareProof.new(arg, method == "With" ? "chi With" : "group constructor", Noir::TreeSitter.node_text(operand, source), Noir::TreeSitter.node_start_row(node)) }
         return {child, kind}
       end
       nil

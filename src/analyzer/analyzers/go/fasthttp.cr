@@ -7,6 +7,7 @@ require "../../engines/go_engine"
 module Analyzer::Go
   class Fasthttp < Analyzer
     include GoTestPath
+    include GoRouteDetails
     analyzer_for "go_fasthttp"
 
     IMPORT_MARKER = "github.com/valyala/fasthttp"
@@ -75,15 +76,14 @@ module Analyzer::Go
               external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
               external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, File.dirname(path))
               callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
-              named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+              named = go_named_handler(content, path, ts_routes, named_scope)
 
               GoEngine.strip_comments(content).each_line.with_index do |line, index|
                 next if named.claim?(index, line)
 
-                details = Details.new(PathInfo.new(path, index + 1))
-
                 if ts_hits = routes_by_line[index]?
                   ts_hits.each do |route|
+                    details = go_route_details(route, path, content)
                     clean_path = normalize_fasthttp_path(route.path)
                     Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                       endpoint = Endpoint.new(clean_path, verb, details)

@@ -222,15 +222,14 @@ module Analyzer::Go
           resolver: resolver, path: path)
         # A same-file named handler's accessors already arrive through
         # `params_by_route`; keep its body out of the last-route heuristic.
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        named = go_named_handler(content, path, ts_routes, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               # `http.Handle("/", r)` hands the tree to a router whose own
               # routes are already reported; it is a mount, not a route
               # answering every method at "/".

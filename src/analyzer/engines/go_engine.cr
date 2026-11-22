@@ -73,7 +73,50 @@ module Analyzer::Go
     end
   end
 
+  module GoRouteDetails
+    @middleware_files = {} of String => Noir::TreeSitterGoRouteExtractor::MiddlewareIndex
+    @serve_mux_files = {} of String => Noir::TreeSitterGoRouteExtractor::ServeMuxMiddleware
+    @builder_middleware = Hash(Tuple(String, String, String), Array(RouteMiddleware)?).new
+    @middleware_mutex = Mutex.new
+
+    private def go_middleware(path, content)
+      @middleware_mutex.synchronize do
+        @middleware_files[path] ||= Noir::TreeSitterGoRouteExtractor.middleware_index(content)
+      end
+    end
+
+    private def go_named_handler(content, path, routes, scope, handler_first = false)
+      index = go_middleware(path, content) unless routes.empty? || tech == "go_http"
+      Noir::GoNamedHandler.new(content, path, routes, scope, handler_first, index)
+    end
+
+    private def go_route_details(route : Noir::TreeSitterGoRouteExtractor::Route, path : String, content : String) : Details
+      location = PathInfo.new(path, route.line + 1)
+      return Details.new(location) if route.prefix_unresolved? || (route.file && route.file != path)
+      if tech == "go_http"
+        graph = @middleware_mutex.synchronize do
+          @serve_mux_files[path] ||= Noir::TreeSitterGoRouteExtractor::ServeMuxMiddleware.new(content, path)
+        end
+        placements = graph.chains(route.line, route.router_name)
+        # Multiple serving paths have to be judged independently: one may be public.
+        if placements.size <= 1
+          location.route_middleware = (placements.first? || [] of RouteMiddleware) + [RouteMiddleware.new(route.handler, path, :route, true, route.router_name)]
+        end
+      else
+        index = go_middleware(path, content)
+        if call = index.registration(route.line, route.verb, route.router_name, route.handler_args)
+          scope = index.scopes[route.line]?
+          location.route_middleware = Noir::TreeSitterGoRouteExtractor.resolved_registration(index, call, route.line, path, tech == "go_echo", route.handler_args, route.path)
+          location.middleware_scope_unresolved = !scope.try(&.complete)
+        end
+      end
+      Details.new(location)
+    end
+  end
+
   abstract class GoEngine < Analyzer
+    include GoRouteDetails
+
     # Conventional test-only trees that `go build` still compiles when
     # they are ordinary packages: `test/`, `tests/`, `e2e/`.
     # Shopify/toxiproxy parks a bench router in `test/e2e/endpoint.go`
@@ -644,6 +687,16 @@ module Analyzer::Go
             prefix = group_map[arg]?
             prefix = arg if prefix.nil? && (arg.starts_with?("/") || unread_group_prefix?(arg))
             if prefix
+              placement = {target, fn, prefix}
+              scope = go_middleware(p, content).handoffs[{row, arg}]?
+              steps = scope.try { |known| Noir::TreeSitterGoRouteExtractor.scoped_steps(known, p, nil) }
+              # Several call sites can have the same public prefix. Only
+              # attach a chain when they agree on its source and order.
+              if @builder_middleware.has_key?(placement) && @builder_middleware[placement] != steps
+                @builder_middleware[placement] = nil
+              else
+                @builder_middleware[placement] = steps
+              end
               ((prefixes_by_dir[target] ||= Hash(String, Set(String)).new)[fn] ||= Set(String).new) << prefix
             else
               (unresolved_by_dir[target] ||= Set(String).new) << fn
@@ -680,6 +733,10 @@ module Analyzer::Go
           (unresolved_by_dir[target] ||= Set(String).new) << fn
         end
       end
+
+      # A forwarded router may add a second placement at the same prefix.
+      forwarded = handed.map { |target, fn, _, _, _, _| {target, fn} }.to_set
+      @builder_middleware.reject! { |(dir, fn, _), _| forwarded.includes?({dir, fn}) }
 
       prefixes_by_dir.each do |dir, prefixes|
         read = prefixes.compact_map { |fn, pset| fn if pset.any? { |p| !unread_group_prefix?(p) } }
@@ -906,7 +963,16 @@ module Analyzer::Go
             content, fn, {rb.param => prefix}, handle_method: handle_method, string_seed: string_seed,
             group_method: group_method, handlefunc_methods: handlefunc_methods, literal_join: literal_join
           ).each do |route|
-            details = Details.new(PathInfo.new(path, route.line + 1))
+            details = go_route_details(route, path, content)
+            if inherited = @builder_middleware[{File.dirname(path), fn, prefix}]?
+              details.code_paths.map! do |location|
+                if chain = location.route_middleware
+                  applicable = inherited.reject { |step| (only = step.prefix) && !route.path.starts_with?(only.rstrip('/')) }
+                  location.route_middleware = applicable.map { |step| step.copy_with(origin: :mount, scope_proven: false) } + chain
+                end
+                location
+              end
+            end
             Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
               ep = Endpoint.new(route.path, verb, details)
               # mux's `.Queries("type", "{type}")` declares required query params.

@@ -67,7 +67,7 @@ module Analyzer::Go
         end
 
         # Echo takes `GET(path, h, m...)`: the handler comes first.
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope, handler_first: true)
+        named = go_named_handler(content, path, ts_routes, named_scope, handler_first: true)
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
@@ -109,13 +109,12 @@ module Analyzer::Go
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if ts_hits = routes_by_line[index]?
             add_echo_body_params(segment, path, last_endpoints, resolver)
             segment = [] of String
             last_endpoints = [] of Endpoint
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               # Echo's `e.Any` registers a route for every HTTP
               # method — fan out so downstream formats see a real
               # verb per endpoint instead of "ANY".

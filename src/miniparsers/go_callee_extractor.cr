@@ -799,27 +799,29 @@ module Noir::GoCalleeExtractor
   # chi analyzer can turn `apiv1.Routes()` in a `.Mount(...)` call into
   # the package directory that declares `Routes`.
   def extract_import_aliases(source : String) : Hash(String, String)
-    aliases = Hash(String, String).new
-    Noir::TreeSitter.parse_go(source) do |root|
-      Noir::TreeSitter.walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "import_spec"
+    aliases = {} of String => String
+    Noir::TreeSitter.parse_go(source) { |root| aliases = extract_import_aliases(root, source) }
+    aliases
+  end
 
-        alias_name : String? = nil
-        import_path : String? = nil
-        Noir::TreeSitter.each_named_child(node) do |child|
-          case Noir::TreeSitter.node_type(child)
-          when "package_identifier"
-            alias_name = Noir::TreeSitter.node_text(child, source)
-          when "interpreted_string_literal", "raw_string_literal"
-            import_path = unquote_import_path(Noir::TreeSitter.node_text(child, source))
-          end
+  def extract_import_aliases(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+    aliases = {} of String => String
+    Noir::TreeSitter.walk(root) do |node|
+      next unless Noir::TreeSitter.node_type(node) == "import_spec"
+      alias_name : String? = nil
+      import_path : String? = nil
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "package_identifier"
+          alias_name = Noir::TreeSitter.node_text(child, source)
+        when "interpreted_string_literal", "raw_string_literal"
+          import_path = unquote_import_path(Noir::TreeSitter.node_text(child, source))
         end
-
-        next unless path = import_path
-        name = alias_name || default_import_alias(path)
-        next if name.empty? || name == "_" || name == "."
-        aliases[name] = path
       end
+      next unless path = import_path
+      name = alias_name || default_import_alias(path)
+      next if name.empty? || name == "_" || name == "."
+      aliases[name] = path
     end
     aliases
   end

@@ -4,6 +4,7 @@
 # part reopens Noir::TreeSitterGoRouteExtractor with one framework
 # family's decoders. Requiring this file pulls in the whole extractor,
 # exactly as before the split.
+require "../models/endpoint"
 require "../utils/http_symbols"
 require "../utils/text_file"
 require "./go_callee_extractor"
@@ -15,5 +16,6 @@ require "./go_route_extractor_ts/gozero"
 require "./go_route_extractor_ts/middleware"
 require "./go_route_extractor_ts/middleware_scope"
 require "./go_route_extractor_ts/net_http"
+require "./go_route_extractor_ts/serve_mux_middleware"
 require "./go_route_extractor_ts/restful"
 require "./go_route_extractor_ts/statics"

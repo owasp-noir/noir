@@ -58,7 +58,7 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        named = go_named_handler(content, path, ts_routes, named_scope)
 
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new
@@ -71,10 +71,9 @@ module Analyzer::Go
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               # `app.Party("admin.")` is an Iris *subdomain*,
               # not a path segment — peel it so the path is
               # clean (`/settings`, not `/admin./settings`) and

@@ -8,6 +8,7 @@ require "../../../miniparsers/go_request_param_extractor"
 module Analyzer::Go
   class Httprouter < Analyzer
     include GoTestPath
+    include GoRouteDetails
     analyzer_for "go_httprouter"
 
     IMPORT_MARKER = "github.com/julienschmidt/httprouter"
@@ -74,15 +75,14 @@ module Analyzer::Go
         routes_by_line.each_key { |row| route_rows << row }
         external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        named = go_named_handler(content, path, ts_routes, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               last_endpoint = add_endpoint(route.path, route.verb, details, named.handler_for(route), named.resolution_for(route))
               named.bind(route, last_endpoint)
               if entries = callees_by_route[route.line]?

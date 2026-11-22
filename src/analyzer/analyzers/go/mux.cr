@@ -82,7 +82,7 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        named = go_named_handler(content, path, ts_routes, named_scope)
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, ts_groups_for_directory(package_groups, dir))
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
@@ -108,10 +108,9 @@ module Analyzer::Go
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                 new_endpoint = Endpoint.new(route.path, verb, details)
                 # mux's `.Queries("type", "{type}", ...)` declares
