@@ -96,3 +96,82 @@ router.get('/admin/dashboard', (req, res) => {
 
 // Export the router
 module.exports = router;
+
+const helpers = require('./body-helpers');
+const defaults = { method: 'POST', body: {}, files: { attachment: { name: 'default' } } };
+
+function readWrapper(request, input) {
+    const copy = { ...input, server: request.method };
+    copy.replaced = request.url;
+    return helpers.forward(Object.assign(copy, { version: 1 }));
+}
+
+router.post('/body/forward', (req, res) => res.json(readWrapper(req, req.body)));
+router.post('/body/forward-default', (req, res) => res.json(readWrapper(req, {})));
+
+function readChoice(source, res) {
+    const input = source.method === 'GET' ? source.query : source.body;
+    const { choice } = input;
+    res.json(choice);
+}
+
+router.post('/body/choice', (req, res) => readChoice(req, res));
+router.post('/body/choice-default', (req, res) => readChoice(defaults, res));
+
+function inspectUpload(source, res) {
+    res.json(source.files.attachment.name);
+}
+
+router.post('/body/upload', inspectUpload);
+router.post('/body/upload-default', (req, res) => inspectUpload(defaults, res));
+
+function readBeforeNext(source, res, next) {
+    const payload = source.body;
+    res.locals.label = payload.label;
+    next();
+}
+
+function finish(req, res) {
+    res.json(res.locals.label);
+}
+
+router.post('/body/chain', readBeforeNext, finish);
+router.post('/body/chain-default', (req, res, next) => readBeforeNext(defaults, res, next), finish);
+
+function checkKeys(keys, source, res) {
+    res.json(keys.filter(key => source.body.hasOwnProperty(key)));
+}
+
+router.post('/body/bound', checkKeys.bind(null, ['channel']));
+router.post('/body/bound-default', (req, res) => checkKeys(['channel'], defaults, res));
+
+function filter(input) {
+    return { ...input };
+}
+
+function profile(payload) {
+    if (Array.isArray(payload)) {
+        payload = {};
+    }
+    const result = filter({ payload });
+    payload = result.payload;
+    return ['nickname', 'timezone'].map(key => payload[key]);
+}
+
+router.post('/body/profile', (req, res) => res.json(profile(req.body)));
+router.post('/body/profile-default', (req, res) => res.json(profile(res.locals)));
+
+function cycle(input, recurse) {
+    if (recurse) return cycle(input, false);
+    return input.code;
+}
+
+router.post('/body/cycle', (req, res) => res.json(cycle(req.body, true)));
+router.post('/body/cycle-default', (req, res) => res.json(cycle(res.locals, true)));
+
+function inspectSlot(req, context) {
+    return [req.body.slot, context.method];
+}
+
+router.post('/body/slot', (req, res) => res.json(inspectSlot(req, res.locals)));
+router.post('/body/slot-default', (req, res) => res.json(inspectSlot(defaults, req)));

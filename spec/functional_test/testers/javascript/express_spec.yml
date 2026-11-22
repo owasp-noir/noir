@@ -1,5 +1,5 @@
 fixture: fixtures/javascript/express/
-counts: {techs: 1, endpoints: 34}
+counts: {techs: 1, endpoints: 50}
 endpoints:
   # Traditional app-based routes
   - url: "/"
@@ -141,3 +141,61 @@ endpoints:
     method: "DELETE"
     params:
       - {name: "objectId", type: "path"}
+  - url: "/body/forward"
+    method: "POST"
+    params:
+      - {name: "display", type: "json"}
+      - {name: "locale", type: "json"}
+  - url: "/body/forward-default"
+    method: "POST"
+    params: []
+  - url: "/body/choice"
+    method: "POST"
+    params:
+      - {name: "choice", type: "json"}
+  - url: "/body/choice-default"
+    method: "POST"
+    params: []
+  - url: "/body/upload"
+    method: "POST"
+    params:
+      - {name: "attachment", type: "file"}
+  - url: "/body/upload-default"
+    method: "POST"
+    params: []
+  - url: "/body/chain"
+    method: "POST"
+    params:
+      - {name: "label", type: "json"}
+  - url: "/body/chain-default"
+    method: "POST"
+    params: []
+  - url: "/body/bound"
+    method: "POST"
+    params:
+      - {name: "channel", type: "json"}
+  - url: "/body/bound-default"
+    method: "POST"
+    params: []
+  - url: "/body/profile"
+    method: "POST"
+    params:
+      - {name: "nickname", type: "json"}
+      - {name: "timezone", type: "json"}
+  - url: "/body/profile-default"
+    method: "POST"
+    params: []
+  - url: "/body/cycle"
+    method: "POST"
+    params:
+      - {name: "code", type: "json"}
+  - url: "/body/cycle-default"
+    method: "POST"
+    params: []
+  - url: "/body/slot"
+    method: "POST"
+    params:
+      - {name: "slot", type: "json"}
+  - url: "/body/slot-default"
+    method: "POST"
+    params: []
