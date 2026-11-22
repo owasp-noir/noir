@@ -12,7 +12,7 @@ expected_endpoints = [
     ep.push_callee(Callee.new("list_items", db_path, 1))
   end,
 
-  Endpoint.new("/items", "POST").tap do |ep|
+  Endpoint.new("/items", "POST", [Param.new("body", "", "json")]).tap do |ep|
     ep.push_callee(Callee.new("save_item", db_path, 5))
   end,
 ]

@@ -18,6 +18,14 @@ async def items():
     return jsonify({"q": q})
 
 
+@app.route("/conditional-items", methods=["GET", "POST"])
+async def conditional_items():
+    if request.method == "POST":
+        if request.args.get("preview"):
+            return jsonify({"preview": True})
+    return jsonify({"q": request.args.get("q")})
+
+
 @app.get("/healthz")
 async def healthz():
     return "ok"

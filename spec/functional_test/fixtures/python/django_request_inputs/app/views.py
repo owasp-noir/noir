@@ -51,6 +51,7 @@ class ItemViewSet(viewsets.GenericViewSet):
             note = request.data["note"]
         elif request.method == "DELETE":
             note_id = request.GET.get("id")
+            reason = request.data.get("reason")
         return Response({})
 
 

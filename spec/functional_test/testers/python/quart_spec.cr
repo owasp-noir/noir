@@ -3,6 +3,8 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/items", "GET", [Param.new("q", "", "query")]),
   Endpoint.new("/items", "POST", [Param.new("name", "", "json")]),
+  Endpoint.new("/conditional-items", "GET", [Param.new("q", "", "query")]),
+  Endpoint.new("/conditional-items", "POST", [Param.new("preview", "", "query"), Param.new("q", "", "query")]),
   Endpoint.new("/healthz", "GET"),
   Endpoint.new("/items/<int:item_id>", "DELETE", [Param.new("item_id", "", "path")]),
   Endpoint.new("/api/v1/users", "POST", [Param.new("username", "", "json")]),
