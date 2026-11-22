@@ -52,7 +52,10 @@ describe "FastAPI prefix resolution", tags: "functional" do
     ])
     tester.endpoints.select(&.resolution).each do |endpoint|
       expected = endpoint.url == "/public/entry" ? Endpoint::RESOLUTION_HEURISTIC : Endpoint::RESOLUTION_UNRESOLVED
-      endpoint.resolution.should eq({"prefix" => expected})
+      evidence = {"prefix" => expected}
+      # Both routers are defined in main.py and omitted from its includes.
+      evidence["registration"] = "unresolved" if endpoint.url.in?("/variable", "/leading-runtime")
+      endpoint.resolution.should eq(evidence)
     end
   end
 

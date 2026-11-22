@@ -580,7 +580,8 @@ module Analyzer::Go
     # keeps its routes.
     def resolve_router_builder_prefixes(file_contents : Hash(String, String),
                                         package_groups : Hash(String, Hash(String, String)),
-                                        builder_type : String | Array(String)) : Hash(String, Hash(String, Set(String)))
+                                        builder_type : String | Array(String),
+                                        uncalled : Hash(String, Array(Range(Int32, Int32)))? = nil) : Hash(String, Hash(String, Set(String)))
       builder_types = builder_type.is_a?(Array) ? builder_type : [builder_type]
       type_names = builder_types.map(&.split('.').last)
       result = Hash(String, Hash(String, Set(String))).new
@@ -633,6 +634,7 @@ module Analyzer::Go
         slices_by_dir[dir] = appends unless appends.empty?
       end
 
+      called = Set(Tuple(String, String)).new
       prefixes_by_dir = Hash(String, Hash(String, Set(String))).new
       unresolved_by_dir = Hash(String, Set(String)).new
       # A call made inside another builder that hands on its own parameter
@@ -676,6 +678,7 @@ module Analyzer::Go
                        end
                      end
             next unless target
+            called << {target, fn} if uncalled
             if arg.includes?(Noir::TreeSitterGoRouteExtractor::HANDED_PREFIX) &&
                (enclosing = scopes.find { |_, rb| rb.start_row <= row <= rb.end_row })
               tail = arg.delete(Noir::TreeSitterGoRouteExtractor::HANDED_PREFIX)
@@ -701,6 +704,17 @@ module Analyzer::Go
             else
               (unresolved_by_dir[target] ||= Set(String).new) << fn
             end
+          end
+        end
+      end
+
+      if uncalled
+        file_builders.each do |file, builders|
+          dir = File.dirname(file)
+          builders.each do |fn, builder|
+            next unless builders_by_dir[dir]?.try(&.includes?(fn))
+            next if called.includes?({dir, fn})
+            (uncalled[file] ||= [] of Range(Int32, Int32)) << (builder.start_row..builder.end_row)
           end
         end
       end
@@ -955,6 +969,7 @@ module Analyzer::Go
                                group_method : String = "Group",
                                handlefunc_methods : Bool = false,
                                literal_join : Bool = false,
+                               any_verbs : Array(String) = Noir::TreeSitterGoRouteExtractor::ANY_FAN_OUT_VERBS,
                                & : String, Endpoint ->)
       expansions.each do |fn, rb, pset|
         emitted = [] of Endpoint
@@ -973,7 +988,7 @@ module Analyzer::Go
                 location
               end
             end
-            Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+            Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb, any_verbs).each do |verb|
               ep = Endpoint.new(route.path, verb, details)
               # mux's `.Queries("type", "{type}")` declares required query params.
               route.query_params.each { |qp| ep.params << Param.new(qp, "", "query") }

@@ -190,7 +190,7 @@ describe "FastAPI prefix resolution" do
     by_url = runner.endpoints.to_h { |endpoint| {endpoint.url, endpoint} }
     by_url["/v1/route"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
     by_url["/route"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
-    by_url["/f-v1/fstring"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
+    by_url["/f-v1/fstring"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED, "registration" => Endpoint::RESOLUTION_UNRESOLVED})
     by_url["/variable"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
     by_url["/leading"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
     by_url["/env"].resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})

@@ -12,6 +12,7 @@ module Noir::TSContractExtractor
   class HonoFile
     getter path : String
     getter imports = {} of String => Tuple(String, String)
+    getter forwards = {} of String => Tuple(String, String)
     getter exports = {} of String => HonoRef
     getter descriptors = {} of UInt32 => HonoDescriptor
     getter registrations = [] of HonoRegistration
@@ -64,7 +65,7 @@ module Noir::TSContractExtractor
   end
 
   def hono_candidate?(content : String) : Bool
-    content.includes?("Hono") || content.includes?("openapi") || content.matches?(/\.\s*route\s*\(/)
+    content.includes?("Hono") || content.includes?("openapi") || content.matches?(/\.\s*route\s*\(|\bexport\s*\{[^}]*\}\s*from\s*['"]\./)
   end
 
   def hono_file(source : String, path : String, *, descriptors : Bool = true) : HonoFile
@@ -133,12 +134,17 @@ module Noir::TSContractExtractor
         value = TreeSitter.field(item, "value") || next
         hono_ref(value, ctx).try { |ref| file.exports[text(name, ctx)] = ref }
       end
-    elsif !TreeSitter.field(node, "source")
+    else
+      source = TreeSitter.field(node, "source").try { |arg| string_value(arg, ctx) }
       TreeSitter.walk(node) do |item|
         next unless TreeSitter.node_type(item) == "export_specifier"
         name = TreeSitter.field(item, "name") || next
         exported = TreeSitter.field(item, "alias") || name
-        hono_ref(name, ctx).try { |ref| file.exports[text(exported, ctx)] = ref }
+        if source
+          file.forwards[text(exported, ctx)] = {source, text(name, ctx)}
+        else
+          hono_ref(name, ctx).try { |ref| file.exports[text(exported, ctx)] = ref }
+        end
       end
     end
   end
@@ -215,6 +221,11 @@ module Noir::TSContractExtractor
       @files.each do |file|
         file.imports.each do |name, (specifier, exported)|
           target = resolve_import.call(file.path, specifier).try { |path| by_path[path]? } || next
+          seen = Set(Tuple(HonoFile, String)).new
+          while (forward = target.forwards[exported]?) && seen.add?({target, exported})
+            next_file = resolve_import.call(target.path, forward[0]).try { |path| by_path[path]? } || break
+            target, exported = next_file, forward[1]
+          end
           id = target.exports[exported]?.as?(UInt32)
           @imports[{file, name}] = {target, id} if id
         end
@@ -275,7 +286,8 @@ module Noir::TSContractExtractor
       @files.each do |file|
         file.descriptors.each do |id, descriptor|
           next if used.includes?({file, id})
-          next if visible.includes?(file) && !incomplete.includes?(file) && !uncertain.includes?({file, id})
+          exported = file.exports.has_value?(id)
+          next if !exported && visible.includes?(file) && !incomplete.includes?(file) && !uncertain.includes?({file, id})
           results << HonoEndpoint.new(descriptor.route, file.path, descriptor.route.line, "", "", unresolved: true)
         end
       end

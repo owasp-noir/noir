@@ -4,6 +4,8 @@ require "../../func_spec.cr"
 # the handler `app.openapi` registers. Only the object's own `middleware` key
 # counts: not a string that mentions one, nor a nested `request` field.
 expected_endpoints = [
+  Endpoint.new("/events", "GET"),
+  Endpoint.new("/news", "GET"),
   Endpoint.new("/notes", "POST", [Param.new("text", "", "json")]),
   Endpoint.new("/notes", "GET", [Param.new("middleware", "", "query")]),
   Endpoint.new("/notes/{id}", "DELETE", [Param.new("id", "", "path")]),

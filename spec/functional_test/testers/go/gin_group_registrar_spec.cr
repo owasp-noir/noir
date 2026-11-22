@@ -22,7 +22,12 @@ expected_endpoints = [
   Endpoint.new("/plain/ping", "GET"),
   Endpoint.new("/robots.txt", "GET"),
   Endpoint.new("/pages/about", "GET"),
+  Endpoint.new("/preview-only", "GET"),
+  Endpoint.new("/plain/events", "GET", [Param.new("page", "", "query")]),
+  Endpoint.new("/plain/news", "GET", [Param.new("page", "", "query")]),
 ]
+
+%w[GET POST PUT PATCH DELETE OPTIONS HEAD CONNECT TRACE].each { |verb| expected_endpoints << Endpoint.new("/plain/echo", verb) }
 
 tester = FunctionalTester.new("fixtures/go/gin_group_registrar/", {
   :techs     => 1,
@@ -32,8 +37,13 @@ tester.perform_tests
 
 describe "gin group prefix resolution", tags: "functional" do
   it "marks every route on a group whose prefix was not read in full, and no other" do
-    tester.endpoints.reject(&.resolution).map { |ep| "#{ep.method} #{ep.url}" }.sort!.should eq(["GET /healthz", "GET /plain/ping"])
-    tester.endpoints.compact_map(&.resolution).uniq!.should eq([{"prefix" => "unresolved"}])
+    preview = tester.endpoints.find! { |ep| ep.url == "/preview-only" }
+    preview.resolution.should eq({"registration" => "unresolved", "prefix" => "unresolved"})
+    added = tester.endpoints.select { |ep| ep.url.in?("/plain/events", "/plain/news", "/plain/echo") }
+    added.each(&.resolution.should(be_nil))
+    previous = tester.endpoints - added - [preview]
+    previous.reject(&.resolution).map { |ep| "#{ep.method} #{ep.url}" }.sort!.should eq(["GET /healthz", "GET /plain/ping"])
+    previous.compact_map(&.resolution).uniq!.should eq([{"prefix" => "unresolved"}])
   end
 end
 

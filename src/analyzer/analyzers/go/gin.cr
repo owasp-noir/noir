@@ -4,6 +4,8 @@ module Analyzer::Go
   class Gin < GoEngine
     analyzer_for "go_gin"
 
+    ANY_VERBS = Noir::TreeSitterGoRouteExtractor::ANY_FAN_OUT_VERBS + %w[CONNECT TRACE]
+
     IMPORT_MARKER = "github.com/gin-gonic/gin"
     BUILDER_TYPE  = "*gin.RouterGroup"
     # Helper parameter types a group is handed as; the interfaces also take
@@ -33,7 +35,8 @@ module Analyzer::Go
       # from a central function with a versioned group (`addUserRoutes(
       # router.Group("/v1"))`). The prefix lives at the call site, so it
       # must be grafted onto the helper's routes.
-      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPES)
+      uncalled = {} of String => Array(Range(Int32, Int32))
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPES, uncalled)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents, infer_module: true)
       resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs, "gin", named_scope.structs)
@@ -149,7 +152,7 @@ module Analyzer::Go
               # (SARIF / Postman / openapi) get a usable verb per
               # endpoint instead of a non-HTTP "ANY" string they
               # can't ingest.
-              Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+              Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb, ANY_VERBS).each do |verb|
                 new_endpoint = Endpoint.new(route.path, verb, details)
                 if entries = callees_by_route[route.line]?
                   entries.each do |entry|
@@ -159,6 +162,7 @@ module Analyzer::Go
                 end
                 new_endpoint.handler = named.handler_for(route)
                 new_endpoint.resolution = named.resolution_for(route)
+                new_endpoint.mark_resolution("registration") if uncalled[path]?.try(&.any?(&.includes?(index)))
                 result << new_endpoint
                 named.bind(route, new_endpoint)
                 last_endpoints << new_endpoint
@@ -179,7 +183,7 @@ module Analyzer::Go
         # Each expanded endpoint's lines are read as one body (keyed by its
         # params array, which every copy of the struct shares).
         builder_bodies = Hash(UInt64, Tuple(Endpoint, Array(String))).new
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle", string_seed: string_seed) do |line, ep|
+        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle", string_seed: string_seed, any_verbs: ANY_VERBS) do |line, ep|
           (builder_bodies[ep.params.object_id] ||= {ep, [] of String})[1] << line
         end
         builder_bodies.each_value { |(ep, body_lines)| add_gin_body_params(body_lines, path, [ep], resolver) }

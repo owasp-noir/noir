@@ -44,6 +44,8 @@ module Noir
     @current_route_start_idx : Int32? = nil
     @current_route_raw_path : String? = nil
     getter router_prefixes : Hash(String, Array(String)) = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+    @express_routers = Set(String).new
+    @loop_paths = {} of Int32 => Array(PathEntry)
     @named_route_receivers = Set(String).new
     # Slash-less koa-router paths accepted by `route_path_entries_from_args`;
     # the final `valid_route_path?` filter would otherwise drop them.
@@ -221,6 +223,15 @@ module Noir
       nil
     end
 
+    # A file mount belongs to its default export when that binding is
+    # known. Another router in the same module may have no mount at all.
+    def unmounted_express_router?(receiver : String, file_mounted : Bool, default_export : String?) : Bool
+      return false unless @express_routers.includes?(receiver)
+      nearest_ancestor(receiver) do |owner|
+        !@express_routers.includes?(owner) || (file_mounted && (!default_export || default_export == owner))
+      end.nil?
+    end
+
     def detect_framework : Symbol
       # Check if any tokens match framework patterns
       @tokens.each do |token|
@@ -263,6 +274,7 @@ module Noir
       # 2. Variables that have route methods called on them (.get, .post, etc.)
       @named_route_receivers.clear
       @explicit_router_vars.clear
+      collect_loop_paths if @source.includes?("for")
       identify_router_variables(router_variables)
       identify_named_route_receivers(router_variables)
       scan_router_constructor_prefixes(router_prefixes, router_variables, router_parents)
@@ -294,6 +306,11 @@ module Noir
             end
           end
           if prefixes.empty?
+            # A pathless same-file use(child) is also a registration edge.
+            child = @tokens[idx + 4].value
+            if @tokens[idx + 2].value == "use" && @express_routers.includes?(child) && @tokens[idx + 5].type == :rparen
+              router_parents[child] << parent_router
+            end
             idx += 1
             next
           end
@@ -681,9 +698,46 @@ module Noir
       paths
     end
 
+    # Bind the first argument of a direct call in a for-of body to the
+    # literal array elements. Token indices keep same-named loops separate.
+    private def collect_loop_paths
+      @tokens.each_with_index do |token, i|
+        next unless token.value == "for" && @tokens[i + 1]?.try(&.type) == :lparen
+        next unless @tokens[i + 2]?.try(&.value).in?("const", "let")
+        name = @tokens[i + 3]?.try(&.value) || next
+        next unless @tokens[i + 4]?.try(&.value) == "of" && @tokens[i + 5]?.try(&.type) == :lbracket
+        paths = [] of PathEntry
+        pos = i + 6
+        while (item = @tokens[pos]?) && item.type == :string
+          paths << PathEntry.new(item.value, false)
+          pos += 1
+          break unless @tokens[pos]?.try(&.type) == :comma
+          pos += 1
+        end
+        next unless @tokens[pos]?.try(&.type) == :rbracket && @tokens[pos + 1]?.try(&.type) == :rparen
+        pos += 2
+        block = @tokens[pos]?.try(&.type) == :lbrace
+        pos += 1 if block
+        # Walk consecutive call statements only. A new binding, assignment
+        # or nested function can change what the identifier denotes.
+        while @tokens[pos + 1]?.try(&.type) == :dot && @tokens[pos + 3]?.try(&.type) == :lparen
+          if @tokens[pos + 4]?.try(&.value) == name && @tokens[pos + 5]?.try(&.type) == :comma
+            @loop_paths[pos + 4] = paths
+          end
+          break unless block && (close = skip_matching_paren(pos + 3))
+          pos = close + 1
+          pos += 1 if @tokens[pos]?.try(&.type) == :semicolon
+        end
+      end
+    end
+
     private def path_entries_from_token(start_idx : Int32) : Array(PathEntry)
       paths = [] of PathEntry
       return paths unless start_idx < @tokens.size
+
+      if scoped = @loop_paths[start_idx]?
+        return scoped
+      end
 
       token = @tokens[start_idx]
       if token.type == :lbracket
@@ -1196,6 +1250,7 @@ module Noir
            idx + 2 < @tokens.size && @tokens[idx + 2].value == "express" &&
            idx + 3 < @tokens.size && @tokens[idx + 3].type == :dot &&
            idx + 4 < @tokens.size && @tokens[idx + 4].value == "Router"
+          @express_routers << @tokens[idx].value
           router_variables.add(@tokens[idx].value)
           @explicit_router_vars.add(@tokens[idx].value)
         end
@@ -1203,12 +1258,17 @@ module Noir
         # identifier = [new] express() / fastify() / Koa / Hono / Router /
         # restify.createServer(): an app or router built in this file.
         if @tokens[idx].type == :identifier && @tokens[idx + 1].type == :assign
+          if @tokens[idx + 2].value == "require" && @tokens[idx + 4]?.try(&.value) == "express" &&
+             @tokens[idx + 6]?.try(&.type) == :dot && @tokens[idx + 7]?.try(&.value) == "Router"
+            @express_routers << @tokens[idx].value
+          end
           factory_idx = idx + 2
           factory_idx += 1 if @tokens[factory_idx].value == "new"
           factory = @tokens[factory_idx]?
           if factory && (APP_FACTORIES.includes?(factory.value) ||
              (factory.value == "restify" && @tokens[factory_idx + 2]?.try(&.value) == "createServer"))
             @explicit_router_vars.add(@tokens[idx].value)
+            @express_routers << @tokens[idx].value if @framework == :express && factory.value == "Router"
           end
         end
 

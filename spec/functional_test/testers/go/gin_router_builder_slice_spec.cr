@@ -27,6 +27,6 @@ describe "gin router-builder prefix resolution", tags: "functional" do
   it "marks the routes of builders whose group no call site gave" do
     tester.endpoints.select(&.resolution).map { |ep| "#{ep.method} #{ep.url}" }.sort!
       .should eq(["GET /local", "GET /orphan", "GET /sb"])
-    tester.endpoints.compact_map(&.resolution).uniq!.should eq([{"prefix" => "unresolved"}])
+    tester.endpoints.compact_map(&.resolution).uniq!.should eq([{"prefix" => "unresolved", "registration" => "unresolved"}])
   end
 end

@@ -199,6 +199,7 @@ module Analyzer::Python
           codelines = source.split("\n")
           # A worked `@app.get(...)` example in a docstring is prose.
           in_docstring = Helper.docstring_line_flags(codelines)
+          loop_strings = Noir::TreeSitterPythonRouteExtractor.loop_call_strings(source)
           instance_mounts.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
               next if in_docstring[index] || line.lstrip.starts_with?("#")
@@ -261,7 +262,7 @@ module Analyzer::Python
 
                 details = Details.new(PathInfo.new(path, index + 1))
                 base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
-                base_endpoint = mark_unresolved_prefix(base_endpoint, router_class)
+                base_endpoint = mark_router_resolution(base_endpoint, router_class)
                 base_endpoint.protocol = "ws" if websocket_route
                 base_endpoint.handler = handler_at(codelines, def_line, path)
 
@@ -302,8 +303,7 @@ module Analyzer::Python
               # without trying to find a handler def — the handler is
               # passed by reference as the 2nd positional argument.
               prog_line = coalesce_programmatic_call(codelines, index, line, instance_name)
-              if prog_call = parse_fastapi_programmatic_route(prog_line, instance_name, source, import_modules)
-                prog_attr, prog_path, prog_tail = prog_call
+              each_programmatic_route(prog_line, instance_name, source, import_modules, loop_strings, index) do |prog_attr, prog_path, prog_tail|
                 prog_websocket_route = prog_attr.includes?("websocket")
                 prog_methods = extract_declared_methods(prog_tail)
                 if prog_methods.empty?
@@ -340,7 +340,7 @@ module Analyzer::Python
                 end
                 prog_methods.each do |m|
                   endpoint = Endpoint.new(prog_full, m, prog_params, prog_details)
-                  endpoint = mark_unresolved_prefix(endpoint, router_class)
+                  endpoint = mark_router_resolution(endpoint, router_class)
                   endpoint.protocol = "ws" if prog_websocket_route
                   endpoint.handler = prog_handler
                   prog_callees.each { |c| endpoint.push_callee(c) }
@@ -351,7 +351,7 @@ module Analyzer::Python
               mount_line = coalesce_mount_call(codelines, index, line, instance_name)
               if static_mount_path = parse_fastapi_static_mount(mount_line, instance_name, source, import_modules)
                 endpoint = Endpoint.new(static_route_path(router_class.join(static_mount_path)), "GET", Details.new(PathInfo.new(path, index + 1)))
-                endpoint = mark_unresolved_prefix(endpoint, router_class)
+                endpoint = mark_router_resolution(endpoint, router_class)
                 result << endpoint
               end
             end
@@ -384,7 +384,7 @@ module Analyzer::Python
         names.each do |name|
           next unless (target = resolve_router_reference(path, source, import_modules, include_router_map, name)) && target.key[0] != path
           next unless router = include_router_map[target.key[0]]?.try(&.[target.key[1]]?)
-          (uses[path] ||= [] of Tuple(::String, Router)).concat(router.mounts.map { |mounted| {name, target.guessed ? Router.new(mounted.prefix, true) : mounted} })
+          (uses[path] ||= [] of Tuple(::String, Router)).concat(router.mounts.map { |mounted| {name, target.guessed ? Router.new(mounted.prefix, true, mounted.registration_unknown?) : mounted} })
         end
       end
       uses
@@ -1264,10 +1264,11 @@ module Analyzer::Python
       {attr, path, args}
     end
 
-    private def parse_fastapi_programmatic_route(line : ::String,
-                                                 instance_name : ::String,
-                                                 source : ::String,
-                                                 import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String, ::String)?
+    private def each_programmatic_route(line : ::String,
+                                        instance_name : ::String,
+                                        source : ::String,
+                                        import_modules : Hash(::String, Tuple(::String, Int32)),
+                                        loop_strings : Hash(Tuple(Int32, ::String), Array(::String)), row : Int32, &)
       match = line.match(instance_regexes(instance_name).programmatic_route)
       return unless match
 
@@ -1276,10 +1277,11 @@ module Analyzer::Python
       path_expr = extract_route_path_expression(args)
       return unless path_expr
 
-      path = resolve_string_expression(path_expr, source, import_modules)
-      return unless path
-
-      {attr, path, args}
+      if paths = loop_strings[{row, path_expr}]?
+        paths.each { |path| yield attr, path, args }
+      elsif path = resolve_string_expression(path_expr, source, import_modules)
+        yield attr, path, args
+      end
     end
 
     private def parse_fastapi_static_mount(line : ::String,
@@ -1697,7 +1699,8 @@ module Analyzer::Python
       !!expr.match(/^(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:\[[^\]]+\])?|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\()/)
     end
 
-    private def mark_unresolved_prefix(endpoint : Endpoint, router : Router) : Endpoint
+    private def mark_router_resolution(endpoint : Endpoint, router : Router) : Endpoint
+      endpoint.mark_resolution("registration") if router.registration_unknown?
       if router.prefix_unresolved?
         endpoint.mark_resolution("prefix")
       elsif router.guessed?
@@ -2296,8 +2299,9 @@ module Analyzer::Python
 
     @guessed_prefixes = Set(::String).new
     getter? guessed : Bool
+    getter? registration_unknown : Bool
 
-    def initialize(@prefix : ::String, @guessed = false)
+    def initialize(@prefix : ::String, @guessed = false, @registration_unknown = false)
     end
 
     # An exact include establishes this path even if a second alias was guessed.
@@ -2311,7 +2315,7 @@ module Analyzer::Python
 
     # One router per mounted prefix, or itself when never included.
     def mounts : Array(Router)
-      return [self] if @mounted_prefixes.empty?
+      return [Router.new(@prefix, @guessed, registration_unknown: true)] if @mounted_prefixes.empty?
       @mounted_prefixes.map { |mounted_prefix| Router.new(mounted_prefix, @guessed_prefixes.includes?(mounted_prefix)) }
     end
 

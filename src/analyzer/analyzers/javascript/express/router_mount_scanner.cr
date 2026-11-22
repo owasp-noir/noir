@@ -105,6 +105,13 @@ module Analyzer::Javascript
       return ExpressConstants.function_key(file, name) unless content.includes?("export")
       content = Noir::JSRouteExtractor.strip_js_comments(content)
 
+      # A whole-module CommonJS forward preserves every named export.
+      if forward = content.match(MODULE_REEXPORT_RE)
+        if (specifier = forward[1]?) && (target = resolve_require_path(file, specifier))
+          return named_export_key(target, name, depth + 1)
+        end
+      end
+
       content.scan(REEXPORT_LIST_RE) do |m|
         m[1].split(',').each do |item|
           parts = item.strip.split(/\s+as\s+/)

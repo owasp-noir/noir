@@ -26,3 +26,6 @@ map.get(key + '/map');
 cache.get(key + '/cache');
 _.get(obj, path);
 config.get('a' + b);
+
+export const preview = express.Router();
+preview.get('/preview-only', (req, res) => res.send('preview'));

@@ -14,6 +14,8 @@ expected_endpoints = [
   Endpoint.new("/v1/checkouts/custom/client/{client_secret}", "GET", [Param.new("client_secret", "", "path")]),
   # A router nothing includes keeps its own prefix.
   Endpoint.new("/standalone/ping", "GET"),
+  Endpoint.new("/events", "POST", [Param.new("limit", "", "query")]),
+  Endpoint.new("/news", "POST", [Param.new("limit", "", "query")]),
   # A dead router including `items` adds no `/legacy/items/...`.
   Endpoint.new("/legacy/ping", "GET"),
 ]
@@ -27,6 +29,6 @@ tester.perform_tests
 describe "fastapi_unmounted_router_root route resolution", tags: "functional" do
   it "records the evidence for each reported route" do
     tester.endpoints.find! { |ep| ep.url == "/v1/items/{item_id}" }.resolution.should eq({"prefix" => "unresolved"})
-    tester.endpoints.find! { |ep| ep.url == "/standalone/ping" }.resolution.should be_nil
+    tester.endpoints.find! { |ep| ep.url == "/standalone/ping" }.resolution.should eq({"registration" => "unresolved"})
   end
 end
