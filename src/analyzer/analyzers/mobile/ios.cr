@@ -263,7 +263,10 @@ module Analyzer::Mobile
     # `.xcworkspace`; nil if none within the search depth.
     private def xcode_project_root(plist_path : String) : String?
       dir = File.dirname(Noir::PathScope.expand(plist_path))
+      base = configured_base_for(plist_path)
+      boundary = Noir::PathScope.normalize_root(base) unless base.empty?
       XCCONFIG_SEARCH_DEPTH.times do
+        break if boundary && !Noir::PathScope.under_normalized_root?(dir, boundary)
         has_project = xcode_project_bundle?(dir, "*.xcodeproj") ||
                       xcode_project_bundle?(dir, "*.xcworkspace")
         return dir if has_project

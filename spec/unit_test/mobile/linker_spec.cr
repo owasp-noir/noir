@@ -196,6 +196,16 @@ describe "NoirMobileLinker iOS handlers" do
   end
 end
 
+# Direct linker calls have no NoirRunner to publish the fixture's scan base.
+private def link_ios_apps(root : String, endpoints : Array(Endpoint), logger : NoirLogger)
+  locator = CodeLocator.instance
+  previous = locator.scan_base_paths
+  locator.scan_base_paths = [root]
+  NoirMobileLinker.apply(endpoints, logger)
+ensure
+  locator.scan_base_paths = previous if locator && previous
+end
+
 describe "NoirMobileLinker iOS multi-app scoping" do
   logger = NoirLogger.new(false, false, false, true)
 
@@ -229,7 +239,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
       endpoint_details.technology = "ios"
       endpoint.details = endpoint_details
 
-      linked = NoirMobileLinker.apply([endpoint], logger)
+      linked = link_ios_apps(root, [endpoint], logger)
       linked[0].callees.map(&.name).should contain("GeneratedProjectRouter.route")
     ensure
       FileUtils.rm_rf(root) if root
@@ -305,7 +315,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
       endpoint_details.technology = "ios"
       endpoint.details = endpoint_details
 
-      linked = NoirMobileLinker.apply([endpoint], logger)
+      linked = link_ios_apps(root, [endpoint], logger)
       names = linked[0].callees.map(&.name)
 
       names.should contain("stateMachine.handle")
@@ -367,7 +377,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
       endpoint_b_details.technology = "ios"
       endpoint_b.details = endpoint_b_details
 
-      linked = NoirMobileLinker.apply([endpoint_a, endpoint_b], logger)
+      linked = link_ios_apps(root, [endpoint_a, endpoint_b], logger)
       app_a_callees = linked[0].callees.map(&.name)
       app_b_callees = linked[1].callees.map(&.name)
 
@@ -430,7 +440,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
         endpoint
       end
 
-      linked = NoirMobileLinker.apply([
+      linked = link_ios_apps(root, [
         # A `<Target>-Info.plist` listed first is the declaring app's config.
         build.call("mainapp://", [main_plist, kit_plist]),
         build.call("demo://", [demo_plist]),
@@ -490,7 +500,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
         endpoint
       end
 
-      linked = NoirMobileLinker.apply([build.call("demo://", main_plist), build.call("sample://", sample_plist)], logger)
+      linked = link_ios_apps(root, [build.call("demo://", main_plist), build.call("sample://", sample_plist)], logger)
       callees = linked.map(&.callees.map(&.name))
 
       callees[0].should contain("MainRouter.route")
@@ -541,7 +551,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
         endpoint
       end
 
-      linked = NoirMobileLinker.apply([
+      linked = link_ios_apps(root, [
         build.call("demo://", main_plist),
         build.call("demo://", sample_plist),
         build.call("demo://item", sample_links),
@@ -553,6 +563,51 @@ describe "NoirMobileLinker iOS multi-app scoping" do
     ensure
       FileUtils.rm_rf(root) if root
       CodeLocator.instance.reset_files
+    end
+  end
+end
+
+private class IosDirectoryProbe < CodeLocator
+  getter visited = [] of String
+
+  def source_child_directories(dir : String) : Array(String)
+    @visited << dir
+    super
+  end
+end
+
+class CodeLocator
+  def self.with_ios_directory_probe(&)
+    previous = @@instance
+    @@instance = probe = IosDirectoryProbe.new
+    begin
+      yield probe
+    ensure
+      @@instance = previous
+    end
+  end
+end
+
+describe "NoirMobileLinker iOS project lookup" do
+  it "checks each ancestor once for routes sharing a plist and stops at the owning scan base" do
+    root = File.tempname("noir-ios-scan-roots")
+    base = File.join(root, "app")
+    config = File.join(base, "Config")
+    plist = File.join(config, "Info.plist")
+    details = Details.new(PathInfo.new(plist))
+    details.technology = "ios"
+    routes = ["one://", "two://"].map do |url|
+      endpoint = Endpoint.new(url, "GET", details)
+      endpoint.protocol = "mobile-scheme"
+      endpoint
+    end
+
+    CodeLocator.with_ios_directory_probe do |locator|
+      locator.scan_base_paths = [root, base]
+      locator.register_path(plist)
+      locator.register_path(File.join(root, "Sibling.xcodeproj", "project.pbxproj"))
+      locator.with_scan_files { NoirMobileLinker.apply(routes, NoirLogger.new(false, false, false, true)) }
+      locator.visited.should eq([config, base])
     end
   end
 end

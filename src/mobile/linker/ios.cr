@@ -11,6 +11,7 @@ module NoirMobileLinker
   private def self.link_ios(endpoints : Array(Endpoint), logger : NoirLogger)
     return unless endpoints.any? { |ep| ios_handler_target?(ep) }
 
+    scopes_by_directory = {} of String => {String, Array(String)}?
     handlers_by_scope = {} of {String, Array(String)}? => Hash(Symbol, HandlerInfo)
 
     # Every app's Info.plist directory, and the configs that declare each
@@ -31,7 +32,7 @@ module NoirMobileLinker
 
     endpoints.each_with_index do |endpoint, i|
       next unless ios_handler_target?(endpoint)
-      scope = ios_handler_scope(endpoint, scheme_configs, app_dirs)
+      scope = ios_handler_scope(endpoint, scheme_configs, app_dirs, scopes_by_directory)
       handlers = handlers_by_scope[scope]?
       unless handlers
         begin
@@ -55,13 +56,19 @@ module NoirMobileLinker
 
   # The handler scope root and the other apps' directories left out of it.
   private def self.ios_handler_scope(endpoint : Endpoint, scheme_configs : Hash(String, Array(String)),
-                                     app_dirs : Set(String)) : {String, Array(String)}?
+                                     app_dirs : Set(String), scopes_by_directory : Hash(String, {String, Array(String)}?)) : {String, Array(String)}?
     source = endpoint.details.code_paths.first?.try(&.path)
     config_path = ios_config_path(endpoint) || scheme_config(scheme_configs[url_scheme(endpoint)]?, source) || source
     return unless config_path
 
-    IosHandlers.xcode_project_root(config_path).try { |root| {root, [] of String} } ||
-      IosHandlers.nearest_handler_source_root(config_path, app_dirs)
+    # Both searches start at the anchor's directory. Many harvested routes
+    # share it, including when neither search finds a handler.
+    dir = File.dirname(Noir::PathScope.expand(config_path))
+    scopes_by_directory.fetch(dir) do
+      base = IosHandlers.scan_base(config_path)
+      scopes_by_directory[dir] = IosHandlers.xcode_project_root(config_path, base).try { |root| {root, [] of String} } ||
+                                 IosHandlers.nearest_handler_source_root(config_path, app_dirs, base)
+    end
   end
 
   # Of the configs declaring a scheme, the one whose app holds `source`,
@@ -199,8 +206,12 @@ module NoirMobileLinker
       {:url => url, :activity => activity}
     end
 
-    def self.xcode_project_root(path : String) : String?
-      nearest_ancestor(path) do |dir|
+    def self.scan_base(path : String) : String?
+      Noir::PathScope.longest_base(path, CodeLocator.instance.scan_base_paths).try { |base| Noir::PathScope.normalize_root(base) }
+    end
+
+    def self.xcode_project_root(path : String, base : String? = scan_base(path)) : String?
+      nearest_ancestor(path, base) do |dir|
         locator = CodeLocator.instance
         if locator.scan_files_active?
           locator.source_child_directories(dir).any? { |child| child.ends_with?(".xcodeproj") || child.ends_with?(".xcworkspace") }
@@ -214,12 +225,12 @@ module NoirMobileLinker
     # holding a handler. It stops at the first directory that holds another
     # app's Info.plist (`app_dirs`), with those apps' subtrees left out:
     # their handlers serve them. Returns the root and the left-out dirs.
-    def self.nearest_handler_source_root(path : String, app_dirs : Set(String) = Set(String).new) : {String, Array(String)}?
+    def self.nearest_handler_source_root(path : String, app_dirs : Set(String) = Set(String).new, base : String? = scan_base(path)) : {String, Array(String)}?
       start = File.dirname(Noir::PathScope.expand(path))
-      nearest_ancestor(path) do |dir|
+      nearest_ancestor(path, base) do |dir|
         others = app_dirs.select { |app| other_app_under?(app, dir, start) }
         return {dir, others} unless others.empty?
-        ios_handler_source_under?(dir)
+        dir == base || ios_handler_source_under?(dir)
       end.try { |dir| {dir, [] of String} }
     end
 
@@ -230,9 +241,10 @@ module NoirMobileLinker
 
     # The closest of `path`'s first XCODE_PROJECT_SEARCH_DEPTH ancestor
     # directories for which the block holds.
-    private def self.nearest_ancestor(path : String, &) : String?
+    private def self.nearest_ancestor(path : String, base : String?, &) : String?
       dir = File.dirname(Noir::PathScope.expand(path))
       XCODE_PROJECT_SEARCH_DEPTH.times do
+        break if base && !Noir::PathScope.under_normalized_root?(dir, base)
         return dir if yield dir
 
         parent = File.dirname(dir)
