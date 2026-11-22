@@ -6,10 +6,10 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/jokes.rss", "GET"),
   Endpoint.new("/contacts/{contactId}/edit", "GET", [Param.new("contactId", "", "path")]),
-  Endpoint.new("/contacts/{contactId}/edit", "POST"),
-  Endpoint.new("/contacts/{contactId}/edit", "PUT"),
-  Endpoint.new("/contacts/{contactId}/edit", "PATCH"),
-  Endpoint.new("/contacts/{contactId}/edit", "DELETE"),
+  Endpoint.new("/contacts/{contactId}/edit", "POST", [Param.new("contactId", "", "path")]),
+  Endpoint.new("/contacts/{contactId}/edit", "PUT", [Param.new("contactId", "", "path")]),
+  Endpoint.new("/contacts/{contactId}/edit", "PATCH", [Param.new("contactId", "", "path")]),
+  Endpoint.new("/contacts/{contactId}/edit", "DELETE", [Param.new("contactId", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/javascript/remix_escape_segments/", {

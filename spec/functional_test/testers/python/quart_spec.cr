@@ -4,10 +4,11 @@ expected_endpoints = [
   Endpoint.new("/items", "GET", [Param.new("q", "", "query")]),
   Endpoint.new("/items", "POST", [Param.new("name", "", "json")]),
   Endpoint.new("/healthz", "GET"),
-  Endpoint.new("/items/<int:item_id>", "DELETE"),
+  Endpoint.new("/items/<int:item_id>", "DELETE", [Param.new("item_id", "", "path")]),
   Endpoint.new("/api/v1/users", "POST", [Param.new("username", "", "json")]),
   Endpoint.new("/mounted/child/reports/<int:report_id>", "GET", [
     Param.new("mode", "", "query"),
+    Param.new("report_id", "", "path"),
   ]),
   Endpoint.new("/reports/<int:report_id>", "GET", [
     Param.new("report_id", "", "path"),

@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 # `withAuth(getHandler)`, `{ GET: Promise.resolve({ default: wrap(h) }) }`).
 all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 expected_endpoints = all_methods.map { |m| Endpoint.new("/api/book", m) } +
-                     all_methods.map { |m| Endpoint.new("/api/auth/{*nextauth}", m) } +
+                     all_methods.map { |m| Endpoint.new("/api/auth/{*nextauth}", m, [Param.new("nextauth", "", "path")]) } +
                      all_methods.map { |m| Endpoint.new("/api/verify", m) } + [
   Endpoint.new("/api/legacy", "GET"),
   Endpoint.new("/api/legacy", "POST"),

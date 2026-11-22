@@ -27,6 +27,7 @@ expected_endpoints = [
     Param.new("username", "", "form"),
     Param.new("password", "", "form"),
     Param.new("session", "", "cookie"),
+    Param.new("x-forwarded-for", "", "header"),
   ]),
 
   # Bare `Request("q")` is ambiguous, so it lands on both methods.

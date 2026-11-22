@@ -11,7 +11,7 @@ expected_endpoints = [
   Endpoint.new("/api/users/login", "POST"),
   Endpoint.new("/api/user", "GET"),
   Endpoint.new("/api/articles", "GET"),
-  Endpoint.new("/api/articles/:slug", "GET"),
+  Endpoint.new("/api/articles/:slug", "GET", [Param.new("slug", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/javascript/koa_nested_mount/", {

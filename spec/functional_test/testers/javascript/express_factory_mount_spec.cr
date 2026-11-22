@@ -16,8 +16,8 @@ FunctionalTester.new("fixtures/javascript/express_factory_mount/", {
 }, [
   Endpoint.new("/api/v2/users", "GET"),
   Endpoint.new("/api/v2/users", "POST"),
-  Endpoint.new("/api/v2/users/:id", "GET"),
+  Endpoint.new("/api/v2/users/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/v2/notes", "GET"),
-  Endpoint.new("/api/v2/notes/:id/comments", "DELETE"),
+  Endpoint.new("/api/v2/notes/:id/comments", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/status", "GET"),
 ]).perform_tests

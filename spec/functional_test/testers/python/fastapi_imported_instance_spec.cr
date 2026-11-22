@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/health", "GET"),
   Endpoint.new("/login", "POST", [Param.new("username", "", "query"), Param.new("password", "", "query")]),
-  Endpoint.new("/api/items/{item_id}", "GET", [Param.new("q", "", "query")]),
+  Endpoint.new("/api/items/{item_id}", "GET", [Param.new("q", "", "query"), Param.new("item_id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/python/fastapi_imported_instance/", {

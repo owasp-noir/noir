@@ -7,7 +7,7 @@ require "../../func_spec.cr"
 # in these files builds a router called `request`. On NodeBB this shape
 # put 11 endpoints that no server serves into the report.
 expected_endpoints = [
-  Endpoint.new("/api/users/:uid", "GET"),
+  Endpoint.new("/api/users/:uid", "GET", [Param.new("uid", "", "path")]),
   Endpoint.new("/api/users", "POST"),
 ]
 

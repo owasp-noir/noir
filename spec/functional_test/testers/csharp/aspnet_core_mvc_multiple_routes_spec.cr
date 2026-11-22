@@ -4,11 +4,11 @@ require "../../func_spec.cr"
 # attribute with a template; a template-less verb joins each `[Route]`.
 # `[Route("")]` on a controller without a route is the site root.
 expected_endpoints = [
-  Endpoint.new("/", "ANY"),
-  Endpoint.new("/Home", "ANY"),
-  Endpoint.new("/Home/Index", "ANY"),
+  Endpoint.new("/", "ANY", [Param.new("id", "", "query")]),
+  Endpoint.new("/Home", "ANY", [Param.new("id", "", "query")]),
+  Endpoint.new("/Home/Index", "ANY", [Param.new("id", "", "query")]),
   Endpoint.new("/Home/Index/{id}", "ANY", [Param.new("id", "", "path")]),
-  Endpoint.new("/Home/About", "ANY"),
+  Endpoint.new("/Home/About", "ANY", [Param.new("id", "", "query")]),
   Endpoint.new("/Home/About/{id}", "ANY", [Param.new("id", "", "path")]),
   Endpoint.new("/api/reports/latest", "GET"),
   Endpoint.new("/api/reports/current", "GET"),

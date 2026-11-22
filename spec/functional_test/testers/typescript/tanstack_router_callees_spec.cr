@@ -1,9 +1,12 @@
 require "../../func_spec.cr"
 
-posts = Endpoint.new("/posts", "GET")
+posts = Endpoint.new("/posts", "GET", [
+  Param.new("filter", "", "query"),
+  Param.new("page", "", "query"),
+])
 posts.push_callee(Callee.new("PostsComponent"))
 
-shop = Endpoint.new("/shop", "GET")
+shop = Endpoint.new("/shop", "GET", [Param.new("sort", "", "query")])
 shop.push_callee(Callee.new("ShopComponent"))
 
 docs = Endpoint.new("/docs", "GET")

@@ -3,7 +3,7 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/sign", "GET"),
   Endpoint.new("/sign", "POST", [Param.new("username", "", "form"), Param.new("password", "", "form")]),
-  Endpoint.new("/cookie", "GET"),
+  Endpoint.new("/cookie", "GET", [Param.new("test", "", "cookie")]),
   Endpoint.new("/login", "POST", [Param.new("username", "", "form"), Param.new("password", "", "form")]),
   Endpoint.new("/create_record", "PUT"),
   Endpoint.new("/delete_record", "DELETE", [Param.new("name", "", "json")]),

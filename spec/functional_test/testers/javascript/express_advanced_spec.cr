@@ -7,7 +7,7 @@ require "../../func_spec.cr"
 # TODO: Add support for router.use() with nested routers - currently not detected
 expected_endpoints = [
   # Multi-line route definitions (WORKING)
-  Endpoint.new("/multiline-simple", "GET"),
+  Endpoint.new("/multiline-simple", "GET", [Param.new("ml_param", "", "query")]),
 
   # Method chaining on routes: each link reads its own handler
   Endpoint.new("/chained", "GET", [
@@ -51,16 +51,22 @@ expected_endpoints = [
     Param.new("x-custom-header", "", "header"),
     Param.new("X-Another-Header", "", "header"),
     Param.new("sessionId", "", "cookie"),
+    Param.new("X-Third-Header", "", "header"),
+    Param.new("query2", "", "query"),
+    Param.new("trackingId", "", "cookie"),
   ]),
 
   # Template literal paths (WORKING)
-  Endpoint.new("/api/v2/template", "GET"),
+  Endpoint.new("/api/v2/template", "GET", [Param.new("templateParam", "", "query")]),
 
   # Concatenated paths (WORKING)
-  Endpoint.new("/api/v2/concat", "POST"),
+  Endpoint.new("/api/v2/concat", "POST", [Param.new("concatData", "", "json")]),
 
   # Multiple middleware (WORKING)
-  Endpoint.new("/multiple-middleware", "PUT"),
+  Endpoint.new("/multiple-middleware", "PUT", [
+    Param.new("Authorization", "", "header"),
+    Param.new("updateData", "", "json"),
+  ]),
 
   # Nested router with prefix (NOW WORKING)
   Endpoint.new("/user/profile", "GET", [

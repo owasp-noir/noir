@@ -17,7 +17,7 @@ FunctionalTester.new("fixtures/javascript/express_factory_app_mount/", {
   :endpoints => 4,
 }, [
   Endpoint.new("/blog/api/admin/posts", "GET"),
-  Endpoint.new("/blog/api/admin/posts/:id", "PUT"),
+  Endpoint.new("/blog/api/admin/posts/:id", "PUT", [Param.new("id", "", "path")]),
   Endpoint.new("/members/api/member/", "PUT"),
   Endpoint.new("/members/api/session", "POST"),
 ]).perform_tests

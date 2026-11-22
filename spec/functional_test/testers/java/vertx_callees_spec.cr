@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 # analyzer resolves `this::handler` references to method bodies and
 # attaches the handler's 1-hop callees.
 expected_endpoints = [
-  Endpoint.new("/users/:id", "POST").tap do |ep|
+  Endpoint.new("/users/:id", "POST", [Param.new("id", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("ctx.pathParam", line: 19))
     ep.push_callee(Callee.new("parseUser", line: 20))
     ep.push_callee(Callee.new("service.save", line: 21))
@@ -13,7 +13,7 @@ expected_endpoints = [
     ep.push_callee(Callee.new("ctx.response", line: 23))
   end,
 
-  Endpoint.new("/orders/:id", "GET").tap do |ep|
+  Endpoint.new("/orders/:id", "GET", [Param.new("id", "", "path")]).tap do |ep|
     ep.push_callee(Callee.new("ctx.pathParam", line: 27))
     ep.push_callee(Callee.new("findOrder", line: 28))
     ep.push_callee(Callee.new("AuditLog.write", line: 29))

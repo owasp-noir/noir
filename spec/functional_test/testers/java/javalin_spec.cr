@@ -41,6 +41,7 @@ expected_endpoints = [
     Param.new("files", "", "form"),
     Param.new("tags", "", "form"),
     Param.new("X-Batch", "", "header"),
+    Param.new("uploadId", "", "path"),
   ]),
   Endpoint.new("/raw", "POST", [
     Param.new("body", "", "json"),

@@ -14,9 +14,9 @@ FunctionalTester.new("fixtures/python/django_drf_legacy_routes/", {
   Endpoint.new("/issues/bulk-create", "POST", [Param.new("bulk_issues", "", "form")]),
   Endpoint.new("/issues/by_ref", "GET"),
   Endpoint.new("/issues/{pk}/upvote", "POST", [Param.new("pk", "", "path")]),
-  Endpoint.new("/issues/{pk}/history", "GET"),
-  Endpoint.new("/issues/{pk}/history", "PUT"),
+  Endpoint.new("/issues/{pk}/history", "GET", [Param.new("pk", "", "path")]),
+  Endpoint.new("/issues/{pk}/history", "PUT", [Param.new("pk", "", "path")]),
   Endpoint.new("/issues", "GET"),
-  Endpoint.new("/issues/{pk}", "DELETE"),
+  Endpoint.new("/issues/{pk}", "DELETE", [Param.new("pk", "", "path")]),
   Endpoint.new("/issues/{pk}", "GET", [Param.new("pk", "", "path")]),
 ]).perform_tests

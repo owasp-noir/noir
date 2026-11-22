@@ -28,9 +28,13 @@ expected_endpoints = [
   Endpoint.new("/", "GET", [
     Param.new("CategoryID", "", "query"),
     Param.new("q", "", "query"),
+    Param.new("menuwidth", "", "cookie"),
+    Param.new("mode", "", "query"),
   ]),
   Endpoint.new("/", "POST", [
     Param.new("pageNo", "", "form"),
+    Param.new("menuwidth", "", "cookie"),
+    Param.new("mode", "", "form"),
   ]),
 
   # Its own `<form runat="server">` makes the page a POST target even

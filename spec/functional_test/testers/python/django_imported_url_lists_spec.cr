@@ -16,8 +16,11 @@ FunctionalTester.new("fixtures/python/django_imported_url_lists/", {
   Endpoint.new("/two/p/", "GET"),
   # `ev = None`: the include() entry stays, as on a list never followed.
   Endpoint.new("/none/", "GET"),
-  Endpoint.new("/control/event/{organizer}/", "GET"),
+  Endpoint.new("/control/event/{organizer}/", "GET", [Param.new("organizer", "", "path")]),
   Endpoint.new("/locale/set", "GET"),
-  Endpoint.new("/{organizer}/", "GET"),
-  Endpoint.new("/{organizer}/{event}/", "GET"),
+  Endpoint.new("/{organizer}/", "GET", [Param.new("organizer", "", "path")]),
+  Endpoint.new("/{organizer}/{event}/", "GET", [
+    Param.new("event", "", "path"),
+    Param.new("organizer", "", "path"),
+  ]),
 ]).perform_tests

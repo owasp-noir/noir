@@ -1,10 +1,23 @@
 require "../../func_spec.cr"
 
+# Both versions have the same method and URL. Match the newer handler
+# for the param assertion while the spec below checks both versions.
+private class NestjsHeaderVersioningTester < FunctionalTester
+  private def actual_endpoint(expected : Endpoint) : Endpoint
+    return super unless expected.method == "GET" && expected.url == "/v2/schedules"
+
+    endpoints.find do |endpoint|
+      endpoint.method == expected.method && endpoint.url == expected.url &&
+        endpoint.handler.try(&.name) == "SchedulesController_2024_06_01.list"
+    end || fail("Missing versioned GET /v2/schedules endpoint")
+  end
+end
+
 # `enableVersioning({ type: VersioningType.CUSTOM, ... })` reads the version
 # from a header: no `v<version>` URL segment, and Nest's trailing-slash strip
 # applies (`@Get("/")` on `/v2/me`).
 expected_endpoints = [
-  Endpoint.new("/v2/schedules", "GET"),
+  Endpoint.new("/v2/schedules", "GET", [Param.new("x-api-version", "", "header")]),
   Endpoint.new("/v2/schedules/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/v2/me", "GET"),
   # `@Controller({ path: "/v2/verified-resources", })`: the trailing comma
@@ -13,7 +26,7 @@ expected_endpoints = [
 ]
 
 # The two `/v2/schedules` controllers stay two rows.
-FunctionalTester.new("fixtures/typescript/nestjs_header_versioning/", {
+NestjsHeaderVersioningTester.new("fixtures/typescript/nestjs_header_versioning/", {
   :techs     => 1,
   :endpoints => 5,
 }, expected_endpoints).perform_tests

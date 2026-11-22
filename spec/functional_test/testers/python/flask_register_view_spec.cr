@@ -17,12 +17,18 @@ FunctionalTester.new("fixtures/python/flask_register_view/", {
 }, [
   Endpoint.new("/user/topic/<int:topic_id>", "GET", [Param.new("topic_id", "", "path")]),
   Endpoint.new("/user/topic/<int:topic_id>", "POST", [Param.new("topic_id", "", "path")]),
-  Endpoint.new("/user/topic/<int:topic_id>-<slug>", "GET"),
-  Endpoint.new("/user/topic/<int:topic_id>-<slug>", "POST"),
+  Endpoint.new("/user/topic/<int:topic_id>-<slug>", "GET", [
+    Param.new("slug", "", "path"),
+    Param.new("topic_id", "", "path"),
+  ]),
+  Endpoint.new("/user/topic/<int:topic_id>-<slug>", "POST", [
+    Param.new("slug", "", "path"),
+    Param.new("topic_id", "", "path"),
+  ]),
   Endpoint.new("/user/login", "GET"),
   Endpoint.new("/user/login", "POST"),
-  Endpoint.new("/user/post/<int:post_id>/raw", "GET"),
-  Endpoint.new("/user/post/<int:post_id>/raw", "POST"),
+  Endpoint.new("/user/post/<int:post_id>/raw", "GET", [Param.new("post_id", "", "path")]),
+  Endpoint.new("/user/post/<int:post_id>/raw", "POST", [Param.new("post_id", "", "path")]),
   Endpoint.new("/admin/", "GET"),
   Endpoint.new("/message/inbox", "GET"),
   Endpoint.new("/api/status", "GET"),

@@ -52,7 +52,7 @@ expected_endpoints = [
   Endpoint.new("/internal/submit", "POST"),
   # ExternalComposedAnnotationController.java
   Endpoint.new("/external/audit", "GET"),
-  Endpoint.new("/external/reports/{id}", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/external/reports/{id}", "DELETE", [Param.new("id", "", "path"), Param.new("id", "", "query")]),
   # CatalogApi.java + CatalogController.java
   Endpoint.new("/api/catalog/{id}", "GET", [
     Param.new("id", "", "path"),
@@ -89,7 +89,10 @@ expected_endpoints = [
     Param.new("X-Client", "", "header"),
     Param.new("session-id", "", "cookie"),
   ]),
-  Endpoint.new("/greet", "GET"),
+  Endpoint.new("/greet", "GET", [
+    Param.new("header", "", "header"),
+    Param.new("name", "", "query"),
+  ]),
   Endpoint.new("/greet2", "GET", [
     Param.new("myname", "", "query"),
     Param.new("b", "", "query"),
@@ -108,15 +111,28 @@ expected_endpoints = [
     Param.new("X-Client", "mobile", "header"),
   ]),
   # MyController.java
-  Endpoint.new("/api/v1/test", "GET"),
+  Endpoint.new("/api/v1/test", "GET", [
+    Param.new("header", "", "header"),
+    Param.new("name", "", "query"),
+  ]),
   # TApiResponses.java
-  Endpoint.new("/multi/annotation", "GET"),
+  Endpoint.new("/multi/annotation", "GET", [
+    Param.new("header", "", "header"),
+    Param.new("name", "", "query"),
+  ]),
   # TRequestHeader.java
-  Endpoint.new("/request/header", "GET"),
+  Endpoint.new("/request/header", "GET", [
+    Param.new("Authorization", "", "header"),
+    Param.new("header", "", "header"),
+    Param.new("name", "", "query"),
+  ]),
   # DuplicateParameter.java
   Endpoint.new("/duplicate/parameter/{token}/test", "DELETE", [Param.new("token", "", "path")]),
   # ThrowsMultiException.java
-  Endpoint.new("/throws/multi/exception", "GET"),
+  Endpoint.new("/throws/multi/exception", "GET", [
+    Param.new("header", "", "header"),
+    Param.new("name", "", "query"),
+  ]),
   # InventoryClient.java
   Endpoint.new("/api/v2/items/{id}/stock", "PATCH", [Param.new("id", "", "path"), Param.new("quantity", "", "json")]),
   Endpoint.new("/api/v2/items", "GET", [Param.new("category", "", "query")]),

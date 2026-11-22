@@ -4,8 +4,8 @@ require "../../func_spec.cr"
 # `(module, app_name)` tuple both keep the mount prefix; neither used to be
 # followed, leaving unprefixed routes plus a bare GET on the mount point.
 expected_endpoints = [
-  Endpoint.new("/api/users/<uuid:id>/", "GET"),
-  Endpoint.new("/v1/x/<int:pk>/", "GET"),
+  Endpoint.new("/api/users/<uuid:id>/", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/v1/x/<int:pk>/", "GET", [Param.new("pk", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/python/django_include_forms/", {

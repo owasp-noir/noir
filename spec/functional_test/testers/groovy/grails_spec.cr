@@ -37,10 +37,10 @@ expected_endpoints = [
   # `(resources: 'order')` shortcut → six REST endpoints.
   Endpoint.new("/api/orders", "GET"),
   Endpoint.new("/api/orders", "POST"),
-  Endpoint.new("/api/orders/:id", "GET"),
-  Endpoint.new("/api/orders/:id", "PUT"),
-  Endpoint.new("/api/orders/:id", "PATCH"),
-  Endpoint.new("/api/orders/:id", "DELETE"),
+  Endpoint.new("/api/orders/:id", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/orders/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/orders/:id", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/orders/:id", "DELETE", [Param.new("id", "", "path")]),
   # `group "/v2", { ... }` — prefix propagates to inner mappings.
   Endpoint.new("/v2/items", "GET"),
   # Closure-form mapping with `method = "POST"` assignment.
