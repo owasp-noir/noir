@@ -256,17 +256,15 @@ jobs:
           # optimizer output. publish-ghcr.yml builds the release image every
           # night, so a release-only break surfaces there.
           build-args: NOIR_BUILD_FLAGS=
-          # Read publish-ghcr.yml's scope as well as this job's own. GitHub
-          # scopes its Actions cache per ref, so a pull request can only read
-          # entries written on its own branch or on main — and now that this
-          # job no longer runs on pushes to main, its own scope is never
-          # populated there. publish-ghcr.yml builds the identical Dockerfile
-          # from main every night, so its layers (base image, packages,
-          # shards) are what keep pull requests off a cold cache.
-          cache-from: |
-            type=gha,scope=ci-${{ matrix.slug }}
-            type=gha,scope=ghcr-${{ matrix.slug }}
-          cache-to: type=gha,mode=max,scope=ci-${{ matrix.slug }}
+          # Read publish-ghcr.yml's layers and write none. GitHub scopes its
+          # Actions cache per ref, so a pull request can only read entries
+          # written on its own branch or on main, and this job does not run on
+          # main. A `cache-to` here therefore wrote `mode=max` blobs (about
+          # 133 MB each) that only a later push to the same pull request could
+          # read. publish-ghcr.yml builds the identical Dockerfile from main
+          # (nightly, when an image input changed), so its layers (base image,
+          # packages, shards) are what keep pull requests off a cold cache.
+          cache-from: type=gha,scope=ghcr-${{ matrix.slug }}
       - name: Run entrypoint end-to-end
         # Drive the entrypoint exactly as action.yml does and assert the
         # output contract.
@@ -403,8 +401,17 @@ jobs:
         # missed), so a hit means the inputs are byte-identical to when these
         # objects were compiled.
         run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
-      - name: Cache Crystal compiler cache
-        uses: actions/cache@v6
+      # Restored on every run, saved only from main (the save step is at the
+      # end of the job). A cache saved by a pull request can be read by that
+      # pull request alone, so it only ever helped a second push to the same
+      # branch, and each one is 190-250 MB per Crystal version against the
+      # repository's 10 GB limit, which the caches had passed (11.2 GB in 227
+      # entries). A pull request restores what main saved: the entry for its
+      # own src/ if there is one, otherwise the newest for this Crystal
+      # version.
+      - name: Restore Crystal compiler cache
+        id: crystal-cache
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/crystal
           # `spec/**/*.cr` is deliberately not in the key. Nearly every pull
@@ -416,12 +423,11 @@ jobs:
           # recompile, which they were going to do anyway. Keying on
           # `shard.lock` plus `src/**/*.cr` lets a run whose src/ is unchanged
           # hit the primary key instead. Note that a primary-key hit also means
-          # actions/cache does not re-save, so the entry ages until src/ moves.
+          # the save step below is skipped, so the entry ages until src/ moves.
           # Watch the `--stats` lines on the build step for the effect.
           key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
           restore-keys: |
             crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-
-            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
       - name: Install dependencies
         run: shards install
       # This job used to run four `crystal spec` steps (unit, functional, and
@@ -446,6 +452,7 @@ jobs:
       # the spec DSL passes its own file and line. Reproduce such a failure with
       # `just spec-build`, which keeps debug info on purpose.
       - name: Build the spec binary
+        id: spec-build
         # `--no-export-dynamic` is load-bearing, not tidiness. Crystal passes
         # `-rdynamic` so backtraces can symbolize, which exports every Crystal
         # symbol into `.dynsym`. For this binary that was 133,142 entries in
@@ -487,6 +494,7 @@ jobs:
       # build-crystal job used to compile the same program once more per
       # Crystal version and never run it.
       - name: Build noir for the CLI specs
+        id: app-build
         run: shards build --no-debug --link-flags="-Wl,--no-export-dynamic"
       # Spec files load in directory order, which differs between macOS and
       # Linux, so an example that depends on state another example left behind
@@ -538,6 +546,20 @@ jobs:
             echo "::endgroup::"
           done
           exit $failed
+      - name: Save Crystal compiler cache
+        # From main only (a push or a manual run there), and only once both
+        # programs were built: a key is written once, so a save after one
+        # build would leave the other out for good. `always()` keeps two fresh
+        # builds when an example fails. Skipped when the restore step already
+        # hit this exact key.
+        if: >-
+          always() && github.ref == 'refs/heads/main' &&
+          steps.spec-build.outcome == 'success' && steps.app-build.outcome == 'success' &&
+          steps.crystal-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/crystal
+          key: ${{ steps.crystal-cache.outputs.cache-primary-key }}
   nix:
     # Nix is one of the documented install paths (`nix profile add
     # github:owasp-noir/noir`), and nothing in CI ever looked at it — so the
