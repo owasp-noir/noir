@@ -418,7 +418,7 @@ module Analyzer::Go
     # router.Group("/api/v1")`), else "" (the routes stay unprefixed, as on
     # an unread group). See `file_router_receivers`.
     record RouterReceivers, fields : Hash(String, Set(String)), accessors : Hash(String, Hash(String, String)),
-      import_dirs : Hash(String, String)
+      import_dirs : Hash(String, String), struct_fields : Hash(String, Hash(String, Array(String)))
 
     def package_router_fields(file_contents : Hash(String, String), types : Hash(String, Array(String)),
                               import_dirs : Hash(String, String), package_groups : Hash(String, Hash(String, String))) : RouterReceivers
@@ -460,7 +460,25 @@ module Analyzer::Go
       end
       embedded_router_fields(file_contents, struct_routers, import_dirs, routers) unless struct_routers.empty? || import_dirs.empty?
       routers.each { |dir, found| others[dir]?.try { |o| found.subtract(o) } }
-      RouterReceivers.new(routers, accessors, import_dirs)
+      RouterReceivers.new(routers, accessors, import_dirs, struct_routers)
+    end
+
+    # Index the caller placements of group-typed fields before scanning
+    # methods. The constructor and receiver may live in separate files.
+    alias BuilderFieldIndex = Hash(String, Noir::TreeSitterGoRouteExtractor::FieldPrefixes)
+
+    private def collect_builder_fields(files, receivers, file_builders, prefixes, unknown, result)
+      files.each do |path, source|
+        dir = File.dirname(path)
+        types = receivers.struct_fields[dir]? || next
+        next unless types.any? { |type, _| source.includes?(type) }
+        builders = file_builders[path]? || Hash(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder).new
+        fields = result.put_if_absent(dir) { Noir::TreeSitterGoRouteExtractor::FieldPrefixes.new }
+        Noir::TreeSitterGoRouteExtractor.builder_field_prefixes(source, types, builders, prefixes[dir]?, unknown[dir]?, fields)
+      end
+      result.each_value do |fields|
+        fields.reject! { |_, placements| placements.all? { |p| p == Noir::TreeSitterGoRouteExtractor::UNREAD_PREFIX.to_s } }
+      end
     end
 
     # Whether `type_text` (`*gin.Engine`, `gin.IRouter`) names one of the
@@ -600,7 +618,8 @@ module Analyzer::Go
     def resolve_router_builder_prefixes(file_contents : Hash(String, String),
                                         package_groups : Hash(String, Hash(String, String)),
                                         builder_type : String | Array(String),
-                                        uncalled : Hash(String, Array(Range(Int32, Int32)))? = nil) : Hash(String, Hash(String, Set(String)))
+                                        uncalled : Hash(String, Array(Range(Int32, Int32)))? = nil,
+                                        router_fields : RouterReceivers? = nil, field_prefixes : BuilderFieldIndex? = nil) : Hash(String, Hash(String, Set(String)))
       builder_types = builder_type.is_a?(Array) ? builder_type : [builder_type]
       type_names = builder_types.map(&.split('.').last)
       result = Hash(String, Hash(String, Set(String))).new
@@ -781,6 +800,10 @@ module Analyzer::Go
       # A forwarded router may add a second placement at the same prefix.
       forwarded = handed.map { |target, fn, _, _, _, _| {target, fn} }.to_set
       @builder_middleware.reject! { |(dir, fn, _), _| forwarded.includes?({dir, fn}) }
+
+      if router_fields && field_prefixes
+        collect_builder_fields(file_contents, router_fields, file_builders, prefixes_by_dir, unresolved_by_dir, field_prefixes)
+      end
 
       prefixes_by_dir.each do |dir, prefixes|
         read = prefixes.compact_map { |fn, pset| fn if pset.any? { |p| !unread_group_prefix?(p) } }

@@ -36,11 +36,12 @@ module Analyzer::Go
       # router.Group("/v1"))`). The prefix lives at the call site, so it
       # must be grafted onto the helper's routes.
       uncalled = {} of String => Array(Range(Int32, Int32))
-      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPES, uncalled)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents, infer_module: true)
       resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs, "gin", named_scope.structs)
       router_fields = package_router_fields(file_contents, ROUTER_TYPES, named_scope.import_dirs, package_groups)
+      field_prefixes = BuilderFieldIndex.new
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPES, uncalled, router_fields, field_prefixes)
       each_framework_route_file(file_contents, framework_dirs, IMPORT_MARKER, ["Handle", "Static"]) do |path, content, dir|
         lines = GoEngine.strip_comments(content).lines
         last_endpoints = [] of Endpoint
@@ -72,6 +73,9 @@ module Analyzer::Go
         # decoders so those registrations surface as endpoints too.
         ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle",
           handle_many_methods: ["Match"], string_seed: string_seed, router_fields: receivers)
+        if fields = field_prefixes[dir]?
+          ts_routes = Noir::TreeSitterGoRouteExtractor.place_field_routes(content, ts_routes, fields)
+        end
         # A helper's routes on a group no call site gave a readable prefix (#3567).
         unread = unread_builder_routes(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups, "Handle", string_seed)
         ts_routes.map! { |r| unread.includes?({r.line, r.path}) ? r.unresolve_prefix! : r } unless unread.empty?

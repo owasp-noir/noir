@@ -11,6 +11,47 @@ module Noir::PythonDeclarations
 
     def initialize(@bases = "")
     end
+
+    # Read the named field on the constructed settings class. An ordinary
+    # class literal is exact; a BaseSettings literal is an environment default.
+    def class_environment_default(class_name : String, field : String) : String?
+      klass = classes[class_name]? || return
+      rhs = klass.attributes[field]? || return
+      environment_value(rhs) ||
+        (PythonDeclarations.settings_default(rhs) if klass.bases.matches?(/\bBaseSettings\b/))
+    end
+
+    def environment_attribute(expression : String, module_member : Bool) : String?
+      owner, _, field = expression.rpartition('.')
+      if constructor = attributes[owner]?
+        klass = constructor.match(/\A(\w+)\(\s*\)\z/) || return
+        return class_environment_default(klass[1], field)
+      end
+      return unless owner.empty? || module_member
+      rhs = attributes[field]? || field
+      environment_value(rhs)
+    end
+
+    private def environment_value(rhs : String) : String?
+      if method = methods[rhs.rchop("()")]?
+        return unless rhs.ends_with?("()")
+        returns = PythonDeclarations.reachable_values(method, ->(_guard : String) { nil.as(Bool?) })
+        return unless returns.size == 1
+        rhs = returns.first
+      end
+      PythonDeclarations.environment_default(rhs)
+    end
+  end
+
+  # A default is evidence about the path on an unconfigured deployment.
+  # A lookup without a string default supplies no such evidence.
+  def self.environment_default(rhs : String) : String?
+    rhs.match(/\Aos\.(?:getenv|environ\.get)\(\s*(["'])[^"']+\1\s*,\s*(?:default\s*=\s*)?(["'])([^"'\\]*)\2\s*\)\z/).try(&.[3])
+  end
+
+  def self.settings_default(rhs : String) : String?
+    rhs.match(/\A(["'])([^"'\\]*)\1\z/).try(&.[2]) ||
+      rhs.match(/\A(?:pydantic\.)?Field\(\s*(?:default\s*=\s*)?(["'])([^"'\\]*)\1\s*(?:,|\))/).try(&.[2])
   end
 
   def self.parse(source : String) : Scope

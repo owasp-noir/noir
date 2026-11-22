@@ -2,6 +2,7 @@ require "../../engines/python_engine"
 require "../../../utils/top_level_split"
 require "../../../miniparsers/python_route_extractor_ts"
 require "./python_helper"
+require "../../../miniparsers/python_declarations"
 
 module Analyzer::Python
   class FastAPI < PythonEngine
@@ -122,18 +123,18 @@ module Analyzer::Python
               # https://fastapi.tiangolo.com/tutorial/bigger-applications/
               match = line.includes?("Router(") ? line.match(router_instance_re) : nil
               unless match.nil?
-                prefix = ""
+                router = Router.new("")
                 router_instance_name = match[1]
                 if param_codes = effective_line.split(match[2], 2)[1]?
                   if raw_prefix = extract_python_keyword_expression(param_codes, "prefix")
-                    prefix = router_prefix_text(raw_prefix, source, import_modules)
+                    router = router_prefix(raw_prefix, source, import_modules)
                   end
                 end
 
                 if include_router_map.has_key?(path)
-                  include_router_map[path][router_instance_name] = Router.new(prefix)
+                  include_router_map[path][router_instance_name] = router
                 else
-                  include_router_map[path] = {router_instance_name => Router.new(prefix)}
+                  include_router_map[path] = {router_instance_name => router}
                 end
               end
             end
@@ -157,7 +158,6 @@ module Analyzer::Python
         # unless the mount is a route-less wrapper in another file
         # (`wrapper = FastAPI(); wrapper.mount("/x", app)` in a dev script):
         # the real app is then likely served on its own too, so keep both.
-        unread_mounts = Set(Tuple(::String, ::String)).new
         mounted_apps = Set(Tuple(::String, ::String)).new
         fastapi_app_instances.each do |app_file, app_instance|
           source = read_file_content(app_file)
@@ -167,18 +167,13 @@ module Analyzer::Python
             target = resolve_router_reference(app_file, source, import_modules, include_router_map, mount[1])
             next unless target && target.key != {app_file, app_instance}
             next if target.key[0] != app_file && !declares_own_routes?(source, app_instance)
-            if mount[0]
-              mounted_apps << target.key
-            else
-              unread_mounts << target.key
-            end
+            mounted_apps << target.key
           end
         end
         (fastapi_app_instances + (parameter_app_instances - fastapi_app_instances)).each do |app_file, app_instance|
           next if mounted_apps.includes?({app_file, app_instance})
           app_base_path = fastapi_base_path_for(app_file, fastapi_base_paths)
-          prefix = unread_mounts.includes?({app_file, app_instance}) ? Router::UNREAD_PREFIX : ""
-          configure_router_prefix(app_file, include_router_map, app_base_path, prefix, app_instance, prefix_visited)
+          configure_router_prefix(app_file, include_router_map, app_base_path, "", app_instance, prefix_visited)
         end
         seed_unmounted_router_roots(include_router_map, fastapi_base_paths,
           (fastapi_app_instances + parameter_app_instances).to_set, prefix_visited)
@@ -565,7 +560,8 @@ module Analyzer::Python
         # time, but their routes were surfacing without the
         # `/users` / `/items` segment.
         mounted = Router.new(combine_fastapi_router_prefixes(router_prefix, router_class.prefix))
-        router_class.add_mount(mounted.prefix, guessed)
+        inherited_guess = guessed || router_class.guessed?
+        router_class.add_mount(mounted.prefix, inherited_guess)
 
         # Parse `{app}.include_router(...)` calls. Real FastAPI apps
         # often use keyword form (`router=users.router`) and nested
@@ -577,20 +573,14 @@ module Analyzer::Python
           router_instance_name = extract_include_router_target(args)
           next if router_instance_name.empty?
 
-          prefix = ""
-          if raw_value = extract_python_keyword_expression(args, "prefix")
-            if lit = raw_value.match(/^['"]([^'"]*)['"]/)
-              prefix = router_prefix_text(raw_value, source, import_modules, leading_literal: lit[1])
-            else
-              prefix = router_prefix_text(raw_value, source, import_modules)
-            end
-          end
+          raw_value = extract_python_keyword_expression(args, "prefix")
+          prefix = raw_value ? router_prefix(raw_value, source, import_modules, keep_leading_literal: true) : Router.new("")
 
           # Register router's prefix recursively, so the included router's
           # OWN `include_router` calls are processed under the inherited
           # prefix too.
           if target = resolve_router_reference(file, source, import_modules, include_router_map, router_instance_name)
-            configure_router_prefix(target.key[0], include_router_map, app_base_path, mounted.join_prefix(prefix), target.key[1], visited, guessed || target.guessed)
+            configure_router_prefix(target.key[0], include_router_map, app_base_path, mounted.join_prefix(prefix.prefix), target.key[1], visited, inherited_guess || prefix.guessed? || target.guessed)
           end
         end
 
@@ -598,9 +588,9 @@ module Analyzer::Python
         # under the mount path, like an include_router prefix.
         extract_app_mount_calls(source, instance_name).each do |args|
           next unless mount = parse_app_mount(args, source, import_modules)
-          next unless mount_path = mount[0]
+          mount_path = mount[0]
           if target = resolve_router_reference(file, source, import_modules, include_router_map, mount[1])
-            configure_router_prefix(target.key[0], include_router_map, app_base_path, mounted.join_prefix(mount_path), target.key[1], visited, guessed || target.guessed)
+            configure_router_prefix(target.key[0], include_router_map, app_base_path, mounted.join_prefix(mount_path.prefix), target.key[1], visited, inherited_guess || mount_path.guessed? || target.guessed)
           end
         end
         visited.delete(visit_key)
@@ -805,12 +795,12 @@ module Analyzer::Python
     # `{prefix, target}` of an app mount: `mount("/sub", sub)` or
     # `mount(path="/sub", app=sub)`.
     private def parse_app_mount(args : ::String, source : ::String,
-                                import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String?, ::String)?
+                                import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(Router, ::String)?
       positional = split_python_arguments(args).map(&.strip).reject(&.empty?).take_while { |arg| !top_level_keyword_argument?(arg) }
       target = extract_python_keyword_expression(args, "app").try(&.strip) || positional[1]?
       path_expr = positional[0]? || extract_python_keyword_expression(args, "path")
       return unless target && path_expr
-      {resolve_string_expression(path_expr, source, import_modules), target}
+      {router_prefix(path_expr, source, import_modules), target}
     end
 
     private record RouterReference, key : Tuple(::String, ::String), guessed : Bool = false
@@ -958,7 +948,7 @@ module Analyzer::Python
     # to an empty prefix so we never surface raw Python expressions
     # in URLs.
     def resolve_constant_value(expression : ::String,
-                               import_modules : Hash(::String, Tuple(::String, Int32))) : ::String?
+                               import_modules : Hash(::String, Tuple(::String, Int32)), prefix : Bool = false) : ::String?
       expr = expression.strip
       module_path = nil
       const_name = nil
@@ -979,11 +969,14 @@ module Analyzer::Python
       return unless File.exists?(module_path)
 
       module_source = read_file_content(module_path)
+      if prefix && (value = environment_attribute(module_source, expr, module_member: true))
+        return value
+      end
       # Match either a typed assignment (`NAME: str = "..."`) or a
       # bare assignment (`NAME = "..."`). Indented assignments are
       # accepted because BaseSettings-style configs nest the
       # constant inside a class body.
-      pattern = /^\s*#{Regex.escape(const_name)}\s*(?::[^=]+)?=\s*['"]([^'"]*)['"]/m
+      pattern = /^\s*#{Regex.escape(const_name)}\s*(?::[^=\n#]+)?=\s*['"]([^'"]*)['"]/m
       if match = module_source.match(pattern)
         return match[1]
       end
@@ -994,14 +987,14 @@ module Analyzer::Python
     private def resolve_string_expression(expression : ::String,
                                           source : ::String,
                                           import_modules : Hash(::String, Tuple(::String, Int32)),
-                                          depth : Int32 = 0) : ::String?
+                                          depth : Int32 = 0, prefix : Bool = false) : ::String?
       return if depth > 3
 
       expr = expression.strip
       if parts = split_python_expression(expr, '+')
         resolved_parts = [] of ::String
         parts.each do |part|
-          resolved = resolve_string_expression(part, source, import_modules, depth + 1)
+          resolved = resolve_string_expression(part, source, import_modules, depth + 1, prefix)
           return unless resolved
           resolved_parts << resolved
         end
@@ -1012,32 +1005,41 @@ module Analyzer::Python
         prefixes = lit[1].downcase
         value = lit[2]
         if prefixes.includes?("f") && value.includes?("{")
-          return resolve_f_string(value, source, import_modules, depth + 1)
+          return resolve_f_string(value, source, import_modules, depth + 1, prefix)
         end
         return value
       end
 
-      if local = resolve_constant_in_source(expr, source, import_modules, depth)
+      if prefix
+        if value = Noir::PythonDeclarations.environment_default(expr)
+          return "#{ENV_DEFAULT}#{value}"
+        end
+        if (expr.includes?('.') || expr.ends_with?("()")) && (value = environment_attribute(source, expr))
+          return value
+        end
+      end
+
+      if local = resolve_constant_in_source(expr, source, import_modules, depth, prefix)
         return local
       end
 
-      if local_attr = resolve_local_factory_attribute(expr, source, import_modules, depth)
+      if local_attr = resolve_local_factory_attribute(expr, source, import_modules, depth, prefix)
         return local_attr
       end
 
-      resolve_constant_value(expr, import_modules)
+      resolve_constant_value(expr, import_modules, prefix)
     end
 
     private def resolve_local_factory_attribute(expression : ::String,
                                                 source : ::String,
                                                 import_modules : Hash(::String, Tuple(::String, Int32)),
-                                                depth : Int32) : ::String?
+                                                depth : Int32, prefix : Bool = false) : ::String?
       return if depth > 3
       attr_match = expression.match(/^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/)
       return unless attr_match
 
       object_name, attr_name = attr_match[1], attr_match[2]
-      call_match = source.match(/^\s*#{Regex.escape(object_name)}\s*(?::[^=]+)?=\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\(/m)
+      call_match = source.match(/^\s*#{Regex.escape(object_name)}\s*(?::[^=\n#]+)?=\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\(/m)
       return unless call_match
 
       callee = call_match[1]
@@ -1045,7 +1047,7 @@ module Analyzer::Python
       callee_name = callee.split(".")[-1]
       if imported = import_modules[callee_root]?
         module_path = imported.first
-        return resolve_attribute_from_file(module_path, attr_name, callee_name, depth + 1) unless module_path.empty?
+        return resolve_attribute_from_file(module_path, attr_name, callee_name, depth + 1, prefix) unless module_path.empty?
       end
 
       nil
@@ -1054,18 +1056,21 @@ module Analyzer::Python
     private def resolve_attribute_from_file(module_path : ::String,
                                             attr_name : ::String,
                                             factory_name : ::String?,
-                                            depth : Int32) : ::String?
+                                            depth : Int32, prefix : Bool = false) : ::String?
       return if depth > 4
       return unless File.exists?(module_path)
 
       module_source = read_file_content(module_path)
+      if prefix && factory_name && (value = class_environment_attribute(module_source, factory_name, attr_name))
+        return value
+      end
       if value = resolve_attribute_default_in_source(module_source, attr_name)
         return value
       end
 
       if factory_name
         if return_type = extract_function_return_annotation(module_source, factory_name)
-          if value = resolve_class_attribute_from_file(module_path, module_source, return_type, attr_name, depth + 1)
+          if value = resolve_class_attribute_from_file(module_path, module_source, return_type, attr_name, depth + 1, prefix)
             return value
           end
         end
@@ -1078,9 +1083,12 @@ module Analyzer::Python
                                                   module_source : ::String,
                                                   class_name : ::String,
                                                   attr_name : ::String,
-                                                  depth : Int32) : ::String?
+                                                  depth : Int32, prefix : Bool = false) : ::String?
       return if depth > 4
 
+      if prefix && (value = class_environment_attribute(module_source, class_name, attr_name))
+        return value
+      end
       if value = resolve_class_attribute_default(module_source, class_name, attr_name)
         return value
       end
@@ -1090,7 +1098,7 @@ module Analyzer::Python
         imported_path = imported.first
         return if imported_path.empty? || imported_path == module_path
         imported_source = read_file_content(imported_path)
-        return resolve_class_attribute_from_file(imported_path, imported_source, class_name, attr_name, depth + 1)
+        return resolve_class_attribute_from_file(imported_path, imported_source, class_name, attr_name, depth + 1, prefix)
       end
 
       nil
@@ -1119,7 +1127,7 @@ module Analyzer::Python
     end
 
     private def resolve_attribute_default_in_source(source : ::String, attr_name : ::String) : ::String?
-      pattern = /^\s*#{Regex.escape(attr_name)}\s*(?::[^=]+)?=\s*['"]([^'"]*)['"]/m
+      pattern = /^\s*#{Regex.escape(attr_name)}\s*(?::[^=\n#]+)?=\s*['"]([^'"]*)['"]/m
       if match = source.match(pattern)
         return match[1]
       end
@@ -1140,7 +1148,7 @@ module Analyzer::Python
     private def resolve_f_string(value : ::String,
                                  source : ::String,
                                  import_modules : Hash(::String, Tuple(::String, Int32)),
-                                 depth : Int32) : ::String?
+                                 depth : Int32, prefix : Bool = false) : ::String?
       # `String#[]` walks from the start on every call for non-ASCII
       # content, so indexing `value` directly inside this while loop was
       # O(n^2); `chars` (Array(Char)) gives O(1) random access instead.
@@ -1161,7 +1169,7 @@ module Analyzer::Python
             return unless end_index
             expression = value[(index + 1)...end_index].strip
             return if expression.empty? || expression.includes?(":") || expression.includes?("!")
-            resolved = resolve_string_expression(expression, source, import_modules, depth + 1)
+            resolved = resolve_string_expression(expression, source, import_modules, depth + 1, prefix)
             return unless resolved
             io << resolved
             index = end_index + 1
@@ -1180,14 +1188,14 @@ module Analyzer::Python
     private def resolve_constant_in_source(expression : ::String,
                                            source : ::String,
                                            import_modules : Hash(::String, Tuple(::String, Int32)),
-                                           depth : Int32) : ::String?
+                                           depth : Int32, prefix : Bool = false) : ::String?
       return unless expression.matches?(/^[A-Za-z_][A-Za-z0-9_]*$/)
       pattern = /^\s*#{Regex.escape(expression)}\s*(?::[^=]+)?=\s*([^#]+)/
       source.each_line do |line|
         next unless match = line.match(pattern)
         raw_value = match[1].strip
         next if raw_value.empty?
-        return resolve_string_expression(raw_value, source, import_modules, depth + 1)
+        return resolve_string_expression(raw_value, source, import_modules, depth + 1, prefix)
       end
       nil
     end
@@ -1626,16 +1634,32 @@ module Analyzer::Python
       parts
     end
 
-    private def router_prefix_text(expression : ::String,
-                                   source : ::String,
-                                   import_modules : Hash(::String, Tuple(::String, Int32)),
-                                   leading_literal : ::String? = nil) : ::String
-      if literal = leading_literal
-        return literal if resolve_string_expression(expression, source, import_modules)
-        return "#{Router::UNREAD_PREFIX}#{unread_prefix_tail(expression, source, import_modules) || literal}"
+    # This marker only travels inside a prefix expression (including + and
+    # f-strings). Strip it before joining URLs or comparing router mounts.
+    ENV_DEFAULT = "\u{FDD2}"
+
+    @prefix_declarations = Hash(::String, Noir::PythonDeclarations::Scope).new
+
+    private def environment_attribute(source, expression, module_member = false) : ::String?
+      return unless source.includes?("getenv") || source.includes?("environ") || source.includes?("BaseSettings")
+      scope = @prefix_declarations[source] ||= Noir::PythonDeclarations.parse(source)
+      scope.environment_attribute(expression, module_member).try { |value| "#{ENV_DEFAULT}#{value}" }
+    end
+
+    private def class_environment_attribute(source, class_name, name) : ::String?
+      scope = @prefix_declarations[source] ||= Noir::PythonDeclarations.parse(source)
+      scope.class_environment_default(class_name, name).try { |value| "#{ENV_DEFAULT}#{value}" }
+    end
+
+    private def router_prefix(expression, source, import_modules, keep_leading_literal = false) : Router
+      if value = resolve_string_expression(expression, source, import_modules, prefix: true)
+        return Router.new(value) unless value.includes?(ENV_DEFAULT)
+        path = value.gsub(ENV_DEFAULT, "")
+        return Router.new(path, guessed: true) if path.empty? || path.starts_with?('/')
       end
-      resolve_string_expression(expression, source, import_modules) ||
-        "#{Router::UNREAD_PREFIX}#{unread_prefix_tail(expression, source, import_modules) || ""}"
+      tail = unread_prefix_tail(expression, source, import_modules)
+      tail ||= expression.match(/^['"]([^'"]*)['"]/).try(&.[1]) if keep_leading_literal
+      Router.new("#{Router::UNREAD_PREFIX}#{tail}")
     end
 
     # Only retain a final slash-rooted literal when every earlier operand is
