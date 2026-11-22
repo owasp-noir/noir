@@ -8,6 +8,11 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/orders", "GET", [Param.new("page", "", "query"), Param.new("limit", "", "query"), Param.new("tag", "", "query"), Param.new("debug", "", "query")]),
   Endpoint.new("/orders", "POST", [Param.new("sku", "", "json"), Param.new("quantity", "", "json"), Param.new("coupon", "", "json")]),
+  Endpoint.new("/stream", "POST", [Param.new("sku", "", "json"), Param.new("quantity", "", "json"), Param.new("coupon", "", "json")]),
+  Endpoint.new("/render", "POST", [Param.new("sku", "", "json"), Param.new("quantity", "", "json"), Param.new("coupon", "", "json")]),
+  Endpoint.new("/cursor", "GET", [Param.new("cursor", "", "query")]),
+  Endpoint.new("/ignored", "POST"),
+  Endpoint.new("/bytes", "POST", [Param.new("X-Codec", "", "header"), Param.new("sku", "", "json"), Param.new("quantity", "", "json"), Param.new("coupon", "", "json")]),
   Endpoint.new("/orders/{id}", "PUT", [Param.new("status", "", "form"), Param.new("note", "", "form"), Param.new("labels", "", "form"), Param.new("id", "", "path")]),
   Endpoint.new("/orders/search", "GET", [Param.new("from", "", "query"), Param.new("to", "", "query")]),
   Endpoint.new("/inline", "POST", [Param.new("dry_run", "", "query"), Param.new("sku", "", "json"), Param.new("quantity", "", "json"), Param.new("coupon", "", "json")]),

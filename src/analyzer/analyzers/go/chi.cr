@@ -203,7 +203,7 @@ module Analyzer::Go
 
       named_scope = Noir::GoNamedHandler.scope(file_contents_cache, @import_dirs)
       @named_scope = named_scope
-      resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents_cache, @import_dirs)
+      resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents_cache, @import_dirs, structs: named_scope.structs)
       @resolver = resolver
       external_helper = ->(from_file : String, qualifier : String, name : String) do
         external_route_helper(from_file, qualifier, name, package_files, file_contents_cache)
@@ -405,15 +405,11 @@ module Analyzer::Go
       extract_handler_params(line, last_endpoint)
     end
 
-    # `chi.URLParam(r, "id")` and go-chi/render's body binders, then the
-    # stdlib request reads.
+    # Chi path slots and explicit stdlib request reads.
     private def extract_handler_params(line : String, last_endpoint : Endpoint)
       return if last_endpoint.url.empty?
       line.scan(/chi\.URLParam\([^,]+,\s*["']([^"']+)["']\s*\)/) { |m| add_param_to_endpoint(Param.new(m[1], "", "path"), last_endpoint) }
       add_request_line_params(line, last_endpoint)
-      if (line.includes?("render.DecodeJSON(") || line.includes?("render.Bind(")) && last_endpoint.params.none? { |param| param.param_type == "json" }
-        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-      end
     end
 
     # The params the definition a route's handler resolves to reads.

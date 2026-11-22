@@ -1,5 +1,4 @@
 require "../../engines/go_engine"
-require "../../../miniparsers/go_struct_fields"
 
 module Analyzer::Go
   class Gin < GoEngine
@@ -36,8 +35,8 @@ module Analyzer::Go
       # must be grafted onto the helper's routes.
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups, BUILDER_TYPES)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
-      named_scope = named_handler_scope(file_contents)
-      struct_index = Noir::GoStructFields::Index.new(file_contents, named_scope.import_dirs)
+      named_scope = named_handler_scope(file_contents, infer_module: true)
+      resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs, "gin", named_scope.structs)
       router_fields = package_router_fields(file_contents, ROUTER_TYPES, named_scope.import_dirs, package_groups)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if go_test_path?(path)
@@ -46,7 +45,7 @@ module Analyzer::Go
         dir = File.dirname(path)
         next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Handle", "Static"])
         lines = GoEngine.strip_comments(content).lines
-        last_endpoint = Endpoint.new("", "")
+        last_endpoints = [] of Endpoint
 
         # Tree-sitter pre-pass: harvest every verb route with its
         # group-resolved path in one go. Indexed by line so the
@@ -124,7 +123,7 @@ module Analyzer::Go
           end
         end
 
-        # The lines credited to `last_endpoint` since its route, read as one
+        # The lines credited to `last_endpoint` since their route, read as one
         # body when the next route starts (or the file ends).
         segment = [] of String
         lines.each_with_index do |line, index|
@@ -142,8 +141,9 @@ module Analyzer::Go
           # (`r.GET` vs `r.Get`); both are covered by the TS
           # extractor's HTTP_VERB_METHODS set.
           if ts_hits = routes_by_line[index]?
-            add_gin_body_params(segment, path, [last_endpoint], struct_index)
+            add_gin_body_params(segment, path, last_endpoints, resolver)
             segment = [] of String
+            last_endpoints = [] of Endpoint
             ts_hits.each do |route|
               # `r.Any(...)` / `r.All(...)` register one route under
               # every HTTP method. Fan out so downstream formats
@@ -162,14 +162,14 @@ module Analyzer::Go
                 new_endpoint.resolution = named.resolution_for(route)
                 result << new_endpoint
                 named.bind(route, new_endpoint)
-                last_endpoint = new_endpoint
+                last_endpoints << new_endpoint
               end
             end
           end
 
           segment << line
         end
-        add_gin_body_params(segment, path, [last_endpoint], struct_index)
+        add_gin_body_params(segment, path, last_endpoints, resolver)
 
         # Expansion pass: emit each suppressed router-builder's
         # routes once per resolved call-site prefix, with the
@@ -183,9 +183,10 @@ module Analyzer::Go
         expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle", string_seed: string_seed) do |line, ep|
           (builder_bodies[ep.params.object_id] ||= {ep, [] of String})[1] << line
         end
-        builder_bodies.each_value { |(ep, body_lines)| add_gin_body_params(body_lines, path, [ep], struct_index) }
+        builder_bodies.each_value { |(ep, body_lines)| add_gin_body_params(body_lines, path, [ep], resolver) }
 
-        named.each_bound_body { |file, body_lines, eps| add_gin_body_params(body_lines, file, eps, struct_index) }
+        named.each_attribution { |line, ep| add_gin_param_patterns(line, ep) }
+        named.each_bound_body(direct_only: true) { |file, body_lines, eps| add_binding_params(body_lines, file, eps, resolver) }
       end
 
       resolve_public_dirs(public_dirs)
@@ -193,121 +194,13 @@ module Analyzer::Go
       result
     end
 
-    # Lines that belong to one route (an inline closure's body, or a named
-    # handler's): `c.ShouldBind(&req)` read as the fields of `req`'s struct,
-    # the generic body marker kept only when a bind target does not resolve.
-    private def add_gin_body_params(lines : Array(String), file : String, eps : Array(Endpoint), index : Noir::GoStructFields::Index)
-      binds, unresolved = gin_bind_fields(lines, file, index)
-      lines.each { |line| eps.each { |ep| add_gin_param_patterns(line, ep, bind_marker: unresolved) } }
-      eps.each { |ep| binds.each { |kind, fields| add_gin_bind_params(kind, fields, ep) } }
+    private def add_gin_body_params(lines, file, eps, resolver)
+      lines.each { |line| eps.each { |ep| add_gin_param_patterns(line, ep) } }
+      add_binding_params(lines, file, eps, resolver)
     end
 
-    BIND_LINE = /\.(?:Must|Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With|BodyWith|BodyWithJSON)?\s*\(/
-    # `c.ShouldBindJSON(&req)`, `c.MustBindWith(params, binding.Query)`.
-    BIND_CALL = /\.(?:Must|Should)?Bind(JSON|Query|Header|Uri|With|BodyWith|BodyWithJSON)?\s*\(\s*&?\s*([A-Za-z_]\w*)\s*(?:,\s*binding\.(\w+)\s*)?\)/
-    # The binder a `binding.X` argument names.
-    BINDING_KINDS = {"JSON" => "json", "Query" => "query", "Form" => "form", "FormPost" => "form",
-                     "FormMultipart" => "form", "Uri" => "uri", "Header" => "header"}
-    # The struct tags each binder reads.
-    BIND_KIND_TAGS = {"default" => %w[json form], "json" => %w[json], "query" => %w[form],
-                      "form" => %w[form], "uri" => %w[uri], "header" => %w[header]}
-
-    TAG_KEYS = %w[json form uri header].to_h { |key| {key, /(?:\A|\s)#{key}:"/} }
-
-    # The name gin's binder reads `field` by: its `key` tag (nil for `-`),
-    # or, without that tag, an exported field's own name, as gin's form
-    # mapping and encoding/json do.
-    private def gin_field_name(field : Noir::GoStructFields::Field, key : String) : String?
-      return Noir::GoStructFields.tag_value(field.tag, key) if field.tag.matches?(TAG_KEYS[key])
-      field.name if !field.embedded && field.name[0]?.try(&.uppercase?)
-    end
-
-    # Json name for default `Bind`/`ShouldBind`. A `json` tag wins; with no
-    # `form` tag either, the exported name is the json key (the untagged
-    # convention). `form:"name"` and no `json` tag is a form param only —
-    # the Go field name is not also emitted as json.
-    private def gin_default_json_name(field : Noir::GoStructFields::Field) : String?
-      return if field.tag.matches?(TAG_KEYS["form"]) && !field.tag.matches?(TAG_KEYS["json"])
-      gin_field_name(field, "json")
-    end
-
-    # The binds in `lines` as {binder, fields}, and whether any bind did not
-    # resolve to tagged struct fields.
-    private def gin_bind_fields(lines : Array(String), file : String, index : Noir::GoStructFields::Index) : Tuple(Array(Tuple(String, Array(Noir::GoStructFields::Field))), Bool)
-      binds = [] of Tuple(String, Array(Noir::GoStructFields::Field))
-      unresolved = false
-      lines.each do |line|
-        next unless line.includes?("Bind")
-        next unless line.matches?(BIND_LINE)
-        match = line.match(BIND_CALL)
-        kind = match.try { |m| gin_bind_kind(m[1]?, m[3]?) }
-        fields = kind && match && index.target_fields(lines, match[2], file)
-        # A struct with no field its binder reads keeps the generic marker.
-        if kind && fields && fields.any? { |f| BIND_KIND_TAGS[kind].any? { |key| gin_field_name(f, key) } }
-          binds << {kind, fields}
-        else
-          unresolved = true
-        end
-      end
-      {binds, unresolved}
-    end
-
-    # `Bind`/`ShouldBind` pick the binder from the method and Content-Type;
-    # the suffixed forms and `binding.X` name it. Nil for one not read here
-    # (XML, YAML, TOML, ProtoBuf).
-    private def gin_bind_kind(suffix : String?, binding : String?) : String?
-      case suffix
-      when nil                    then "default"
-      when "JSON", "BodyWithJSON" then "json"
-      when "Query"                then "query"
-      when "Header"               then "header"
-      when "Uri"                  then "uri"
-      else                             binding.try { |b| BINDING_KINDS[b]? }
-      end
-    end
-
-    # gin's binders: the default one reads the query string (`form` tags) on
-    # GET, otherwise the body by Content-Type. Json comes from a `json` tag,
-    # or from the exported name when the field has no `form` tag; a form-only
-    # tag is listed as form and not also as json. `uri` tags fill path slots,
-    # `header` tags headers. A `-` field is left out.
-    private def add_gin_bind_params(kind : String, fields : Array(Noir::GoStructFields::Field), ep : Endpoint)
-      fields.each do |field|
-        case kind
-        when "uri"
-          if (name = gin_field_name(field, "uri")) && (ep.url.includes?(":#{name}") || ep.url.includes?("*#{name}"))
-            add_param_to_endpoint(Param.new(name, "", "path"), ep)
-          end
-        when "header"
-          gin_field_name(field, "header").try { |name| add_param_to_endpoint(Param.new(name, "", "header"), ep) }
-        when "query"
-          gin_field_name(field, "form").try { |name| add_param_to_endpoint(Param.new(name, "", "query"), ep) }
-        else
-          query = ep.method == "GET"
-          if kind == "json"
-            gin_field_name(field, "json").try { |name| add_param_to_endpoint(Param.new(name, "", "json"), ep) }
-          elsif kind == "default" && !query
-            gin_default_json_name(field).try { |name| add_param_to_endpoint(Param.new(name, "", "json"), ep) }
-          end
-          if kind != "json"
-            gin_field_name(field, "form").try { |name| add_param_to_endpoint(Param.new(name, "", query ? "query" : "form"), ep) }
-          end
-        end
-      end
-    end
-
-    private def add_gin_param_patterns(line : String, target : Endpoint, bind_marker : Bool = true)
-      # Bind*/ShouldBind* already contribute a single generic body param.
-      # Skip the accessor loop on those lines so `ShouldBindQuery(&x)` does
-      # not also fabricate a bogus query param named "&x".
-      is_bind_line = line.matches?(BIND_LINE)
-
-      unless is_bind_line
-        line.scan(ACCESSOR_RE) { |m| add_param_to_endpoint(Param.new(m[2], "", accessor_type(m[1])), target) }
-      end
-      if is_bind_line && bind_marker
-        add_param_to_endpoint(Param.new("body", "", bind_param_type(line)), target)
-      end
+    private def add_gin_param_patterns(line : String, target : Endpoint)
+      line.scan(ACCESSOR_RE) { |m| add_param_to_endpoint(Param.new(m[2], "", accessor_type(m[1])), target) }
       # `c.Cookie("name")`, and the stdlib request behind the context
       # (`c.Request.URL.Query().Get("q")`, `c.Request.Header.Get("X")`).
       Noir::GoRequestParamExtractor.line_params(line, target.method).each { |param| add_param_to_endpoint(param, target) }
@@ -327,19 +220,6 @@ module Analyzer::Go
         "path"
       else
         "form"
-      end
-    end
-
-    # Where a bind call reads from: `ShouldBindQuery(&q)` and
-    # `ShouldBindWith(&q, binding.Query)` read the query string, not a JSON
-    # body; `BindHeader` / `BindUri` the header / path; `binding.Form*` a form.
-    private def bind_param_type(line : String) : String
-      case line
-      when /Bind(?:Query)\s*\(|binding\.Query\b/ then "query"
-      when /BindHeader\s*\(|binding\.Header\b/   then "header"
-      when /BindUri\s*\(|binding\.Uri\b/         then "path"
-      when /binding\.Form(?:Post|Multipart)?\b/  then "form"
-      else                                            "json"
       end
     end
   end

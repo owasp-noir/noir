@@ -11,7 +11,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/keepers/feed", "POST", [
     Param.new("X-Keeper-Token", "", "header"),
-    Param.new("body", "", "json"),
+    Param.new("Food", "", "json"),
   ]),
   Endpoint.new("/keepers/cages/:cage", "DELETE", [
     Param.new("X-Keeper-Token", "", "header"),

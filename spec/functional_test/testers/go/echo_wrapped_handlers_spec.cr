@@ -30,6 +30,8 @@ expected_endpoints = [
     Param.new("l", "", "query"),
   ]),
   Endpoint.new("/subscribe", "POST", [
+    Param.new("Lists", "", "json"),
+    Param.new("Note", "", "json"),
     Param.new("confirm", "", "form"),
     Param.new("l", "", "form"),
   ]),

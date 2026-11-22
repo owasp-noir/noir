@@ -1,13 +1,17 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./go_callee_extractor"
-require "./go_struct_fields"
+require "./go_binding"
+require "./go_named_handler"
 require "../utils/c_comments"
 
 module Noir::GoRequestParamExtractor
+  alias GoBinding = Noir::GoBinding
   extend self
 
-  MAX_HELPER_DEPTH = 3
+  # Include an accessor called by the request helper at the third hop. The
+  # cache keeps the remaining walk depth separate for each call site.
+  MAX_HELPER_DEPTH = 4
 
   # Lookups across packages for the walk: a helper called through an
   # imported package (`request.QueryBoolParam(r, "force", false)`), the
@@ -22,8 +26,18 @@ module Noir::GoRequestParamExtractor
     @constants = Hash(String, Hash(String, String)).new
     @mutex = Mutex.new
 
-    def initialize(@bodies, @file_contents : Hash(String, String), @import_dirs : Hash(String, String))
-      @structs = Noir::GoStructFields::Index.new(@file_contents, @import_dirs)
+    getter framework : String?
+    @factory_sites = Hash(String, GoBinding::FactorySites).new
+
+    def receiver_factories(file, row, handler, receiver) : GoBinding::Arguments
+      sites = @mutex.synchronize { @factory_sites[file] ||= GoBinding.factory_sites(@file_contents[file], file) }
+      result = GoBinding::Arguments.new
+      sites[{row, handler}]?.try &.each { |field, dest| result["#{receiver}.#{field}()"] = dest }
+      result
+    end
+
+    def initialize(@bodies, @file_contents : Hash(String, String), @import_dirs : Hash(String, String), @framework : String? = nil, structs : Noir::GoStructFields::Index? = nil)
+      @structs = structs || Noir::GoStructFields::Index.new(@file_contents, @import_dirs)
       @file_contents.each_key do |path|
         (@files_by_dir[File.dirname(path)] ||= [] of String) << path unless path.ends_with?("_test.go")
       end
@@ -37,7 +51,7 @@ module Noir::GoRequestParamExtractor
       @bodies.functions_for(dir)[name]?
     end
 
-    private def aliases(file : String) : Hash(String, String)
+    def aliases(file : String) : Hash(String, String)
       @mutex.synchronize do
         @aliases[file] ||= @file_contents[file]?.try { |c| Noir::GoCalleeExtractor.extract_import_aliases(c) } || Hash(String, String).new
       end
@@ -81,7 +95,7 @@ module Noir::GoRequestParamExtractor
   # `queries` names the locals holding the parsed query (`values :=
   # r.URL.Query()`).
   record Context, resolver : Resolver?, file : String?, lines : Array(String), bindings : Hash(String, String),
-    requests : Set(String)? = nil, queries : Set(String) = Set(String).new
+    requests : Set(String)? = nil, queries : Set(String) = Set(String).new, destinations : GoBinding::Arguments = GoBinding::Arguments.new, decoded_bytes : Bool = false
 
   QUERY_ALIAS = /([A-Za-z_]\w*)\s*:?=\s*\w+\s*\.\s*URL\s*\.\s*Query\s*\(\s*\)/
 
@@ -158,6 +172,22 @@ module Noir::GoRequestParamExtractor
     append_function_params(fn, http_method, resolver.bodies.functions_for(dir), resolver.bodies.methods_for(dir),
       Hash(String, Array(Param)).new, Set(String).new, params, 0, resolver, Hash(String, String).new)
     params
+  end
+
+  # Attributed lines from the framework adapters can be a named declaration
+  # or an inline registration. Wrap the latter as a Go statement list.
+  def binding_params(lines : Array(String), file : String, method : String, resolver : Resolver, destinations = GoBinding::Arguments.new) : Array(Param)
+    return [] of Param if lines.empty?
+    text = lines.join("\n")
+    source = text.lstrip.starts_with?("func ") ? "package p\n#{text}" : "package p\nfunc _() {\n#{text}\n}"
+    ctx = Context.new(resolver, file, lines, Hash(String, String).new, destinations: destinations)
+    result = [] of Param
+    dir = File.dirname(file)
+    Noir::TreeSitter.parse_go(source) do |root|
+      collect_params_in_body(root, source, method, resolver.bodies.functions_for(dir), resolver.bodies.methods_for(dir),
+        Hash(String, Array(Param)).new, Set(String).new, result, 0, ctx)
+    end
+    result
   end
 
   def params_for_routes(source : String,
@@ -270,8 +300,9 @@ module Noir::GoRequestParamExtractor
                                      sink : Array(Param),
                                      depth : Int32,
                                      resolver : Resolver? = nil,
-                                     arg_bindings : Hash(String, String) = Hash(String, String).new)
-    key = "#{fn.file_path}:#{fn.start_row}:#{http_method}:#{arg_bindings.to_a.sort!.join(',')}"
+                                     arg_bindings : Hash(String, String) = Hash(String, String).new,
+                                     destinations : GoBinding::Arguments = GoBinding::Arguments.new, decoded_bytes = false)
+    key = "#{fn.file_path}:#{fn.start_row}:#{http_method}:#{arg_bindings.to_a.sort!.join(',')}:#{destinations}:#{depth}:#{decoded_bytes}"
     if cached = cache[key]?
       cached.each { |param| push_param(sink, param) }
       return
@@ -292,7 +323,7 @@ module Noir::GoRequestParamExtractor
       bindings = arg_bindings
     end
     ctx = Context.new(resolver, fn.file_path, fn.source.lines, bindings, request_params(fn.source),
-      fn.source.scan(QUERY_ALIAS).map(&.[1]).to_set)
+      fn.source.scan(QUERY_ALIAS).map(&.[1]).to_set, destinations, decoded_bytes)
     wrapped = "package _noir_params_wrap\n#{fn.source}\n"
     Noir::TreeSitter.parse_go(wrapped) do |root|
       Noir::TreeSitter.each_named_child(root) do |child|
@@ -320,21 +351,35 @@ module Noir::GoRequestParamExtractor
                                      sink : Array(Param),
                                      depth : Int32,
                                      ctx : Context)
+    decoded_reads = consumed_byte_reads(body, source, ctx)
     Noir::TreeSitter.walk(body) do |node|
       type = Noir::TreeSitter.node_type(node)
       # `items := r.Form["i"]` reads the form outside any call.
-      if type == "index_expression"
+      if type == "index_expression" && !ctx.resolver.try(&.framework)
         extract_params_from_call(node, source, http_method, ctx).each { |param| push_param(sink, param) }
       end
-      if type == "for_statement"
+      if type == "for_statement" && !ctx.resolver.try(&.framework)
         each_range_literal(node, source, ctx) do |loop_body, loop_ctx|
           collect_params_in_body(loop_body, source, http_method, external_functions, external_methods, cache, visiting, sink, depth, loop_ctx)
         end
       end
       next unless type == "call_expression"
 
-      extract_params_from_call(node, source, http_method, ctx).each do |param|
-        push_param(sink, param)
+      # The helper (or io.ReadAll) supplying bytes to json.Unmarshal
+      # is accounted for at the decoding call with its actual destination.
+      consumed = decoded_reads.includes?(LibTreeSitter.ts_node_start_byte(node))
+      if binding = bound_params(node, source, http_method, ctx)
+        binding.each { |param| push_param(sink, param) }
+        next
+      end
+      if !consumed && !ctx.decoded_bytes && call_function_leaf(node, source) == "ReadAll" &&
+         GoBinding.node_field(node, "function", source).matches?(/\A(?:io|ioutil)\.ReadAll\z/) &&
+         (args = Noir::TreeSitter.field(node, "arguments")) && (arg = Noir::TreeSitter.first_named_arg(args)) &&
+         request_body?(Noir::TreeSitter.node_text(arg, source), node, source, ctx)
+        push_param(sink, Param.new("body", "", "json"))
+      end
+      unless ctx.resolver.try(&.framework)
+        extract_params_from_call(node, source, http_method, ctx).each { |param| push_param(sink, param) }
       end
 
       imported = depth < MAX_HELPER_DEPTH ? imported_helper_for_call(node, source, ctx) : nil
@@ -344,17 +389,20 @@ module Noir::GoRequestParamExtractor
         # nothing off the request.
         found = [] of Param
         append_function_params(imported, http_method, external_functions, external_methods, cache, visiting, found, depth + 1,
-          ctx.resolver, helper_bindings(imported, node, source, ctx))
-        found = named_helper_params(node, source, http_method) if found.empty?
+          ctx.resolver, helper_bindings(imported, node, source, ctx), destination_arguments(imported, node, source, ctx), consumed)
+        found = named_helper_params(node, source, http_method) if found.empty? && !ctx.resolver.try(&.framework)
         found.each { |param| push_param(sink, param) }
         next
       end
-      named_helper_params(node, source, http_method).each { |param| push_param(sink, param) }
+      named_helper_params(node, source, http_method).each { |param| push_param(sink, param) } unless ctx.resolver.try(&.framework)
 
       next if depth >= MAX_HELPER_DEPTH
-      if fn = helper_function_body_for_call(node, source, external_functions, external_methods)
+      if fn = helper_function_body_for_call(node, source, external_functions, external_methods, ctx)
+        if ctx.resolver.try(&.framework)
+          next unless request_helper?(fn.source.match(HELPER_PARAMS).try(&.[1]) || "", ctx.resolver.try(&.framework))
+        end
         append_function_params(fn, http_method, external_functions, external_methods, cache, visiting, sink, depth + 1,
-          ctx.resolver, helper_bindings(fn, node, source, ctx))
+          ctx.resolver, helper_bindings(fn, node, source, ctx), destination_arguments(fn, node, source, ctx), consumed)
       end
     end
   end
@@ -403,7 +451,161 @@ module Noir::GoRequestParamExtractor
     # A helper that is not handed the request (an outbound client, `client.
     # Fetch(ctx, url)`) reads none of it.
     params = fn.source.match(HELPER_PARAMS).try(&.[1]) || return
-    fn if params.matches?(REQUEST_PARAM) && !params.includes?("http.ResponseWriter")
+    fn if request_helper?(params, resolver.framework)
+  end
+
+  private def request_helper?(params : String, framework : String?) : Bool
+    (params.matches?(REQUEST_PARAM) || (!framework.nil? && params.matches?(/\b(?!context\.)\w+\.Context\b/))) && !params.includes?("http.ResponseWriter")
+  end
+
+  private def destination_arguments(fn, call, source, ctx) : GoBinding::Arguments
+    result = GoBinding::Arguments.new
+    file = ctx.file || return result
+    list = fn.source.match(HELPER_PARAMS).try(&.[1]) || return result
+    return result unless list.matches?(REQUEST_PARAM) || request_helper?(list, ctx.resolver.try(&.framework))
+    names = list.split(',').map(&.strip.split(/\s+/).first?)
+    args = Noir::TreeSitter.field(call, "arguments") || return result
+    i = 0
+    Noir::TreeSitter.each_named_arg(args) do |arg|
+      name = names[i]?
+      i += 1
+      next unless name
+      dest = GoBinding.destination(Noir::TreeSitter.node_text(arg, source), call, source, file, ctx.destinations)
+      result[name] = dest if dest
+    end
+    result
+  end
+
+  GIN_BIND  = /\A(?:Should|Must)?Bind(JSON|Query|Header|Uri|With|BodyWith|BodyWithJSON|XML|YAML|TOML)?\z/
+  GIN_KINDS = {"JSON" => "json", "BodyWithJSON" => "json", "Query" => "query", "Uri" => "uri",
+               "Header" => "header", "Form" => "form", "FormPost" => "form", "FormMultipart" => "form"}
+  ECHO_KINDS = {"Bind" => "echo", "BindBody" => "json", "BindJSON" => "json", "BindQuery" => "echo_query",
+                "BindQueryParams" => "echo_query", "BindPath" => "param", "BindPathParams" => "param",
+                "BindHeaders" => "echo_header", "BindXML" => "opaque", "BindYAML" => "opaque"}
+
+  private def consumed_byte_reads(body, source, ctx) : Set(UInt32)
+    reads = Set(UInt32).new
+    return reads unless ctx.lines.any?(&.includes?("Unmarshal"))
+    Noir::TreeSitter.walk(body) do |node|
+      next unless Noir::TreeSitter.node_type(node) == "call_expression" && call_function_leaf(node, source) == "Unmarshal"
+      qualifier = GoBinding.node_field(node, "function", source).rpartition('.').first
+      next unless json_package?(qualifier, ctx)
+      args = Noir::TreeSitter.field(node, "arguments") || next
+      arg = Noir::TreeSitter.first_named_arg(args) || next
+      name = Noir::TreeSitter.node_text(arg, source)
+      if request_bytes?(name, node, source, ctx) && (value = GoBinding.local(name, node, source).try(&.value))
+        reads << LibTreeSitter.ts_node_start_byte(value)
+      end
+    end
+    reads
+  end
+
+  private def bound_params(call, source, method, ctx) : Array(Param)?
+    function = Noir::TreeSitter.field(call, "function") || return
+    return unless Noir::TreeSitter.node_type(function) == "selector_expression"
+    name = GoBinding.node_field(function, "field", source)
+    return unless name.includes?("Bind") || {"Decode", "DecodeJSON", "Unmarshal"}.includes?(name)
+    recv = GoBinding.node_field(function, "operand", source)
+    args = [] of String
+    Noir::TreeSitter.field(call, "arguments").try do |list|
+      Noir::TreeSitter.each_named_arg(list) { |arg| args << Noir::TreeSitter.node_text(arg, source) }
+    end
+    target = args.first? || return
+    framework = ctx.resolver.try(&.framework)
+    package = ctx.file.try { |file| ctx.resolver.try(&.aliases(file)[recv]?) }
+    if package == "github.com/oapi-codegen/runtime" && {"BindQueryParameter", "BindQueryParameterWithOptions"}.includes?(name)
+      if (literal = args[3]?.try(&.match(/\A["`]([^"`]+)["`]\z/))) && args[4]?.try(&.matches?(/\A\w+\.URL\.Query\(\)\z/))
+        return [Param.new(literal[1], "", "query")]
+      end
+      return
+    end
+    kind = case
+           when package == "github.com/go-chi/render" && {"Bind", "DecodeJSON"}.includes?(name)
+             target = args[1]? || return
+             return unless name == "Bind" || request_body?(args[0], call, source, ctx)
+             "json"
+           when name == "Decode"
+             decoder = recv.matches?(GoBinding::IDENT) ? GoBinding.local(recv, call, source).try(&.expression(source)) : recv
+             return unless decoder && (m = decoder.match(/\A(\w+)\.NewDecoder\(\s*(.+?)\s*\)\z/m))
+             return unless json_package?(m[1], ctx) && request_body?(m[2], call, source, ctx)
+             "json"
+           when name == "Unmarshal"
+             return unless json_package?(recv, ctx) && request_bytes?(target, call, source, ctx)
+             target = args[1]? || return
+             "json"
+           when framework == "gin" && !package && (m = name.match(GIN_BIND)) && context_receiver?(recv, call, source, ctx)
+             suffix = m[1]?
+             suffix = args[1]?.try(&.split('.').last) if {"With", "BodyWith"}.includes?(suffix)
+             m[1]? ? GIN_KINDS.fetch(suffix || "", "opaque") : "gin"
+           when framework == "echo" && ECHO_KINDS.has_key?(name) && (package.try(&.starts_with?("github.com/labstack/echo")) || context_receiver?(recv, call, source, ctx))
+             target = args.last
+             ECHO_KINDS[name]
+           else
+             return
+           end
+    dest = ctx.file.try { |file| GoBinding.destination(target, call, source, file, ctx.destinations) }
+    GoBinding.params(kind, method, dest, ctx.resolver.try(&.structs))
+  end
+
+  private def context_receiver?(name, call, source, ctx) : Bool
+    return false unless name.matches?(GoBinding::IDENT)
+    local = GoBinding.local(name, call, source) || return true
+    type = local.type.lchop('*')
+    # A context may be embedded in a project-defined handler context.
+    return true if type.ends_with?(".Context")
+    file = ctx.file || return false
+    fields = ctx.resolver.try(&.structs.declaration(type, file))
+    !!fields.try(&.last.any? { |field| field.embedded && field.type.ends_with?(".Context") })
+  end
+
+  private def json_package?(name, ctx) : Bool
+    path = ctx.file.try { |file| ctx.resolver.try(&.aliases(file)[name]?) }
+    path ? (path == "encoding/json" || path.ends_with?("/go-json") || path.ends_with?("/json-iterator/go")) : name == "json"
+  end
+
+  private def request_body?(expr, call, source, ctx) : Bool
+    # http.MaxBytesReader(w, r.Body, limit) preserves the input stream.
+    body = expr.match(/\Ahttp\.MaxBytesReader\([^,]+,\s*([^,]+),/).try(&.[1]) || expr
+    if body.matches?(GoBinding::IDENT)
+      body = GoBinding.local(body, call, source).try(&.expression(source)) || return false
+    end
+    m = body.match(/\A(\w+)(\.Request(?:\(\))?)?\.Body\z/) || return false
+    return true if m[2]?
+    requests = ctx.requests
+    requests ? requests.includes?(m[1]) : GoBinding.local(m[1], call, source).try(&.type) == "*http.Request"
+  end
+
+  # Trace the bytes fed to json.Unmarshal to a request stream. A helper
+  # returning []byte is inspected at its return, in its own package.
+  private def request_bytes?(name, call, source, ctx, follow = true) : Bool
+    return false unless name.matches?(GoBinding::IDENT)
+    expr = GoBinding.local(name, call, source).try(&.expression(source)) || return false
+    if m = expr.match(/\A(?:io|ioutil)\.ReadAll\((.+)\)\z/)
+      return request_body?(m[1], call, source, ctx)
+    end
+    return false unless follow && (m = expr.match(/\A(?:(\w+)\.)?(\w+)\((\w+)\)\z/))
+    request = GoBinding.local(m[3], call, source)
+    return false unless ctx.requests.try(&.includes?(m[3])) || request.try(&.type) == "*http.Request"
+    resolver = ctx.resolver || return false
+    file = ctx.file || return false
+    fn = if qualifier = m[1]?
+           resolver.imported_function(file, qualifier, m[2])
+         else
+           resolver.bodies.functions_for(File.dirname(file))[m[2]]?
+         end
+    return false unless fn && request_params(fn.source) && fn.source.includes?("[]byte")
+    helper_ctx = Context.new(resolver, fn.file_path, fn.source.lines, Hash(String, String).new, request_params(fn.source))
+    found = false
+    wrapped = "package p\n#{fn.source}"
+    Noir::TreeSitter.parse_go(wrapped) do |root|
+      Noir::TreeSitter.walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "return_statement"
+        if returned = Noir::TreeSitter.node_text(node, wrapped).match(/\Areturn\s+(\w+)\s*(?:,|\z)/)
+          found ||= request_bytes?(returned[1], node, wrapped, helper_ctx, false)
+        end
+      end
+    end
+    found
   end
 
   HELPER_PARAMS = /\Afunc\s*(?:\([^)]*\)\s*)?\w+\s*(?:\[.*?\]\s*)?\(([^)]*)\)/
@@ -433,10 +635,7 @@ module Noir::GoRequestParamExtractor
     bindings
   end
 
-  # `json.NewDecoder(r.Body).Decode(&req)`, under any alias of the package.
-  JSON_DECODE   = /\b\w*json\w*\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/
-  DECODE_TARGET = /\.Decode\s*\(\s*&\s*([A-Za-z_]\w*)\s*\)/
-  BOUND_NAME    = /(?<![\w."`])([A-Za-z_]\w*)(?![\w"`(])/
+  BOUND_NAME = /(?<![\w."`])([A-Za-z_]\w*)(?![\w"`(])/
 
   private def extract_params_from_call(call : LibTreeSitter::TSNode,
                                        source : String,
@@ -449,13 +648,6 @@ module Noir::GoRequestParamExtractor
     if ctx && !ctx.bindings.empty?
       bindings = ctx.bindings
       call_text = call_text.gsub(BOUND_NAME) { |name| (value = bindings[name]?) ? %("#{value}") : name }
-    end
-
-    if call_text.matches?(JSON_DECODE)
-      fields = decoded_fields(call_text, ctx)
-      fields ? params.concat(fields) : (params << Param.new("body", "", "json"))
-    elsif call_text.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/)
-      params << Param.new("body", "", "json")
     end
 
     params.concat(accessor_params(call_text, http_method, ctx))
@@ -518,26 +710,6 @@ module Noir::GoRequestParamExtractor
     [Param.new(name, "", param_type)]
   end
 
-  # The JSON names of the struct a decoded body fills (`var req T` then
-  # `Decode(&req)`): a field's `json` tag, or an exported field's own name;
-  # a `json:"-"` field is never bound. Nil when the target does not resolve
-  # to a struct with such a field.
-  private def decoded_fields(call_text : String, ctx : Context?) : Array(Param)?
-    ctx || return
-    resolver = ctx.resolver || return
-    file = ctx.file || return
-    target = call_text.match(DECODE_TARGET) || return
-    fields = resolver.structs.target_fields(ctx.lines, target[1], file) || return
-    names = fields.compact_map do |field|
-      tag = field.tag.match(/(?:\A|\s)json:"([^"]*)"/)
-      name = tag ? tag[1].split(',').first : ""
-      next if name == "-"
-      next name unless name.empty?
-      field.name if !field.embedded && field.name[0]?.try(&.uppercase?)
-    end
-    names.empty? ? nil : names.uniq.map { |name| Param.new(name, "", "json") }
-  end
-
   private def append_regex_param(params : Array(Param), call_text : String, regex : Regex, param_type : String)
     call_text.scan(regex) { |match| params << Param.new(match[1], "", param_type) }
   end
@@ -545,7 +717,8 @@ module Noir::GoRequestParamExtractor
   private def helper_function_body_for_call(call : LibTreeSitter::TSNode,
                                             source : String,
                                             external_functions : Hash(String, Noir::GoCalleeExtractor::FunctionBody),
-                                            external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))) : Noir::GoCalleeExtractor::FunctionBody?
+                                            external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)),
+                                            ctx : Context) : Noir::GoCalleeExtractor::FunctionBody?
     function = Noir::TreeSitter.field(call, "function")
     return unless function
 
@@ -558,9 +731,15 @@ module Noir::GoRequestParamExtractor
       return unless field
       method_name = Noir::TreeSitter.node_text(field, source)
       return if helper_param_type(method_name, "") || method_name == "Get" || method_name == "Decode"
-      if (methods = external_methods[method_name]?) && methods.size == 1
-        methods.first
+      methods = external_methods[method_name]? || return
+      if ctx.resolver.try(&.framework) && (file = ctx.file)
+        receiver = GoBinding.node_field(function, "operand", source)
+        if dest = GoBinding.destination(receiver, call, source, file, ctx.destinations)
+          type = dest.type.lchop('*')
+          return methods.find { |fn| fn.source.match(Noir::GoNamedHandler::RECEIVER_RE).try(&.[2]) == type }
+        end
       end
+      methods.first if methods.size == 1
     end
   end
 

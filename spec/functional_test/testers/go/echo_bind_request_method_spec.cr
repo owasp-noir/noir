@@ -5,6 +5,8 @@ require "../../func_spec.cr"
 # struct's tagged fields.
 expected_endpoints = [
   Endpoint.new("/login", "POST", [Param.new("user", "", "json")]),
+  Endpoint.new("/drafts", "POST", [Param.new("title", "", "json")]),
+  Endpoint.new("/replies", "POST", [Param.new("text", "", "json")]),
   Endpoint.new("/direct", "POST", [Param.new("user", "", "json")]),
 ]
 
