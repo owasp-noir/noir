@@ -3,6 +3,7 @@ require "../../../miniparsers/python_method_guard"
 require "json"
 require "../../../utils/top_level_split"
 require "./django_view_registry"
+require "./django_drf_inputs"
 
 module Analyzer::Python
   class Django < PythonEngine
@@ -150,6 +151,8 @@ module Analyzer::Python
       root_django_urls_list.each do |root_django_urls|
         logger.debug "Found Django URL configurations in #{root_django_urls.filepath}"
         @django_base_path = root_django_urls.basepath
+        @settings_file = root_django_urls.settings_file
+        @drf_urlconf = root_django_urls.filepath
         extract_endpoints(root_django_urls).each do |endpoint|
           endpoints << endpoint
         end
@@ -182,6 +185,7 @@ module Analyzer::Python
       # its prefix is `@visited_url_paths`, which `extract_endpoints`
       # fills in as it follows `include()` — a record of what was
       # actually resolved, not a guess about which URLs look alike.
+      @settings_file = nil
       extract_endpoints_from_orphan_urlconfs.each do |endpoint|
         endpoints << endpoint
       end
@@ -237,6 +241,7 @@ module Analyzer::Python
         end
         next unless content.includes?("urlpatterns")
 
+        @drf_urlconf = file
         django_urls = DjangoUrls.new("", file, candidate_base_path)
         extract_endpoints(django_urls).each do |endpoint|
           endpoints << endpoint
@@ -432,7 +437,7 @@ module Analyzer::Python
             dotted_as_urlconf = match[1].split(".")
             resolve_root_urlconf_paths(file, dotted_as_urlconf, current_base_path).each do |filepath|
               basepath = filepath.split("/")[..-(dotted_as_urlconf.size + 1)].join("/")
-              root_django_urls_list << DjangoUrls.new("", filepath, basepath)
+              root_django_urls_list << DjangoUrls.new("", filepath, basepath, settings_file: file)
             end
           end
         end
@@ -2348,18 +2353,20 @@ module Analyzer::Python
                   definition_base_path: @django_base_path,
                   source: content
                 )
-                method_params[method_name].concat drf_serializer_params(codeblock, filepath, chain)
+                method_params[method_name].concat drf_serializer_params(codeblock, filepath, chain, verb: method_name)
                 method_params[method_name].concat cached_cbv_params(codeblock, filepath, chain, 0, method_name)
               end
             elsif drf_generic_class && any_method_function_match && (drf_methods = drf_generic_action_http_methods(any_method_function_match[1]))
               current_http_methods = drf_methods
               # `create` validating `self.get_serializer(data=request.data)`
               # reads that serializer's fields for the verbs it serves.
-              action_serializer_params = parse_code_block(lines[offset..]).try { |codeblock| drf_serializer_params(codeblock, filepath, chain) }
+              action_body = parse_code_block(lines[offset..])
               drf_methods.each do |method_name|
                 next unless suspicious_http_methods.includes?(method_name)
                 method_lines[method_name] ||= body_start_line + offset + 2
-                action_serializer_params.try { |found| method_params[method_name].concat found }
+                if action_body
+                  method_params[method_name].concat drf_serializer_params(action_body, filepath, chain, verb: method_name)
+                end
               end
             end
 
@@ -2391,7 +2398,7 @@ module Analyzer::Python
               method_lines[method_name] = klass.line_index + offset + 1
               method_owners[method_name] = klass
               if codeblock = parse_code_block(klass.codeblock.split("\n")[offset..])
-                method_params[method_name].concat drf_serializer_params(codeblock, klass.filepath, chain)
+                method_params[method_name].concat drf_serializer_params(codeblock, klass.filepath, chain, verb: method_name)
                 method_params[method_name].concat cached_cbv_params(codeblock, klass.filepath, chain, owner_index, method_name)
               end
             end
@@ -2399,9 +2406,12 @@ module Analyzer::Python
 
           # A stock `CreateAPIView.post` / `UpdateAPIView.put` validates the body.
           if drf_generic_class
+            suspicious_http_methods.each do |verb|
+              method_params[verb].concat generic_query_params(chain, chain_header, verb)
+            end
             {"POST" => "create", "PUT" => "update", "PATCH" => "partial_update"}.each do |verb, action|
               next if method_lines.has_key?(verb) || !suspicious_http_methods.includes?(verb)
-              method_params[verb].concat drf_serializer_params(STOCK_SERIALIZER_CALL, filepath, chain, action)
+              method_params[verb].concat drf_serializer_params(STOCK_SERIALIZER_CALL, filepath, chain, action, verb)
             end
           end
 
@@ -2576,52 +2586,10 @@ module Analyzer::Python
     # A declared serializer field: `name = serializers.CharField(`.
     SERIALIZER_FIELD_RE = /^(\s+)([a-z_][a-z0-9_]*)\s*=\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)*([A-Z][A-Za-z0-9_]*(?:Field|Serializer))\s*\(/
 
-    # Body fields a handler reads through the DRF serializer it hands
-    # `request.data`: the fields that serializer class (or a project base)
-    # declares. `get_serializer` means the view's `serializer_class`.
-    # ponytail: declared fields plus a literal `Meta.fields` list; `"__all__"`
-    # and `Meta.exclude` need the model's columns and are not read.
-    SERIALIZER_CLASS_RE         = /^\s+serializer_class\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*$/m
-    GET_SERIALIZER_CLASS_DEF_RE = /^\s+def\s+get_serializer_class\s*\(/
-    ACTION_BRANCH_RE            = /\A(?:if|elif)\s+self\.action\s*(==|in)\s*(.+?):\s*(.*)\z/
-    RETURN_NAME_RE              = /\Areturn\s+([A-Za-z_][\w.]*)\s*\z/
-
-    # `{file, class}` of the serializer `get_serializer` builds for
-    # `action`: the nearest `get_serializer_class` override when its choice
-    # is static (`if self.action == "create": return CreateSerializer`), else the
-    # nearest `serializer_class`, named where the view declares it (not
-    # where the inherited method calling `get_serializer` lives). Nil when
-    # an override decides some other way.
-    private def view_serializer_class(view_chain : Array(DrfClass), action : ::String?,
-                                      attribute_only = false) : Tuple(::String, ::String)?
-      # `@action(serializer_class=X)` sets the attribute for that action;
-      # a `get_serializer_class` override anywhere up the chain still
-      # decides first, as DRF resolves the method before the attribute.
-      kwarg = action_kwarg_class(view_chain, action, "serializer_class")
-      return kwarg if attribute_only && kwarg
-      view_chain.each do |klass|
-        lines = klass.codeblock.split("\n")
-        if !attribute_only && (index = lines.index(&.matches?(GET_SERIALIZER_CLASS_DEF_RE)))
-          body = parse_code_block(lines[index..]) || return
-          case choice = static_serializer_choice(body, action)
-          when :super   then next
-          when ::String then return {klass.filepath, choice}
-          else               return
-          end
-        end
-        next if kwarg && !attribute_only && view_chain.any? { |base| base.codeblock.split("\n").any?(&.matches?(GET_SERIALIZER_CLASS_DEF_RE)) }
-        return kwarg if kwarg
-        if bound = klass.codeblock.match(SERIALIZER_CLASS_RE)
-          return {klass.filepath, bound[1]}
-        end
-      end
-      kwarg
-    end
-
     # The class an `@action(...)` decorator on method `action` passes as
     # `key` (`serializer_class=`, `pagination_class=`), named where that
     # method is declared: DRF sets it on the view for that action.
-    private def action_kwarg_class(view_chain : Array(DrfClass), action : ::String?, key : ::String) : Tuple(::String, ::String)?
+    private def action_kwarg(view_chain : Array(DrfClass), action : ::String?, key : ::String) : Tuple(::String, ::String)?
       return unless action
       view_chain.each do |klass|
         found = nil
@@ -2630,56 +2598,56 @@ module Analyzer::Python
         end
         next unless decorators = found
         args = drf_action_decorator_args(decorators) || return
-        name = args.match(/\b#{key}\s*=\s*([A-Za-z_][\w.]*)/).try(&.[1]) || return
-        return {klass.filepath, name}
-      end
-      nil
-    end
-
-    # What a `get_serializer_class` body returns for `action`: a class
-    # name, `:super` for `return super().get_serializer_class()`, nil when
-    # it branches on anything but `self.action` or returns an expression.
-    private def static_serializer_choice(body : ::String, action : ::String?) : ::String | Symbol?
-      code = body.split("\n")[1..].map { |line| strip_python_comment(line).rstrip }.reject(&.strip.empty?)
-      level = code.min_of? { |line| line.size - line.lstrip.size } || return
-      index = 0
-      while index < code.size
-        line = code[index]
-        stripped = line.strip
-        index += 1
-        next unless line.size - line.lstrip.size == level
-        if branch = stripped.match(ACTION_BRANCH_RE)
-          returned = branch[3].empty? ? code[index]?.try(&.strip) : branch[3]
-          name = returned.try(&.match(RETURN_NAME_RE)).try(&.[1]) || return
-          return name if action && branch[2].scan(/['"](\w+)['"]/).any? { |m| m[1] == action }
-        elsif stripped == "else:"
-          next
-        elsif stripped.matches?(/\Areturn\s+super\s*\(\s*\)\s*\.get_serializer_class\s*\(\s*\)\s*\z/)
-          return :super
-        elsif returned = stripped.match(RETURN_NAME_RE)
-          return returned[1]
-        else
-          return
+        split_python_arguments(args).each do |arg|
+          attr, _, value = arg.partition('=')
+          return {klass.filepath, value.strip} if attr.strip == key
         end
+        return
       end
       nil
     end
 
     private def drf_serializer_params(codeblock : ::String, filepath : ::String, view_chain : Array(DrfClass),
-                                      action : ::String? = nil) : Array(Param)
+                                      action : ::String? = nil, verb : ::String? = nil) : Array(Param)
       params = [] of Param
       return params unless codeblock.includes?("request.data")
       codeblock.scan(SERIALIZER_DATA_RE) do |call|
         name = call[1]
-        source = filepath
-        if name.ends_with?("get_serializer")
-          source, name = view_serializer_class(view_chain, action) || next
-        elsif name == "self.serializer_class"
-          source, name = view_serializer_class(view_chain, action, attribute_only: true) || next
+        candidates = [{filepath, name}]
+        uncertain = false
+        if name.ends_with?("get_serializer") || name == "self.serializer_class"
+          attribute = action_kwarg(view_chain, action, "serializer_class") || class_attribute(view_chain, "serializer_class")
+          if name == "self.serializer_class"
+            candidates = [attribute].compact
+          else
+            candidates, uncertain = serializer_choices(view_chain, "get_serializer_class", action, verb, attribute)
+            if attribute && candidates.any? { |candidate| !resolve_python_class(*candidate) }
+              candidates << attribute
+              uncertain = true
+            end
+          end
+        elsif name.matches?(/\A[a-z_]\w*\z/)
+          # Some handlers ask a registry for a serializer by its class name,
+          # then call that local with data=request.data. The registry may
+          # substitute a different implementation for this request.
+          prefix = codeblock.byte_slice(0, call.byte_begin(1)).rpartition('\n')[0]
+          guard = ->(expr : ::String) { serializer_guard(expr, view_chain, action, verb) }
+          Noir::PythonDeclarations.reachable_values(prefix, guard, name).each do |value|
+            if factory = value.match(/\A[\w.]+\(\s*(['"])([\w.]+Serializer)\1\s*\)\z/)
+              candidates << {filepath, factory[2]}
+              uncertain = true
+            end
+          end
         end
-        target = resolve_python_class(source, name) || next
-        declared_input_fields(target).each do |field|
-          params << Param.new(field, "", "form") unless params.any? { |param| param.name == field }
+        candidates.each do |file, ref|
+          target = resolve_python_class(file, ref) || next
+          fields = @serializer_inputs[target] ||= serializer_inputs(target)
+          fields.each do |field|
+            next if params.any? { |param| param.name == field }
+            param = Param.new(field, "", "form")
+            param.tags << Tag.new("conditional", "The serializer class depends on runtime dispatch.", TAGGER) if uncertain
+            params << param
+          end
         end
       end
       params
@@ -2695,7 +2663,7 @@ module Analyzer::Python
     # A field class that never takes input: one of DRF's, or a project
     # class built on one (`RelatedObjectCountField(serializers.ReadOnlyField)`).
     private def output_only_field?(type_name : ::String, filepath : ::String) : Bool
-      return true if type_name.matches?(OUTPUT_ONLY_FIELD_RE)
+      return true if type_name.rpartition('.')[2].matches?(OUTPUT_ONLY_FIELD_RE)
       target = resolve_python_class(filepath, type_name) || return false
       drf_class_chain(target[0], target[1]).any? do |klass|
         python_class_bases(klass.header).any?(&.rpartition('.')[2].matches?(OUTPUT_ONLY_FIELD_RE))
@@ -2998,7 +2966,7 @@ module Analyzer::Python
           index = lines.index(&.matches?(def_re)) || next
           if body = parse_code_block(lines[index..])
             break unless passed || body.matches?(/\bself\.request\b/)
-            params.concat drf_serializer_params(body, klass.filepath, chain, action)
+            params.concat drf_serializer_params(body, klass.filepath, chain, action, verb)
             params.concat cbv_body_params(body, klass.filepath, chain, verb, depth + 1, seen, self_forms, index_in_chain, helpers, action)
           end
           break
@@ -3389,12 +3357,18 @@ module Analyzer::Python
         end
         # The mixin's `create` / `update` validate the request body.
         if action.name.in?("create", "update", "partial_update")
-          action.body_params.concat drf_serializer_params(STOCK_SERIALIZER_CALL, own.filepath, chain, action.name)
+          action.body_params.concat drf_serializer_params(STOCK_SERIALIZER_CALL, own.filepath, chain, action.name, action.method)
           next if action.name == "create"
         end
         calls = action.detail ? "self.get_object()\nself.get_queryset()" : "self.get_queryset()"
         reads = queryset_reads[action.detail] ||= cbv_body_params(calls, own.filepath, chain, "GET")
         action.params.concat reads
+        if action.name == "list"
+          action.params.concat pagination_params(chain, action.name)
+          action.params.concat drf_backend_params(chain, action.name)
+        elsif filters_object?(chain)
+          action.params.concat drf_backend_params(chain, action.name)
+        end
       end
 
       actions.each do |action|
@@ -3452,13 +3426,16 @@ module Analyzer::Python
       # What the action's serializer reads is its body, whatever the verb
       # (`ChangeLogMessageSerializer(data=request.data)` on DELETE), unless
       # the body branches on the verb and the binding may be another's.
-      serializer_params = drf_serializer_params(input_code, klass.filepath, chain, drf_action.name)
+      serializer_params = drf_serializer_params(input_code, klass.filepath, chain, drf_action.name, drf_action.method)
       (input_code.includes?("request.method") ? drf_action.params : drf_action.body_params).concat serializer_params
       drf_action.params.concat cbv_body_params(input_code, klass.filepath, chain, drf_action.method, action: drf_action.name)
       # A DELETE action's own body reads, unless it branches on the verb
       # and they may be another's.
       if drf_action.method == "DELETE" && !input_code.includes?("request.method")
         drf_action.body_params.concat drf_filter_params(drf_action.method, drf_action.params)
+      end
+      if input_code.matches?(/\bself\.filter_queryset\s*\(/) || (input_code.matches?(/\bself\.get_object\s*\(/) && filters_object?(chain))
+        drf_action.params.concat drf_backend_params(chain, drf_action.name)
       end
       if paginates?(input_code, klass.filepath, body_lines, offset)
         drf_action.params.concat pagination_params(chain, drf_action.name)
@@ -3472,15 +3449,12 @@ module Analyzer::Python
       )
     end
 
-    PAGINATE_CALL_RE      = /\bself\.paginate_queryset\s*\(/
-    PAGINATION_CLASS_RE   = /^\s+pagination_class\s*=\s*([A-Za-z_][\w.]*)\s*$/m
-    PAGINATION_PARAM_ATTR = /^\s+((?:page|page_size|limit|offset|cursor)_query_param)\s*=\s*(?:['"](\w+)['"]|None)/m
+    PAGINATE_CALL_RE = /\bself\.paginate_queryset\s*\(/
 
     # Whether the action `offset` lines into `body_lines` pages its result
     # itself: its body calls `self.paginate_queryset`, or a project
     # decorator stacked on it does (`@paginate` wrapping the queryset the
-    # action returns). ponytail: the stock `list` action (which pages too)
-    # is not covered; it has no body in the project to read.
+    # action returns). The stock list is handled with the other mixin actions.
     private def paginates?(codeblock : ::String, filepath : ::String, body_lines : Array(::String), offset : Int32) : Bool
       return true if codeblock.matches?(PAGINATE_CALL_RE)
       def_indent = body_lines[offset].size - body_lines[offset].lstrip.size
@@ -3511,30 +3485,48 @@ module Analyzer::Python
     # action's own `@action(pagination_class=...)` comes first.
     private def pagination_params(chain : Array(DrfClass), action : ::String) : Array(Param)
       params = [] of Param
-      source, name = action_kwarg_class(chain, action, "pagination_class") || begin
-        klass = chain.find(&.codeblock.matches?(PAGINATION_CLASS_RE)) || return params
-        {klass.filepath, klass.codeblock.match(PAGINATION_CLASS_RE).try(&.[1]) || return params}
-      end
-      return params if name == "None"
-      paginator = (target = resolve_python_class(source, name)) ? drf_class_chain(target[0], target[1]) : [] of DrfClass
-      kinds = paginator.flat_map { |base| python_class_bases(base.header) }.map(&.rpartition('.')[2])
-      kinds << name.rpartition('.')[2]
+      binding = action_kwarg(chain, action, "pagination_class") || class_attribute(chain, "pagination_class") || drf_setting("DEFAULT_PAGINATION_CLASS")
+      return params unless binding
+      paginator = configured_class(*binding)
+      kinds = configured_bases(binding[1], paginator)
       attrs = {} of ::String => ::String?
       if kinds.includes?("LimitOffsetPagination")
         attrs["limit_query_param"] = "limit"
         attrs["offset_query_param"] = "offset"
       elsif kinds.includes?("CursorPagination")
         attrs["cursor_query_param"] = "cursor"
+        attrs["page_size_query_param"] = nil
       elsif kinds.includes?("PageNumberPagination")
         attrs["page_query_param"] = "page"
+        attrs["page_size_query_param"] = nil
       else
         return params
       end
       # The nearest class setting an attribute wins.
+      uncertain = Set(::String).new
       paginator.reverse_each do |base|
-        base.codeblock.scan(PAGINATION_PARAM_ATTR) { |m| attrs[m[1]] = m[2]? }
+        scope(base).attributes.each do |key, value|
+          next unless attrs.has_key?(key)
+          if value == "None" || (literal = quoted_name(value))
+            attrs[key] = literal
+            uncertain.delete(key)
+          else
+            uncertain << key
+          end
+        end
       end
-      attrs.each_value { |param| params << Param.new(param, "", "query") if param }
+      # Page-number and cursor pagination return before reading the page
+      # token if the page size is disabled and the client cannot supply it.
+      if attrs.has_key?("page_size_query_param") && !attrs["page_size_query_param"] && !uncertain.includes?("page_size_query_param") && !class_method(paginator, "get_page_size")
+        size = class_attribute(paginator, "page_size") || drf_setting("PAGE_SIZE")
+        return params if size && size[1].in?("None", "0")
+      end
+      attrs.each do |key, name|
+        next unless name
+        param = Param.new(name, "", "query")
+        param.tags << Tag.new("conditional", "The paginator selects the query parameter name at runtime.", TAGGER) if uncertain.includes?(key)
+        params << param
+      end
       params
     end
 
@@ -3886,9 +3878,10 @@ module Analyzer::Python
       property prefix, filepath, basepath
       # The url list read from the file: `urlpatterns`, or a list another
       # urlconf imports by name (`from pretix.urls import common_patterns`).
+      property settings_file : ::String?
       property list_name : ::String
 
-      def initialize(@prefix : ::String, @filepath : ::String, @basepath : ::String, @list_name : ::String = "urlpatterns")
+      def initialize(@prefix : ::String, @filepath : ::String, @basepath : ::String, @list_name : ::String = "urlpatterns", @settings_file : ::String? = nil)
         if !File.directory? @basepath
           raise "The basepath for DjangoUrls (#{@basepath}) does not exist or is not a directory."
         end

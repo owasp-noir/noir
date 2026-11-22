@@ -6,6 +6,13 @@ require "../../func_spec.cr"
 # when a `json` tag exists, and an untagged field still binds by its own
 # name. `ShouldBindJSON` / `ShouldBindQuery` keep their previous params.
 expected_endpoints = [
+  Endpoint.new("/wrapped", "POST", [
+    Param.new("cursor", "", "json"), Param.new("limit", "", "json"),
+    Param.new("Trace", "", "json"), Param.new("group", "", "json"), Param.new("dry_run", "", "query"),
+  ]),
+  Endpoint.new("/combined/:id", "GET", [
+    Param.new("id", "", "path"), Param.new("limit", "", "query"), Param.new("X-Trace", "", "header"),
+  ]),
   Endpoint.new("/tags", "POST", [
     Param.new("name", "", "form"),
     Param.new("description", "", "form"),

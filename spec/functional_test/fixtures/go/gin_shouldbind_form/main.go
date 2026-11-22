@@ -4,7 +4,12 @@
 // `ShouldBindQuery` are unchanged.
 package main
 
-import "github.com/gin-gonic/gin"
+import (
+	args "example.com/gin-shouldbind-form/input"
+	"github.com/gin-gonic/gin"
+)
+
+type inputOptions = args.Options
 
 type CreateTag struct {
 	Name        string `form:"name" binding:"required"`
@@ -32,6 +37,25 @@ func main() {
 	r.POST("/orders", createOrder)
 	r.POST("/messages", createMessage)
 	r.GET("/items", listItems)
+	r.POST("/wrapped", func(c *gin.Context) {
+		req := new(inputOptions)
+		destination := req
+		_ = args.Read(c, destination)
+		_ = c.Query("dry_run")
+	})
+	r.GET("/combined/:id", func(c *gin.Context) {
+		var in struct {
+			ID    string `uri:"id" form:"-"`
+			Limit int    `form:"limit" uri:"-"`
+		}
+		_ = c.ShouldBindQuery(&in)
+		_ = c.Query("limit")
+		_ = c.ShouldBindUri(&in)
+		var h struct {
+			Trace string `header:"X-Trace"`
+		}
+		_ = c.ShouldBindHeader(&h)
+	})
 }
 
 func createTag(c *gin.Context) {
