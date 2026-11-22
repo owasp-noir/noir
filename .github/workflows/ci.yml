@@ -13,6 +13,14 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # Inert until a merge queue is switched on for main. With a queue, this is
+  # the run that tests the tree main is about to become (the pull request's
+  # own run tested it against whatever main was when it was pushed), and
+  # `ci-ok` at the bottom is the single check the branch rule requires.
+  # (A pull request retargeted to main from another base gets no run from the
+  # retarget itself; push to it or reopen it.)
+  merge_group:
+    branches: [main]
   workflow_dispatch:
     inputs:
       logLevel:
@@ -49,6 +57,7 @@ jobs:
       spec: ${{ steps.gate.outputs.spec }}
       lint: ${{ steps.gate.outputs.lint }}
       image: ${{ steps.gate.outputs.image }}
+      image_contract: ${{ steps.gate.outputs.image_contract }}
       generated_docs: ${{ steps.gate.outputs.generated_docs }}
       nix: ${{ steps.gate.outputs.nix }}
       tag_rules: ${{ steps.gate.outputs.tag_rules }}
@@ -90,6 +99,18 @@ jobs:
               - action.yml
               # The scripts only: the README next to them is not in the image
               # and neither test reads it.
+              - github-action/*.sh
+            # The part of `image` that is about the image itself rather than
+            # the program inside it. The merge queue rebuilds the images only
+            # for these: two pull requests that each passed alone (one changes
+            # the Dockerfile, one the entrypoint) meet for the first time in
+            # the queue.
+            image_contract:
+              - .github/workflows/ci.yml
+              - packaging/docker/**
+              - shard.yml
+              - shard.lock
+              - action.yml
               - github-action/*.sh
             generated_docs:
               # Mirrors what scripts/generate_supported_docs.cr writes — see the
@@ -153,7 +174,7 @@ jobs:
           fi
           echo "rules_only=$rules_only"
 
-          for gate in spec lint image generated_docs nix tag_rules; do
+          for gate in spec lint image image_contract generated_docs nix tag_rules; do
             if [ "$FORCE_ALL" = "true" ]; then
               value=true
             else
@@ -161,7 +182,7 @@ jobs:
             fi
             if [ "$rules_only" = "true" ]; then
               case "$gate" in
-                lint | image) value=false ;;
+                lint | image | image_contract) value=false ;;
               esac
             fi
             echo "$gate=$value" >> "$GITHUB_OUTPUT"
@@ -208,7 +229,14 @@ jobs:
     # from the same Dockerfile; here it drives the image that was just built,
     # and the arm64 image gets run for the first time too.
     needs: changes
-    if: github.event_name != 'push' && needs.changes.outputs.image == 'true'
+    # In the merge queue only when the image's own inputs changed (see
+    # `image_contract`): a source change was already built into both images by
+    # its pull request, and what a rebase onto main can break there is what
+    # the test jobs cover.
+    if: >-
+      github.event_name != 'push' &&
+      (github.event_name == 'merge_group' && needs.changes.outputs.image_contract == 'true' ||
+      github.event_name != 'merge_group' && needs.changes.outputs.image == 'true')
     # linux/arm64 used to cross-build under QEMU on an x86 runner, which took
     # 58 minutes on a cold cache and dominated the whole pipeline. Building on
     # a native arm runner — the arrangement publish-ghcr.yml already uses — is
@@ -520,11 +548,12 @@ jobs:
       # cross-half dependency has to fail here rather than only on a
       # contributor's machine.
       #
-      # Every run is single-threaded and takes ~0.3GB, so all four go at once
-      # and the full randomized run (~18s) sets the wall time. Each writes to
-      # its own file, replayed in a collapsed group afterwards, because runners
-      # sharing a stdout interleave their progress dots and their failure
-      # reports.
+      # Every run is single-threaded and takes under 1 GB, so all four go at
+      # once and a whole-suite run sets the wall time (2:49 on a runner in
+      # November 2026, with the suite at 46,085 examples; dropping one of the
+      # four was measured and saved nothing). Each writes to its own file,
+      # replayed in a collapsed group afterwards, because runners sharing a
+      # stdout interleave their progress dots and their failure reports.
       - name: Run the suite
         run: |
           # Top-level spec code shares one `__crystal_main` frame, which has
@@ -595,3 +624,24 @@ jobs:
           github.event_name == 'push' && github.ref == 'refs/heads/main' ||
           github.event_name == 'workflow_dispatch'
         run: nix build .#default --print-build-logs
+  ci-ok:
+    # The one check to require on main. Requiring the jobs above by name does
+    # not work: a job skipped by its path gate reports under a different name
+    # than its matrix legs (`tests`, not `tests (1.22.0)`), and a job whose
+    # `needs` failed is skipped, which a required check counts as passing.
+    # This job always runs and fails unless every job above succeeded or was
+    # skipped on purpose.
+    name: ci-ok
+    if: always()
+    # Reads nothing but the results handed to it.
+    permissions: {}
+    needs: [changes, tag-rules, build-docker, docs-generated, lint, tests, nix]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job succeeded or was skipped by its gate
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' <<<"$RESULTS"
+          # `changes` decides every gate, so it has to have succeeded itself.
+          jq -e '.changes.result == "success" and all(.[]; .result == "success" or .result == "skipped")' <<<"$RESULTS" >/dev/null
