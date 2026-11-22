@@ -40,6 +40,18 @@ server.mount_proc '/api/users' do |req, res|
   end
 end
 
+# Shared reads and a nonliteral branch must survive method attribution.
+server.mount_proc '/dispatch' do |request, response|
+  token = request['X-Shared']
+  case request.request_method
+  when 'POST', ENV['EXTRA_VERB']
+    response.body = request.query['action']
+  when 'GET', 'HEAD'
+    response.body = request.query['view']
+  end
+  response.body = request.query['fallback'] unless token
+end
+
 # Simple unconditional GET
 server.mount_proc '/health' do |req, res|
   if req.request_method == "GET"

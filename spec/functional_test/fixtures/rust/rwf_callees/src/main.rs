@@ -57,7 +57,32 @@ async fn main() -> Result<(), Error> {
         route!("/users" => UsersController),
         route!("/users/:id" => UserController),
         route!("/session" => SessionController),
+        route!("/preview" => PreviewController),
     ])
     .launch("0.0.0.0:8000")
     .await
+}
+
+#[derive(Default)]
+struct PreviewController;
+
+#[async_trait]
+impl Controller for PreviewController {
+    async fn handle(&self, request: &Request) -> Result<Response, Error> {
+        let _trace = request.header("X-Trace");
+        // Matching a configured verb does not constrain this request.
+        let configured = Method::GET;
+        match configured {
+            Method::GET => { let _ = request.cookie("preview"); }
+            _ => {}
+        }
+        match request.method() {
+            Method::GET => {
+                let body = request.body()?;
+                Ok(Response::new().json(&body))
+            }
+            Method::POST => Ok(Response::new().text("OK")),
+            _ => Ok(Response::new().status(405)),
+        }
+    }
 }

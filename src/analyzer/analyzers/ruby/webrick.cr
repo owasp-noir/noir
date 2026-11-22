@@ -1,4 +1,5 @@
 require "../../engines/ruby_engine"
+require "../../../miniparsers/ruby_case_branches"
 
 module Analyzer::Ruby
   class Webrick < RubyEngine
@@ -185,11 +186,14 @@ module Analyzer::Ruby
 
           verbs_found = ["GET"] if verbs_found.empty?
 
+          request_arg = stripped[/\bdo\s*\|\s*(req|request)\s*[,|]/, 1]?
+          bodies = Noir::RubyCaseBranches.bodies(handler_body, request_arg, "request_method", verbs_found) if request_arg
+
           verbs_found.uniq.each do |verb|
             endpoint = Endpoint.new(mount_path, verb)
             endpoint.details = Details.new(PathInfo.new(path, idx + 1))
 
-            extract_webrick_params(handler_body, verb).each do |param|
+            extract_webrick_params(bodies.try(&.[verb]?) || handler_body, verb).each do |param|
               endpoint.push_param(param)
             end
 

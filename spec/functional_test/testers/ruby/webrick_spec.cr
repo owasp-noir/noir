@@ -27,6 +27,16 @@ expected_endpoints = [
   ]),
 ]
 
+%w[GET HEAD POST].each do |verb|
+  params = [
+    Param.new("X-Shared", "", "header"),
+    Param.new("action", "", "query"),
+    Param.new("fallback", "", "query"),
+  ]
+  params << Param.new("view", "", "query") unless verb == "POST"
+  expected_endpoints << Endpoint.new("/dispatch", verb, params)
+end
+
 tester = FunctionalTester.new("fixtures/ruby/webrick/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,

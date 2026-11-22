@@ -262,6 +262,46 @@ module Noir
       end
     end
 
+    # Functions passed directly as the sole handler that never use their one
+    # argument. A local binding could shadow a same-file function, so keep
+    # only names seen exclusively as function declarations and call arguments.
+    def self.functions_ignoring_argument(source : String, routes : Array(Route)) : Set(String)
+      names = routes.compact_map { |r| r.handler if r.handler_args.size == 1 && r.handler.matches?(/\A\w+\z/) }.to_set
+      unused = Set(String).new
+      return unused if names.empty?
+      Noir::TreeSitter.parse_go(source) do |root|
+        next if Noir::TreeSitter.node_has_error?(root)
+        Noir::TreeSitter.each_named_child(root) do |decl|
+          next unless Noir::TreeSitter.node_type(decl) == "function_declaration"
+          name = Noir::TreeSitter.field(decl, "name") || next
+          text = Noir::TreeSitter.node_text(name, source)
+          unused << text if names.includes?(text) && ignores_argument?(decl, source)
+        end
+        next if unused.empty?
+        Noir::TreeSitter.walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "identifier"
+          name = Noir::TreeSitter.node_text(node, source)
+          next unless unused.includes?(name)
+          parent = Noir::TreeSitter.parent(node) || next
+          unless {"argument_list", "function_declaration"}.includes?(Noir::TreeSitter.node_type(parent))
+            unused.delete(name)
+          end
+        end
+      end
+      unused
+    end
+
+    private def self.ignores_argument?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      body = Noir::TreeSitter.field(decl, "body") || return false
+      params = Noir::TreeSitter.field(decl, "parameters") || return false
+      return false unless LibTreeSitter.ts_node_named_child_count(params) == 1
+      param = Noir::TreeSitter.first_named_child(params) || return false
+      return false unless Noir::TreeSitter.node_type(param) == "parameter_declaration" && LibTreeSitter.ts_node_named_child_count(param) <= 2
+      name = Noir::TreeSitter.field(param, "name") || return true
+      ident = Noir::TreeSitter.node_text(name, source)
+      !Noir::TreeSitter.node_text(body, source).matches?(/\b#{Regex.escape(ident)}\b/)
+    end
+
     # Appends the text of a handler argument to `sink`, flattening the
     # `append(mws, h)...` spread Hertz/Gin apps use for middleware chains.
     private def address_of?(arg : LibTreeSitter::TSNode, source : String) : Bool

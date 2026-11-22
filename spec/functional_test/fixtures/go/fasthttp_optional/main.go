@@ -17,4 +17,6 @@ func main() {
 
 func index(ctx *fasthttp.RequestCtx) {
 	_ = ctx.UserValue("name")
+	_ = ctx.UserValue("id")
+	_ = ctx.QueryArgs().Peek("preview")
 }

@@ -22,9 +22,6 @@ fixtures/cpp/drogon/	PUT::/api/users/{id}
 fixtures/crystal/lucky_callees/	DELETE::/lucky/users/:id
 fixtures/csharp/aspnet_core_mvc_discovery/	POST::/returns/record-parameter
 fixtures/etc/multi_techs/	GET::/
-fixtures/go/fasthttp_optional/	GET::/combo/{slug}
-fixtures/go/fasthttp_optional/	GET::/regex/{id}
-fixtures/go/kratos_router_group/	POST::/api/v2/admin/reset
 fixtures/java/spring_data_rest/	PATCH::/api/items/{id}
 fixtures/java/spring_data_rest/	PATCH::/companies/{id}
 fixtures/java/spring_data_rest/	PATCH::/orders/{id}
@@ -55,14 +52,6 @@ fixtures/ruby/rails/	POST::/api/users/auth/:provider
 fixtures/ruby/rails/	POST::/api/users/auth/:provider/callback
 fixtures/ruby/rails_advanced/	GET::/{ENV.fetch}/:area
 fixtures/ruby/rails_route_loader/	GET::/{api_path}/stale_interp
-fixtures/ruby/webrick/	GET::/api/users
-fixtures/ruby/webrick/	POST::/api/users
-fixtures/rust/rwf_callees/	GET::/users
-fixtures/rust/salvo/	GET::/search
-fixtures/rust/salvo/	POST::/api/submit/<id>
-fixtures/rust/salvo/	PUT::/items/<id>
-fixtures/rust/salvo_builder/	GET::/api/users
-fixtures/rust/salvo_callees/	POST::/api/submit/<id>
 fixtures/specification/hasura/	POST::/v1/graphql#Mutation.delete_movies_by_pk
 fixtures/specification/hasura/	POST::/v1/graphql#Mutation.insert_directors
 fixtures/specification/hasura/	POST::/v1/graphql#Mutation.insert_directors_one

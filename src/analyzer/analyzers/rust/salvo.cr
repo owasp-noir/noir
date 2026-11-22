@@ -1,4 +1,5 @@
 require "../../engines/rust_engine"
+require "../../../miniparsers/rust_expression_context"
 require "../../../ext/tree_sitter/tree_sitter"
 require "../../../miniparsers/rust_callee_extractor_ts"
 
@@ -548,8 +549,13 @@ module Analyzer::Rust
             endpoint.push_param(Param.new(name, "", type)) unless endpoint.params.any? { |p| p.name == name && p.param_type == type }
           end
           # Salvo's request-side body extractors: `req.parse_json::<T>()` /
-          # `req.extract::<T>()` (JSON) and `req.parse_form::<T>()` (form).
-          if (base.ends_with?(".parse_json") || base.ends_with?(".extract")) && !endpoint.params.any? { |p| p.name == "body" && p.param_type == "json" }
+          # `req.parse_form::<T>()`. Untyped extract() keeps the JSON fallback.
+          if base.ends_with?(".parse_json") || base.ends_with?(".extract")
+            if base.ends_with?(".extract")
+              binding = Noir::RustExpressionContext.bound_type(node, source)
+              next if binding.try(&.matches?(/\A(?:\w+::)*(?:QueryParam|FormBody)(?:\s*<|\z)/))
+            end
+            next if endpoint.params.any? { |p| p.name == "body" && p.param_type == "json" }
             endpoint.push_param(Param.new("body", "", "json"))
           end
           if base.ends_with?(".parse_form") && !endpoint.params.any? { |p| p.name == "form" && p.param_type == "form" }
