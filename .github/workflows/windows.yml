@@ -46,9 +46,58 @@ jobs:
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: 1.22.0
+      # This job ran with no cache at all: every run fetched the shards,
+      # compiled the nine vendored grammars and built both programs from
+      # nothing. The three caches below mirror the Linux jobs in ci.yml.
+      - name: Cache shards
+        uses: actions/cache@v6
+        with:
+          path: |
+            lib
+            .shards.info
+          key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
+      - name: Cache tree-sitter objects
+        id: ts-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            src/ext/tree_sitter/runtime/lib.o
+            src/ext/tree_sitter/grammars/*/*.o
+          # Every C source and header build.sh compiles or checks, including
+          # grammars/ts_common/scanner.h, which the typescript and tsx
+          # scanners include.
+          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/**/*.c', 'src/ext/tree_sitter/grammars/**/*.h') }}
+      - name: Refresh restored object mtimes
+        if: steps.ts-cache.outputs.cache-hit == 'true'
+        # build.sh decides staleness by mtime and checkout stamps every source
+        # with the checkout time, so restored objects always look stale. The
+        # key hashes every input, so a hit means the objects are current.
+        run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
+      # Restored on every run, saved only from main. A cache saved by a pull
+      # request can be read by that pull request alone, and each one is a few
+      # hundred megabytes against a 10 GB repository limit. Crystal checks its
+      # cache entries by content, so an entry set from an older main commit is
+      # safe: what no longer matches is recompiled.
+      - name: Point Crystal at a fixed cache directory
+        # One known place, so the cache steps do not depend on where Crystal
+        # looks for a home directory on Windows. (`runner.temp` cannot be read
+        # in a job-level `env:`.)
+        run: echo "CRYSTAL_CACHE_DIR=${RUNNER_TEMP}/crystal-cache" >> "$GITHUB_ENV"
+      - name: Restore Crystal compiler cache
+        id: crystal-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/crystal-cache
+          # `spec/**/*.cr` is left out of the key on purpose, as in ci.yml:
+          # nearly every push touches a spec, so including it would save a
+          # new entry per push. A spec-only push recompiles its changed specs.
+          key: crystal-${{ runner.os }}-1.22.0-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
+          restore-keys: |
+            crystal-${{ runner.os }}-1.22.0-
       - name: Install shards
         run: shards install
       - name: Build
+        id: build
         # --static, as release-binaries.yml builds the shipped .exe, so a
         # static-CRT link failure shows up here rather than at release time.
         run: shards build --verbose --static
@@ -59,6 +108,7 @@ jobs:
           echo "endpoints: $count"
           test "$count" -gt 0
       - name: Build spec suite
+        id: spec-build
         # Every spec file's top-level code lands in one unoptimized
         # `__crystal_main`, and on win64 each by-value struct (Endpoint is
         # ~200 bytes) gets its own stack slot there; the frame passed the 8 MB
@@ -67,3 +117,20 @@ jobs:
         run: crystal build spec/suite.cr -o bin/noir_spec.exe --link-flags=/STACK:0x2000000
       - name: Run specs
         run: ./bin/noir_spec.exe
+      - name: Report compiler cache size
+        # What a save from main costs against the repository's cache limit.
+        if: always()
+        run: du -sh "$CRYSTAL_CACHE_DIR" || true
+      - name: Save Crystal compiler cache
+        # `always()` so a failing spec does not throw away two fresh builds.
+        # Both builds must have finished: a key is written once, so a save
+        # after only the first build would leave the spec half out for good.
+        # Skipped when the restore step already hit this exact key.
+        if: >-
+          always() && github.ref == 'refs/heads/main' &&
+          steps.build.outcome == 'success' && steps.spec-build.outcome == 'success' &&
+          steps.crystal-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/crystal-cache
+          key: ${{ steps.crystal-cache.outputs.cache-primary-key }}
