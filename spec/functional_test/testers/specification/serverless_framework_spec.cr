@@ -4,7 +4,9 @@ expected_endpoints = [
   Endpoint.new("/dev/users", "GET"),
   Endpoint.new("/dev/users", "POST"),
   # httpApi: served from the `$default` stage, no `/dev` segment.
-  Endpoint.new("/users/{id}", "GET"),
+  Endpoint.new("/users/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
   Endpoint.new("/dev/health", "GET"),
 ]
 

@@ -57,5 +57,6 @@ FunctionalTester.new("fixtures/specification/postman/nested_body/", {
   Endpoint.new("/graphql", "POST", [
     Param.new("filter", %({"status":"open"}), "json"),
     Param.new("first", "10", "json"),
+    Param.new("query", "", "json"),
   ]),
 ]).perform_tests

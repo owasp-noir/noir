@@ -23,14 +23,14 @@ expected_endpoints = [
   build.call("myapp://", "mobile-scheme", [Param.new("redirect", "", "query"), Param.new("token", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL", "handleObjcDeepLink"]),
   build.call("myapp-alt://", "mobile-scheme", [Param.new("redirect", "", "query"), Param.new("token", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL", "handleObjcDeepLink"]),
   # CFBundleURLSchemes entry `$(BUNDLE_URL_SCHEME)` resolved from Config.xcconfig.
-  build.call("resolvedscheme://", "mobile-scheme", no_params, [] of String),
+  build.call("resolvedscheme://", "mobile-scheme", [Param.new("redirect", "", "query"), Param.new("token", "", "query")], [] of String),
   # CFBundleURLSchemes entry `$(NESTED_BUNDLE_URL_SCHEME)` resolves through
   # another build-setting reference in Config.xcconfig.
-  build.call("resolvedscheme-nested://", "mobile-scheme", no_params, [] of String),
+  build.call("resolvedscheme-nested://", "mobile-scheme", [Param.new("redirect", "", "query"), Param.new("token", "", "query")], [] of String),
   # CFBundleURLSchemes entry `$(PBXPROJ_URL_SCHEME)` resolves from multiple
   # project.pbxproj build configurations.
-  build.call("pbxscheme://", "mobile-scheme", no_params, [] of String),
-  build.call("pbxscheme-alt://", "mobile-scheme", no_params, [] of String),
+  build.call("pbxscheme://", "mobile-scheme", [Param.new("redirect", "", "query"), Param.new("token", "", "query")], [] of String),
+  build.call("pbxscheme-alt://", "mobile-scheme", [Param.new("redirect", "", "query"), Param.new("token", "", "query")], [] of String),
   # Universal links (universal-link), linked to the userActivity handlers:
   # the Swift `routeUniversalLink` and the Objective-C `routeObjcUniversalLink`
   # from LegacyAppDelegate.m `application:continueUserActivity:`.

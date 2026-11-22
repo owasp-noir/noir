@@ -10,7 +10,9 @@ expected_endpoints = [
   Endpoint.new("/kong/[0-9]+", "ANY"),
   Endpoint.new("/kong-literal$", "ANY"),
   Endpoint.new("/ingress/[0-9]+", "ANY"),
-  Endpoint.new("/tornado/([0-9]+).json", "GET"),
+  Endpoint.new("/tornado/([0-9]+).json", "GET", [
+    Param.new("id", "", "path"),
+  ]),
   Endpoint.new("/drogon/([0-9]+)", "GET"),
   Endpoint.new("/httplib/(\\d+)", "GET"),
 ]

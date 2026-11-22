@@ -41,10 +41,12 @@ rpc_endpoints = [
     Param.new("SOAPAction", "http://example.com/calc/Add", "header"),
     Param.new("a", "", "json"),
     Param.new("b", "", "json"),
+    Param.new("Content-Type", "", "header"),
   ]),
   Endpoint.new("/services/Calculator/Square", "POST", [
     Param.new("SOAPAction", "http://example.com/calc/Square", "header"),
     Param.new("value", "", "json"),
+    Param.new("Content-Type", "", "header"),
   ]),
 ]
 
@@ -60,6 +62,7 @@ import_endpoints = [
   Endpoint.new("/services/AccountService/GetBalance", "POST", [
     Param.new("SOAPAction", "http://example.com/account/GetBalance", "header"),
     Param.new("accountId", "", "json"),
+    Param.new("Content-Type", "", "header"),
   ]),
 ]
 

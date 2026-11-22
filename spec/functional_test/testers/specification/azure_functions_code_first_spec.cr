@@ -5,27 +5,39 @@ require "../../func_spec.cr"
 # `python` disables it, `node` sets `v1`.
 expected_endpoints = [
   # C# isolated worker + in-process
-  Endpoint.new("/api/products/{id}", "GET"),
+  Endpoint.new("/api/products/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
   Endpoint.new("/api/products", "POST"),
   Endpoint.new("/api/products", "PUT"),
   Endpoint.new("/api/Health", "ANY"),
   Endpoint.new("/api/ListOrders", "GET"),
-  Endpoint.new("/api/orders/{id}", "PATCH"),
+  Endpoint.new("/api/orders/{id}", "PATCH", [
+    Param.new("id", "", "path"),
+  ]),
   # Python v2
   Endpoint.new("/hello", "GET"),
   Endpoint.new("/orders", "POST"),
   Endpoint.new("/orders", "PUT"),
   Endpoint.new("/Status", "ANY"),
-  Endpoint.new("/items/{id}", "GET"),
-  Endpoint.new("/items/{id}", "DELETE"),
+  Endpoint.new("/items/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/items/{id}", "DELETE", [
+    Param.new("id", "", "path"),
+  ]),
   # Node v4
-  Endpoint.new("/v1/products/{id}", "GET"),
+  Endpoint.new("/v1/products/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
   Endpoint.new("/v1/hello", "GET"),
   Endpoint.new("/v1/hello", "POST"),
   Endpoint.new("/v1/health", "GET"),
   Endpoint.new("/v1/orders", "POST"),
   Endpoint.new("/v1/orders", "PUT"),
-  Endpoint.new("/v1/orders/{id}", "DELETE"),
+  Endpoint.new("/v1/orders/{id}", "DELETE", [
+    Param.new("id", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/azure_functions_code_first/", {
