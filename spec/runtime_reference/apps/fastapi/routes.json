@@ -1,0 +1,126 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/catalog/authors/{author:uuid}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/books"
+  },
+  {
+    "method": "POST",
+    "path": "/api/catalog/books"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/books/{id}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/edition"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/edition/{year:int}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/files/{name:path}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/price/{amount:float}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/titles/{name:str}"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/authors/{author:uuid}"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/books"
+  },
+  {
+    "method": "POST",
+    "path": "/archive/books"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/books/{id}"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/edition"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/edition/{year:int}"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/files/{name:path}"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/price/{amount:float}"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/titles/{name:str}"
+  },
+  {
+    "method": "CONNECT",
+    "path": "/echo"
+  },
+  {
+    "method": "DELETE",
+    "path": "/echo"
+  },
+  {
+    "method": "GET",
+    "path": "/echo"
+  },
+  {
+    "method": "HEAD",
+    "path": "/echo"
+  },
+  {
+    "method": "OPTIONS",
+    "path": "/echo"
+  },
+  {
+    "method": "PATCH",
+    "path": "/echo"
+  },
+  {
+    "method": "POST",
+    "path": "/echo"
+  },
+  {
+    "method": "PUT",
+    "path": "/echo"
+  },
+  {
+    "method": "TRACE",
+    "path": "/echo"
+  },
+  {
+    "method": "GET",
+    "path": "/featured"
+  },
+  {
+    "method": "GET",
+    "path": "/popular"
+  },
+  {
+    "method": "GET",
+    "path": "/recent"
+  },
+  {
+    "method": "GET",
+    "path": "/status/ready"
+  }
+]

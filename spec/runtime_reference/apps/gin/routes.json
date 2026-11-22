@@ -1,0 +1,110 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/catalog/books"
+  },
+  {
+    "method": "POST",
+    "path": "/api/catalog/books"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/books/:id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/catalog/books/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/editions"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/editions/:year"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/files/*parts"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/books"
+  },
+  {
+    "method": "POST",
+    "path": "/archive/books"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/books/:id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/archive/books/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/editions"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/editions/:year"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/files/*parts"
+  },
+  {
+    "method": "CONNECT",
+    "path": "/echo"
+  },
+  {
+    "method": "DELETE",
+    "path": "/echo"
+  },
+  {
+    "method": "GET",
+    "path": "/echo"
+  },
+  {
+    "method": "HEAD",
+    "path": "/echo"
+  },
+  {
+    "method": "OPTIONS",
+    "path": "/echo"
+  },
+  {
+    "method": "PATCH",
+    "path": "/echo"
+  },
+  {
+    "method": "POST",
+    "path": "/echo"
+  },
+  {
+    "method": "PUT",
+    "path": "/echo"
+  },
+  {
+    "method": "TRACE",
+    "path": "/echo"
+  },
+  {
+    "method": "GET",
+    "path": "/featured"
+  },
+  {
+    "method": "GET",
+    "path": "/popular"
+  },
+  {
+    "method": "GET",
+    "path": "/recent"
+  },
+  {
+    "method": "GET",
+    "path": "/status/ready"
+  }
+]

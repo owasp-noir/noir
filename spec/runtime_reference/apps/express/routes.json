@@ -1,0 +1,90 @@
+[
+  {
+    "method": "GET",
+    "path": "/^\\/isbn\\/(?<number>\\d+)$/"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/authors/:\"author-name\""
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/books"
+  },
+  {
+    "method": "POST",
+    "path": "/api/catalog/books"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/books/:id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/catalog/books/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/editions{/:year}"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/files/*parts"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/authors/:\"author-name\""
+  },
+  {
+    "method": "GET",
+    "path": "/archive/books"
+  },
+  {
+    "method": "POST",
+    "path": "/archive/books"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/books/:id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/archive/books/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/editions{/:year}"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/files/*parts"
+  },
+  {
+    "method": "ALL",
+    "path": "/echo"
+  },
+  {
+    "method": "GET",
+    "path": "/featured"
+  },
+  {
+    "method": "GET",
+    "path": "/health"
+  },
+  {
+    "method": "GET",
+    "path": "/popular"
+  },
+  {
+    "method": "GET",
+    "path": "/recent"
+  },
+  {
+    "method": "GET",
+    "path": "/search"
+  },
+  {
+    "method": "GET",
+    "path": "/status/ready"
+  }
+]

@@ -261,3 +261,8 @@ benchmark-full: build-release
 [group('development')]
 scoreboard: build-release
     scripts/compile_gate.sh crystal run scripts/scoreboard.cr -- --run-scoreboard
+
+# Refresh registered HTTP route tables from the four reference applications.
+[group('development')]
+runtime-reference:
+    python3 spec/runtime_reference/generate.py

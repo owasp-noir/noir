@@ -1,0 +1,14 @@
+# One normalized difference per line: missed METHOD /path or extra METHOD /path.
+# Initial entries inferred from registrations and a Noir scan; verify with the first container dump.
+extra DELETE /echo
+extra GET /echo
+extra GET /unpublished
+extra HEAD /echo
+extra OPTIONS /echo
+extra PATCH /echo
+extra POST /echo
+extra PUT /echo
+missed ALL /echo
+missed GET /featured
+missed GET /popular
+missed GET /recent
