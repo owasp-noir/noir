@@ -2,6 +2,22 @@ require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
+require "../../../../src/analyzer/analyzers/javascript/express"
+
+# Exercise the same analyzer-to-tagger handoff as a scan. Some examples set
+# the handler explicitly to test how the tagger treats that input.
+private def tag_express_examples(options, endpoints)
+  bases = options["base"].as_a? || [options["base"]]
+  rows = Analyzer::Javascript::Express.new(options.merge({"base" => YAML::Any.new(bases)})).analyze
+  endpoints.each do |endpoint|
+    next if endpoint.details.code_paths.empty?
+    location = endpoint.details.code_paths.first
+    row = rows.find! { |r| r.details.code_paths.includes?(location) && r.method == endpoint.method && r.url == endpoint.url }
+    endpoint.details.code_paths[0] = row.details.code_paths.first
+  end
+  ExpressAuthTagger.new(options).perform(endpoints)
+end
+
 describe "ExpressAuthTagger" do
   fixture_base = File.expand_path("../../../functional_test/fixtures/javascript/express_auth", __DIR__)
   app_path = "#{fixture_base}/app.js"
@@ -32,8 +48,7 @@ describe "ExpressAuthTagger" do
     details.technology = "js_express"
     endpoint = Endpoint.new("/profile", "GET", [] of Param, details)
 
-    tagger = ExpressAuthTagger.new(noir_options)
-    tagger.perform([endpoint])
+    tag_express_examples(noir_options, [endpoint])
 
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")
@@ -55,8 +70,7 @@ describe "ExpressAuthTagger" do
     details.technology = "js_express"
     endpoint = Endpoint.new("/api/data", "POST", [] of Param, details)
 
-    tagger = ExpressAuthTagger.new(noir_options)
-    tagger.perform([endpoint])
+    tag_express_examples(noir_options, [endpoint])
 
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")
@@ -77,8 +91,7 @@ describe "ExpressAuthTagger" do
     details.technology = "js_express"
     endpoint = Endpoint.new("/dashboard", "GET", [] of Param, details)
 
-    tagger = ExpressAuthTagger.new(noir_options)
-    tagger.perform([endpoint])
+    tag_express_examples(noir_options, [endpoint])
 
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")
@@ -102,12 +115,12 @@ describe "ExpressAuthTagger" do
     ].join("\n"))
     noir_options["base"] = YAML::Any.new(tmpdir)
 
+    CodeLocator.instance.register_path(js)
     details = Details.new(PathInfo.new(js, 4))
     details.technology = "js_express"
     endpoint = Endpoint.new("/secret", "GET", [] of Param, details)
 
-    tagger = ExpressAuthTagger.new(noir_options)
-    tagger.perform([endpoint])
+    tag_express_examples(noir_options, [endpoint])
 
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")
@@ -122,10 +135,10 @@ describe "ExpressAuthTagger" do
     Dir.mkdir_p(base1)
     Dir.mkdir_p(base2)
     # app.use auth config lives only under the second base path.
-    File.write(File.join(base2, "auth.js"), "app.use('/admin', requireAuth);")
+    File.write(File.join(base2, "auth.js"), "const app = express(); const panel = require('./routes'); app.use('/admin', requireAuth, panel);")
     routes = File.join(base2, "routes.js")
     File.write(routes, [
-      "app.get('/admin/panel', (req, res) => {",
+      "const router = express.Router(); router.get('/panel', (req, res) => {",
       "  res.json({});",
       "});",
     ].join("\n"))
@@ -145,7 +158,7 @@ describe "ExpressAuthTagger" do
     details.technology = "js_express"
     endpoint = Endpoint.new("/admin/panel", "GET", [] of Param, details)
 
-    ExpressAuthTagger.new(noir_options).perform([endpoint])
+    tag_express_examples(noir_options, [endpoint])
 
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].description.should contain("app.use()")
@@ -168,34 +181,27 @@ describe "ExpressAuthTagger" do
     details.technology = "js_express"
     endpoint = Endpoint.new("/api/health", "GET", [] of Param, details)
 
-    tagger = ExpressAuthTagger.new(noir_options)
-    tagger.perform([endpoint])
+    tag_express_examples(noir_options, [endpoint])
 
     endpoint.tags.empty?.should be_true
   end
 
   it "detects app.use level auth for matching prefix" do
-    noir_options = create_test_options
-    noir_options["base"] = YAML::Any.new(fixture_base)
-
-    locator = CodeLocator.instance
-    Dir.glob("#{fixture_base}/**/*").each do |file|
-      next if File.directory?(file)
-      locator.register_path(file)
-    end
-
-    # This endpoint has no auth on its own route definition,
-    # but /admin prefix has app.use() level auth
-    details = Details.new(PathInfo.new(app_path, 31))
-    details.technology = "js_express"
-    endpoint = Endpoint.new("/admin/settings", "GET", [] of Param, details)
-
-    tagger = ExpressAuthTagger.new(noir_options)
-    tagger.perform([endpoint])
+    tmpdir = File.tempname("express_admin_auth")
+    Dir.mkdir_p(tmpdir)
+    path = File.join(tmpdir, "app.js")
+    File.write(path, "const app = express();\napp.use('/admin', requireAuth);\napp.get('/admin/settings', handler);")
+    CodeLocator.instance.register_path(path)
+    options = create_test_options
+    options["base"] = YAML::Any.new(tmpdir)
+    endpoint = Endpoint.new("/admin/settings", "GET", Details.new(PathInfo.new(path, 3)))
+    tag_express_examples(options, [endpoint])
 
     endpoint.tags.empty?.should be_false
     endpoint.tags[0].name.should eq("auth")
     endpoint.tags[0].description.should contain("app.use()")
+  ensure
+    FileUtils.rm_rf(tmpdir) if tmpdir
   end
 
   # --- negative cases: a route that nothing protects must never be tagged ---
@@ -238,7 +244,7 @@ describe "ExpressAuthTagger" do
     panel_details.technology = "js_express"
     panel = Endpoint.new("/admin/panel", "GET", [] of Param, panel_details)
 
-    ExpressAuthTagger.new(noir_options).perform([health, panel])
+    tag_express_examples(noir_options, [health, panel])
 
     # `router.use(requireAuth)` guards the sub-router, not the application.
     health.tags.empty?.should be_true
@@ -277,13 +283,13 @@ describe "ExpressAuthTagger" do
     noir_options["base"] = YAML::Any.new(tmpdir)
     CodeLocator.instance.register_path(app_js)
 
-    routes = [{"GET", "/api/secure", 6}, {"POST", "/api/secure", 9}, {"GET", "/open", 11}, {"GET", "/api/:id", 15}, {"DELETE", "/api/:id", 16}]
+    routes = [{"GET", "/api/secure", 6}, {"POST", "/api/secure", 9}, {"GET", "/open", 10}, {"GET", "/api/:id", 15}, {"DELETE", "/api/:id", 16}]
     endpoints = routes.map do |method, url, line|
       details = Details.new(PathInfo.new(app_js, line))
       details.technology = "js_express"
       Endpoint.new(url, method, [] of Param, details)
     end
-    ExpressAuthTagger.new(noir_options).perform(endpoints)
+    tag_express_examples(noir_options, endpoints)
 
     endpoints[0].tags.map(&.name).should eq(["auth"])
     endpoints[1].tags.map(&.name).should eq(["auth"])
@@ -360,7 +366,7 @@ describe "ExpressAuthTagger" do
       details.technology = "js_express"
       Endpoint.new(url, method, [] of Param, details)
     end
-    ExpressAuthTagger.new(noir_options).perform(endpoints)
+    tag_express_examples(noir_options, endpoints)
 
     endpoints[0].tags.map(&.name).should eq(["auth"])
     endpoints[0].tags[0].description.should contain("auth")
@@ -402,7 +408,7 @@ describe "ExpressAuthTagger" do
     secret_details.technology = "js_express"
     secret_endpoint = Endpoint.new("/secret/two", "GET", [] of Param, secret_details)
 
-    ExpressAuthTagger.new(noir_options).perform([public_endpoint, secret_endpoint])
+    tag_express_examples(noir_options, [public_endpoint, secret_endpoint])
 
     public_endpoint.tags.empty?.should be_true
     secret_endpoint.tags.empty?.should be_false
@@ -435,7 +441,7 @@ describe "ExpressAuthTagger" do
     details.technology = "js_express"
     endpoint = Endpoint.new("/administration/report", "GET", [] of Param, details)
 
-    ExpressAuthTagger.new(noir_options).perform([endpoint])
+    tag_express_examples(noir_options, [endpoint])
 
     endpoint.tags.empty?.should be_true
 
@@ -450,8 +456,7 @@ describe "ExpressAuthTagger" do
     details.technology = "js_express"
     endpoint = Endpoint.new("/unknown/", "GET", [] of Param, details)
 
-    tagger = ExpressAuthTagger.new(noir_options)
-    tagger.perform([endpoint])
+    tag_express_examples(noir_options, [endpoint])
 
     endpoint.tags.empty?.should be_true
   end
@@ -475,7 +480,7 @@ describe "ExpressAuthTagger" do
     github = Endpoint.new("/auth/github", "GET", [] of Param, Details.new(PathInfo.new(app_js, 3)))
     profile = Endpoint.new("/profile", "GET", [] of Param, Details.new(PathInfo.new(app_js, 4)))
 
-    ExpressAuthTagger.new(noir_options).perform([login, github, profile])
+    tag_express_examples(noir_options, [login, github, profile])
 
     login.tags.should be_empty
     github.tags.should be_empty
@@ -522,7 +527,7 @@ describe "ExpressAuthTagger" do
       locator.scan_base_paths = [fixture_base]
       Noir::JSHandlerResolver.reset
       begin
-        ExpressAuthTagger.new(noir_options).perform(endpoints)
+        tag_express_examples(noir_options, endpoints)
       ensure
         locator.scan_base_paths = previous_bases
       end
@@ -653,7 +658,7 @@ describe "ExpressAuthTagger" do
       Endpoint.new(url, method, [] of Param, details)
     end
     begin
-      ExpressAuthTagger.new(noir_options).perform(endpoints)
+      tag_express_examples(noir_options, endpoints)
     ensure
       locator.scan_base_paths = previous_bases
       FileUtils.rm_rf(tmpdir)
@@ -688,7 +693,7 @@ describe "ExpressAuthTagger" do
     status = Endpoint.new("/status", "GET", [] of Param, Details.new(PathInfo.new(app_js, 4)))
     me = Endpoint.new("/me", "GET", [] of Param, Details.new(PathInfo.new(app_js, 5)))
 
-    ExpressAuthTagger.new(noir_options).perform([authorize, verify, status, me])
+    tag_express_examples(noir_options, [authorize, verify, status, me])
 
     authorize.tags.should be_empty
     verify.tags.should be_empty
@@ -829,7 +834,7 @@ describe "ExpressAuthTagger" do
       Endpoint.new("/#{n}", "GET", [] of Param, Details.new(PathInfo.new(app_js, idx + 3)))
     end
     begin
-      ExpressAuthTagger.new(noir_options).perform(endpoints)
+      tag_express_examples(noir_options, endpoints)
     ensure
       locator.scan_base_paths = previous_bases
     end
@@ -846,10 +851,12 @@ describe "ExpressAuthTagger" do
     server = "#{base}/server.js"
 
     it "counts a basic-auth middleware where it runs and a helper replying 401, nothing built-only or local" do
-      endpoints = (11..23).map do |line|
+      urls = %w[/metrics /docs /open /built-only /run-gated /outbound /size-limit /caller-check /inline-mount /var-mount /exported-mount /session-403 /cart-403]
+      endpoints = urls.map_with_index do |url, i|
+        line = 11 + i
         details = Details.new(PathInfo.new(server, line))
         details.technology = "js_express"
-        Endpoint.new("/x", "GET", [] of Param, details)
+        Endpoint.new(url, url == "/size-limit" ? "POST" : "GET", [] of Param, details)
       end
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(base)
@@ -859,7 +866,7 @@ describe "ExpressAuthTagger" do
       locator.scan_base_paths = [base]
       Noir::JSHandlerResolver.reset
       begin
-        ExpressAuthTagger.new(noir_options).perform(endpoints)
+        tag_express_examples(noir_options, endpoints)
       ensure
         locator.scan_base_paths = previous_bases
       end
@@ -917,7 +924,7 @@ describe "ExpressAuthTagger" do
     admin_details.technology = "js_express"
     admin = Endpoint.new("/admin/users", "GET", [] of Param, admin_details)
 
-    ExpressAuthTagger.new(noir_options).perform([reports, admin])
+    tag_express_examples(noir_options, [reports, admin])
 
     reports.tags.any? { |tag| tag.name == "auth" }.should be_false
     admin.tags.any? { |tag| tag.name == "auth" }.should be_true
@@ -1051,18 +1058,18 @@ describe "ExpressAuthTagger" do
 
     guarded_details = Details.new(PathInfo.new(guarded_js, 5))
     guarded_details.technology = "js_express"
-    guarded = Endpoint.new("/secret", "POST", [] of Param, guarded_details)
+    guarded = Endpoint.new("/", "POST", [] of Param, guarded_details)
     open_details = Details.new(PathInfo.new(open_js, 5))
     open_details.technology = "js_express"
-    open = Endpoint.new("/open", "POST", [] of Param, open_details)
+    open = Endpoint.new("/", "POST", [] of Param, open_details)
 
-    others = open_files.map_with_index do |file, idx|
+    others = open_files.map do |file|
       details = Details.new(PathInfo.new(file, 5))
       details.technology = "js_express"
-      Endpoint.new("/other#{idx}", "POST", [] of Param, details)
+      Endpoint.new("/", "POST", [] of Param, details)
     end
 
-    tagged = ExpressAuthTagger.new(noir_options).perform([guarded, open] + others)
+    tagged = tag_express_examples(noir_options, [guarded, open] + others)
 
     guarded.tags.map(&.description).join(" ").should contain("validateSession() res.status(401)")
     open.tags.empty?.should be_true

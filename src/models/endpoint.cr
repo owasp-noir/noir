@@ -432,21 +432,23 @@ struct Details
   end
 end
 
+# Source and registration position of one step in a framework's middleware chain.
+record RouteMiddleware, source : String, file : String, origin : Symbol = :route,
+  handler_position : Bool = false, receiver : String = "", prefix : String? = nil, verb : String = "use"
+
 struct PathInfo
   include JSON::Serializable
   include YAML::Serializable
   property path, line
 
   # Scan-time evidence for framework auth taggers: the middleware the
-  # analyzer read for the route registered at this location, as source text.
-  # An empty string means the registration was read and has none; nil means
-  # the analyzer did not record it and the tagger must read the source
-  # itself. Carrying it here lets a tagger use what extraction already
-  # resolved instead of re-deriving it from text. It lives on the location
-  # so it survives endpoint dedup.
+  # analyzer read for the route registered at this location, in execution order.
+  # An empty array means the registration was read and has none; nil means
+  # the analyzer did not record middleware for this location. The evidence
+  # stays on the location through endpoint deduplication.
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
-  property route_middleware : String?
+  property route_middleware : Array(RouteMiddleware)?
 
   def initialize(@path : String)
     @line = nil

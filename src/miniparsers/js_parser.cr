@@ -16,6 +16,8 @@ module Noir
     # `route('/x').get(...).post(...)` chain, of that link's own verb, so
     # each verb reports its own line and handler.
     getter start_pos : Int32
+    property receiver : String = ""
+    property? pathless : Bool = false
     getter params : Array(Param)
     # A RegExp literal route (`router.get(/^\/item\/(\d+)$/, ...)`); its
     # path is the pattern, which the extractor marks `kind: "regex"`.
@@ -55,6 +57,12 @@ module Noir
     # after `parse_routes` so a caller can walk a sub-router up to the
     # router the file exports.
     @router_parents = {} of String => Array(String)
+    # For consumers of registration evidence, retain the call site chosen
+    # for each same-file prefix as it is composed by resolve_full_prefixes.
+    record LocalMount, receiver : String, child : String, prefix : String, start_pos : Int32, parent_prefix : String = ""
+    @local_sites = {} of Tuple(String, String, String) => LocalMount
+    getter local_chains = {} of Tuple(String, String) => Array(LocalMount)
+
     @supports_named_routes : Bool = false
     # Paths `format_regex_path` made from a RegExp literal that is still a
     # pattern, so `parse_routes` can mark the routes built on them.
@@ -101,7 +109,7 @@ module Noir
     # in any other framework's file `.on(` is an event listener.
     def initialize(@source : String, @this_receiver_ok : Bool = true, constants : Hash(String, String)? = nil,
                    @resolve_mount_prefixes : Bool = false, @mount_middleware : Proc(String, Bool)? = nil,
-                   mount_constants : Hash(String, String)? = nil, @on_routes : Bool = false)
+                   mount_constants : Hash(String, String)? = nil, @on_routes : Bool = false, @record_middleware : Bool = false)
       source = @source
       lexer = JSLexer.new(source)
       @tokens = drop_type_arguments(lexer.tokenize)
@@ -319,6 +327,9 @@ module Noir
 
           routers.each do |router_identifier|
             prefixes.each do |prefix|
+              if @record_middleware && @tokens[idx + 2].value == "use"
+                @local_sites[{parent_router, router_identifier, prefix}] ||= LocalMount.new(parent_router, router_identifier, prefix, @tokens[idx + 2].position)
+              end
               router_prefixes[router_identifier] << prefix unless router_prefixes[router_identifier].includes?(prefix)
             end
             router_parents[router_identifier] << parent_router unless router_parents[router_identifier].includes?(parent_router)
@@ -476,6 +487,10 @@ module Noir
             if result.size >= MAX_MOUNT_PREFIXES
               @mount_prefixes_capped = true
               break
+            end
+            if @record_middleware && (site = @local_sites[{parent, router, prefix}]?)
+              ancestors = @local_chains[{parent, parent_prefix}]? || [] of LocalMount
+              @local_chains[{router, combined}] ||= ancestors + [site.copy_with(parent_prefix: parent_prefix)]
             end
             result << combined
           end
@@ -1375,7 +1390,7 @@ module Noir
           # Create one route for each path with prefix
           start_pos = @tokens[idx].position
           each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
-            results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
+            results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?, router_var)
           end
 
           idx += 1
@@ -1399,7 +1414,7 @@ module Noir
 
           start_pos = @tokens[idx].position
           each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
-            results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
+            results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?, router_var)
           end
 
           idx += 1
@@ -1420,7 +1435,7 @@ module Noir
             start_pos = @tokens[idx].position
             each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
               methods.each do |method|
-                results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
+                results << create_route_with_params(method, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?, router_var)
               end
             end
           end
@@ -1477,7 +1492,7 @@ module Noir
                 # chain alive without emitting a route.
                 # Each link is located at its own verb (see start_pos).
                 if http_method?(@tokens[j + 1])
-                  results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, @tokens[j + 1].position, path_entry.is_regex?)
+                  results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, @tokens[j + 1].position, path_entry.is_regex?, router_var, pathless: true)
                 end
                 j = method_rparen + 1
                 steps += 1
@@ -1553,6 +1568,7 @@ module Noir
             prefixes_to_apply.each do |prefix|
               path = prefix.empty? ? base_path : JSMountPrefix.join(prefix, base_path)
               route = JSRoutePattern.new(method, path, raw_path, start_pos)
+              route.receiver = router_var
               unless path_entry.is_regex?
                 extract_path_params(path).each do |param|
                   route.push_param(param)
@@ -1754,6 +1770,8 @@ module Noir
             prefixes_to_apply.each do |prefix|
               path = prefix.empty? ? base_path : JSMountPrefix.join(prefix, base_path)
               route = JSRoutePattern.new(method, path, raw_path, start_pos)
+              route.receiver = router_var
+              route.pathless = !!pathless
               unless path_entry.is_regex?
                 extract_path_params(path).each do |param|
                   route.push_param(param)
@@ -2125,8 +2143,10 @@ module Noir
       end
     end
 
-    private def create_route_with_params(method : String, path : String, raw_path : String, start_pos : Int32, is_regex : Bool) : JSRoutePattern
+    private def create_route_with_params(method : String, path : String, raw_path : String, start_pos : Int32, is_regex : Bool, receiver : String, pathless : Bool = false) : JSRoutePattern
       route = JSRoutePattern.new(normalize_verb(method), path, raw_path, start_pos)
+      route.receiver = receiver
+      route.pathless = pathless
       unless is_regex
         extract_path_params(path).each { |p| route.push_param(p) }
       end

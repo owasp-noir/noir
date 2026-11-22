@@ -4,15 +4,10 @@ require "../../../miniparsers/js_handler_resolver"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
 require "./js_object_literal"
-require "../../../utils/url_path"
 require "../../../models/code_locator"
-require "../../../analyzer/analyzers/javascript/express_constants"
-require "../prefix_scope"
 
 @[Noir::TaggerFor(key: "express_auth", name: "Express Auth Tagger", desc: "Identifies Express.js authentication patterns (Passport, JWT, auth middleware)", order: 40)]
 class ExpressAuthTagger < FrameworkTagger
-  include PrefixScope
-
   PASSPORT_PATTERN = /passport\.authenticate\s*\(/
 
   # Passport strategies that *are* the login flow — `local` checks the
@@ -60,44 +55,8 @@ class ExpressAuthTagger < FrameworkTagger
   # password), not a guard in front of one.
   HANDLER_RESPONSE = /\b(?:res|response)\s*\.\s*(?:json|send|sendStatus|render|redirect|sendFile|download|attachment|end|status)\s*\(|\.pipe\s*\(\s*(?:res|response)\s*\)/
 
-  # ponytail: brace/paren-counted spans; a registration whose closure runs
-  # past 60 lines or a definition past 40 is read truncated, not re-parsed.
-  MAX_STATEMENT_LINES  = 60
-  MAX_DEFINITION_LINES = 40
-
-  # `x.use(authMiddleware)` — no path argument. Which routes this guards is a
-  # property of the *object* `x`, not of any URL, so the receiver is captured.
-  BARE_USE = /\b(\w+)\.use\s*\(/
-
-  # A route registration, and who it was registered on: `app.get('/x', …)`,
-  # `router.post(…)`, `app.route('/x')`.
-  ROUTE_RECEIVER = /\b(\w+)\s*\.\s*(?:get|post|put|patch|delete|options|head|all|use|route)\s*\(/
-
-  # The start of a route registration, used as a statement boundary so a
-  # window around one route never reads the next one's middleware.
-  ROUTE_DECLARATION = /\.\s*(?:get|post|put|patch|delete|options|head|all|use|route)\s*\(/
-
-  # `Promise.all(` / `Promise.all (`: the builtin, never a mount. A large
-  # TS codebase carries thousands of them, and each one used to be read as
-  # a `.all()` registration whose every argument was followed to its
-  # definition (n8n: ~3,200 lines, over a second of tagging).
-  PROMISE_ALL = /\bPromise\s*\.\s*all\s*\(/
-
-  # The calls the mount pre-scan reads: a file with neither is skipped whole.
-  MOUNT_CALL = /\.\s*(?:use|all)\s*\(/
-
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @mounted_auth_rules = [] of {prefix: String, description: String, file: String, receiver: String}
-    @receiver_auth_rules = [] of {file: String, receiver: String, line: Int32, description: String}
-    # Same-file `parent.use(path, childRouter)` edges, keyed by the file.
-    @router_parents = Hash(String, Hash(String, Array({String, String}))).new
-    # The method of the endpoint being judged, for `req.method` tests; nil
-    # while mounts are pre-scanned.
-    @method = nil.as(String?)
-    # Its URL, for `req.path` tests.
-    @url = nil.as(String?)
-  end
+  @method : String?
+  @url : String?
 
   def self.target_techs : Array(String)
     ["js_express"]
@@ -109,8 +68,6 @@ class ExpressAuthTagger < FrameworkTagger
   @last_refusal_followed = false
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    # Pre-scan: Find app.use() level auth middleware
-    pre_scan_app_use_auth
     endpoints.map! do |endpoint|
       @guard_followed = false
       endpoint = check_endpoint(endpoint)
@@ -119,74 +76,6 @@ class ExpressAuthTagger < FrameworkTagger
         endpoint.resolution = (endpoint.resolution || {} of String => String).merge({"guard" => Endpoint::RESOLUTION_HEURISTIC})
       end
       endpoint
-    end
-  end
-
-  private def pre_scan_app_use_auth
-    @mounted_auth_rules.clear
-    @receiver_auth_rules.clear
-    @router_parents.clear
-
-    extensions = [".js", ".ts", ".mjs", ".cjs"]
-    extensions.each do |ext|
-      files = collect_files_by_extension(ext)
-      files.each do |file|
-        content = read_file(file) || next
-        # Most files of a large tree mount nothing: do not split them into
-        # (cached) lines just to look at none of them.
-        next unless content.matches?(MOUNT_CALL, options: Noir::TextFile::MATCH_OPTIONS)
-        lines = read_file_lines(file) || next
-        expanded = Noir::PathScope.expand(file)
-
-        lines.each_with_index do |line, idx|
-          next unless line.includes?(".use") || line.includes?(".all")
-          stripped = line.strip
-          next unless stripped.matches?(ROUTE_DECLARATION)
-          next if stripped.includes?("Promise") && !stripped.gsub(PROMISE_ALL, "").matches?(ROUTE_DECLARATION)
-          statement = Noir::CComments.strip(get_route_statement(lines, idx).join("\n"), quotes: %("'`))
-          record_router_mount(expanded, statement, content) if statement.includes?(".use")
-          args = call_args(statement) || [statement]
-          # The last argument of `app.use('/ftp/:file', serveFiles())` is the
-          # mount's handler when its definition serves the request: it
-          # answers 403 to a bad name, which no more makes it a guard than
-          # `login()` answering 401 does.
-          guard = args.each_with_index do |arg, arg_idx|
-            found = guard_description(arg, file, handler_position: arg_idx == args.size - 1)
-            break found if found
-          end
-          next unless guard
-
-          # `app.use(\n  '/private',\n  auth,\n)`: the path is on a later line.
-          # `router.all(['/apps', '/apps/*'], guard)` is the same kind of
-          # path scope as `router.use('/apps', guard)`.
-          prefixes = mount_path_prefixes(statement)
-          receiver = statement.match(/\b([A-Za-z_$][\w$]*)\s*\.\s*(?:use|all)\s*\(/).try(&.[1])
-          if receiver && !prefixes.empty?
-            via = statement.matches?(/\.all\s*\(/) ? "#{receiver}.all()" : "app.use()"
-            prefixes.each do |prefix|
-              @mounted_auth_rules << {
-                prefix:      prefix,
-                description: "#{guard.description} via #{via} on #{prefix}",
-                file:        expanded,
-                receiver:    receiver,
-              }
-            end
-          elsif match = stripped.match(BARE_USE)
-            # A path-less `use(auth)` guards the routes registered on THIS
-            # object, below THIS line — nothing else. Registering it as a
-            # global `prefix: "/"` rule (what this used to do) meant one
-            # `router.use(requireAuth)` in `routes/admin.js` reported every
-            # endpoint in the project as protected, including `/login`.
-            receiver = match[1]
-            @receiver_auth_rules << {
-              file:        expanded,
-              receiver:    receiver,
-              line:        idx + 1,
-              description: "#{guard.description} via #{receiver}.use()",
-            }
-          end
-        end
-      end
     end
   end
 
@@ -229,52 +118,40 @@ class ExpressAuthTagger < FrameworkTagger
   end
 
   private def check_route(endpoint : Endpoint) : Endpoint
-    receiver_description = nil
+    scoped_description = nil
     handler_inline = false
     handler_direct = false
 
-    # Check route definition line for auth patterns
-    endpoint.details.code_paths.each do |path_info|
-      lines = read_file_lines(path_info.path)
-      next if lines.nil?
-      line_num = path_info.line
-      next if line_num.nil?
-
-      # The whole registration statement, argument by argument: any
-      # argument may be the guard, so each is read on its own.
-      route_lines = get_route_statement(lines, line_num - 1) # 0-indexed
-      route_text = Noir::CComments.strip(route_lines.join("\n"), quotes: %("'`))
-      helper_args = helper_call_args(route_text)
-      args = helper_args || call_args(route_text)
-      handler_direct ||= helper_args.nil? && !args.nil?
-      handler_inline ||= helper_args.nil? && args.try(&.last?).try(&.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE)) || false
-      tagged = false
-      (args || [route_text]).each_with_index do |arg, idx|
-        last = !args.nil? && idx == args.size - 1
-        evidence = guard_description(arg, path_info.path, handler_position: last) || next
-        @guard_followed ||= evidence.followed && !args.nil? && helper_args.nil?
-        next if tagged
-        tagged = true
-        endpoint.add_tag(Tag.new("auth", evidence.description, "express_auth"))
-        # `app.get('/api/Users', security.isAuthorized())`: the guard is the
-        # only callable, so the analyzer reported it as the handler. It is
-        # not one — the request falls through to the next match. A refusing
-        # wrapper (`withAuth(list)`) is the guard around a handler that stays.
-        # An inline closure that checks the caller itself is still the handler.
-        if args && idx == args.size - 1 && !arg.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE) && wrapper_guard(arg, path_info.path).nil?
-          endpoint.handler = nil
+    endpoint.details.code_paths.each do |location|
+      chain = location.route_middleware || next
+      direct = nil.as(String?)
+      chain.each do |step|
+        local = step.origin.in?(:route, :helper)
+        inline = step.source.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE)
+        handler_direct ||= step.origin == :route
+        handler_inline ||= step.origin == :route && step.handler_position && inline
+        evidence = judge_step(step) || next
+        if local
+          @guard_followed ||= evidence.followed && step.origin == :route
+          next if direct
+          direct = evidence.description
+          if step.handler_position && !inline && wrapper_guard(step.source, step.file).nil?
+            endpoint.handler = nil
+          end
+        elsif scoped_description.nil?
+          via = step.prefix && step.verb == "use" ? "app.use()" : "#{step.receiver}.#{step.verb}()"
+          scoped_description = "#{evidence.description} via #{via}"
+          scoped_description += " on #{step.prefix}" if step.prefix
         end
       end
-      return endpoint if tagged
-
-      receiver_description ||= check_receiver_use_auth(path_info.path, lines, line_num - 1)
+      if direct
+        endpoint.add_tag(Tag.new("auth", direct, "express_auth"))
+        return endpoint
+      end
     end
 
-    # Check app.use() level auth: the router this route was registered on
-    # first, then a path-scoped mount.
-    description = receiver_description || check_mounted_use_auth(endpoint)
-    if description
-      endpoint.add_tag(Tag.new("auth", description, "express_auth"))
+    if scoped_description
+      endpoint.add_tag(Tag.new("auth", scoped_description, "express_auth"))
     elsif evidence = handler_caller_check(endpoint)
       endpoint.add_tag(Tag.new("auth", evidence.description, "express_auth"))
       handler = endpoint.handler
@@ -287,6 +164,16 @@ class ExpressAuthTagger < FrameworkTagger
       @guard_followed ||= evidence.followed && handler_direct && (bound || handler_inline) && endpoint.resolution.try(&.["handler"]?) != Endpoint::RESOLUTION_HEURISTIC
     end
     endpoint
+  end
+
+  private def judge_step(step : RouteMiddleware) : GuardEvidence?
+    method, url = @method, @url
+    # The unresolved-prefix fallback was judged before any endpoint was
+    # known. A route-specific branch cannot strengthen that evidence.
+    @method = @url = nil if step.origin == :fallback
+    guard_description(step.source, step.file, handler_position: step.handler_position)
+  ensure
+    @method, @url = method, url
   end
 
   # Why `arg` (one argument of a registration, as written) guards the
@@ -368,33 +255,6 @@ class ExpressAuthTagger < FrameworkTagger
     Noir::TopLevelSplit.split(text[1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?)
   end
 
-  HELPER_CALL = /\A\s*(?:await\s+)?((?:[A-Za-z_$][\w$]*\s*\.\s*)*([A-Za-z_$][\w$]*))\s*\(/
-  PATH_ARG    = /\A\s*['"`]\//
-
-  # The steps of a registration made through a route helper
-  # (`setupApiRoute(router, 'put', '/:pid/vote', [...], controllers.vote)`):
-  # the arguments the helper hands to the router as the route's middleware
-  # and handler. Nil unless the statement opens with
-  # such a call: a verb call is a registration of its own.
-  private def helper_call_args(statement : String) : Array(String)?
-    head = statement.match(HELPER_CALL) || return
-    return if head[2].matches?(/\A(?:get|post|put|patch|delete|options|head|all|use|route)\z/)
-    open_paren = head.end(0) - 1
-    close_paren = Noir::JSLiteralScanner.find_matching_paren(statement, open_paren) || return
-    args = Noir::TopLevelSplit.split(statement[open_paren + 1...close_paren], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?)
-    return unless args.any?(&.matches?(PATH_ARG))
-    # Every argument but the literals (verb, path) and the router may be a
-    # step: `secured(ensureAuthenticated, router, 'get', '/x', h)` forwards
-    # its guard from before the path. The handler stays the last.
-    steps = args.reject { |arg| arg.matches?(LITERAL_ARG) || arg.strip.matches?(ROUTER_ARG) }
-    steps unless steps.empty?
-  end
-
-  LITERAL_ARG = /\A\s*(?:'[^']*'|"[^"]*"|`[^`]*`)\s*\z/
-  # The receiver a helper is handed, by the names the route-helper scanner
-  # accepts for it.
-  ROUTER_ARG = /\A_?(?:router|app|server|[A-Za-z_$][\w$]*(?:Router|App|Server))\z/
-
   private def unwrapped_arg(arg : String, file : String) : String?
     content = read_file(file) || return
     Noir::JSHandlerResolver.unwrap(code_only(arg).strip, content, file, guards: true).try(&.[0])
@@ -419,7 +279,7 @@ class ExpressAuthTagger < FrameworkTagger
   # — in the handler position — one that serves the request itself.
   # Judged once per step: a shared middleware array is spread into hundreds
   # of routes.
-  @refusals = Hash(Tuple(String, String, Bool, Int32, String?), {String, String, Bool}?).new
+  @refusals = Hash(Tuple(String, String, Bool, Int32, String?, String?), {String, String, Bool}?).new
 
   @unique_guard_bindings = Hash(String, Set(String)).new
 
@@ -506,7 +366,7 @@ class ExpressAuthTagger < FrameworkTagger
   end
 
   private def refusing_definition(arg : String, file : String, handler_position : Bool, depth : Int32 = 0) : {String, String, Bool}?
-    key = {arg, file, handler_position, depth, @method}
+    key = {arg, file, handler_position, depth, @method, @url}
     return @refusals[key] if @refusals.has_key?(key)
     @refusals[key] = judge_definition(arg, file, handler_position, depth)
   end
@@ -731,7 +591,7 @@ class ExpressAuthTagger < FrameworkTagger
   private def middleware_array(lines : Array(String), idx : Int32) : Array(String)?
     return if idx < 0 || idx >= lines.size
     head = lines[idx].match(/\A[^=:(]*(?:=|:)\s*\[/) || return
-    text = lines[idx...Math.min(lines.size, idx + MAX_DEFINITION_LINES)].join("\n")
+    text = lines[idx..].join("\n")
     open = head.end(0) - 1
     close = Noir::JSLiteralScanner.find_matching_bracket(text, open) || return
     Noir::TopLevelSplit.split(code_only(text[open + 1...close]), ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
@@ -974,7 +834,7 @@ class ExpressAuthTagger < FrameworkTagger
     return result if idx < 0 || idx >= lines.size
     depth = 0
     i = idx
-    while i < lines.size && i < idx + MAX_DEFINITION_LINES
+    while i < lines.size
       result << lines[i]
       code = code_only(lines[i])
       depth += code.count('{') - code.count('}')
@@ -984,129 +844,6 @@ class ExpressAuthTagger < FrameworkTagger
       i += 1
     end
     result
-  end
-
-  # The arguments of the registration `statement` opens with (the `(`…`)`
-  # after its `.get(` / `.use(` / …), split at the top level so a closure
-  # body or an object literal stays one argument. Nil when the statement
-  # holds no registration.
-  private def call_args(statement : String) : Array(String)?
-    head = statement.match(ROUTE_DECLARATION) || return
-    open_paren = statement.index('(', head.begin(0)) || return
-    close_paren = Noir::JSLiteralScanner.find_matching_paren(statement, open_paren) || statement.size
-    # A trailing comma leaves an empty last part; the last real argument is
-    # the handler position.
-    Noir::TopLevelSplit.split(statement[open_paren + 1...close_paren], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.blank?)
-  end
-
-  # Get lines that make up a route statement (handles multi-line route definitions)
-  private def get_route_statement(lines : Array(String), line_idx : Int32) : Array(String)
-    return [] of String if line_idx < 0 || line_idx >= lines.size
-
-    result = [lines[line_idx]]
-
-    # Look at preceding lines that might be part of the same statement
-    # (e.g., chained method calls). Skipped when the referenced line already
-    # starts a route registration — walking back from there can only reach
-    # the *previous* route, whose middleware is not this route's.
-    unless lines[line_idx].matches?(ROUTE_DECLARATION)
-      i = line_idx - 1
-      while i >= 0 && i >= line_idx - 2
-        stripped = lines[i].strip
-        break if stripped.empty? || stripped.ends_with?(";")
-        # Only include if this looks like part of the route definition
-        if stripped.matches?(ROUTE_DECLARATION)
-          result.unshift(lines[i])
-          break
-        elsif stripped.includes?("passport") || stripped.includes?("expressjwt")
-          result.unshift(lines[i])
-        else
-          break
-        end
-        i -= 1
-      end
-    end
-
-    # Look at following lines that might complete the statement — but only
-    # while the statement is actually still open. The route line's own
-    # parentheses say whether it is: `app.get('/x', (req, res) => { … });`
-    # closes on itself, and reading one line past it attributed the NEXT
-    # route's `requireAuth` to this one. Parentheses are counted on the
-    # code alone, so a `(` in a path literal or a trailing comment cannot
-    # hold the statement open.
-    depth = paren_depth(code_only(lines[line_idx]))
-    i = line_idx + 1
-    while depth > 0 && i < lines.size && i < line_idx + MAX_STATEMENT_LINES
-      break if lines[i].strip.matches?(ROUTE_DECLARATION)
-      result << lines[i]
-      depth += paren_depth(code_only(lines[i]))
-      i += 1
-    end
-
-    result
-  end
-
-  private def paren_depth(line : String) : Int32
-    line.count('(') - line.count(')')
-  end
-
-  # A path-less `x.use(auth)` guards the routes registered on `x`, in the same
-  # file, after that line.
-  private def check_receiver_use_auth(path : String, lines : Array(String), line_idx : Int32) : String?
-    return if @receiver_auth_rules.empty?
-    return if line_idx < 0 || line_idx >= lines.size
-
-    # Which object the route was registered on. Unreadable (a multi-line
-    # registration whose receiver sits above the referenced line) means we
-    # cannot tell app from sub-router, so decline rather than guess: a false
-    # "protected" is the failure that gets an endpoint skipped in review.
-    # A `x.route('/p')` chain link (`  .post(...)`) reports its own line, which
-    # names no receiver: the chain's `x.route(` line above does, or `x` alone
-    # on its line where Prettier broke the chain before `.route(`.
-    line_idx = chain_start_line(lines, line_idx) if lines[line_idx].lstrip.starts_with?('.')
-    receiver = (lines[line_idx].match(ROUTE_RECEIVER) || lines[line_idx].match(BARE_RECEIVER)).try &.[1]
-    return if receiver.nil?
-
-    expanded = Noir::PathScope.expand(path)
-    line_num = line_idx + 1
-
-    @receiver_auth_rules.each do |rule|
-      next unless rule[:receiver] == receiver
-      next unless rule[:file] == expanded
-      next unless rule[:line] < line_num
-      return rule[:description]
-    end
-
-    nil
-  end
-
-  ROUTE_CHAIN_START  = /\b\w+\s*\.\s*route\s*\(/
-  BARE_RECEIVER      = /\A\s*([A-Za-z_$][\w$]*)\s*\z/
-  MAX_CHAIN_LOOKBACK = 500
-
-  # The head line a chain link at `line_idx` belongs to: walk up over
-  # earlier links and their (bracket-balanced) handler bodies to the first
-  # line outside any bracket that does not continue the chain. Returns
-  # `line_idx` itself when that line is neither an `x.route(` head nor a
-  # receiver alone on its line, so the receiver reads as unknown.
-  private def chain_start_line(lines : Array(String), line_idx : Int32) : Int32
-    depth = 0
-    idx = line_idx - 1
-    stop = Math.max(0, line_idx - MAX_CHAIN_LOOKBACK)
-    while idx >= stop
-      line = lines[idx]
-      line.each_char do |char|
-        case char
-        when ')', '}', ']' then depth += 1
-        when '(', '{', '[' then depth -= 1
-        end
-      end
-      if depth <= 0 && !line.lstrip.starts_with?('.')
-        return line.matches?(ROUTE_CHAIN_START) || line.matches?(BARE_RECEIVER) ? idx : line_idx
-      end
-      idx -= 1
-    end
-    line_idx
   end
 
   # The last field of a negated read that names who is calling:
@@ -1458,101 +1195,12 @@ class ExpressAuthTagger < FrameworkTagger
     code_only(Noir::JSRouteExtractor.definition_body(text, method_line))
   end
 
-  private def check_mounted_use_auth(endpoint : Endpoint) : String?
-    url = endpoint.url
-
-    @mounted_auth_rules.each do |rule|
-      written = scope_prefix(rule[:prefix])
-      bases = mount_bases(rule[:file], rule[:receiver])
-      candidates = bases.empty? ? [written] : bases.map { |base| Noir::URLPath.join(base, written) }
-      return rule[:description] if candidates.any? { |prefix| prefix_covers?(prefix, url) }
-    end
-
-    nil
-  end
-
   BARE_IDENT           = /\A[A-Za-z_$][\w$]*\z/
   CREDENTIALS_OPTIONAL = /credentialsRequired\s*:\s*false\b/
   JWT_FACTORY          = /\Aexpress[jJ]wt\z/
 
   private def credentials_optional?(text : String) : Bool
     text.matches?(CREDENTIALS_OPTIONAL)
-  end
-
-  # `router.use('/apps', ...)` and `router.all(['/apps', '/apps/*'], ...)`.
-  # The path is the first argument when it is a string or an array of them.
-  private def mount_path_prefixes(statement : String) : Array(String)
-    first = call_args(statement).try(&.first?).try(&.strip) || return [] of String
-    if literal = first.match(/\A['"`]([^'"`]*)['"`]/)
-      return [literal[1]]
-    end
-    return [] of String unless first.starts_with?('[')
-    first.scan(/['"`]([^'"`]*)['"`]/).map(&.[1])
-  end
-
-  # `/apps/*` and `/apps/(.*)` cover the same routes as `/apps`.
-  private def scope_prefix(raw : String) : String
-    stripped = raw.sub(/\/(?:\(\.\*\)|\*(?:\/.*)?)?\z/, "")
-    stripped.empty? ? raw : stripped
-  end
-
-  # `parent.use(path, child)` where `child` is an `express.Router()` in this file.
-  private def record_router_mount(file : String, statement : String, content : String)
-    parent = statement.match(/\b([A-Za-z_$][\w$]*)\s*\.\s*use\s*\(/).try(&.[1]) || return
-    args = call_args(statement) || return
-    paths = mount_path_prefixes(statement)
-    paths = [""] if paths.empty?
-    args.each do |arg|
-      child = arg.strip
-      next unless child.matches?(BARE_IDENT) && express_router?(content, child)
-      parents = (@router_parents[file] ||= Hash(String, Array({String, String})).new)
-      list = (parents[child] ||= [] of {String, String})
-      paths.each { |path| list << {parent, path} unless list.includes?({parent, path}) }
-    end
-  end
-
-  private def express_router?(content : String, name : String) : Bool
-    content.matches?(/\b(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*(?:express\s*\.\s*Router|Router)\s*\(/)
-  end
-
-  private def express_app?(content : String, name : String) : Bool
-    content.matches?(/\b(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*(?:express|require\s*\(\s*['"]express['"]\s*\))\s*\(\s*\)/)
-  end
-
-  # Prefixes to join in front of a path-scoped `use`/`all`. Empty means the
-  # written path is already absolute (`app.use('/admin', guard)` on the
-  # express() instance, or a router whose mount was not found).
-  private def mount_bases(file : String, receiver : String) : Array(String)
-    content = read_file(file) || return [] of String
-    return [] of String if express_app?(content, receiver) && !express_router?(content, receiver)
-    rel, rooted = walk_mounts(content, file, receiver, [] of String)
-    return rel if rooted
-    locs = locator_prefixes(file)
-    return locs if rel.empty?
-    return rel if locs.empty?
-    rel.flat_map { |prefix| locs.map { |loc| Noir::URLPath.join(loc, prefix) } }.uniq!
-  end
-
-  # `{absolute-or-relative prefixes, true when an express() app is the root}`.
-  private def walk_mounts(content : String, file : String, name : String, stack : Array(String)) : {Array(String), Bool}
-    return {[] of String, false} if stack.includes?(name) || stack.size > 8
-    stack = stack + [name]
-    parents = @router_parents[file]?.try(&.[name]?) || [] of {String, String}
-    return express_app?(content, name) ? {[] of String, true} : {[] of String, false} if parents.empty?
-    bases = [] of String
-    rooted = true
-    parents.each do |parent, path|
-      parent_bases, parent_rooted = walk_mounts(content, file, parent, stack)
-      rooted = false unless parent_rooted
-      segs = parent_bases.empty? ? [path] : parent_bases.map { |base| Noir::URLPath.join(base, path) }
-      segs.each { |seg| bases << seg unless bases.includes?(seg) }
-    end
-    {bases, rooted}
-  end
-
-  private def locator_prefixes(file : String) : Array(String)
-    key = Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(file))
-    CodeLocator.instance.all(key)
   end
 
   # `{description, true}` when `arg` is an express-jwt alias (`import {
@@ -1625,19 +1273,10 @@ class ExpressAuthTagger < FrameworkTagger
 
   private def local_binding_expr(content : String, name : String) : String?
     decl = content.match(/\b(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*/) || return
-    rest = content[decl.end(0)..]
-    depth = 0
-    limit = Math.min(rest.size, 800)
-    i = 0
-    while i < limit
-      case rest[i]
-      when '(', '{', '[' then depth += 1
-      when ')', '}', ']' then depth -= 1
-      when ';'           then break if depth <= 0
-      end
-      i += 1
-    end
-    rest[0...i]
+    start = decl.end(0)
+    call = content.match(/\G[A-Za-z_$][\w$]*\s*\(/, start) || return
+    close = Noir::JSLiteralScanner.find_matching_paren(content, call.end(0) - 1) || return
+    content[start..close]
   end
 
   private def object_literal_at(content : String, line : Int32?) : String?
@@ -1647,10 +1286,8 @@ class ExpressAuthTagger < FrameworkTagger
       nl = content.index('\n', idx) || return
       idx = nl + 1
     end
-    window = content[idx, 400]
-    brace = window.index('{') || return
-    return if window[0...brace].includes?(';')
-    abs = idx + brace
+    abs = content.index(/[;{]/, idx) || return
+    return unless content[abs] == '{'
     close = Noir::JSLiteralScanner.find_matching_brace(content, abs) || return
     content[abs..close]
   end

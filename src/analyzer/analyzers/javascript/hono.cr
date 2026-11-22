@@ -68,7 +68,7 @@ module Analyzer::Javascript
         route = registration.route
         url = Noir::URLPath.join(registration.prefix, route.path)
         location = PathInfo.new(registration.file, registration.line)
-        location.route_middleware = registration.middleware
+        location.route_middleware = registration.middleware.try { |source| [RouteMiddleware.new(source, registration.file)] }
         endpoint = Endpoint.new(url, route.method, Details.new(location))
         endpoint.resolution = {"registration" => Endpoint::RESOLUTION_UNRESOLVED} if registration.unresolved
         url.scan(/\{(\w+)\}/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }

@@ -119,7 +119,7 @@ class HonoAuthTagger < FrameworkTagger
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
       if middleware = path_info.route_middleware
-        if description = middleware_description(code_only(middleware))
+        if description = middleware.find_value { |step| middleware_description(code_only(step.source)) }
           endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "hono_auth"))
           return
         end
