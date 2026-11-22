@@ -459,7 +459,6 @@ module Analyzer::Python
       import_modules
     end
 
-    ABSOLUTE_IMPORT_RE = /^[ \t]*(?:from|import)[ \t]+([A-Za-z_]\w*)/m
     @package_roots : Hash(::String, Array(::String))?
     @package_root_imports = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
 
@@ -486,14 +485,8 @@ module Analyzer::Python
       @package_root_imports.fetch(path) do
         imports = Hash(::String, Tuple(::String, Int32)).new
         resolved = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
-        own_base = python_base_path_for(path)
-        source.scan(ABSOLUTE_IMPORT_RE) do |m|
-          package = m[1]
-          next unless roots = package_roots[package]?
-          roots = roots.select { |root| python_base_path_for(root) == own_base }
-          containing = roots.select { |root| Noir::PathScope.under_root?(path, root) }.sort_by!(&.size).reverse!
-          next if containing.empty? && roots.size != 1
-          (containing.empty? ? roots : containing).each do |root|
+        imported_packages(path, source).values.uniq!.each do |package|
+          roots_for_package(package, path).each do |root|
             # Already asked by `find_fastapi_imported_modules`.
             next if root == base_path || root == File.dirname(path)
             package_dir = File.join(root, package) + "/"
@@ -504,6 +497,15 @@ module Analyzer::Python
         end
         @package_root_imports[path] = imports
       end
+    end
+
+    private def roots_for_package(package : ::String, path : ::String, allow_ambiguous : Bool = false) : Array(::String)
+      roots = package_roots[package]? || return [] of ::String
+      own_base = python_base_path_for(path)
+      roots = roots.select { |root| python_base_path_for(root) == own_base }
+      containing = roots.select { |root| Noir::PathScope.under_root?(path, root) }
+      return containing.sort_by!(&.size).reverse! unless containing.empty?
+      allow_ambiguous || roots.size == 1 ? roots : [] of ::String
     end
 
     # Top-level package name => the directories holding it (a package dir
@@ -1383,9 +1385,9 @@ module Analyzer::Python
     private def extract_fastapi_handler_params(codelines : Array(::String),
                                                def_line : Int32,
                                                route_path : ::String,
-                                               source : ::String,
+                                               handler_source : ::String,
                                                import_modules : Hash(::String, Tuple(::String, Int32)),
-                                               path : ::String,
+                                               handler_path : ::String,
                                                base_path : ::String,
                                                depth : Int32 = 0) : Array(Param)
       params = [] of Param
@@ -1394,20 +1396,21 @@ module Analyzer::Python
 
       path_param_names = fastapi_path_param_names(route_path)
 
+      # Each body occupies one slot. Only a lone, unembedded slot can be
+      # replaced with top-level fields once the whole signature is known.
+      bodies = Hash(Int32, Array(Param)).new
       function_definition.params.each do |param|
         next if param.name == "*" || path_param_names.includes?(param.name)
         next if param.name.in?(%w[self cls])
         next if param.type == "WebSocket"
-        # `common: CommonParameters`, a module-level `Annotated[...]` alias:
-        # read as the expression it names, in the file that assigns it.
-        if depth < 3 && VAR_NAME_FULL_RE.matches?(param.type) &&
-           (import_modules.has_key?(param.type) || source.includes?("Annotated") || source.includes?("import *")) &&
+        source, path = handler_source, handler_path
+        receiver, _, attribute = param.type.rpartition('.')
+        binding = receiver.empty? ? attribute : receiver
+        if depth < 3 && (VAR_NAME_FULL_RE.matches?(param.type) || QUALIFIED_NAME_RE.matches?(param.type)) &&
+           (import_modules.has_key?(binding) || source.includes?("Annotated") || source.includes?("import *")) &&
            (alias_site = annotated_alias(param.type, source, path, base_path))
-          expression, alias_source, alias_path = alias_site
-          default = param.default.empty? ? "" : " = #{param.default}"
-          params.concat(extract_fastapi_handler_params(["def _(#{param.name}: #{expression}#{default}):"], 0, route_path, alias_source,
-            find_fastapi_imported_modules(base_path, alias_path, alias_source), alias_path, base_path, depth + 1))
-          next
+          expression, source, path = alias_site
+          param = FunctionParameter.new(param.name, expression, param.default)
         end
         # `Depends()` on a password-flow form model reads the two
         # `application/x-www-form-urlencoded` fields the client must send.
@@ -1449,16 +1452,6 @@ module Analyzer::Python
 
         model = fastapi_model_name(param.type, qualified: true)
 
-        # A lone `Body()` model is the request body itself; `embed=True`
-        # nests it under the parameter name instead.
-        if param_type == "json" && model && !fastapi_param_declaration(param).matches?(BODY_EMBED_RE)
-          fields = model_params_for(model, param.name, source, path, base_path)
-          unless fields.empty?
-            params.concat(fields)
-            next
-          end
-        end
-
         # `q: Annotated[FilterModel, Query()]` (likewise `Header()` /
         # `Cookie()` / `Form()`): a parameter model, whose fields each
         # arrive there.
@@ -1470,50 +1463,55 @@ module Analyzer::Python
           end
         end
 
-        # A lone `dict[str, Any]` body is the body itself: FastAPI nests a
-        # body under its parameter name only beside another one (or with
-        # `embed=True`). Its fields are the keys the handler reads.
-        if param_type == "json" && fastapi_peeled_type(param.type).try(&.matches?(DICT_BODY_TYPE_RE)) &&
-           !fastapi_param_declaration(param).matches?(BODY_EMBED_RE) &&
-           fastapi_lone_body?(param, function_definition.params, path_param_names, source, path, base_path)
-          keys = parse_code_block(codelines[def_line..]).try { |block| find_dictionary_params(block, FunctionParameter.new(param.name, "dict", param.default)) }
-          if keys && !keys.empty?
-            params.concat(keys)
+        fields = [] of Param
+        if param_type.nil? && model == "Request"
+          if block = parse_code_block(codelines[def_line..])
+            params.concat(find_dictionary_params(block, FunctionParameter.new(param.name, "Request", param.default)))
+          end
+          next
+        elsif (param_type.nil? || param_type == "json") && fastapi_peeled_type(param.type).try(&.matches?(DICT_BODY_TYPE_RE))
+          param_type = "json"
+          if block = parse_code_block(codelines[def_line..])
+            fields = find_dictionary_params(block, FunctionParameter.new(param.name, "dict", param.default))
+          end
+        elsif model && (param_type.nil? || param_type == "json")
+          fields = model_params_for(model, param.name, source, path, base_path)
+          if fields.any? { |field| field.param_type == "json" }
+            param_type = "json"
+          elsif !fields.empty? && param_type.nil?
+            params.concat(fields) # A string Enum is a query parameter.
             next
+          elsif unresolved_body_model?(model, source, path, base_path)
+            param_type = "json"
+            fields = [opaque_model_body(model)]
+          elsif param_type.nil?
+            next unless fastapi_query_value_type?(model, source, path, base_path)
+            param_type = "query"
+          else
+            fields.clear
+          end
+        elsif param_type.nil?
+          if peeled = fastapi_peeled_type(param.type)
+            next unless peeled.matches?(QUERY_VALUE_TYPE_RE)
+            param_type = "query"
+          else
+            # An unclassified union may include a body model.
+            param_type = "json"
+            fields = [opaque_model_body(param.type)]
           end
         end
 
-        if param_type.nil?
-          unless model
-            # `Literal[...]`, `conint(gt=0)`: a value, read from the query.
-            if fastapi_peeled_type(param.type).try(&.matches?(QUERY_VALUE_TYPE_RE))
-              params << Param.new(fastapi_wire_name(param, "query"), default_value, "query")
-            end
-            next
-          end
-          if model.in?(%w[Request dict])
-            function_codeblock = parse_code_block(codelines[def_line..])
-            next if function_codeblock.nil?
-            params.concat(find_dictionary_params(function_codeblock, FunctionParameter.new(param.name, model, param.default)))
-          else
-            fields = model_params_for(model, param.name, source, path, base_path)
-            # A model from a package the scan does not hold (a sibling
-            # project scanned alone) is still the body: one opaque field,
-            # as an unresolved `Body()` model is kept.
-            if fields.empty?
-              if foreign_project_model?(model, source, path, base_path)
-                fields << Param.new(param.name, default_value, "json")
-              elsif fastapi_query_value_type?(model, source, path, base_path)
-                fields << Param.new(fastapi_wire_name(param, "query"), default_value, "query")
-              end
-            end
-            params.concat(fields)
-          end
-        else
-          params << Param.new(fastapi_wire_name(param, param_type), default_value, param_type)
+        if param_type == "json"
+          fields.clear if fastapi_param_declaration(param).matches?(BODY_EMBED_RE)
+          bodies[params.size] = fields
         end
+        params << Param.new(fastapi_wire_name(param, param_type), default_value, param_type)
       end
 
+      if bodies.size == 1 && params.none? { |param| param.param_type == "form" }
+        index, fields = bodies.first
+        params[index, 1] = fields unless fields.empty?
+      end
       params
     end
 
@@ -1545,48 +1543,43 @@ module Analyzer::Python
       end
     end
 
-    FROM_IMPORT_RE = /^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]+(?:\(([^)]*)\)|([^\n]*))/m
+    @imported_packages = Hash(::String, Hash(::String, ::String)).new
 
-    # Whether bare class `model` is imported (`from pkg.schemas import
-    # Model`) from a module the scan cannot resolve and that is no stdlib or
-    # framework module whose classes FastAPI reads as query values or injects.
-    # ponytail: an Enum from such a package is a query value, read as json.
-    @foreign_models = Hash(Tuple(::String, ::String, ::String), Bool).new
-
-    private def foreign_project_model?(model : ::String, source : ::String, path : ::String, base_path : ::String) : Bool
-      return false unless VAR_NAME_FULL_RE.matches?(model)
-      @foreign_models.fetch({model, path, base_path}) do
-        @foreign_models[{model, path, base_path}] = uncached_foreign_project_model?(model, source, path, base_path)
-      end
-    end
-
-    private def uncached_foreign_project_model?(model : ::String, source : ::String, path : ::String, base_path : ::String) : Bool
-      return false if resolve_model_reference(model, source, path, base_path)
-      source.scan(FROM_IMPORT_RE) do |m|
-        names = (m[2]? || m[3]? || "").split(',').map(&.split(/\s+as\s+/).last.strip)
-        next unless names.includes?(model)
-        return !NON_BODY_MODULES.includes?(m[1].split('.').first)
-      end
-      false
-    end
-
-    # Whether no parameter but `param` is a body: a `Body()`, a container
-    # type, a bare `dict`, or a model the scan resolves or that is imported
-    # from outside it.
-    private def fastapi_lone_body?(param : FunctionParameter, all : Array(FunctionParameter), path_param_names : Array(::String),
-                                   source : ::String, path : ::String, base_path : ::String) : Bool
-      all.none? do |other|
-        next false if other.name == param.name || other.name == "*" || other.name.in?(%w[self cls]) || path_param_names.includes?(other.name)
-        next false if fastapi_dependency_param?(other)
-        next true if "#{other.type} #{other.default}".matches?(/\bBody\s*\(/)
-        next false if other.type.matches?(LOCATION_MARKER_RE) || other.default.matches?(LOCATION_MARKER_RE)
-        next false if other.type.empty?
-        # A union of several types: unsure, so taken for a body.
-        peeled = fastapi_peeled_type(other.type) || next true
-        next true if peeled.matches?(BODY_CONTAINER_TYPE_RE) || peeled.matches?(DICT_BODY_TYPE_RE)
-        !!fastapi_model_name(peeled, qualified: true).try do |model|
-          resolve_model_reference(model, source, path, base_path) || foreign_project_model?(model, source, path, base_path)
+    # Names as bound in the handler module, including imports whose files
+    # are outside the scan. A relative import belongs to the project.
+    private def imported_packages(path : ::String, source : ::String) : Hash(::String, ::String)
+      @imported_packages[path] ||= begin
+        packages = Hash(::String, ::String).new
+        Noir::ImportGraph::Python.each_import_statement(source) do |from, names|
+          names.split(',').each do |spec|
+            original, _, renamed = spec.strip.partition(/\s+as\s+/)
+            next if original.empty? || original == "*"
+            local = renamed.empty? ? original : renamed
+            packages[local] = (from.empty? ? original : from).split('.').first
+          end
         end
+        packages
+      end
+    end
+
+    private def unresolved_body_model?(model : ::String, source : ::String, path : ::String,
+                                       base_path : ::String) : Bool
+      if resolve_model_reference(model, source, path, base_path)
+        return !fastapi_query_value_type?(model, source, path, base_path)
+      end
+      receiver, _, name = model.rpartition('.')
+      return false if INJECTED_TYPES.includes?(name)
+      packages = imported_packages(path, source)
+      if package = packages[receiver.empty? ? name : receiver]?
+        return !NON_BODY_MODULES.includes?(package)
+      end
+      # An unavailable class annotation can also come from a star import.
+      name.matches?(/\A[A-Z]/) && !NON_BODY_MODULES.includes?(receiver.split('.').first)
+    end
+
+    private def opaque_model_body(model : ::String) : Param
+      Param.new("body", "", "json").tap do |body|
+        body.add_tag(Tag.new("unresolved", "Could not resolve body fields for #{model}", "analyzer"))
       end
     end
 
@@ -1845,11 +1838,44 @@ module Analyzer::Python
         if resolved = resolve_model_reference(model, source, path, base_path)
           class_name, class_source, class_path = resolved
           find_base_model_params(class_source, class_name, param_name, path: class_path, base_path: base_path, location: location)
+        elsif location == "json"
+          package_model_fields(model, param_name, source, path)
         else
           [] of Param
         end
       end
       fields.map(&.detached_copy)
+    end
+
+    # When several unrelated roots can supply the import, keep the union
+    # of their fields and mark only the claims the definitions disagree on.
+    private def package_model_fields(model : ::String, param_name : ::String, source : ::String, path : ::String) : Array(Param)
+      receiver, _, attribute = model.rpartition('.')
+      local = receiver.empty? ? model : receiver
+      package = imported_packages(path, source)[local]? || return [] of Param
+      candidates = [] of Array(Param)
+      roots_for_package(package, path, allow_ambiguous: true).each do |root|
+        symbol = Noir::ImportGraph::Python.find_imported_symbols(root, path, source)[local]?
+        next unless symbol
+        file, original = symbol
+        name = receiver.empty? ? original : attribute
+        next if name.empty? || (!receiver.empty? && !original.empty?)
+        next unless site = model_site(name, read_file_content(file), file, root)
+        fields = find_base_model_params(site[0], name, param_name, path: site[1], base_path: root)
+        return fields if Noir::PathScope.under_root?(path, root)
+        candidates << fields
+      end
+      return candidates.first if candidates.size == 1
+
+      candidates.flatten.group_by { |field| {field.name, field.param_type} }.map do |_, variants|
+        field = variants.first
+        defaults_differ = variants.any? { |variant| variant.value != field.value }
+        if variants.size < candidates.size || defaults_differ
+          field.value = "" if defaults_differ
+          field.add_tag(Tag.new("unresolved", "Candidate definitions of #{model} differ on this field", "analyzer"))
+        end
+        field
+      end
     end
 
     QUALIFIED_NAME_RE = /^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})+$/
@@ -1943,6 +1969,13 @@ module Analyzer::Python
     private def annotated_alias(name : ::String, source : ::String, path : ::String,
                                 base_path : ::String) : Tuple(::String, ::String, ::String)?
       @annotated_aliases.fetch({path, name}) do
+        receiver, _, attribute = name.rpartition('.')
+        unless receiver.empty?
+          info = fastapi_import(receiver, path, source, base_path)
+          return @annotated_aliases[{path, name}] = info.try do |file, _|
+            annotated_alias(attribute, read_file_content(file), file, base_path)
+          end
+        end
         defined = /^#{Regex.escape(name)}\s*(?::[^=\n]+)?=\s*(?:[A-Za-z_]\w*\.)?Annotated\s*\[/m
         @annotated_aliases[{path, name}] = if site = model_site(name, source, path, base_path, defined: defined)
                                              fold_python_continuations(site[0].split("\n")).find(&.matches?(defined)).try do |line|
