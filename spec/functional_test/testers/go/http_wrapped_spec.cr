@@ -32,7 +32,10 @@ expected_endpoints = [
   Endpoint.new("/share/{code}", "GET", [Param.new("code", "", "path")]),
   Endpoint.new("/static/{file}", "GET", [Param.new("file", "", "path"), Param.new("Range", "", "header"), Param.new("Accept", "", "header")]),
   Endpoint.new("/fever/", "POST", [Param.new("groups", "", "query"), Param.new("mark", "", "form")]),
-] + (all_methods - ["POST"]).map { |m| Endpoint.new("/fever/", m) } + all_methods.flat_map { |m| [Endpoint.new("/liveness", m), Endpoint.new("/", m)] }
+] + (all_methods - ["POST"]).map { |m|
+  mark_type = m.in?("GET", "HEAD") ? "query" : "form"
+  Endpoint.new("/fever/", m, [Param.new("groups", "", "query"), Param.new("mark", "", mark_type)])
+} + all_methods.flat_map { |m| [Endpoint.new("/liveness", m), Endpoint.new("/", m)] }
 
 tester = FunctionalTester.new("fixtures/go/http_wrapped/", {
   :techs     => 1,

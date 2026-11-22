@@ -21,7 +21,7 @@ socket = Endpoint.new("/socket", "GET").tap do |ep|
   ep.push_callee(Callee.new("socket.send", line: 19))
 end
 
-api_user = Endpoint.new("/v1/api/users/:id", "GET").tap do |ep|
+api_user = Endpoint.new("/v1/api/users/:id", "GET", [Param.new("id", "", "path")]).tap do |ep|
   ep.push_callee(Callee.new("env.params.url", line: 25))
   ep.push_callee(Callee.new("UserLookup.find", line: 26))
   ep.push_callee(Callee.new("UserPresenter.render", line: 27))

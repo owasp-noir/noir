@@ -21,6 +21,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/verb_named/:post", "GET", [
     Param.new("id", "", "query"),
+    Param.new("post", "", "path"),
   ]),
   Endpoint.new("/v2/widgets", "GET", [
     Param.new("cursor", "", "query"),

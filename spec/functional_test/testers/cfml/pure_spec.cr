@@ -80,6 +80,7 @@ expected_endpoints = [
     Param.new("username", "", "form"),
     Param.new("password", "", "form"),
     Param.new("session_id", "", "cookie"),
+    Param.new("user-agent", "", "header"),
   ]),
 
   # Client-side JS that manipulates a DOM `form` must not register as

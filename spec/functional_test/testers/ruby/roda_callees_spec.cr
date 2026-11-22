@@ -6,7 +6,7 @@ root = Endpoint.new("/", "GET").tap do |ep|
   ep.push_callee(Callee.new("serialize_home", line: 7))
 end
 
-users_index = Endpoint.new("/users", "GET").tap do |ep|
+users_index = Endpoint.new("/users", "GET", [Param.new("page", "", "query")]).tap do |ep|
   ep.push_callee(Callee.new("r.params", line: 12))
   ep.push_callee(Callee.new("UserService.list", line: 13))
   ep.push_callee(Callee.new("response.write", line: 14))
@@ -19,7 +19,7 @@ users_create = Endpoint.new("/users", "POST").tap do |ep|
   ep.push_callee(Callee.new("r.body.read", line: 17))
 end
 
-users_show = Endpoint.new("/users/{id}", "GET").tap do |ep|
+users_show = Endpoint.new("/users/{id}", "GET", [Param.new("id", "", "path")]).tap do |ep|
   ep.push_callee(Callee.new("Feature.enabled?", line: 21))
   ep.push_callee(Callee.new("UserService.find", line: 22))
   ep.push_callee(Callee.new("UserFallback.find", line: 24))
@@ -27,12 +27,12 @@ users_show = Endpoint.new("/users/{id}", "GET").tap do |ep|
   ep.push_callee(Callee.new("serialize_user", line: 26))
 end
 
-users_delete = Endpoint.new("/users/{id}", "DELETE").tap do |ep|
+users_delete = Endpoint.new("/users/{id}", "DELETE", [Param.new("id", "", "path")]).tap do |ep|
   ep.push_callee(Callee.new("UserService.delete", line: 30))
   ep.push_callee(Callee.new("response.status", line: 31))
 end
 
-users_toggle = Endpoint.new("/users/{id}/toggle", "PATCH").tap do |ep|
+users_toggle = Endpoint.new("/users/{id}/toggle", "PATCH", [Param.new("id", "", "path")]).tap do |ep|
   ep.push_callee(Callee.new("Feature.enabled?", line: 35))
   ep.push_callee(Callee.new("UserService.enable", line: 35))
   ep.push_callee(Callee.new("UserService.disable", line: 35))
@@ -40,7 +40,7 @@ users_toggle = Endpoint.new("/users/{id}/toggle", "PATCH").tap do |ep|
   ep.push_callee(Callee.new("serialize_state", line: 36))
 end
 
-users_options = Endpoint.new("/users/{id}", "OPTIONS").tap do |ep|
+users_options = Endpoint.new("/users/{id}", "OPTIONS", [Param.new("id", "", "path")]).tap do |ep|
   ep.push_callee(Callee.new("OptionsService.allow", line: 39))
 end
 

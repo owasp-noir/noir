@@ -9,7 +9,7 @@ require "../../func_spec.cr"
 # pattern built from a package constant in another file resolves.
 attachment_verbs = %w[GET POST PUT PATCH DELETE HEAD OPTIONS]
 expected_endpoints = attachment_verbs.map { |verb| Endpoint.new("/file/attachments/{uid}", verb, [Param.new("uid", "", "path")]) } + [
-  Endpoint.new("/file/users/{identifier}/export", "GET"),
+  Endpoint.new("/file/users/{identifier}/export", "GET", [Param.new("identifier", "", "path")]),
   Endpoint.new("/healthz", "GET"),
   Endpoint.new("/api/users", "GET"),
 ]

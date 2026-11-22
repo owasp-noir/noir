@@ -1,19 +1,19 @@
 require "../../func_spec.cr"
 
-index_endpoint = Endpoint.new("/posts", "GET").tap do |ep|
+index_endpoint = Endpoint.new("/posts", "GET", [Param.new("page", "", "query")]).tap do |ep|
   ep.push_callee(Callee.new("PostQuery.list", line: 3))
   ep.push_callee(Callee.new("AuditLog.write", line: 4))
   ep.push_callee(Callee.new("render", line: 5))
   ep.push_callee(Callee.new("serialize_posts", line: 5))
 end
 
-show_endpoint = Endpoint.new("/posts/:id", "GET").tap do |ep|
+show_endpoint = Endpoint.new("/posts/:id", "GET", [Param.new("id", "", "path")]).tap do |ep|
   ep.push_callee(Callee.new("Post.find", line: 9))
   ep.push_callee(Callee.new("render", line: 10))
   ep.push_callee(Callee.new("serialize_post", line: 10))
 end
 
-create_endpoint = Endpoint.new("/posts", "POST").tap do |ep|
+create_endpoint = Endpoint.new("/posts", "POST", [Param.new("title", "", "json")]).tap do |ep|
   ep.push_callee(Callee.new("PostCreator.create", line: 14))
   ep.push_callee(Callee.new("AuditLog.write", line: 15))
   ep.push_callee(Callee.new("render", line: 16))
@@ -27,25 +27,25 @@ destroy_memory_endpoint = Endpoint.new("/posts/:id/memory", "DELETE", [
   ep.push_callee(Callee.new("AuditLog.write", line: 38))
 end
 
-external_ready_endpoint = Endpoint.new("/posts/:id/external_ready", "GET").tap do |ep|
+external_ready_endpoint = Endpoint.new("/posts/:id/external_ready", "GET", [Param.new("id", "", "path")]).tap do |ep|
   ep.push_callee(Callee.new("render", line: 10))
   ep.push_callee(Callee.new("Ready.check", line: 10))
 end
 
-preview_endpoint = Endpoint.new("/posts/preview", "GET").tap do |ep|
+preview_endpoint = Endpoint.new("/posts/preview", "GET", [Param.new("draft", "", "query")]).tap do |ep|
   ep.push_callee(Callee.new("PreviewBuilder.build", line: 20))
   ep.push_callee(Callee.new("render", line: 21))
   ep.push_callee(Callee.new("serialize_preview", line: 21))
 end
 
-implicit_preview_endpoint = Endpoint.new("/posts/implicit_preview", "POST").tap do |ep|
+implicit_preview_endpoint = Endpoint.new("/posts/implicit_preview", "POST", [Param.new("draft", "", "json")]).tap do |ep|
   ep.push_callee(Callee.new("PreviewBuilder.build", line: 25))
   ep.push_callee(Callee.new("AuditLog.write", line: 26))
   ep.push_callee(Callee.new("render", line: 27))
   ep.push_callee(Callee.new("serialize_preview", line: 27))
 end
 
-legacy_implicit_preview_endpoint = Endpoint.new("/posts/implicit_preview_legacy", "POST").tap do |ep|
+legacy_implicit_preview_endpoint = Endpoint.new("/posts/implicit_preview_legacy", "POST", [Param.new("draft", "", "json")]).tap do |ep|
   ep.push_callee(Callee.new("PreviewBuilder.build", line: 31))
   ep.push_callee(Callee.new("AuditLog.write", line: 32))
   ep.push_callee(Callee.new("render", line: 33))

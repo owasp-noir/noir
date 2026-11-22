@@ -11,9 +11,9 @@ expected_endpoints = [
     Param.new("email", "", "form"),
   ]),
   # Path param type annotation stripped: {id:uint64} → {id}
-  Endpoint.new("/users/{id}", "PUT"),
-  Endpoint.new("/users/{id}", "DELETE"),
-  Endpoint.new("/items/{id}", "PATCH"),
+  Endpoint.new("/users/{id}", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/users/{id}", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/items/{id}", "PATCH", [Param.new("id", "", "path")]),
   Endpoint.new("/health", "OPTIONS"),
   Endpoint.new("/health", "HEAD"),
   # app.Any("/any", ...) expands to all HTTP methods
@@ -35,7 +35,7 @@ expected_endpoints = [
     Param.new("Authorization", "", "header"),
     Param.new("session", "", "cookie"),
   ]),
-  Endpoint.new("/api/v1/files/{file}", "GET"),
+  Endpoint.new("/api/v1/files/{file}", "GET", [Param.new("file", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/go/iris/", {

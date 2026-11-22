@@ -19,7 +19,7 @@ require "../../func_spec.cr"
 helpers_path = "./spec/functional_test/fixtures/go/beego_callees/helpers.go"
 
 expected_endpoints = [
-  Endpoint.new("/users", "POST").tap do |ep|
+  Endpoint.new("/users", "POST", [Param.new("name", "", "query")]).tap do |ep|
     ep.push_callee(Callee.new("ctx.Input.Query", line: 8))
     ep.push_callee(Callee.new("saveUser", helpers_path, 3))
     ep.push_callee(Callee.new("auditLog", helpers_path, 7))

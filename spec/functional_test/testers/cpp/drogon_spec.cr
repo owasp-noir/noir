@@ -27,10 +27,12 @@ expected_endpoints = [
   Endpoint.new("/items/{id}", "GET", [
     Param.new("Authorization", "", "header"),
     Param.new("session", "", "cookie"),
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/items/{id}", "DELETE", [
     Param.new("Authorization", "", "header"),
     Param.new("session", "", "cookie"),
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/named", "GET", [
     Param.new("q", "", "query"),
@@ -43,11 +45,12 @@ expected_endpoints = [
   Endpoint.new("/api/users", "POST", [
     Param.new("body", "", "json"),
   ]),
-  Endpoint.new("/api/users/{id}", "GET"),
-  Endpoint.new("/api/users/{id}", "PUT"),
-  Endpoint.new("/api/users/{id}", "DELETE"),
+  Endpoint.new("/api/users/{id}", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/users/{id}", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/users/{id}", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/api/users/{id}/profile", "GET", [
     Param.new("X-API-Token", "", "header"),
+    Param.new("id", "", "path"),
   ]),
 ]
 

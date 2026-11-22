@@ -9,7 +9,7 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/version", "GET"),
   Endpoint.new("/store", "POST"),
-  Endpoint.new("/store/{hash}", "GET"),
+  Endpoint.new("/store/{hash}", "GET", [Param.new("hash", "", "path")]),
   Endpoint.new("/api/health", "GET"),
 ]
 

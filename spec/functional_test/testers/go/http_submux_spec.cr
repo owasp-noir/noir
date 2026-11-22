@@ -4,7 +4,7 @@ require "../../func_spec.cr"
 # its routes take the stripped prefix (nested mounts compose) and the mount
 # registration itself is not a route.
 expected_endpoints = [
-  Endpoint.new("/v1/users/{id}", "GET"),
+  Endpoint.new("/v1/users/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/v1/users", "POST"),
   Endpoint.new("/v1/admin/stats", "GET"),
   Endpoint.new("/healthz", "GET"),

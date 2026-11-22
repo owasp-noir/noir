@@ -27,6 +27,7 @@ expected_endpoints = [
     Param.new("extras", "", "json"),
     Param.new("Owner", "", "json"),
     Param.new("Owner", "", "form"),
+    Param.new("priority", "", "form"),
   ]),
   Endpoint.new("/client/:id", "GET", [Param.new("id", "", "path")]),
 ]

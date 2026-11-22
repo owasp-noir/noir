@@ -14,20 +14,20 @@ expected_endpoints = [
   # subsequent route declarations. Discourse's chat plugin
   # depends on this resolution to avoid phantom `/#{base_c_route}/...`
   # entries.
-  Endpoint.new("/c/:channel_title/:channel_id/:message_id", "GET"),
-  Endpoint.new("/c/:channel_title/:channel_id/messages", "POST"),
+  Endpoint.new("/c/:channel_title/:channel_id/:message_id", "GET", [Param.new("channel_id", "", "path"), Param.new("channel_title", "", "path"), Param.new("message_id", "", "path")]),
+  Endpoint.new("/c/:channel_title/:channel_id/messages", "POST", [Param.new("channel_id", "", "path"), Param.new("channel_title", "", "path")]),
 
   # `#{ENV.fetch('URL_COMPONENT', 'bb')}` interpolation embeds quotes; the
   # path must be captured whole (placeholdered), not truncated mid-quote.
-  Endpoint.new("/{ENV.fetch}/:area", "GET"),
+  Endpoint.new("/{ENV.fetch}/:area", "GET", [Param.new("area", "", "path")]),
 
   # namespace :admin do resources :reports end
   Endpoint.new("/admin/reports", "GET"),
-  Endpoint.new("/admin/reports/:id", "GET"),
+  Endpoint.new("/admin/reports/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/admin/reports", "POST"),
-  Endpoint.new("/admin/reports/:id", "PUT"),
-  Endpoint.new("/admin/reports/:id", "PATCH"),
-  Endpoint.new("/admin/reports/:id", "DELETE"),
+  Endpoint.new("/admin/reports/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/admin/reports/:id", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/admin/reports/:id", "DELETE", [Param.new("id", "", "path")]),
 
   # member/collection actions on namespaced resource. #1359: action-scoped
   # headers must surface on the custom-action endpoint (previously dropped
@@ -35,15 +35,18 @@ expected_endpoints = [
   Endpoint.new("/admin/refunds/:id/change_status", "POST", [
     Param.new("X-Refund-Reason", "", "header"),
     Param.new("status", "", "form"),
+    Param.new("id", "", "path"),
   ]),
   # DELETE custom action — no shared body params, only the action's headers.
   Endpoint.new("/admin/refunds/:id/purge", "DELETE", [
     Param.new("X-Confirm", "", "header"),
+    Param.new("id", "", "path"),
   ]),
   # `permit("note", "kind")` (string form) and member POST verb.
   Endpoint.new("/admin/refunds/:id/update_metadata", "POST", [
     Param.new("note", "", "form"),
     Param.new("kind", "", "form"),
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/admin/refunds/new_list", "GET", [
     Param.new("X-Page", "", "header"),
@@ -59,8 +62,8 @@ expected_endpoints = [
 
   # Keyword-block guard: route inside `if ENV["DEBUG_ROUTES"]` and the route
   # after the `end` both stay under `/admin`.
-  Endpoint.new("/admin/debug/echo", "GET"),
-  Endpoint.new("/admin/after_conditional", "GET"),
+  Endpoint.new("/admin/debug/echo", "GET", [Param.new("X-Heartbeat", "", "header"), Param.new("id", "", "query")]),
+  Endpoint.new("/admin/after_conditional", "GET", [Param.new("X-Heartbeat", "", "header"), Param.new("id", "", "query")]),
 
   # #3267: bare one-segment routes bind to the namespace's own controller.
   Endpoint.new("/admin/dashboard", "GET", [Param.new("page", "", "query")]),
@@ -71,7 +74,7 @@ expected_endpoints = [
   # Parenthesized namespace with path override keeps the controller namespace
   # while changing the URL prefix.
   Endpoint.new("/sekret/reports", "GET"),
-  Endpoint.new("/sekret/reports/:id", "GET"),
+  Endpoint.new("/sekret/reports/:id", "GET", [Param.new("id", "", "path")]),
 
   # scope module/path variants resolve controller params through admin/.
   Endpoint.new("/backoffice/heartbeat", "GET", [
@@ -90,21 +93,21 @@ expected_endpoints = [
 
   # scope :api do resources :items, only: [:index, :show] end
   Endpoint.new("/api/items", "GET"),
-  Endpoint.new("/api/items/:id", "GET"),
+  Endpoint.new("/api/items/:id", "GET", [Param.new("id", "", "path")]),
 
   # scope path: "internal" do resources :statements, except: [:destroy] end
   Endpoint.new("/internal/statements", "GET"),
-  Endpoint.new("/internal/statements/:id", "GET"),
+  Endpoint.new("/internal/statements/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/internal/statements", "POST"),
-  Endpoint.new("/internal/statements/:id", "PUT"),
-  Endpoint.new("/internal/statements/:id", "PATCH"),
+  Endpoint.new("/internal/statements/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/internal/statements/:id", "PATCH", [Param.new("id", "", "path")]),
 
   # resources :scans, controller: "billing/scans", only: [:index]
   Endpoint.new("/scans", "GET"),
 
   # Multiline options and %i lists.
   Endpoint.new("/legacy_posts", "GET"),
-  Endpoint.new("/legacy_posts/:id", "GET"),
+  Endpoint.new("/legacy_posts/:id", "GET", [Param.new("id", "", "path")]),
 
   # Inline custom resource scopes: collection, implicit member, and new.
   Endpoint.new("/refunds/summary", "GET", [
@@ -112,6 +115,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/refunds/:refund_id/preview", "GET", [
     Param.new("X-Preview", "", "header"),
+    Param.new("refund_id", "", "path"),
   ]),
   Endpoint.new("/refunds/new/template", "GET", [
     Param.new("X-Template", "", "header"),
@@ -121,6 +125,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/refunds/:id/inline_preview", "POST", [
     Param.new("X-Inline-Preview", "", "header"),
+    Param.new("id", "", "path"),
   ]),
 
   # Rails concerns: `concern :commentable do resources :comments end`
@@ -128,15 +133,15 @@ expected_endpoints = [
   # with `resources :posts, concerns: :commentable` should emit nested
   # comments and preserve nested resources inside the concern.
   Endpoint.new("/posts", "GET"),
-  Endpoint.new("/posts/:id", "GET"),
+  Endpoint.new("/posts/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/posts", "POST"),
-  Endpoint.new("/posts/:id", "PUT"),
-  Endpoint.new("/posts/:id", "PATCH"),
-  Endpoint.new("/posts/:id", "DELETE"),
-  Endpoint.new("/posts/:post_id/comments", "GET"),
-  Endpoint.new("/posts/:post_id/comments/:id", "GET"),
-  Endpoint.new("/posts/:post_id/comments/:comment_id/likes", "GET"),
-  Endpoint.new("/posts/:post_id/comments/:comment_id/likes/:id", "GET"),
+  Endpoint.new("/posts/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/posts/:id", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/posts/:id", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/posts/:post_id/comments", "GET", [Param.new("post_id", "", "path")]),
+  Endpoint.new("/posts/:post_id/comments/:id", "GET", [Param.new("id", "", "path"), Param.new("post_id", "", "path")]),
+  Endpoint.new("/posts/:post_id/comments/:comment_id/likes", "GET", [Param.new("comment_id", "", "path"), Param.new("post_id", "", "path")]),
+  Endpoint.new("/posts/:post_id/comments/:comment_id/likes/:id", "GET", [Param.new("comment_id", "", "path"), Param.new("id", "", "path"), Param.new("post_id", "", "path")]),
 
   # A concern's member/collection verbs apply to the resource naming it,
   # and `with_options only: [:index], concerns:` reaches `resources :tags`
@@ -180,11 +185,12 @@ expected_endpoints = [
   ]),
   Endpoint.new("/report/:section/rss", "GET", [
     Param.new("X-Ping", "", "header"),
+    Param.new("section", "", "path"),
   ]),
   # Adjacent groups fill in order: never `/archive/:month`.
-  Endpoint.new("/archive", "GET"),
-  Endpoint.new("/archive/:year", "GET"),
-  Endpoint.new("/archive/:year/:month", "GET"),
+  Endpoint.new("/archive", "GET", [Param.new("X-Ping", "", "header")]),
+  Endpoint.new("/archive/:year", "GET", [Param.new("X-Ping", "", "header"), Param.new("year", "", "path")]),
+  Endpoint.new("/archive/:year/:month", "GET", [Param.new("X-Ping", "", "header"), Param.new("month", "", "path"), Param.new("year", "", "path")]),
   Endpoint.new("/localized_ping", "GET", [
     Param.new("X-Ping", "", "header"),
   ]),
@@ -194,9 +200,11 @@ expected_endpoints = [
   # fabricated `{action}` path param into the URL.
   Endpoint.new("/repo/:id/browse", "GET", [
     Param.new("X-Ping", "", "header"),
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/repo/:id/annotate", "GET", [
     Param.new("X-Ping", "", "header"),
+    Param.new("id", "", "path"),
   ]),
 
   # devise_for :users — sample of generated routes. No app/models/user.rb
@@ -246,13 +254,14 @@ expected_endpoints = [
 
   # Hash-rocket `scope :module =>`, `namespace ..., :module =>`, a slashed
   # controller inside a namespace and `namespace ..., :path => ""`.
-  Endpoint.new("/api/0.6/changeset/:id", "GET"),
+  Endpoint.new("/api/0.6/changeset/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/0.6/changeset/:changeset_id/download", "GET", [
     Param.new("Accept", "", "header"),
     Param.new("Accept-Language", "", "header"),
     Param.new("Content-Type", "", "header"),
+    Param.new("changeset_id", "", "path"),
   ]),
-  Endpoint.new("/api/0.6/changeset/:changeset_id/hide", "POST"),
+  Endpoint.new("/api/0.6/changeset/:changeset_id/hide", "POST", [Param.new("changeset_id", "", "path")]),
   Endpoint.new("/profile/description", "GET"),
   Endpoint.new("/profile", "GET"),
   Endpoint.new("/feeds/legacy", "GET"),

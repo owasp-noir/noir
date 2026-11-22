@@ -31,9 +31,9 @@ expected_endpoints = [
     Param.new("site", "", "path"),
     Param.new("id", "", "path"),
   ]),
-  Endpoint.new("/sites/:site/comments/:id", "PUT"),
-  Endpoint.new("/sites/:site/comments/:id", "PATCH"),
-  Endpoint.new("/sites/:site/comments/:id", "DELETE"),
+  Endpoint.new("/sites/:site/comments/:id", "PUT", [Param.new("id", "", "path"), Param.new("site", "", "path")]),
+  Endpoint.new("/sites/:site/comments/:id", "PATCH", [Param.new("id", "", "path"), Param.new("site", "", "path")]),
+  Endpoint.new("/sites/:site/comments/:id", "DELETE", [Param.new("id", "", "path"), Param.new("site", "", "path")]),
 
   # Fluent `.to()` target.
   Endpoint.new("/render/:format", "GET", [Param.new("format", "", "path")]),

@@ -7,13 +7,13 @@ expected_endpoints = [
   Endpoint.new("/init", "GET"),
   Endpoint.new("/", "GET"),
   Endpoint.new("/api/v1/tickets", "GET"),
-  Endpoint.new("/api/v1/tickets/:id", "PUT"),
-  Endpoint.new("/api/v1/tickets/merge/:id", "POST"),
+  Endpoint.new("/api/v1/tickets/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v1/tickets/merge/:id", "POST", [Param.new("id", "", "path")]),
   Endpoint.new("/api/v1/tickets/search", "GET", [Param.new("query", "", "query")]),
-  Endpoint.new("/api/v1/tickets/search", "POST"),
+  Endpoint.new("/api/v1/tickets/search", "POST", [Param.new("query", "", "json")]),
   Endpoint.new("/api/v1/ticket_stats", "GET"),
   Endpoint.new("/ticket_overview", "GET"),
-  Endpoint.new("/*a", "GET"),
+  Endpoint.new("/*a", "GET", [Param.new("a", "", "path")]),
   # overrides.rb: production.rb wins, development.rb alone does not, a
   # conditional assignment and a rebound local resolve to nothing.
   Endpoint.new("/prodbase/a", "GET"),

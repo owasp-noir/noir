@@ -22,7 +22,7 @@ require "../../func_spec.cr"
 helpers_path = "./spec/functional_test/fixtures/go/gf_callees/helpers.go"
 
 expected_endpoints = [
-  Endpoint.new("/users", "GET").tap do |ep|
+  Endpoint.new("/users", "GET", [Param.new("name", "", "query")]).tap do |ep|
     ep.push_callee(Callee.new("r.GetQuery", line: 8))
     ep.push_callee(Callee.new("saveUser", helpers_path, 3))
     ep.push_callee(Callee.new("name.String", line: 9))

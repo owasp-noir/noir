@@ -8,10 +8,14 @@ expected_endpoints = [
   Endpoint.new("/api/files/{collection}/{recordId}/{filename}", "GET", [
     Param.new("token", "", "query"),
     Param.new("thumb", "", "query"),
+    Param.new("collection", "", "path"),
+    Param.new("filename", "", "path"),
+    Param.new("recordId", "", "path"),
   ]),
   Endpoint.new("/api/files/{key}", "GET", [
     Param.new("token", "", "query"),
     Param.new("X-Backup-Key", "", "header"),
+    Param.new("key", "", "path"),
   ]),
   Endpoint.new("/api/files/token", "POST"),
   Endpoint.new("/hello", "GET", [Param.new("name", "", "query")]),

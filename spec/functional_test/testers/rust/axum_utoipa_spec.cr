@@ -8,7 +8,7 @@ require "../../func_spec.cr"
 # `method(get, post)` multi-verb form.
 expected_endpoints = [
   Endpoint.new("/api/v1/users", "GET"),
-  Endpoint.new("/api/v1/users/{id}", "GET"),
+  Endpoint.new("/api/v1/users/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/v1/users/tokens", "GET"),
   Endpoint.new("/api/v1/admin/dashboard", "GET"),
   Endpoint.new("/api/v1/admin/dashboard", "POST"),

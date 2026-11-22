@@ -45,6 +45,7 @@ expected_endpoints = [
   # handlers.go: path param with query param
   Endpoint.new("/items/:itemId/reviews", "GET", [
     Param.new("sort", "", "query"),
+    Param.new("itemId", "", "path"),
   ]),
   # handlers.go: handler reference (non-inline)
   Endpoint.new("/health", "GET"),

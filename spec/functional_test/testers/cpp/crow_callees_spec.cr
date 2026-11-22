@@ -15,13 +15,13 @@ expected_endpoints = [
     Callee.new("crow::response", line: 10),
     Callee.new("serializeUser", line: 10),
   ]),
-  endpoint_with_callees("/users", "POST", [] of Param, [
+  endpoint_with_callees("/users", "POST", [Param.new("body", "", "json")], [
     Callee.new("parseJson", line: 15),
     Callee.new("service.save", line: 17),
     Callee.new("crow::response", line: 18),
     Callee.new("renderUser", line: 18),
   ]),
-  endpoint_with_callees("/users", "PUT", [] of Param, [
+  endpoint_with_callees("/users", "PUT", [Param.new("body", "", "json")], [
     Callee.new("parseJson", line: 15),
     Callee.new("service.save", line: 17),
     Callee.new("crow::response", line: 18),

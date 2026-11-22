@@ -7,7 +7,7 @@ require "../../func_spec.cr"
 {
   "echo"  => [Endpoint.new("/api/v1/users", "GET", [Param.new("page", "", "query")])],
   "hertz" => [Endpoint.new("/api/v1/users", "GET", [Param.new("page", "", "query")])],
-  "chi"   => [Endpoint.new("/users/", "GET"), Endpoint.new("/users/{id}", "GET")],
+  "chi"   => [Endpoint.new("/users/", "GET"), Endpoint.new("/users/{id}", "GET", [Param.new("id", "", "path")])],
   "fiber" => [
     Endpoint.new("/r/in", "GET"),
     Endpoint.new("/mnt/micro", "GET"),

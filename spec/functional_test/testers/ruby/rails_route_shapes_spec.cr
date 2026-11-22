@@ -6,15 +6,15 @@ require "../../func_spec.cr"
 # `def` inside `namespace :admin` must not leak a frame (else `/posts` would
 # come out as `/admin/posts`).
 expected_endpoints = [
-  Endpoint.new("/api/v1_alpha/accounts/:account_id/collections", "GET"),
+  Endpoint.new("/api/v1_alpha/accounts/:account_id/collections", "GET", [Param.new("account_id", "", "path")]),
   Endpoint.new("/api/v1/trends", "GET"),
   Endpoint.new("/api/v1/trends/tags", "GET"),
   Endpoint.new("/admin/api", "GET"),
   Endpoint.new("/admin/api/keys", "GET"),
-  Endpoint.new("/admin/api/keys/:id", "PUT"),
-  Endpoint.new("/posts/:id", "PUT", [Param.new("raw", "", "form")]),
+  Endpoint.new("/admin/api/keys/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/posts/:id", "PUT", [Param.new("raw", "", "form"), Param.new("id", "", "path")]),
   # `def delete!` and a constraint class's `def get` shadow no mapper verb.
-  Endpoint.new("/posts/:id", "DELETE"),
+  Endpoint.new("/posts/:id", "DELETE", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/ruby/rails_route_shapes/", {

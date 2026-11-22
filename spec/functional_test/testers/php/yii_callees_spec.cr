@@ -31,6 +31,7 @@ end
 post_create_get = Endpoint.new("/post/create", "GET", [
   Param.new("title", "", "form"),
   Param.new("body", "", "form"),
+  Param.new("X-CSRF-Token", "", "header"),
 ]).tap do |ep|
   post_create_callees.each { |callee| ep.push_callee(callee) }
 end

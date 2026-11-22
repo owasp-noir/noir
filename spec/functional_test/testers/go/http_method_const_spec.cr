@@ -5,8 +5,8 @@ expected_endpoints = [
   Endpoint.new("/ctl", "GET"),
   Endpoint.new("/users", "GET"),
   Endpoint.new("/users", "POST"),
-  Endpoint.new("/users/{id}", "DELETE"),
-  Endpoint.new("/api/v1/items/{id}", "PUT"),
+  Endpoint.new("/users/{id}", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v1/items/{id}", "PUT", [Param.new("id", "", "path")]),
   Endpoint.new("/api/v1/orders", "GET"),
 ]
 

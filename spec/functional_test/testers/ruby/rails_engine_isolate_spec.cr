@@ -4,7 +4,7 @@ require "../../func_spec.cr"
 # `app/controllers/shop/`, so `resources` rows and `to:` handlers resolve there.
 expected_endpoints = [
   Endpoint.new("/api/v3/products", "GET", [Param.new("q", "", "query")]),
-  Endpoint.new("/api/v3/products/:id", "GET"),
+  Endpoint.new("/api/v3/products/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/v3/auth/login", "POST", [Param.new("email", "", "json")]),
 ]
 
