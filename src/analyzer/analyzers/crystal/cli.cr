@@ -52,7 +52,7 @@ module Analyzer::Crystal
     def analyze
       endpoints = {} of String => Endpoint
       get_files_by_extension(".cr").each do |path|
-        next if cli_test_path?(path)
+        next if file_role(path, Noir::FileRole::CLI_SPEC).test?
         next unless File.exists?(path)
         begin
           # Comment-cut first: a doc comment's `ARGV[0]` or `parser.on`
@@ -301,13 +301,6 @@ module Analyzer::Crystal
         end
       end
       stem
-    end
-
-    private def cli_test_path?(path : String) : Bool
-      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
-      # scan base is not this project's test tree.
-      lower = base_relative_path(path).downcase
-      lower.includes?("_spec.") || lower.includes?("/test/")
     end
   end
 end

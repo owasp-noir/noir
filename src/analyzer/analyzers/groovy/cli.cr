@@ -55,17 +55,12 @@ module Analyzer::Groovy
     COMMONS_CLI_LONGOPT = /\.longOpt\s*\(\s*['"]([^'"]+)['"]/
     COMMONS_CLI_ADD_OPT = /\.addOption\s*\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*,/
 
-    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces three separate
-    # `String#includes?` scans of the same buffer -- Crystal's `includes?` is
-    # not Boyer-Moore accelerated, so a single regex pass over the downcased
-    # path is cheaper than three. Equivalent to the OR-of-substrings it
-    # replaces (union escapes each literal).
-    CLI_TEST_PATH_RE = Regex.union("/test/", "spec.groovy", "test.groovy")
+    CLI_TEST_SOURCES = Noir::FileRole::Convention.new(:test, path: Regex.union("/test/", "spec.groovy", "test.groovy"), lowercase_path: true)
 
     def analyze
       endpoints = {} of String => Endpoint
       get_files_by_extension(".groovy").each do |path|
-        next if cli_test_path?(path)
+        next if file_role(path, CLI_TEST_SOURCES).test?
         next unless File.exists?(path)
         begin
           content = read_file_content(path)
@@ -237,12 +232,6 @@ module Analyzer::Groovy
         end
       end
       stem
-    end
-
-    private def cli_test_path?(path : String) : Bool
-      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
-      # scan base is not this project's test tree.
-      base_relative_path(path).downcase.matches?(CLI_TEST_PATH_RE)
     end
   end
 end

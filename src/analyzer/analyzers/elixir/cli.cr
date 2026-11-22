@@ -23,7 +23,7 @@ module Analyzer::Elixir
       files = get_files_by_extension(".ex") + get_files_by_extension(".exs")
 
       files.each do |path|
-        next if cli_test_path?(path)
+        next if file_role(path, Noir::FileRole::CLI_TEST).test?
         begin
           content = read_file_content(path)
           # Cheap reject before the full MARKERS regex: every alternative
@@ -70,13 +70,6 @@ module Analyzer::Elixir
         end
       end
       stem
-    end
-
-    private def cli_test_path?(path : String) : Bool
-      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
-      # scan base is not this project's test tree.
-      lower = base_relative_path(path).downcase
-      lower.includes?("/test/") || lower.includes?("_test.")
     end
   end
 end

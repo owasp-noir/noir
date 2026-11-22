@@ -31,7 +31,7 @@ module Analyzer::Typescript
     end
 
     private def analyze_tanstack_file(path : String, result : Array(Endpoint))
-      return if tanstack_test_fixture_path?(path)
+      return if file_role(path, Noir::FileRole::TYPESCRIPT_ROUTER_TEST).test?
 
       raw = read_file_content(path)
       return unless tanstack_route_candidate?(raw)
@@ -74,24 +74,6 @@ module Analyzer::Typescript
 
     private def tanstack_route_candidate?(content : String) : Bool
       content.matches?(ROUTE_CONSTRUCTOR_RE)
-    end
-
-    TEST_FIXTURE_PATH_MARKERS = [
-      "/test/",
-      "/tests/",
-      "/__tests__/",
-      "/e2e/",
-      "/snapshots/",
-      "/test-files/",
-    ]
-
-    # Scan-base-relative, never absolute: a `test/` directory ABOVE the
-    # scan base is not this project's test tree.
-    private def tanstack_test_fixture_path?(path : String) : Bool
-      relative = base_relative_path(path)
-      TEST_FIXTURE_PATH_MARKERS.any? { |marker| relative.includes?(marker) } ||
-        relative.includes?(".test.") ||
-        relative.includes?(".spec.")
     end
 
     # A Storybook story (`Admin.stories.tsx`) builds a throwaway router with

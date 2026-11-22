@@ -73,19 +73,17 @@ module Analyzer::Cpp
       "DEFINE_string", "DEFINE_int", "DEFINE_bool", "ABSL_FLAG", "argparse::ArgumentParser")
     WEB_RE = /\b(?:Crow|crow|drogon|httplib|oatpp)\b|Crow::|drogon::|httplib::|oatpp::/
 
-    # Precompiled union for the per-file test-path skip gate (cpp_test_path?),
-    # matched via String#matches? instead of five naive substring scans.
-    CPP_TEST_PATH_RE = Regex.new(
+    CLI_TEST_SOURCES = Noir::FileRole::Convention.new(:test, path: Regex.new(
       Regex.union("/test/", "/tests/", "_test.", "test_", ".test.").source,
       Regex::Options::IGNORE_CASE
-    )
+    ))
 
     def analyze
       endpoints = {} of String => Endpoint
 
       EXTS.each do |ext|
         get_files_by_extension(ext).each do |path|
-          next if cpp_test_path?(path)
+          next if file_role(path, CLI_TEST_SOURCES).test?
           next unless File.exists?(path)
 
           begin
@@ -105,12 +103,6 @@ module Analyzer::Cpp
 
       @result.concat(cli_endpoints(endpoints))
       @result
-    end
-
-    private def cpp_test_path?(path : String) : Bool
-      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
-      # scan base is not this project's test tree.
-      base_relative_path(path).matches?(CPP_TEST_PATH_RE)
     end
 
     private def cpp_binary_name(path : String) : String

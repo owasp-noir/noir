@@ -66,10 +66,14 @@ module Analyzer::Zig
     ARGS_IMPORT_RE = /@import\s*\(\s*"args"\s*\)/
     WEB_RE         = /@import\s*\(\s*"(?:zap|jetzig|httpz|tokamak)"\s*\)/
 
+    # Only the directory prefix is matched against a lowercased path.
+    CLI_DIRECTORY   = Noir::FileRole::Convention.new(:test, path: /\/test/, lowercase_path: true)
+    CLI_TEST_MARKER = Noir::FileRole::Convention.new(:test, path: /_test\./)
+
     def analyze
       endpoints = {} of String => Endpoint
       get_files_by_extension(".zig").each do |path|
-        next if cli_test_path?(path)
+        next if file_role(path, CLI_DIRECTORY, CLI_TEST_MARKER).test?
         next unless File.exists?(path)
         begin
           content = read_file_content(path)
@@ -232,13 +236,6 @@ module Analyzer::Zig
         end
       end
       stem
-    end
-
-    private def cli_test_path?(path : String) : Bool
-      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
-      # scan base is not this project's test tree.
-      relative = base_relative_path(path)
-      relative.downcase.includes?("/test") || relative.includes?("_test.")
     end
   end
 end

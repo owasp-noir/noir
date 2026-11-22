@@ -44,7 +44,7 @@ module Analyzer::Cfml
     # The leading `.+` is load-bearing: a component named exactly
     # `Test.cfc` is a demo, not a suite (fw1 ships one that declares a
     # real `remote` method), and an anchored `ends_with?` swallowed it.
-    TEST_COMPONENT_RE = /.+(?:Test|Spec)\.cfc\z/i
+    TEST_COMPONENT = Noir::FileRole::Convention.new(:test, path: Regex.union("/tests/", "/test/"), name: /.+(?:Test|Spec)\.cfc\z/i)
 
     private BYTE_LT            = '<'.ord.to_u8
     private BYTE_BANG          = '!'.ord.to_u8
@@ -92,24 +92,13 @@ module Analyzer::Cfml
     end
 
     protected def cfml_components : Array(String)
-      get_files_by_extension(".cfc").reject { |path| cfml_test_path?(path) }
+      get_files_by_extension(".cfc").reject { |path| file_role(path, TEST_COMPONENT).test? }
     end
 
     protected def cfml_pages : Array(String)
       (get_files_by_extension(".cfm") + get_files_by_extension(".cfml"))
         .uniq!
-        .reject { |path| cfml_test_path?(path) }
-    end
-
-    protected def cfml_test_path?(path : String) : Bool
-      # Scan-base-relative, never absolute. Checking the absolute path made
-      # the result depend on where the checkout happens to live: the same
-      # Taffy tree scanned from `/srv/test/app` reported zero endpoints
-      # instead of 23, because every component looked like a test suite.
-      relative = base_relative_path(path)
-      return true if relative.includes?("/tests/") || relative.includes?("/test/")
-
-      File.basename(path).matches?(TEST_COMPONENT_RE)
+        .reject { |path| file_role(path, TEST_COMPONENT).test? }
     end
 
     # `<cfargument>` tags belong to the function they follow, so scan only

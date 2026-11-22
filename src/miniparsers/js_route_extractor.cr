@@ -1,3 +1,4 @@
+require "../models/file_role"
 require "../models/endpoint"
 require "../miniparsers/js_callee_extractor"
 require "../miniparsers/js_handler_resolver"
@@ -970,6 +971,9 @@ module Noir
     CLIENT_SIDE_FRAMEWORK_MARKER = Regex.union(CLIENT_SIDE_FRAMEWORK_MARKERS)
     HTTP_SERVER_LIBRARY_MARKER   = Regex.union(HTTP_SERVER_LIBRARY_MARKERS)
 
+    NAMED_TEST = FileRole::Convention.new(:test, path: STRICT_TEST_PATH_MARKER, name: TEST_STUB_FILENAME_MARKER)
+    TEST_SUITE = FileRole::Convention.new(:test, path: TEST_DIR_MARKER, name: UNDERSCORE_TEST_FILENAME_MARKER, content: TEST_SUITE_MARKER)
+
     # Every marker below names a directory *inside the project*
     # (`__tests__/`, `dist/`, `vendor/`, `public/`, ...), so they are
     # matched on the scan-base-relative path. Matched on the absolute
@@ -981,7 +985,7 @@ module Noir
                              include_client_frameworks : Bool = true) : Bool
       relative_path = CodeLocator.instance.base_relative(file_path)
       basename = File.basename(file_path)
-      return true if test_file?(basename, relative_path, content)
+      return true if FileRole.classify(relative_path, NAMED_TEST, TEST_SUITE, filename: basename, content: content).test?
       has_library = content_matches?(content, TEST_STUB_LIBRARY_MARKER) ||
                     (include_client_frameworks && content_matches?(content, CLIENT_SIDE_FRAMEWORK_MARKER))
       if basename.matches?(HYPHEN_TEST_FILENAME_MARKER)
@@ -1000,19 +1004,11 @@ module Noir
     # use this instead of `test_stub_only?`, which would let any server
     # import keep a test's routes and drop real routes beside axios/react.
     def self.test_file?(file_path : String, content : String) : Bool
-      test_file?(File.basename(file_path), CodeLocator.instance.base_relative(file_path), content)
+      FileRole.classify(CodeLocator.instance.base_relative(file_path), NAMED_TEST, TEST_SUITE, filename: file_path, content: content).test?
     end
 
-    private def self.test_file?(basename : String, relative_path : String, content : String) : Bool
-      return true if test_named_or_in_test_tree?(basename, relative_path)
-      return false unless relative_path.matches?(TEST_DIR_MARKER) || basename.matches?(UNDERSCORE_TEST_FILENAME_MARKER)
-      content_matches?(content, TEST_SUITE_MARKER)
-    end
-
-    # The content-free half of `test_file?`: a test by its name
-    # (`*.test.*`, `*.spec.*`, ...) or inside a dedicated test tree
-    # (`__tests__/`, `e2e/`, ...). Shared with `JavascriptEngine#js_test_file?`,
-    # which has to decide before it reads the file.
+    # The Koa auth tagger passes its original file path here. Preserve that
+    # legacy scope until its checkout-dependent behavior can change separately.
     def self.test_named_or_in_test_tree?(basename : String, relative_path : String) : Bool
       basename.matches?(TEST_STUB_FILENAME_MARKER) || relative_path.matches?(STRICT_TEST_PATH_MARKER)
     end

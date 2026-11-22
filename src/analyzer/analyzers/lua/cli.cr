@@ -33,15 +33,11 @@ module Analyzer::Lua
 
     MARKERS = /\brequire\s*\(?\s*['"]argparse['"]|\bargparse\s*\(|(?<!\w)(?<!\w\.)arg\s*\[\s*\d+\s*\]|\brequire\s*\(?\s*['"]cliargs['"]/
     WEB_RE  = /\brequire\s*\(?\s*['"](?:lapis|lor)['"]/
-    # `cli_test_path?`'s two OR-ed String#includes? scans, folded into one
-    # precompiled union so the per-file boolean gate costs a single PCRE2
-    # match instead of up to two naive substring scans.
-    TEST_PATH_RE = Regex.union("_spec.", "/test/")
 
     def analyze
       endpoints = {} of String => Endpoint
       get_files_by_extension(".lua").each do |path|
-        next if cli_test_path?(path)
+        next if file_role(path, Noir::FileRole::CLI_SPEC).test?
         next unless File.exists?(path)
         begin
           content = read_file_content(path)
@@ -154,12 +150,6 @@ module Analyzer::Lua
         end
       end
       stem
-    end
-
-    private def cli_test_path?(path : String) : Bool
-      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
-      # scan base is not this project's test tree.
-      base_relative_path(path).downcase.matches?(TEST_PATH_RE)
     end
   end
 end

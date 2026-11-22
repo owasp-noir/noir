@@ -44,11 +44,10 @@ module Analyzer::Kotlin
       "/testData/",
     )
 
+    TEST_SOURCES = Noir::FileRole::Convention.new(:test, path: TEST_PATH_RE, name: /Tests?\.kt\z/)
+
     def self.test_path?(relative_path : String) : Bool
-      return true if relative_path.matches?(TEST_PATH_RE)
-      base = File.basename(relative_path)
-      return true if base.ends_with?("Test.kt")
-      base.ends_with?("Tests.kt")
+      Noir::FileRole.classify(relative_path, TEST_SOURCES).test?
     end
   end
 end

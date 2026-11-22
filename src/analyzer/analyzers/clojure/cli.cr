@@ -37,7 +37,7 @@ module Analyzer::Clojure
       endpoints = {} of String => Endpoint
       [".clj", ".cljs", ".cljc"].each do |ext|
         get_files_by_extension(ext).each do |path|
-          next if cli_test_path?(path)
+          next if file_role(path, Noir::FileRole::CLI_TEST).test?
           next unless File.exists?(path)
           begin
             content = read_file_content(path)
@@ -104,13 +104,6 @@ module Analyzer::Clojure
         end
       end
       stem
-    end
-
-    private def cli_test_path?(path : String) : Bool
-      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
-      # scan base is not this project's test tree.
-      lower = base_relative_path(path).downcase
-      lower.includes?("/test/") || lower.includes?("_test.")
     end
 
     # Finds every babashka.cli dispatch-table entry (`{:cmds [...] :spec {...}}`)

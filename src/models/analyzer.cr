@@ -1,3 +1,4 @@
+require "./file_role"
 require "./logger"
 require "./endpoint"
 require "./file_helper"
@@ -12,6 +13,7 @@ require "../utils/utils"
 require "../techs/techs"
 
 class Analyzer
+  include Noir::FileRole::Scoped
   include FileHelper
 
   DEFAULT_CHANNEL_CAPACITY = 128

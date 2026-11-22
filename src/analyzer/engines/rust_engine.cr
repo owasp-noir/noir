@@ -195,16 +195,10 @@ module Analyzer::Rust
     # crate, so matching the absolute path let a directory *above* the
     # scan base decide the answer: the same tree cloned into
     # `~/work/tests/myapp` reported 0 endpoints instead of 220.
+    TEST_SOURCES = Noir::FileRole::Convention.new(:test, path: TEST_CRATE_DIR_RE, name: /(?:\Atests|_tests?)\.rs\z/)
+
     def self.test_path?(relative_path : String) : Bool
-      return true if relative_path.includes?("/tests/")
-      return true if relative_path.matches?(TEST_CRATE_DIR_RE)
-      # Cargo's `benches/` directory holds `cargo bench` harnesses
-      # (`Router::new().route(...)` scaffolding for throughput tests),
-      # never production endpoints — axum/tide park route-building
-      # benchmarks here. Exclude it like `tests/`.
-      return true if relative_path.includes?("/benches/")
-      base = File.basename(relative_path)
-      base == "tests.rs" || base.ends_with?("_test.rs") || base.ends_with?("_tests.rs")
+      Noir::FileRole.classify(relative_path, Noir::FileRole::CARGO_HARNESSES, TEST_SOURCES).test?
     end
 
     # Scan the source for `#[cfg(test)]` annotations, then capture
