@@ -17,7 +17,11 @@ module Analyzer::Javascript
     MAX_CHAIN_METHOD_DISTANCE = 1000
     MAX_CHAIN_SEARCH_DISTANCE = 5000
 
-    @middleware = Noir::ExpressMiddleware.new
+    private getter middleware : Noir::ExpressMiddleware do
+      Noir::ExpressMiddleware.new do |file|
+        JsModuleResolver.normalize_computed_specifiers(read_file_content(file))
+      end
+    end
 
     def analyze
       result = [] of Endpoint
@@ -25,7 +29,6 @@ module Analyzer::Javascript
       include_callee = callees_needed?
 
       # Phase 1: Pre-scan to build router mount map
-      @middleware = Noir::ExpressMiddleware.new
       scan_for_router_mounts
 
       # Phase 1b: index the project-local helpers that forward their
@@ -37,12 +40,16 @@ module Analyzer::Javascript
 
       parallel_file_scan do |path|
         content = read_file_content(path)
+        # Helper calls and Finale resources can register routes without a verb.
+        # A comment between .use and its arguments can also hide a static mount.
+        next unless Noir::JSRouteExtractor.route_call_candidate?(content) || content.includes?(".use") ||
+                    content.includes?(".resource") || helper_scanner.helper_candidate?(path, content)
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :express)
         # ExpressAuthTagger reports a refusing wrapper (`withAuth(list)`) as
         # the guard, so the handler may be the function it wraps.
         local_mounts = {} of String => Array(String)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-          include_callees: include_callee, unwrap_guards: true, resolve_mount_prefixes: true, local_mounts: local_mounts, middleware: @middleware)
+          include_callees: include_callee, unwrap_guards: true, resolve_mount_prefixes: true, local_mounts: local_mounts, middleware: middleware)
         RouterMountScanner.store_local_mounts(path, local_mounts)
         # A forwarding helper's own body carries the *shape* of a route,
         # not a route: `router.get(`/api${name}`, …)` inside
@@ -106,7 +113,7 @@ module Analyzer::Javascript
         location = PathInfo.new(asset)
         file = dir["source"]
         key = ExpressConstants.file_key(Noir::PathScope.expand(file)).name
-        location.route_middleware = @middleware.chain(file, dir["receiver"], dir["offset"].to_i, "", "", [key], url, [dir["handler"]])
+        location.route_middleware = middleware.chain(file, dir["receiver"], dir["offset"].to_i, "", "", [key], url, [dir["handler"]])
         location
       end
       template_bodies.each do |site, bodies|
@@ -132,6 +139,8 @@ module Analyzer::Javascript
       clear_ambiguous_template_handlers(result)
 
       result
+    ensure
+      @middleware = nil
     end
 
     # `req.params.X` reads a placeholder the final URL (mount prefix included)
@@ -1077,7 +1086,7 @@ module Analyzer::Javascript
     # Scan for router mount patterns and store them in CodeLocator
     # This enables cross-file router prefix tracking
     private def scan_for_router_mounts
-      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger, :express, middleware: @middleware)
+      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger, :express, middleware: middleware)
       scanner.scan
     end
 
@@ -1095,7 +1104,7 @@ module Analyzer::Javascript
     private def middleware_details(path, line, receiver, offset, prefix, url, args, *, forwarded_steps = nil)
       location = PathInfo.new(path, line)
       key = ExpressConstants.file_key(Noir::PathScope.expand(path)).name
-      location.route_middleware = @middleware.chain(path, receiver, offset, prefix, prefix, [key], url, args, forwarded_steps: forwarded_steps)
+      location.route_middleware = middleware.chain(path, receiver, offset, prefix, prefix, [key], url, args, forwarded_steps: forwarded_steps)
       Details.new(location)
     end
 

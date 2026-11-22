@@ -657,6 +657,8 @@ module Analyzer::Javascript
       end
     end
 
+    MIDDLEWARE_ALL_RE = /\b(?!Promise\s*\.)([\w$]+)\s*\.\s*all\s*\(/
+
     # Process a single file for router mounts
     private def process_file_for_mounts(
       main_file : String,
@@ -665,17 +667,6 @@ module Analyzer::Javascript
       global_deferred_mounts : Array(Mount),
     )
       content = read_source(main_file)
-
-      # A file that imports a *different* shared-extractor framework is not
-      # ours to mount. Its own analyzer resolves its prefixes (koa.cr's
-      # `resolve_koa_mount_prefixes`, oak.cr's equivalent) and writes them to
-      # the same locator table this scanner writes to, so processing it here
-      # does not merely waste work — it adds a competing prefix. The route
-      # pass already refuses these files (`other_shared_extractor_framework?`
-      # guards every `extract_routes` call); the mount pass has to refuse them
-      # for the same reason, or the prefix it invents resurfaces as a whole
-      # second copy of the other framework's routes.
-      return if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
 
       # Cheap pre-filter: every code path in this scanner is downstream
       # of a `.use(...)` or `.route(...)` call (literal mount, no-prefix
@@ -688,6 +679,17 @@ module Analyzer::Javascript
       return unless (@middleware && content.matches?(/\.\s*(?:all|use)\s*\(/)) || content.includes?(".use(") || content.includes?(".use (") ||
                     content.includes?(".route(") || content.includes?(".route (") ||
                     @forwarder_res.each_key.any? { |name| content.includes?(".#{name}(") }
+      # A file that imports a *different* shared-extractor framework is not
+      # ours to mount. Its own analyzer resolves its prefixes (koa.cr's
+      # `resolve_koa_mount_prefixes`, oak.cr's equivalent) and writes them to
+      # the same locator table this scanner writes to, so processing it here
+      # does not merely waste work — it adds a competing prefix. The route
+      # pass already refuses these files (`other_shared_extractor_framework?`
+      # guards every `extract_routes` call); the mount pass has to refuse them
+      # for the same reason, or the prefix it invents resurfaces as a whole
+      # second copy of the other framework's routes.
+      return if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
+
       # A test app that mounts the router under a prefix of its own (or none)
       # adds a phantom prefixed copy of every production route.
       return if Noir::JSRouteExtractor.test_file?(main_file, content)
@@ -696,6 +698,14 @@ module Analyzer::Javascript
       # commented-out mount must not add one. Lines and columns are kept.
       content = Noir::JSRouteExtractor.strip_js_comments(content)
 
+      # Promise.all is common in UI code. It passes the raw call gate but
+      # never registers middleware. Check the same receiver the .all pass
+      # reads, after blanking comments that may separate a receiver and dot.
+      return unless content.matches?(/\.\s*(?:use|route)\s*\(/) ||
+                    content.matches?(MIDDLEWARE_ALL_RE) ||
+                    @forwarder_res.each_key.any? { |name| content.includes?(".#{name}(") }
+
+      deferred_start = global_deferred_mounts.size
       # Parse imports
       @export_bindings[main_file] = Noir::JSRouteExtractor.export_bindings(content)
       imports = parse_imports(content, main_file)
@@ -712,8 +722,7 @@ module Analyzer::Javascript
       end
 
       if middleware = @middleware
-        content.scan(/\b([\w$]+)\s*\.\s*all\s*\(/) do |match|
-          next if match[1] == "Promise"
+        content.scan(MIDDLEWARE_ALL_RE) do |match|
           args = split_at_top_level_commas(extract_use_call_args(content, match.byte_end(0)))
           next if args.size < 2
           first = args.shift
@@ -789,9 +798,12 @@ module Analyzer::Javascript
       # handled by the parser's first-pass `.route(...)` scan instead.
       scan_hono_route_mounts(content, main_file, locator, require_map, function_map)
 
-      @middleware.try &.index_bindings(main_file, content)
-
-      # Store file context for second pass
+      # Only deferred placements need this file's imports and local prefixes
+      # again. Immediate placements have already consumed them.
+      if global_deferred_mounts.size == deferred_start
+        @export_bindings.delete(main_file)
+        return
+      end
       file_contexts[main_file] = {
         require_map:     require_map,
         function_map:    function_map,

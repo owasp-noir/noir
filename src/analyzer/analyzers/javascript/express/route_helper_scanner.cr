@@ -223,6 +223,8 @@ module Analyzer::Javascript
     private record DefaultArgument, span : Range(Int32, Int32), parameter : String, value : String
 
     @defaults = Hash(String, Array(DefaultArgument)).new
+    @registrar_files = [] of String
+    @registrar_lock = Mutex.new
     @site_defaults = Hash(Site, Array(String)).new
 
     def initialize(
@@ -232,8 +234,6 @@ module Analyzer::Javascript
       @logger : NoirLogger,
     )
       @helpers = Hash(String, Hash(String, HelperSpec)).new
-      # {target file, argument position} -> module passed there (nil: callers disagree)
-      @module_arguments = Hash(Tuple(String, Int32), String?).new
       @call_regex_cache = Hash(String, Regex).new
     end
 
@@ -243,7 +243,8 @@ module Analyzer::Javascript
 
     # PASS 1: index every forwarding helper in the tree.
     def index : Nil
-      defaults = Hash(String, Array(Noir::JSRegistrarDefaults::Argument)).new
+      # {target file, argument position} -> module passed there (nil: callers disagree)
+      module_arguments = Hash(Tuple(String, Int32), String?).new
       @all_files.each do |file|
         next unless ExpressConstants::JS_EXTENSIONS.any? { |ext| file.ends_with?(ext) }
         next unless @base_paths.any? { |base| Noir::PathScope.under_root?(file, base) }
@@ -255,10 +256,9 @@ module Analyzer::Javascript
           next
         end
 
-        collect_module_arguments(file, content) if content.includes?("require")
+        collect_module_arguments(file, content, module_arguments) if content.includes?("require")
         if content.includes?("Object.keys") && content.includes?("forEach") && !test_tree?(file) && !Noir::JSRouteExtractor.minified_content?(content)
-          candidates = Noir::JSRegistrarDefaults.extract(content, file)
-          defaults[file] = candidates unless candidates.empty?
+          @registrar_files << file
         end
 
         next unless content.matches?(FORWARD_CALL_GATE, options: Noir::TextFile::MATCH_OPTIONS)
@@ -272,8 +272,7 @@ module Analyzer::Javascript
         # paths and `@all_files` is relative whenever the scan base is.
         @helpers[Noir::PathScope.expand(file)] = found unless found.empty?
       end
-      bind_module_parameters
-      bind_registrar_defaults(defaults)
+      bind_module_parameters(module_arguments)
     end
 
     # ------------------------------------------------------------------
@@ -305,7 +304,7 @@ module Analyzer::Javascript
     # bindings it calls are resolved on disk.
     CALL_SITE = /(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?:\.\s*([A-Za-z_$][\w$]*)\s*|\[\s*['"]([^'"]+)['"]\s*\]\s*)?\(/
 
-    private def collect_module_arguments(file : String, raw : String) : Nil
+    private def collect_module_arguments(file : String, raw : String, module_arguments) : Nil
       return if test_tree?(file)
       called = Set(String).new
       raw.scan(CALL_SITE) { |m| called << ((key = m[2]? || m[3]?) ? "#{m[1]}.#{key}" : m[1]) }
@@ -373,10 +372,10 @@ module Analyzer::Javascript
             passed = JsModuleResolver.resolve(file, spec[0], root) unless shadowed
           end
           key = {target, idx}
-          if @module_arguments.has_key?(key)
-            @module_arguments[key] = nil unless @module_arguments[key] == passed
+          if module_arguments.has_key?(key)
+            module_arguments[key] = nil unless module_arguments[key] == passed
           else
-            @module_arguments[key] = passed
+            module_arguments[key] = passed
           end
         end
       end
@@ -384,9 +383,9 @@ module Analyzer::Javascript
       @logger.debug "Module-argument pass failed for #{file}: #{e.message}"
     end
 
-    private def bind_module_parameters : Nil
+    private def bind_module_parameters(module_arguments) : Nil
       by_target = Hash(String, Array(Tuple(Int32, String))).new { |h, k| h[k] = [] of Tuple(Int32, String) }
-      @module_arguments.each do |key, passed|
+      module_arguments.each do |key, passed|
         by_target[key[0]] << {key[1], passed} if passed
       end
       by_target.each do |target, positions|
@@ -414,9 +413,23 @@ module Analyzer::Javascript
       end
     end
 
-    private def bind_registrar_defaults(defaults) : Nil
+    # These defaults have just two consumers: a template helper body, and a
+    # helper called with an unread path. Keep candidate paths until the first
+    # such lookup; ordinary Object.keys/forEach files otherwise need no AST.
+    private def load_registrar_defaults : Nil
+      return if @registrar_files.empty?
+      @registrar_lock.synchronize do
+        bind_registrar_defaults
+        @registrar_files.clear
+      end
+    end
+
+    private def bind_registrar_defaults : Nil
       targets = Hash(String, Array({String, Int32, String})).new
-      defaults.each do |file, candidates|
+      @registrar_files.each do |file|
+        raw = CodeLocator.instance.read_source(file) rescue nil
+        next unless raw
+        candidates = Noir::JSRegistrarDefaults.extract(JsModuleResolver.normalize_computed_specifiers(raw), file)
         root = Noir::PathScope.longest_base(file, @base_paths) || @base_path
         candidates.each do |candidate|
           if specifier = candidate.import_path
@@ -459,6 +472,7 @@ module Analyzer::Javascript
     # Direct verb registrations in a registry function whose only call is
     # computed. Preserve the source spelling for a potential handler collision.
     def default_bodies(site : Site, endpoint : Endpoint) : Array(Endpoint)
+      load_registrar_defaults
       paths = @site_defaults[site]? || return [] of Endpoint
       template = Endpoint::PrefixTemplate.new(endpoint.url.delete(Noir::JSMountPrefix::UNREAD))
       paths.map do |path|
@@ -493,10 +507,14 @@ module Analyzer::Javascript
       sites
     end
 
+    def helper_candidate?(file : String, content : String) : Bool
+      any_helpers? && (content.includes?("require") || content.includes?("import") || @helpers.has_key?(Noir::PathScope.expand(file)))
+    end
+
     # PASS 2: routes registered by calling an indexed helper from `file`.
     def routes_for(file : String, content : String) : Array(HelperRoute)
       routes = [] of HelperRoute
-      return routes if @helpers.empty?
+      return routes unless helper_candidate?(file, content)
       # Same two exclusions `JSRouteExtractor.extract_routes` applies to
       # its own call sites. A test file that drives the API through the
       # project's own helper would otherwise mint the routes a second
@@ -521,7 +539,6 @@ module Analyzer::Javascript
       prefixes = file_prefixes(file)
       lines = LineIndex.new(content)
       constants = nil
-      defaults = @defaults[Noir::PathScope.expand(file)]?
 
       callables.each do |call_expr, spec|
         content.scan(call_regex(call_expr)) do |m|
@@ -546,8 +563,9 @@ module Analyzer::Javascript
             constants ||= path_constants(file, content) if !string_literal(raw) || raw.includes?("${")
             path, unread = call_site_path(forward, raw, constants)
             paths = [] of String
-            if unread && defaults
-              defaults.each do |binding|
+            if unread
+              load_registrar_defaults
+              @defaults[Noir::PathScope.expand(file)]?.try &.each do |binding|
                 next unless binding.span.includes?(open_paren)
                 values = (constants || {} of String => String).merge({binding.parameter => binding.value})
                 possible, partial = call_site_path(forward, raw, values)
