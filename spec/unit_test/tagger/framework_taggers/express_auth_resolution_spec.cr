@@ -1,6 +1,7 @@
 require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
+require "../../../../src/analyzer/analyzers/javascript/express"
 require "../../../../src/ai_context/augmentor"
 require "../../../../src/cli/commands/query"
 require "../../../../src/output_builder/common"
@@ -16,17 +17,15 @@ private def express_guard_rows(source : String, extra : Hash(String, String) = {
   Noir::JSHandlerResolver.reset
   Dir.glob("#{dir}/*").each { |path| CodeLocator.instance.register_path(path) }
   options = create_test_options
-  options["base"] = YAML::Any.new(dir)
-  endpoints = [] of Endpoint
-  source.lines.each_with_index do |text, idx|
-    next unless route = text.match(/(?:\.get|setup)\(\s*['"]([^'"]+)['"]\s*,\s*(.*)\);/)
-    details = Details.new(PathInfo.new(file, idx + 1))
+  options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+  endpoints = Analyzer::Javascript::Express.new(options).analyze.select { |row| row.method == "GET" && !row.url.includes?('*') }
+  endpoints.sort_by! { |row| row.details.code_paths.first.line || 0 }
+  endpoints.map! do |row|
+    details = row.details
     details.technology = "js_express"
-    endpoint = Endpoint.new(route[1], "GET", details)
-    arg = Noir::TopLevelSplit.split(route[2], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).last.strip
-    endpoint.handler = Noir::JSHandlerResolver.resolve(arg, source, file)
-    endpoint.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED} if route[1] == "/prefix"
-    endpoints << endpoint
+    row.details = details
+    row.resolution = {"prefix" => Endpoint::RESOLUTION_UNRESOLVED} if row.url == "/prefix"
+    row
   end
   NoirTaggers.run_tagger(endpoints, options, "express_auth")
   endpoints
@@ -131,7 +130,8 @@ describe "ExpressAuthTagger guard resolution (#3567)" do
       app.get('/mounted/items', h);
       app.all('/all/*', checkpoint);
       app.get('/all/items', h);
-      setup('/helper', checkpoint, h);
+      function setup(router, path, guard, handler) { router.get(path, guard, handler); }
+      setup(app, '/helper', checkpoint, h);
       JS
     rows.size.should eq(4)
     rows.each do |row|
@@ -404,5 +404,22 @@ describe "ExpressAuthTagger guard resolution (#3567)" do
       row.tags.map(&.name).should eq(["auth"])
       row.resolution.should eq({"guard" => "heuristic"})
     end
+  end
+end
+
+describe "ExpressAuthTagger multiline middleware" do
+  it "reads the whole registration and guard definition" do
+    rows = express_guard_rows(<<-JS)
+      function gate(req, res, next) {
+        #{"\n" * 70}
+        if (!req.user) return res.sendStatus(401);
+        next();
+      }
+      app.get('/private',
+        #{"\n" * 70}
+        gate, handle);
+      app.get('/open', handle);
+      JS
+    rows.map(&.tags.map(&.name)).should eq([["auth"], [] of String])
   end
 end

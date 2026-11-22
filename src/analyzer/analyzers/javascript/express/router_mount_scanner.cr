@@ -9,6 +9,7 @@ require "../../../../miniparsers/js_route_extractor"
 require "../../../../miniparsers/js_mount_prefix"
 require "../../../../miniparsers/firebase_functions_extractor"
 require "./js_module_resolver"
+require "../../../../miniparsers/express_middleware"
 
 module Analyzer::Javascript
   # RouterMountScanner handles the two-pass scanning process for Express router mounts.
@@ -50,6 +51,11 @@ module Analyzer::Javascript
       var_to_function: Hash(String, String),
       var_prefix: Hash(String, Array(String)))
 
+    # Resolve a target once. The same mount (and its argument boundary)
+    # survives every deferred placement attempt.
+    private record Mount, file : String, caller : String, prefix : String, target : PrefixTarget,
+      site : Noir::ExpressMiddleware::Use?, before_child : Array(String)
+
     # `framework` is the analyzer that owns this scan — the same Symbol its
     # route pass hands to `JSRouteExtractor.other_shared_extractor_framework?`.
     # Both Express and Hono run a scanner over *every* JS/TS file in the tree,
@@ -64,6 +70,7 @@ module Analyzer::Javascript
       @base_path : String,
       @logger : NoirLogger,
       @framework : Symbol = :express,
+      @middleware : Noir::ExpressMiddleware? = nil,
     )
     end
 
@@ -170,7 +177,7 @@ module Analyzer::Javascript
 
       # Global collections for two-pass processing
       file_contexts = Hash(String, FileContext).new
-      global_deferred_mounts = [] of Tuple(String, String, String, String)
+      global_deferred_mounts = [] of Mount
 
       # PASS 1: Scan all files for top-level mounts and collect nested mounts for later
       main_files.each do |main_file|
@@ -183,6 +190,7 @@ module Analyzer::Javascript
       # PASS 2: Process all deferred nested mounts now that all top-level mounts are known
       process_deferred_mounts(global_deferred_mounts, file_contexts, locator)
       carry_factory_prefixes(main_files, locator) if @framework == :express
+      @middleware.try(&.finish)
     end
 
     # `app.lazyUse = function lazyUse(mountPath, requireFn) { app.use(mountPath, …) }`
@@ -570,6 +578,7 @@ module Analyzer::Javascript
           key = ExpressConstants.file_key(target)
           grew = false
           prefixes.each do |prefix|
+            @middleware.try &.carry(ExpressConstants.file_key(file).name, key.name, prefix)
             next if locator.all(key).includes?(prefix)
             push_prefix_to_locator(locator, key, prefix, "Mapped factory hand-off prefix: #{file} -> #{target} => #{prefix}")
             grew = true
@@ -646,7 +655,7 @@ module Analyzer::Javascript
       main_file : String,
       locator : CodeLocator,
       file_contexts : Hash(String, FileContext),
-      global_deferred_mounts : Array(Tuple(String, String, String, String)),
+      global_deferred_mounts : Array(Mount),
     )
       content = read_source(main_file)
 
@@ -669,7 +678,7 @@ module Analyzer::Javascript
       # full-content regex scans on the vast majority of files in a large
       # codebase (tests, helpers, UI components, fixtures), which contain
       # no router mounts at all.
-      return unless content.includes?(".use(") || content.includes?(".use (") ||
+      return unless (@middleware && content.matches?(/\.\s*(?:all|use)\s*\(/)) || content.includes?(".use(") || content.includes?(".use (") ||
                     content.includes?(".route(") || content.includes?(".route (") ||
                     @forwarder_res.each_key.any? { |name| content.includes?(".#{name}(") }
       # A test app that mounts the router under a prefix of its own (or none)
@@ -693,6 +702,18 @@ module Analyzer::Javascript
         next if prefix_constants.has_key?(name)
         value = module_string_constants(file)[name]?
         prefix_constants[name] = value if value
+      end
+
+      if middleware = @middleware
+        content.scan(/\b([\w$]+)\s*\.\s*all\s*\(/) do |match|
+          next if match[1] == "Promise"
+          args = split_at_top_level_commas(extract_use_call_args(content, match.byte_end(0)))
+          next if args.size < 2
+          first = args.shift
+          express_mount_prefixes(first, prefix_constants, content, main_file).each do |prefix|
+            middleware.register(Noir::ExpressMiddleware::Use.new(Noir::PathScope.expand(main_file), match[1], match.byte_begin(0), prefix, args, "all", Noir::ExpressMiddleware.literal_scope(first, prefix)))
+          end
+        end
       end
 
       # Store arrays of prefixes per router variable to support multi-mount scenarios
@@ -719,7 +740,8 @@ module Analyzer::Javascript
       # Scan for .use(router) patterns where prefix is omitted (defaults to '/')
       # The negative lookahead `(?!\s*['"])` prevents matching calls that have a
       # string literal as the first argument, avoiding double processing with the above scan.
-      content.scan(/(\w+)\.use\s*\(/) do |m|
+      use_call = @framework == :express ? /([\w$]+)\s*\.\s*use\s*\(/ : /(\w+)\.use\s*\(/
+      content.scan(use_call) do |m|
         next unless m.size >= 2
 
         caller = m[1]
@@ -730,7 +752,7 @@ module Analyzer::Javascript
         next if explicit_mount_prefix_args?(args, prefix_constants) && !Noir::JSRouteExtractor.mount_middleware?(first_top_level_argument(args), content, main_file)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
-          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, path_scoped: false)
       end
 
       scan_chained_router_mounts(content, main_file, locator, require_map, function_map,
@@ -760,6 +782,8 @@ module Analyzer::Javascript
       # handled by the parser's first-pass `.route(...)` scan instead.
       scan_hono_route_mounts(content, main_file, locator, require_map, function_map)
 
+      @middleware.try &.index_bindings(main_file, content)
+
       # Store file context for second pass
       file_contexts[main_file] = {
         require_map:     require_map,
@@ -783,10 +807,20 @@ module Analyzer::Javascript
       function_map : Hash(String, String),
       var_to_function : Hash(String, String),
       var_prefix : Hash(String, Array(String)),
-      global_deferred_mounts : Array(Tuple(String, String, String, String)),
+      global_deferred_mounts : Array(Mount),
+      path_scoped : Bool = true,
+      written : String? = nil,
+      register_scope : Bool = true,
     )
       # Extract arguments with literal-aware scanning
       args = extract_use_call_args(content, match_end)
+
+      site = if middleware = @middleware
+               steps = split_at_top_level_commas(args).reject(&.blank?)
+               use = Noir::ExpressMiddleware::Use.new(Noir::PathScope.expand(main_file), caller, match_end, path_scoped ? prefix : nil, steps, written: written)
+               middleware.register(use) if register_scope
+               use
+             end
 
       # Extract router reference from args
       ref = extract_router_reference(args, require_map, function_map, var_to_function)
@@ -800,21 +834,12 @@ module Analyzer::Javascript
       routers = [router_var]
       routers.concat(other_imported_routers(args, router_var, require_map, function_map)) if router_var && !router_file_direct
       routers.each do |mounted|
-        if caller == "app"
-          # Top-level mount
-          store_top_level_mount(locator, mounted, router_file_direct, prefix, main_file,
-            require_map, function_map, var_to_function, var_prefix)
-        else
-          # Nested mount - try to resolve parent prefixes
-          processed = store_nested_mount(locator, mounted, router_file_direct, prefix, caller, main_file,
-            require_map, function_map, var_to_function, var_prefix)
-
-          # Defer if parent prefix not yet known
-          unless processed
-            deferred_key = router_file_direct || mounted || ""
-            global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
-          end
-        end
+        target = router_prefix_target(mounted, router_file_direct, main_file, require_map, function_map, var_to_function)
+        next unless target
+        steps = site.try(&.before_child(router_file_direct || mounted, router_file_direct)) || [] of String
+        mount = Mount.new(main_file, caller, prefix, target, site, steps)
+        context = {require_map: require_map, function_map: function_map, var_to_function: var_to_function, var_prefix: var_prefix}
+        global_deferred_mounts << mount unless place_if_known(mount, context, locator)
       end
     end
 
@@ -848,7 +873,7 @@ module Analyzer::Javascript
       function_map : Hash(String, String),
       var_to_function : Hash(String, String),
       var_prefix : Hash(String, Array(String)),
-      global_deferred_mounts : Array(Tuple(String, String, String, String)),
+      global_deferred_mounts : Array(Mount),
       prefix_constants : Hash(String, String),
       with_prefix : Bool,
     )
@@ -874,7 +899,7 @@ module Analyzer::Javascript
             end
           elsif !has_prefix
             process_use_call(content, args_start, caller, "/", main_file, locator,
-              require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+              require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, path_scoped: false)
           end
           pos = args_start + args.bytesize + 1
         end
@@ -890,11 +915,11 @@ module Analyzer::Javascript
       function_map : Hash(String, String),
       var_to_function : Hash(String, String),
       var_prefix : Hash(String, Array(String)),
-      global_deferred_mounts : Array(Tuple(String, String, String, String)),
+      global_deferred_mounts : Array(Mount),
       prefix_constants : Hash(String, String),
     )
       if @framework == :express && call_name != "route"
-        content.scan(/(\w+)\.#{Regex.escape(call_name)}\s*\(/) do |m|
+        content.scan(/([\w$]+)\s*\.\s*#{Regex.escape(call_name)}\s*\(/) do |m|
           args = extract_use_call_args(content, m.byte_end(0))
           first = first_top_level_argument(args)
           next unless explicit_mount_prefix_args?(args, prefix_constants)
@@ -902,7 +927,8 @@ module Analyzer::Javascript
           prefixes = express_mount_prefixes(first, prefix_constants, content, main_file)
           prefixes.each do |prefix|
             process_use_call(content, m.byte_end(0) + first.bytesize + 1, m[1], prefix, main_file, locator,
-              require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+              require_map, function_map, var_to_function, var_prefix, global_deferred_mounts,
+              written: Noir::ExpressMiddleware.literal_scope(first, prefix), register_scope: call_name == "use")
           end
         end
         return
@@ -917,7 +943,7 @@ module Analyzer::Javascript
         match_end = m.byte_end(0)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
-          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, register_scope: call_name == "use")
       end
 
       content.scan(backtick_re) do |m|
@@ -931,7 +957,7 @@ module Analyzer::Javascript
         match_end = m.byte_end(0)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
-          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, register_scope: call_name == "use")
       end
 
       content.scan(ident_re) do |m|
@@ -944,7 +970,7 @@ module Analyzer::Javascript
         match_end = m.byte_end(0)
 
         process_use_call(content, match_end, caller, prefix, main_file, locator,
-          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+          require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, register_scope: call_name == "use")
       end
 
       content.scan(array_re) do |m|
@@ -957,7 +983,7 @@ module Analyzer::Javascript
         match_end = m.byte_end(0)
         prefixes.each do |prefix|
           process_use_call(content, match_end, caller, prefix, main_file, locator,
-            require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
+            require_map, function_map, var_to_function, var_prefix, global_deferred_mounts, register_scope: call_name == "use")
         end
       end
     end
@@ -1067,7 +1093,7 @@ module Analyzer::Javascript
     #   defaultRoutes.forEach((r) => router.use(r.path, r.route));
     #
     # Resolves the array declaration locally (same file), then yields each
-    # entry into the same store_top_level_mount / store_nested_mount path
+    # entry into the same prefix placement path
     # the explicit scans use.
     private def scan_config_array_mounts(
       content : String,
@@ -1077,7 +1103,7 @@ module Analyzer::Javascript
       function_map : Hash(String, String),
       var_to_function : Hash(String, String),
       var_prefix : Hash(String, Array(String)),
-      global_deferred_mounts : Array(Tuple(String, String, String, String)),
+      global_deferred_mounts : Array(Mount),
     )
       # ARRAY.forEach(...=> CALLER.use(<param>.path, <param>.route) ...)
       # Also matches `.map(...)` for the rare case someone uses it for side effects.
@@ -1103,20 +1129,13 @@ module Analyzer::Javascript
              var_to_function.has_key?(router_identifier)
             router_var = router_identifier
           end
-          router_file_direct : String? = nil
-          next unless router_var || router_file_direct
-
-          if caller == "app"
-            store_top_level_mount(locator, router_var, router_file_direct, prefix, main_file,
-              require_map, function_map, var_to_function, var_prefix)
-          else
-            processed = store_nested_mount(locator, router_var, router_file_direct, prefix, caller, main_file,
-              require_map, function_map, var_to_function, var_prefix)
-            unless processed
-              deferred_key = router_file_direct || router_var || ""
-              global_deferred_mounts << {main_file, caller, prefix, deferred_key} unless deferred_key.empty?
-            end
-          end
+          next unless router_var
+          target = router_prefix_target(router_var, nil, main_file, require_map, function_map, var_to_function)
+          next unless target
+          site = Noir::ExpressMiddleware::Use.new(Noir::PathScope.expand(main_file), caller, m.byte_begin(0), prefix, [] of String) if @middleware
+          mount = Mount.new(main_file, caller, prefix, target, site, [] of String)
+          context = {require_map: require_map, function_map: function_map, var_to_function: var_to_function, var_prefix: var_prefix}
+          global_deferred_mounts << mount unless place_if_known(mount, context, locator)
         end
       end
     end
@@ -1417,43 +1436,43 @@ module Analyzer::Javascript
       end
     end
 
-    # Get parent prefixes for nested mounts
-    private def get_parent_prefixes(caller : String, var_prefix : Hash(String, Array(String)), require_map : Hash(String, String), function_map : Hash(String, String), var_to_function : Hash(String, String), main_file : String, locator : CodeLocator) : Array(String)
-      parent_prefixes = var_prefix[caller]?.try(&.dup) || [] of String
+    # Return the key along with each prefix so the child inherits the
+    # middleware of the exact placement that supplied its served path.
+    private record Parent, key : String, prefix : String
 
-      if parent_prefixes.empty?
-        if caller_file = require_map[caller]?
-          parent_prefixes = locator.all(module_key(caller_file)).dup
-        elsif caller_func = var_to_function[caller]?
-          if caller_file = function_map[caller_func]?
-            parent_prefixes = locator.all(named_export_key(caller_file, exported_name(main_file, caller_func))).dup
-          end
-        elsif caller_file = function_map[caller]?
-          parent_prefixes = locator.all(named_export_key(caller_file, exported_name(main_file, caller))).dup
-        end
+    private def parent_prefixes(mount : Mount, ctx : FileContext, locator : CodeLocator) : Array(Parent)
+      caller = mount.caller
+      file = mount.file
+      absolute_file = Noir::PathScope.expand(file)
+      if (prefixes = ctx[:var_prefix][caller]?) && !prefixes.empty?
+        key = ExpressConstants.binding_key(absolute_file, caller).name
+        return prefixes.map { |prefix| Parent.new(key, prefix) }
       end
 
-      # A router this file exports by name carries the prefix its importer
-      # recorded under that name.
-      if parent_prefixes.empty?
-        @export_bindings[main_file]?.try(&.[caller]?).try &.each do |exported|
-          key = ExpressConstants.function_key(Noir::PathScope.expand(main_file), exported)
-          locator.all(key).each { |p| parent_prefixes << p unless parent_prefixes.includes?(p) }
-        end
+      imported = if target = ctx[:require_map][caller]?
+                   module_key(target)
+                 elsif factory = ctx[:var_to_function][caller]?
+                   if target = ctx[:function_map][factory]?
+                     named_export_key(target, exported_name(file, factory))
+                   end
+                 elsif target = ctx[:function_map][caller]?
+                   named_export_key(target, exported_name(file, caller))
+                 end
+      if imported
+        parents = locator.all(imported).map { |prefix| Parent.new(imported.name, prefix) }
+        return parents unless parents.empty?
       end
 
-      # Final fallback: use current file's prefix
-      # Try both the raw path and the absolute path since resolve_require_path
-      # returns absolute paths while main_file may be relative.
-      if parent_prefixes.empty?
-        parent_prefixes = locator.all(ExpressConstants.file_key(main_file)).dup
+      parents = [] of Parent
+      @export_bindings[file]?.try(&.[caller]?).try &.each do |exported|
+        key = ExpressConstants.function_key(absolute_file, exported)
+        locator.all(key).each { |prefix| parents << Parent.new(key.name, prefix) }
       end
-      if parent_prefixes.empty?
-        absolute_main = Noir::PathScope.expand(main_file)
-        parent_prefixes = locator.all(ExpressConstants.file_key(absolute_main)).dup
-      end
+      return parents unless parents.empty?
 
-      parent_prefixes
+      key = ExpressConstants.file_key(file)
+      key = ExpressConstants.file_key(absolute_file) if locator.all(key).empty?
+      locator.all(key).map { |prefix| Parent.new(key.name, prefix) }
     end
 
     # Extract arguments from .use() call using literal-aware scanning
@@ -1465,8 +1484,7 @@ module Analyzer::Javascript
     # Where a mount's prefix lands in `CodeLocator`, and which local
     # variable (if any) should remember it.
     #
-    # Split out of `resolve_and_store_router_prefix` so the unplaced-mount
-    # pass can ask "would this mount land on a key that is still empty?"
+    # The unplaced-mount pass asks "would this mount land on a key that is still empty?"
     # *before* any mount is written. Asking after the first write would
     # make the pass order-dependent: two unplaced mounts onto the same
     # child would let whichever ran first veto the other.
@@ -1554,83 +1572,32 @@ module Analyzer::Javascript
 
     LOCAL_ROUTER_VAR_RE = /\A[A-Za-z_$][\w$]*\z/
 
-    # Unified helper: Resolve router variable and store prefix to CodeLocator
-    private def resolve_and_store_router_prefix(
-      locator : CodeLocator,
-      router_var : String?,
-      router_file_direct : String?,
-      prefix : String,
-      main_file : String,
-      require_map : Hash(String, String),
-      function_map : Hash(String, String),
-      var_to_function : Hash(String, String),
-      var_prefix : Hash(String, Array(String)),
-      log_prefix : String = "Mapped router prefix",
-      include_file_level : Bool = false,
-    )
-      target = router_prefix_target(router_var, router_file_direct, main_file,
-        require_map, function_map, var_to_function)
-      return unless target
+    private def place_if_known(mount : Mount, ctx : FileContext, locator : CodeLocator) : Bool
+      if mount.caller == "app"
+        place(mount, nil, ctx, locator)
+        return true
+      end
+      parents = parent_prefixes(mount, ctx, locator)
+      parents.each { |parent| place(mount, parent, ctx, locator) }
+      !parents.empty?
+    end
 
+    private def place(mount : Mount, parent : Parent?, ctx : FileContext, locator : CodeLocator)
+      prefix = parent ? Noir::JSMountPrefix.join(parent.prefix, mount.prefix) : mount.prefix
+      target = mount.target
       if key = target[:key]
-        push_prefix_to_locator(locator, key, prefix, "#{log_prefix}#{target[:note]} => #{prefix}")
+        push_prefix_to_locator(locator, key, prefix, "Mapped router prefix#{target[:note]} => #{prefix}")
       end
-
       if var = target[:var]
-        var_prefix[var] << prefix unless var_prefix[var].includes?(prefix)
-      end
-    end
-
-    # Store a top-level mount (caller == "app") to CodeLocator
-    private def store_top_level_mount(
-      locator : CodeLocator,
-      router_var : String?,
-      router_file_direct : String?,
-      prefix : String,
-      main_file : String,
-      require_map : Hash(String, String),
-      function_map : Hash(String, String),
-      var_to_function : Hash(String, String),
-      var_prefix : Hash(String, Array(String)),
-    )
-      resolve_and_store_router_prefix(
-        locator, router_var, router_file_direct, prefix, main_file,
-        require_map, function_map, var_to_function, var_prefix,
-        log_prefix: "Mapped router prefix",
-        include_file_level: true
-      )
-    end
-
-    # Store a nested mount (caller != "app") with proper parent prefix resolution
-    # Returns true if processed, false if should be deferred
-    private def store_nested_mount(
-      locator : CodeLocator,
-      router_var : String?,
-      router_file_direct : String?,
-      prefix : String,
-      caller : String,
-      main_file : String,
-      require_map : Hash(String, String),
-      function_map : Hash(String, String),
-      var_to_function : Hash(String, String),
-      var_prefix : Hash(String, Array(String)),
-    ) : Bool
-      parent_prefixes = get_parent_prefixes(caller, var_prefix, require_map, function_map, var_to_function, main_file, locator)
-
-      # If no parent prefixes found, defer for later processing
-      return false if parent_prefixes.empty?
-
-      parent_prefixes.each do |parent_prefix|
-        combined = Noir::JSMountPrefix.join(parent_prefix, prefix)
-        resolve_and_store_router_prefix(
-          locator, router_var, router_file_direct, combined, main_file,
-          require_map, function_map, var_to_function, var_prefix,
-          log_prefix: "Mapped nested router prefix",
-          include_file_level: true
-        )
+        prefixes = ctx[:var_prefix][var]
+        prefixes << prefix unless prefixes.includes?(prefix)
       end
 
-      true
+      return unless (middleware = @middleware) && (site = mount.site)
+      file = site.file
+      keys = [key.try(&.name), var.try { |name| ExpressConstants.binding_key(file, name).name }].compact
+      frame = Noir::ExpressMiddleware::Frame.new(site, parent.try(&.prefix) || "", mount.before_child)
+      middleware.place(keys, prefix, parent.try(&.key), frame)
     end
 
     # Process deferred mounts in pass 2
@@ -1638,7 +1605,7 @@ module Analyzer::Javascript
     # Each iteration resolves mounts whose parents became known in a prior iteration.
     # The loop terminates when no further progress is made or after a safety limit.
     private def process_deferred_mounts(
-      global_deferred_mounts : Array(Tuple(String, String, String, String)),
+      global_deferred_mounts : Array(Mount),
       file_contexts : Hash(String, FileContext),
       locator : CodeLocator,
     )
@@ -1656,7 +1623,7 @@ module Analyzer::Javascript
       # A same-file router mounted on an app that is not named `app`
       # (`server.use('/api', apiRouter)`) is placed at the root first, so
       # the routers it mounts in turn resolve under it rather than at `/`.
-      if place_unplaced_local_mounts(remaining, file_contexts)
+      if place_unplaced_local_mounts(remaining, file_contexts, locator)
         remaining = resolve_deferred_fix_point(remaining, file_contexts, locator)
       end
       # Root mounts first: a file that a still-unplaced mount reaches gets
@@ -1674,76 +1641,27 @@ module Analyzer::Javascript
     # Mounts of same-file routers whose parent was never located: their
     # variable takes the mount prefix, as `place_unplaced_mounts` does for
     # imported children. Returns whether any variable was placed.
-    private def place_unplaced_local_mounts(
-      remaining : Array(Tuple(String, String, String, String)),
-      file_contexts : Hash(String, FileContext),
-    ) : Bool
-      eligible = remaining.compact_map do |main_file, _caller, prefix, router_var|
-        ctx = file_contexts[main_file]? || next
-        target = router_prefix_target(router_var, nil, main_file,
-          ctx[:require_map], ctx[:function_map], ctx[:var_to_function])
-        next unless target && target[:key].nil?
-        var = target[:var] || next
-        {ctx[:var_prefix], var, prefix} if ctx[:var_prefix][var].empty?
+    private def place_unplaced_local_mounts(remaining : Array(Mount), file_contexts : Hash(String, FileContext), locator : CodeLocator) : Bool
+      eligible = remaining.select do |mount|
+        var = mount.target[:var]
+        var && mount.target[:key].nil? && file_contexts[mount.file][:var_prefix][var].empty?
       end
-
-      eligible.each do |var_prefix, var, prefix|
-        var_prefix[var] << prefix unless var_prefix[var].includes?(prefix)
-      end
+      eligible.each { |mount| place(mount, nil, file_contexts[mount.file], locator) }
       !eligible.empty?
     end
 
-    private def resolve_deferred_fix_point(
-      remaining : Array(Tuple(String, String, String, String)),
-      file_contexts : Hash(String, FileContext),
-      locator : CodeLocator,
-    ) : Array(Tuple(String, String, String, String))
-      max_iterations = 10
-      iteration = 0
-
-      loop do
-        iteration += 1
-        break if iteration > max_iterations
-        break if remaining.empty?
-
-        resolved_any = false
-        still_deferred = [] of Tuple(String, String, String, String)
-
-        remaining.each do |main_file, caller, prefix, router_var|
-          ctx = file_contexts[main_file]?
-          unless ctx
-            still_deferred << {main_file, caller, prefix, router_var}
-            next
-          end
-
-          require_map = ctx[:require_map]
-          function_map = ctx[:function_map]
-          var_to_function = ctx[:var_to_function]
-          var_prefix = ctx[:var_prefix]
-
-          parent_prefixes = get_parent_prefixes(caller, var_prefix, require_map, function_map, var_to_function, main_file, locator)
-          if parent_prefixes.empty?
-            still_deferred << {main_file, caller, prefix, router_var}
-            next
-          end
-
-          resolved_any = true
-          parent_prefixes.each do |parent_prefix|
-            combined = Noir::JSMountPrefix.join(parent_prefix, prefix)
-            store_deferred_mount(locator, router_var, combined, main_file, require_map, function_map, var_to_function, var_prefix)
-          end
-        end
-
-        remaining = still_deferred
-        break unless resolved_any
+    private def resolve_deferred_fix_point(remaining : Array(Mount), file_contexts : Hash(String, FileContext), locator : CodeLocator) : Array(Mount)
+      MAX_DEFERRED_ITERATIONS.times do
+        pending = remaining.reject { |mount| place_if_known(mount, file_contexts[mount.file], locator) }
+        break if pending.size == remaining.size
+        remaining = pending
       end
-
       remaining
     end
 
     # PASS 3: mounts whose parent router was never located.
     #
-    # `store_nested_mount` refuses to guess: a mount written as
+    # A mount written as
     # `router.use('/api/v3/users', require('./users')())` only produces a
     # prefix once we know where `router` itself is mounted. When the router
     # arrives as a function parameter — NodeBB's
@@ -1762,65 +1680,25 @@ module Analyzer::Javascript
     # Eligibility is decided for every remaining mount before the first
     # write so the outcome does not depend on iteration order.
     private def place_unplaced_mounts(
-      remaining : Array(Tuple(String, String, String, String)),
+      remaining : Array(Mount),
       file_contexts : Hash(String, FileContext),
       locator : CodeLocator,
     ) : Bool
       return false if remaining.empty?
 
       targets = Set(String).new
-      eligible = [] of Tuple(String, String, String)
-      remaining.each do |main_file, _caller, prefix, router_var|
-        ctx = file_contexts[main_file]?
-        next unless ctx
-        target = router_prefix_target(router_var, nil, main_file,
-          ctx[:require_map], ctx[:function_map], ctx[:var_to_function])
-        next unless target
-        key = target[:key]
-        next unless key
+      eligible = remaining.select do |mount|
+        key = mount.target[:key] || next false
         targets << key.name
-        next unless locator.all(key).empty?
-        eligible << {main_file, router_var, prefix}
+        locator.all(key).empty?
       end
-
-      # Roots only, unless every eligible mount sits in a file another
-      # pending mount reaches (a cycle, or a parent that is never placed):
-      # then all of them, as before.
-      roots = eligible.reject do |main_file, _, _|
-        own = module_key(Noir::PathScope.expand(main_file)).name
+      roots = eligible.reject do |mount|
+        own = module_key(Noir::PathScope.expand(mount.file)).name
         targets.any? { |t| t == own || t.starts_with?("#{own}:") }
       end
       eligible = roots unless roots.empty?
-
-      eligible.each do |main_file, router_var, prefix|
-        ctx = file_contexts[main_file]?
-        next unless ctx
-        resolve_and_store_router_prefix(
-          locator, router_var, nil, prefix, main_file,
-          ctx[:require_map], ctx[:function_map], ctx[:var_to_function], ctx[:var_prefix],
-          log_prefix: "Mapped unplaced router prefix"
-        )
-      end
+      eligible.each { |mount| place(mount, nil, file_contexts[mount.file], locator) }
       !eligible.empty?
-    end
-
-    # Store a single deferred mount
-    private def store_deferred_mount(
-      locator : CodeLocator,
-      router_var : String,
-      combined : String,
-      main_file : String,
-      require_map : Hash(String, String),
-      function_map : Hash(String, String),
-      var_to_function : Hash(String, String),
-      var_prefix : Hash(String, Array(String)),
-    )
-      resolve_and_store_router_prefix(
-        locator, router_var, nil, combined, main_file,
-        require_map, function_map, var_to_function, var_prefix,
-        log_prefix: "Mapped deferred nested router prefix",
-        include_file_level: true
-      )
     end
 
     # Parse destructured import/require names from JavaScript/TypeScript syntax.

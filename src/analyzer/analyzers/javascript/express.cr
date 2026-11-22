@@ -17,12 +17,15 @@ module Analyzer::Javascript
     MAX_CHAIN_METHOD_DISTANCE = 1000
     MAX_CHAIN_SEARCH_DISTANCE = 5000
 
+    @middleware = Noir::ExpressMiddleware.new
+
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
       include_callee = callees_needed?
 
       # Phase 1: Pre-scan to build router mount map
+      @middleware = Noir::ExpressMiddleware.new
       scan_for_router_mounts
 
       # Phase 1b: index the project-local helpers that forward their
@@ -37,7 +40,7 @@ module Analyzer::Javascript
         # the guard, so the handler may be the function it wraps.
         local_mounts = {} of String => Array(String)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-          include_callees: include_callee, unwrap_guards: true, resolve_mount_prefixes: true, local_mounts: local_mounts)
+          include_callees: include_callee, unwrap_guards: true, resolve_mount_prefixes: true, local_mounts: local_mounts, middleware: @middleware)
         RouterMountScanner.store_local_mounts(path, local_mounts)
         # A forwarding helper's own body carries the *shape* of a route,
         # not a route: `router.get(`/api${name}`, …)` inside
@@ -97,7 +100,13 @@ module Analyzer::Javascript
       end
 
       # Process static directories to create endpoints for static files
-      process_js_static_dirs(static_dirs, result)
+      process_js_static_dirs(static_dirs, result) do |dir, url, asset|
+        location = PathInfo.new(asset)
+        file = dir["source"]
+        key = ExpressConstants.file_key(Noir::PathScope.expand(file)).name
+        location.route_middleware = @middleware.chain(file, dir["receiver"], dir["offset"].to_i, "", "", [key], url, [dir["handler"]])
+        location
+      end
       result.map! { |endpoint| drop_undeclared_path_params(Noir::JSMountPrefix.finish(endpoint)) }
       clear_ambiguous_template_handlers(result)
 
@@ -173,7 +182,8 @@ module Analyzer::Javascript
         match_start = m.begin(0) || m.begin || 0
         call_start = content.index("this.route", match_start) || match_start
         line = line_number_for_index(content, call_start)
-        details = Details.new(PathInfo.new(path, line))
+        args = Noir::JSRouteExtractor.route_arguments(content, m.byte_begin(0)).skip(2)
+        details = middleware_details(path, line, "this", m.byte_begin(0), "", url, args)
         endpoint = Endpoint.new(url, method, details)
         url.scan(/:(\w+)/) do |pm|
           endpoint.push_param(Param.new(pm[1], "", "path"))
@@ -200,7 +210,7 @@ module Analyzer::Javascript
       callees
     end
 
-    USE_PATH_RE = /\b[A-Za-z_$][\w$]*\.use\s*\(\s*(?:['"]([^'"]+)['"]|`([^`]+)`)\s*,/
+    USE_PATH_RE = /\b([A-Za-z_$][\w$]*)\.use\s*\(\s*(?:['"]([^'"]+)['"]|`([^`]+)`)\s*,/
 
     # Deliberate exception to "no name lists": package-provided serving
     # factories (`swaggerUi.serve`, `express.static`, `serveIndex`, …) have no
@@ -230,7 +240,7 @@ module Analyzer::Javascript
       prefixes = [""] if prefixes.empty?
 
       content.scan(USE_PATH_RE) do |m|
-        raw_path = m[1]? || Noir::JSRouteExtractor.resolve_mount_template(m[2], path, content)
+        raw_path = m[2]? || Noir::JSRouteExtractor.resolve_mount_template(m[3], path, content)
         call_start = m.begin(0)
         paren_open = content.index('(', call_start) || next
         paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open) || next
@@ -247,7 +257,7 @@ module Analyzer::Javascript
             url = prefix.empty? ? mount_path : Noir::JSMountPrefix.join(prefix, mount_path)
             methods.each do |method|
               next if route_recorded_for_file?(result, path, url, method)
-              endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line)))
+              endpoint = Endpoint.new(url, method, middleware_details(path, line, m[1], m.byte_begin(0), prefix, url, args[1..].map(&.[0])))
               url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
               result << endpoint
             end
@@ -269,7 +279,7 @@ module Analyzer::Javascript
         prefixes.each do |prefix|
           url = prefix.empty? ? mount_path : Noir::JSMountPrefix.join(prefix, mount_path)
           FILE_ROUTE_METHODS.each do |method|
-            endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line)))
+            endpoint = Endpoint.new(url, method, middleware_details(path, line, m[1], m.byte_begin(0), prefix, url, args[1..].map(&.[0])))
             url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
             Noir::JSRouteExtractor.apply_handler_facts(endpoint, facts)
             Noir::JSRouteExtractor.push_callees(endpoint, chain_callees)
@@ -292,8 +302,11 @@ module Analyzer::Javascript
       return unless content.includes?(".resource")
       return if Noir::JSRouteExtractor.test_stub_only?(path, content)
       content = Noir::JSRouteExtractor.strip_js_comments(content)
+      offsets = Noir::JSRouteExtractor::ByteOffsets.new(content)
+      receiver = content.match(/\b(?:finale|epilogue)\.initialize\s*\(\s*\{[^}]*?\bapp\s*(?::\s*([\w$]+))?\s*[,}]/).try { |match| match[1]? || "app" } || ""
       Noir::JSRouteExtractor.finale_resource_routes(content).each do |method, url, call_start|
-        endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, line_number_for_index(content, call_start))))
+        at = offsets.byte(call_start)
+        endpoint = Endpoint.new(url, method, middleware_details(path, offsets.line(at), receiver, at, "", url, [] of String))
         url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
         result << endpoint
       end
@@ -369,7 +382,10 @@ module Analyzer::Javascript
 
       # Now process the file line by line for endpoints
       current_router = ""
+      next_line_offset = 0
       lines.each_with_index do |line, index|
+        line_offset = next_line_offset
+        next_line_offset += line.bytesize + 1
         # Detect current router - support case variations of HTTP methods
         if line =~ /(\w+)\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)/
           current_router = $1
@@ -390,6 +406,10 @@ module Analyzer::Javascript
         end
 
         unless endpoint.method.empty?
+          raw = endpoint.url
+          call = line.match(/\b[\w$]+\s*\.\s*[\w$]+\s*\(/)
+          at = line_offset + (call.try(&.byte_begin(0)) || 0)
+          args = Noir::JSRouteExtractor.route_arguments(file_content, at).skip(1)
           # Handle router.all by expanding to all HTTP methods
           if endpoint.method == "ALL"
             all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
@@ -407,8 +427,7 @@ module Analyzer::Javascript
                 expanded_endpoint.url = "#{current_router_base}#{expanded_endpoint.url}"
               end
 
-              details = Details.new(PathInfo.new(path, index + 1))
-              expanded_endpoint.details = details
+              expanded_endpoint.details = middleware_details(path, index + 1, current_router, at, expanded_endpoint.url.rchop(raw), expanded_endpoint.url, args)
               file_endpoints << expanded_endpoint
             end
           else
@@ -423,8 +442,7 @@ module Analyzer::Javascript
               endpoint.url = "#{current_router_base}#{endpoint.url}"
             end
 
-            details = Details.new(PathInfo.new(path, index + 1))
-            endpoint.details = details
+            endpoint.details = middleware_details(path, index + 1, current_router, at, endpoint.url.rchop(raw), endpoint.url, args)
             file_endpoints << endpoint
             last_endpoint = endpoint
           end
@@ -475,8 +493,7 @@ module Analyzer::Javascript
 
                 # Create the endpoint with prefixed path
                 endpoint = Endpoint.new(full_path, method_upper)
-                details = Details.new(PathInfo.new(path, 1))
-                endpoint.details = details
+                endpoint.details = fallback_details(path, content, em.byte_begin(0), router_var, prefix, full_path)
 
                 # Extract parameters
                 # Query parameters
@@ -602,8 +619,7 @@ module Analyzer::Javascript
 
             # Create endpoint and add to results
             endpoint = Endpoint.new(full_path, method_upper)
-            details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
-            endpoint.details = details
+            endpoint.details = fallback_details(path, content, m.byte_begin(0), router_prefix_router_name, router_prefix, full_path)
 
             # Extract path parameters
             if full_path.includes?(":")
@@ -645,8 +661,7 @@ module Analyzer::Javascript
 
             # Create endpoint and add to results
             endpoint = Endpoint.new(full_path, method_upper)
-            details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
-            endpoint.details = details
+            endpoint.details = fallback_details(path, content, m.byte_begin(0), router_name, prefix, full_path)
 
             # Extract path parameters
             if full_path.includes?(":")
@@ -911,11 +926,10 @@ module Analyzer::Javascript
           settings_route = /#{router_name}\.put\s*\(\s*['"]\/settings['"]\s*,.*?\{\s*theme,\s*notifications\s*\}\s*=\s*req\.body.*?userKey\s*=\s*req\.cookies\.userKey/m
 
           # Add the status endpoint with correct prefix
-          if content.match(status_route)
+          if site = content.match(status_route)
             # Create a new endpoint with the correct prefix
             endpoint = Endpoint.new("#{prefix}/status", "GET")
-            details = Details.new(PathInfo.new(path, 1))
-            endpoint.details = details
+            endpoint.details = fallback_details(path, content, site.byte_begin(0), router_name, prefix, endpoint.url)
 
             # Add parameters
             endpoint.push_param(Param.new("format", "", "query"))
@@ -925,11 +939,10 @@ module Analyzer::Javascript
           end
 
           # Add the settings endpoint with correct prefix
-          if content.match(settings_route)
+          if site = content.match(settings_route)
             # Create a new endpoint with the correct prefix
             endpoint = Endpoint.new("#{prefix}/settings", "PUT")
-            details = Details.new(PathInfo.new(path, 1))
-            endpoint.details = details
+            endpoint.details = fallback_details(path, content, site.byte_begin(0), router_name, prefix, endpoint.url)
 
             # Add parameters
             endpoint.push_param(Param.new("theme", "", "json"))
@@ -998,8 +1011,10 @@ module Analyzer::Javascript
 
           # Create endpoint for this method
           endpoint = Endpoint.new(route_path, method)
-          details = Details.new(PathInfo.new(path, 1))
-          endpoint.details = details
+          offset = content[0...method_pos].bytesize
+          receiver = content[start_pos..].starts_with?("app.") ? "app" : "router"
+          steps = Noir::JSRouteExtractor.route_arguments(content, offset)
+          endpoint.details = middleware_details(path, 1, receiver, offset, "", route_path, steps)
 
           # Try to extract the function body for this specific method
           # Find the function body following this method position
@@ -1033,7 +1048,7 @@ module Analyzer::Javascript
     private def collect_express_static_paths(path : String, content : String, static_dirs : Array(Hash(String, String))) : Nil
       return unless express_source?(content)
 
-      collect_static_paths(path, content, static_dirs, :express)
+      collect_static_paths(path, content, static_dirs, :express, include_site: true)
     end
 
     # Precompiled once — a single PCRE2-JIT scan replaces six naive
@@ -1053,7 +1068,7 @@ module Analyzer::Javascript
     # Scan for router mount patterns and store them in CodeLocator
     # This enables cross-file router prefix tracking
     private def scan_for_router_mounts
-      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger, :express)
+      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger, :express, middleware: @middleware)
       scanner.scan
     end
 
@@ -1063,13 +1078,25 @@ module Analyzer::Javascript
       scanner
     end
 
+    private def fallback_details(path, content, offset, receiver, prefix, url)
+      args = Noir::JSRouteExtractor.route_arguments(content, offset).skip(1)
+      middleware_details(path, 1, receiver, offset, prefix, url, args)
+    end
+
+    private def middleware_details(path, line, receiver, offset, prefix, url, args, *, forwarded_steps = nil)
+      location = PathInfo.new(path, line)
+      key = ExpressConstants.file_key(Noir::PathScope.expand(path)).name
+      location.route_middleware = @middleware.chain(path, receiver, offset, prefix, prefix, [key], url, args, forwarded_steps: forwarded_steps)
+      Details.new(location)
+    end
+
     # Emit one endpoint per route recovered from a forwarding-helper call.
     private def extract_route_helper_calls(scanner : RouteHelperScanner, path : String, content : String,
                                            result : Array(Endpoint), include_callee : Bool)
       return unless scanner.any_helpers?
 
       scanner.routes_for(path, content).each do |route|
-        details = Details.new(PathInfo.new(path, route.line))
+        details = middleware_details(path, route.line, route.receiver, route.offset, route.prefix, route.url, [] of String, forwarded_steps: route.steps)
         endpoint = Endpoint.new(route.url, route.method, details)
         route.url.scan(/:(\w+)/) do |pm|
           endpoint.push_param(Param.new(pm[1], "", "path"))

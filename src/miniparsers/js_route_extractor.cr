@@ -11,6 +11,7 @@ require "../utils/js_literal_scanner"
 require "../analyzer/analyzers/javascript/express_constants"
 require "../utils/text_file"
 require "./ts_class_fields"
+require "./express_middleware"
 
 module Noir
   # JSRouteExtractor provides a unified interface for extracting routes from JavaScript files
@@ -78,6 +79,7 @@ module Noir
                             unwrap_guards : Bool = false,
                             resolve_mount_prefixes : Bool = false,
                             local_mounts : Hash(String, Array(String))? = nil,
+                            middleware : ExpressMiddleware? = nil,
                             on_routes : Bool = false) : Array(Endpoint)
       return [] of Endpoint unless File.exists?(file_path)
 
@@ -125,7 +127,7 @@ module Noir
         constants = content.includes?("${") || content.includes?('+') || content.matches?(MEMBER_PATH_ARG_RE, options: Noir::TextFile::MATCH_OPTIONS) ? file_string_constants(file_path, content) : nil
         mount_constants = resolve_mount_prefixes ? (constants || file_string_constants(file_path, content)) : nil
         mount_middleware = resolve_mount_prefixes ? ->(expression : String) { mount_middleware?(expression, content, file_path) } : nil
-        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants, mount_constants: mount_constants, resolve_mount_prefixes: resolve_mount_prefixes, mount_middleware: mount_middleware, on_routes: on_routes)
+        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants, mount_constants: mount_constants, resolve_mount_prefixes: resolve_mount_prefixes, mount_middleware: mount_middleware, on_routes: on_routes, record_middleware: !middleware.nil?)
         route_patterns = parser.parse_routes
         # Helpers run after extraction and need the same relative local mounts.
         if resolve_mount_prefixes
@@ -283,7 +285,8 @@ module Noir
         # Routers imported by name: prefixes recorded under the exported
         # name apply to routes registered on the local binding.
         prefixes_by_binding = Hash(String, Array(String)).new
-        export_bindings(content).each do |local, exported_names|
+        exports = export_bindings(content)
+        exports.each do |local, exported_names|
           list = exported_names.flat_map do |exported|
             locator.all(Analyzer::Javascript::ExpressConstants.function_key(absolute_file_path, exported))
           end.uniq!.reject!(&.empty?)
@@ -329,6 +332,7 @@ module Noir
         end
         route_patterns.each do |pattern|
           start_byte = pattern.start_pos >= 0 ? offsets.byte(pattern.start_pos) : -1
+          owner_keys = [lookup_key.name] if middleware
           # Apply cross-file router prefix if present (function-scoped first)
           prefixes = [] of String
           if start_byte >= 0
@@ -346,6 +350,7 @@ module Noir
             containing_functions.each do |func_name, _|
               func_prefixes = prefixes_by_function[func_name]
               unless func_prefixes.empty?
+                owner_keys = [Analyzer::Javascript::ExpressConstants.function_key(absolute_file_path, func_name).name] if middleware
                 prefixes = func_prefixes
                 break
               end
@@ -380,6 +385,7 @@ module Noir
               # part (`/comfy`) into the route's own path.
               if root = parser.nearest_ancestor(receiver[1]) { |name| prefixes_by_binding.has_key?(name) }
                 prefixes = prefixes_by_binding[root]
+                owner_keys = exports[root].map { |name| Analyzer::Javascript::ExpressConstants.function_key(absolute_file_path, name).name } if middleware
               end
             end
           end
@@ -392,7 +398,21 @@ module Noir
           normalized_method = normalize_http_method(pattern.method)
 
           line_number = start_byte >= 0 ? offsets.line(start_byte) : 1
-          route_details = Details.new(PathInfo.new(file_path, line_number))
+          if middleware
+            route_steps = route_arguments(content, start_byte)
+            route_steps.shift? unless pattern.pathless?
+            local_prefix = parser.router_prefixes[pattern.receiver]?.try &.find do |candidate|
+              JSMountPrefix.join(candidate, pattern.raw_path) == pattern.path
+            end
+            if local_prefix && (sites = parser.local_chains[{pattern.receiver, local_prefix}]?)
+              local_frames = sites.map do |site|
+                at = offsets.byte(site.start_pos)
+                args = route_arguments(content, at).skip(1)
+                use = ExpressMiddleware::Use.new(absolute_file_path, site.receiver, at, site.prefix, args)
+                ExpressMiddleware::Frame.new(use, site.parent_prefix, use.before_child(site.child))
+              end
+            end
+          end
 
           # Body/query/header/... params from the handler, read once per
           # route rather than once per prefix and expanded method.
@@ -423,6 +443,12 @@ module Noir
             path_with_prefix = prefix.empty? ? pattern.path : JSMountPrefix.join(prefix, pattern.path)
             path_with_prefix = "/" if path_with_prefix.empty?
 
+            location = PathInfo.new(file_path, line_number)
+            if middleware && route_steps && owner_keys
+              base = local_prefix ? JSMountPrefix.join(prefix, local_prefix) : prefix
+              location.route_middleware = middleware.chain(absolute_file_path, pattern.receiver, start_byte, base, prefix, owner_keys, path_with_prefix, route_steps, local_frames: local_frames)
+            end
+            route_details = Details.new(location)
             if normalized_method == "ALL"
               all_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
               all_methods.each do |method|
@@ -3015,6 +3041,13 @@ module Noir
     end
 
     # Extract static path declarations from JavaScript content
+    private def self.static_site(directory, content, match, prefixed)
+      offset = match.byte_begin(0)
+      directory["receiver"] = match[1]
+      directory["offset"] = offset.to_s
+      directory["handler"] = route_arguments(content, offset)[prefixed ? 1 : 0]? || ""
+    end
+
     # Returns array of hashes with static_path (URL prefix) and file_path (directory)
     # `framework` scopes the scan to one framework's static-mount idiom so a
     # framework analyzer running over a sibling project's file (every JS
@@ -3026,7 +3059,7 @@ module Noir
       "ServeStaticModule.forRoot", "serveStatic",
     )
 
-    def self.extract_static_paths(content : String, framework : Symbol? = nil) : Array(Hash(String, String))
+    def self.extract_static_paths(content : String, framework : Symbol? = nil, *, include_site : Bool = false) : Array(Hash(String, String))
       static_paths = [] of Hash(String, String)
 
       # Cheap pre-filter: static-mount shapes use Express/Koa
@@ -3055,23 +3088,17 @@ module Noir
         # app.use('/static', express.static('public'))
         # app.use(express.static('public'))
         # router.use('/static', express.static('public'))
-        content.scan(/(?:app|router|\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:express\.)?static\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-          if match.size >= 2
-            static_paths << {
-              "static_path" => match[1],
-              "file_path"   => match[2],
-            }
-          end
+        content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:express\.)?static\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          directory = {"static_path" => match[2], "file_path" => match[3]}
+          static_site(directory, content, match, true) if include_site
+          static_paths << directory
         end
 
         # app.use(express.static('public')) - no prefix, serves at root
-        content.scan(/(?:app|router|\w+)\.use\s*\(\s*(?:express\.)?static\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-          if match.size >= 1
-            static_paths << {
-              "static_path" => "/",
-              "file_path"   => match[1],
-            }
-          end
+        content.scan(/(\w+)\.use\s*\(\s*(?:express\.)?static\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          directory = {"static_path" => "/", "file_path" => match[2]}
+          static_site(directory, content, match, false) if include_site
+          static_paths << directory
         end
       end
 

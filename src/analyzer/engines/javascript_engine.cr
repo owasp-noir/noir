@@ -280,15 +280,20 @@ module Analyzer::Javascript
       end
     end
 
-    protected def collect_static_paths(source_path : String, content : String, static_dirs : Array(Hash(String, String)), framework : Symbol? = nil) : Nil
-      Noir::JSRouteExtractor.extract_static_paths(content, framework).each do |static_path|
+    protected def collect_static_paths(source_path : String, content : String, static_dirs : Array(Hash(String, String)), framework : Symbol? = nil, *, include_site : Bool = false) : Nil
+      Noir::JSRouteExtractor.extract_static_paths(content, framework, include_site: include_site).each do |static_path|
         normalized = static_path.dup
+        normalized["source"] = source_path if include_site
         normalized["file_path"] = resolve_static_file_path(source_path, normalized["file_path"])
         static_dirs << normalized unless static_dirs.any? { |s| s["static_path"] == normalized["static_path"] && s["file_path"] == normalized["file_path"] }
       end
     end
 
     protected def process_js_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint)) : Nil
+      process_js_static_dirs(static_dirs, result) { |_dir, _url, file| PathInfo.new(file) }
+    end
+
+    protected def process_js_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint), & : Hash(String, String), String, String -> PathInfo) : Nil
       # Reuse CodeLocator's once-built expanded file map instead of
       # re-running File.expand_path + File.directory? across every
       # static dir (and across every concurrent JS analyzer).
@@ -317,7 +322,7 @@ module Analyzer::Javascript
           url = url.squeeze('/')
 
           next unless seen_get.add?(url)
-          result << Endpoint.new(url, "GET", Details.new(PathInfo.new(file_path)))
+          result << Endpoint.new(url, "GET", Details.new(yield dir, url, file_path))
         end
       end
     end

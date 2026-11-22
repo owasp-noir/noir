@@ -208,3 +208,97 @@ describe "Express prefix-only constant resolution" do
     endpoints.map { |e| {e.url, e.resolution} }.uniq!.should eq([{"/leaf", {"prefix" => "unresolved"}}])
   end
 end
+
+describe "Express middleware evidence" do
+  it "carries the registration order and source of each step through deferred and multiple mounts" do
+    rows = express_prefix_files({
+      "leaf.js" => <<-JS,
+        const router = express.Router();
+        router
+          .use
+          (leafStep);
+        router.get('/item', inlineStep, handle);
+        router.use(tooLate);
+        module.exports = router;
+        JS
+      "api.js" => <<-JS,
+        const router = express.Router();
+        const leaf = require('./leaf');
+        router.use('/v1', scopedStep);
+        router.use('/v1', mountStep, leaf, afterLeaf);
+        router.use(tooLate);
+        module.exports = router;
+        JS
+      "app.js" => <<-JS,
+        const app = express();
+        const api = require('./api');
+        app.use(rootStep);
+        app.use('/private', privateStep, api);
+        app.use('/public', api);
+        app.use(tooLate);
+        JS
+    })
+    private_row = rows.find! { |row| row.url == "/private/v1/item" }
+    steps = private_row.details.code_paths.first.route_middleware.not_nil!
+    steps.map(&.source.strip).should eq(%w[rootStep privateStep scopedStep mountStep leafStep inlineStep handle])
+    steps.map(&.origin).should eq([:router, :mount, :router, :mount, :router, :route, :route])
+    steps.map { |step| File.basename(step.file) }.should eq(%w[app.js app.js api.js api.js leaf.js leaf.js leaf.js])
+    rows.find! { |row| row.url == "/public/v1/item" }.details.code_paths.first.route_middleware.not_nil!.map(&.source.strip)
+      .should eq(%w[rootStep scopedStep mountStep leafStep inlineStep handle])
+    private_row.to_json.should_not contain("rootStep")
+    private_row.to_yaml.should_not contain("rootStep")
+  end
+
+  it "records fixed helper arguments in registration order with their defining module" do
+    rows = express_prefix_files({
+      "app.js"     => "const app = express(); const { register } = require('./helpers'); register(app, '/one', handle, firstStep);",
+      "helpers.js" => "exports.register = function (router, path, handler, first) { router.get(path, first, localStep, handler); };",
+    })
+    steps = rows.find! { |row| row.url == "/one" }.details.code_paths.first.route_middleware.not_nil!
+    steps.map { |step| {step.source.strip, File.basename(step.file), step.handler_position} }.should eq([
+      {"firstStep", "app.js", false}, {"localStep", "helpers.js", false}, {"handle", "app.js", true},
+    ])
+  end
+
+  it "keeps local evidence on an unread prefix without attributing the speculative parent" do
+    rows = express_prefix_files({
+      "app.js"  => "const app = express(); const leaf = require('./leaf'); app.use(config.path, requireAuth, leaf);",
+      "leaf.js" => "const router = express.Router(); router.use(checkAuth);\nrouter.get('/item', verifyToken, handle); module.exports = router;",
+    })
+    row = rows.find! { |r| r.url == "/item" }
+    row.resolution.should eq({"prefix" => "unresolved"})
+    row.details.code_paths.first.route_middleware.not_nil!.map(&.source.strip).should eq(%w[checkAuth verifyToken handle])
+  end
+
+  it "retains literal-prefix guesses on an unread path with heuristic guard resolution" do
+    rows = express_prefix_files({
+      "app.js"  => "const app = express(); const leaf = require('./leaf'); app.use('/scope', ensureAuthenticated); app.use(config.base, verifyToken, leaf);",
+      "leaf.js" => "const router = express.Router(); router.use('/inner', requireAuth); router.get('/scope/one', handle); router.get('/inner/two', handle); module.exports = router;",
+    })
+    guarded = rows.find! { |row| row.url == "/scope/one" }
+    guarded.details.code_paths.first.route_middleware.not_nil!.map(&.origin).should eq([:fallback, :route])
+    tagged = ExpressAuthTagger.new(create_test_options).perform([guarded]).first
+    tagged.tags.map(&.name).should eq(["auth"])
+    tagged.resolution.should eq({"prefix" => "unresolved", "guard" => "heuristic"})
+    rows.find! { |row| row.url == "/inner/two" }.details.code_paths.first.route_middleware.not_nil!.map(&.source.strip).should eq(["handle"])
+  end
+
+  it "keeps bare uses on the router declared in their own factory" do
+    rows = express_prefix_files({
+      "factory.js" => <<-JS,
+        const express = require('express');
+        function protectedRoutes() {
+          const router = express.Router();
+          router.use(requireAuth);
+          router.get('/secret', handle);
+        }
+        function openRoutes() {
+          const router = express.Router();
+          router.get('/health', handle);
+        }
+        JS
+    })
+    rows.find! { |row| row.url == "/health" }.details.code_paths.first.route_middleware.not_nil!.map(&.source.strip).should eq(["handle"])
+    rows.find! { |row| row.url == "/secret" }.details.code_paths.first.route_middleware.not_nil!.map(&.source.strip).should eq(%w[requireAuth handle])
+  end
+end

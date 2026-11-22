@@ -71,6 +71,8 @@ module Analyzer::Javascript
     #   router.get(name, …)           → verb: "get", path_arg: 1
     #   router.get(`/api${name}`, …)  → verb: "get", path_arg: 1,
     #                                   path_before: "/api"
+    record ForwardArgument, source : String, position : Int32?
+
     record Forward,
       receiver : String,
       verb : String?,
@@ -79,12 +81,15 @@ module Analyzer::Javascript
       path_before : String,
       path_after : String,
       line : Int32,
+      middleware : Array(ForwardArgument),
       handler_arg : Int32? = nil
 
     # A helper definition: which argument carries the router, and what the
     # body forwards.
     record HelperSpec,
       name : String,
+      file : String,
+      variadic : Bool,
       router_arg : Int32,
       forwards : Array(Forward)
 
@@ -96,6 +101,10 @@ module Analyzer::Javascript
       line : Int32,
       args : Array(Tuple(String, Int32)),
       path_arg : Int32,
+      receiver : String,
+      prefix : String,
+      offset : Int32,
+      steps : Array(RouteMiddleware),
       handler_arg : Int32? = nil
 
     # The forwarded-registration shape, used both as the per-file gate and
@@ -432,7 +441,8 @@ module Analyzer::Javascript
             mounted.each do |prefix|
               url = prefix.empty? ? path : Noir::JSMountPrefix.join(prefix, path)
               next unless seen.add?({method, url})
-              routes << HelperRoute.new(method, url, line, args, forward.path_arg, call_site_handler(forward, args))
+              steps = helper_middleware(forward, spec, file, args, prefix)
+              routes << HelperRoute.new(method, url, line, args, forward.path_arg, binding, prefix, m.byte_begin(0), steps, call_site_handler(forward, args))
             end
           end
         end
@@ -528,7 +538,7 @@ module Analyzer::Javascript
         router_arg = param_index[forwards.first.receiver]?
         next unless router_arg && router_arg >= 0
 
-        specs[func.name] = HelperSpec.new(func.name, router_arg, forwards)
+        specs[func.name] = HelperSpec.new(func.name, file, src.slice(func.params_open + 1, func.params_close).includes?("..."), router_arg, forwards)
         @logger.debug "Indexed Express route helper #{file}:#{func.name} (#{forwards.size} forward(s))"
       end
 
@@ -575,28 +585,40 @@ module Analyzer::Javascript
       path_arg, before, after = parse_path_expression(match.path_expr, param_index)
       return unless path_arg && path_arg >= 0
 
-      Forward.new(match.receiver, verb, verb_arg, path_arg, before, after, lines.line_at(match.pos),
-        forwarded_handler(file, src, match, param_index))
-    end
-
-    # The helper parameter the forwarded registration serves the request
-    # with: its last argument, through any transparent wrapper the helper
-    # applies (`helpers.tryRoute(controller, onError)`), when that is a
-    # parameter of the helper. Negative positions count from the end of the
-    # call (`const controller = args[args.length - 1]`).
-    private def forwarded_handler(file : String, src : Noir::CharOffsets, match : ForwardMatch,
-                                  param_index : Hash(String, Int32)) : Int32?
-      content = src.content
-      close = Noir::JSLiteralScanner.find_matching_paren(src, match.open_paren) || return
-      spans = Noir::TopLevelSplit.split_spans(src.slice(match.open_paren + 1, close), ',',
-        Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).reject(&.[0].blank?)
-      return if spans.size < 2
-      text = spans.last[0].strip
+      arguments = if close = Noir::JSLiteralScanner.find_matching_paren(src, match.open_paren)
+                    Noir::TopLevelSplit.split(src.slice(match.open_paren + 1, close), ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+                      .reject(&.blank?).skip(1)
+                  else
+                    [] of String
+                  end
+      middleware = arguments.map { |arg| ForwardArgument.new(arg, param_index[arg.strip]?) }
+      # The terminal argument may be passed through a transparent wrapper.
+      text = arguments.last?.try(&.strip) || ""
       3.times do
-        inner = Noir::JSHandlerResolver.unwrap(text, content, file) || break
+        inner = Noir::JSHandlerResolver.unwrap(text, src.content, file) || break
         text = inner[0]
       end
-      param_index[text]?
+      Forward.new(match.receiver, verb, verb_arg, path_arg, before, after, lines.line_at(match.pos), middleware, param_index[text]?)
+    end
+
+    # Fixed signatures let us follow each argument of the actual registration
+    # to its source. A rest helper can build its stack at runtime. Preserve
+    # the call-site evidence there and for the unresolved-prefix heuristic.
+    private def helper_middleware(forward, spec, file, args, prefix)
+      if spec.variadic || forward.middleware.empty? || prefix.includes?(Noir::JSMountPrefix::UNREAD)
+        sources = args.each_with_index.compact_map do |(source, _), idx|
+          {source, file} unless idx == spec.router_arg || idx == forward.verb_arg || idx == forward.path_arg || source.blank?
+        end.to_a
+      else
+        sources = forward.middleware.compact_map do |step|
+          if index = step.position
+            args[index]?.try { |arg| {arg[0], file} }
+          else
+            {step.source, spec.file}
+          end
+        end
+      end
+      sources.map_with_index { |(source, path), i| RouteMiddleware.new(source, path, :helper, i == sources.size - 1) }
     end
 
     # `name` → the parameter itself; `` `/api${name}` `` → the parameter
