@@ -8,7 +8,7 @@ This source-only measurement compares code analyzers with the OpenAPI contracts 
 
 <!-- SCOREBOARD -->
 
-Measured: 2026-11-15. Analyzer source: `830b4cfce775d24812f4b0305df6fc24359dcdcb`.
+Measured: 2026-11-22. Analyzer source: `bd9e6c936808b26689f5b1939676db1876aab621`.
 
 A technology measured on one repository is a single data point.
 
@@ -17,8 +17,8 @@ A technology measured on one repository is a single data point.
 | cs_aspnet_core_minimal_api | 1 | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | go_chi | 2 | 264 | 41 | 249 | 86.6% | 51.5% | 262 (51.1%) |
 | go_echo | 1 | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
-| go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 228 (80.9%) |
-| go_mux | 1 | 26 | 1 | 60 | 96.3% | 30.2% | 0 (0.0%) |
+| go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 230 (81.6%) |
+| go_mux | 1 | 26 | 1 | 88 | 96.3% | 22.8% | 0 (0.0%) |
 | java_spring | 1 | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
 | js_express | 2 | 303 | 128 | 366 | 70.3% | 45.3% | 9 (1.3%) |
 | python_django | 2 | 235 | 0 | 300 | 100.0% | 43.9% | 0 (0.0%) |
@@ -34,21 +34,88 @@ A technology measured on one repository is a single data point.
 | dvws-node | 53 | 0 | 11 | 100.0% | 82.8% | 0 (0.0%) |
 | eShop | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | flowable-engine | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
-| gotify | 42 | 0 | 10 | 100.0% | 80.8% | 0 (0.0%) |
+| gotify | 42 | 0 | 10 | 100.0% | 80.8% | 2 (3.8%) |
 | immich | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
 | langflow | 84 | 0 | 111 | 100.0% | 43.1% | 0 (0.0%) |
 | owncast | 241 | 0 | 189 | 100.0% | 56.0% | 262 (60.9%) |
-| podinfo | 26 | 1 | 60 | 96.3% | 30.2% | 0 (0.0%) |
+| podinfo | 26 | 1 | 88 | 96.3% | 22.8% | 0 (0.0%) |
 | pokeapi | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | pretalx | 133 | 0 | 300 | 100.0% | 30.7% | 0 (0.0%) |
 | vikunja | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
+
+| Technology | Detected / repositories | Other technologies detected | Forced-only rows | Automatic-only rows |
+| --- | ---: | --- | ---: | ---: |
+| cs_aspnet_core_minimal_api | 1 / 1 | cs_aspnet_core_mvc, http_file, oas3 | 0 | 0 |
+| go_chi | 2 / 2 | caddy, go_cli, go_http, js_cli, js_egg, js_http, js_nextjs, oas3, supabase | 0 | 0 |
+| go_echo | 1 / 1 | go_cli, go_http, go_huma, oas2 | 0 | 0 |
+| go_gin | 2 / 2 | go_cli, go_http, k8s_ingress, oas2 | 0 | 0 |
+| go_mux | 1 / 1 | go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2 | 0 | 0 |
+| java_spring | 1 / 1 | oas2 | 0 | 0 |
+| js_express | 2 / 2 | js_apollo, js_cli, js_socketio, js_sveltekit, oas3, wsdl | 0 | 0 |
+| python_django | 2 / 2 | graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli | 0 | 0 |
+| python_fastapi | 2 / 2 | oas3, python_cli, python_fastmcp, python_starlette | 0 | 0 |
+| ts_nestjs | 1 / 1 | js_express, js_socketio, oas3 | 0 | 0 |
+
+| Repository | Technology | Detected | Other technologies detected | Forced-only rows | Automatic-only rows |
+| --- | --- | --- | --- | ---: | ---: |
+| InvokeAI | python_fastapi | true | oas3, python_cli, python_starlette | 0 | 0 |
+| NodeBB | js_express | true | js_cli, js_socketio, oas3 | 0 | 0 |
+| answer | go_gin | true | go_cli, k8s_ingress, oas2 | 0 | 0 |
+| auth | go_chi | true | go_cli, go_http, oas3, supabase | 0 | 0 |
+| dvws-node | js_express | true | js_apollo, js_sveltekit, oas3, wsdl | 0 | 0 |
+| eShop | cs_aspnet_core_minimal_api | true | cs_aspnet_core_mvc, http_file, oas3 | 0 | 0 |
+| flowable-engine | java_spring | true | oas2 | 0 | 0 |
+| gotify | go_gin | true | go_cli, go_http, oas2 | 0 | 0 |
+| immich | ts_nestjs | true | js_express, js_socketio, oas3 | 0 | 0 |
+| langflow | python_fastapi | true | oas3, python_cli, python_fastmcp, python_starlette | 0 | 0 |
+| owncast | go_chi | true | caddy, go_cli, go_http, js_cli, js_egg, js_http, js_nextjs, oas3 | 0 | 0 |
+| podinfo | go_mux | true | go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2 | 0 | 0 |
+| pokeapi | python_django | true | graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli | 0 | 0 |
+| pretalx | python_django | true | oas3, python_cli | 0 | 0 |
+| vikunja | go_echo | true | go_cli, go_http, go_huma, oas2 | 0 | 0 |
+
+| Technology | Inputs on matched rows | Both | Document only | Code only | Recall | Agreement |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| cs_aspnet_core_minimal_api | Parameters | 28 | 16 | 0 | 63.6% | 100.0% |
+| cs_aspnet_core_minimal_api | Body fields | 38 | 1 | 0 | 97.4% | 100.0% |
+| go_chi | Parameters | 31 | 27 | 88 | 53.4% | 26.1% |
+| go_chi | Body fields | 16 | 162 | 4 | 9.0% | 80.0% |
+| go_echo | Parameters | 128 | 69 | 0 | 65.0% | 100.0% |
+| go_echo | Body fields | 0 | 364 | 0 | 0.0% | n/a |
+| go_gin | Parameters | 35 | 106 | 5 | 24.8% | 87.5% |
+| go_gin | Body fields | 35 | 307 | 1 | 10.2% | 97.2% |
+| go_mux | Parameters | 7 | 0 | 0 | 100.0% | 100.0% |
+| go_mux | Body fields | 0 | 0 | 0 | n/a | n/a |
+| java_spring | Parameters | 544 | 21 | 109 | 96.3% | 83.3% |
+| java_spring | Body fields | 378 | 67 | 90 | 84.9% | 80.8% |
+| js_express | Parameters | 272 | 18 | 65 | 93.8% | 80.7% |
+| js_express | Body fields | 96 | 78 | 19 | 55.2% | 83.5% |
+| python_django | Parameters | 331 | 297 | 73 | 52.7% | 81.9% |
+| python_django | Body fields | 311 | 142 | 10 | 68.7% | 96.9% |
+| python_fastapi | Parameters | 454 | 20 | 9 | 95.8% | 98.1% |
+| python_fastapi | Body fields | 360 | 33 | 42 | 91.6% | 89.6% |
+| ts_nestjs | Parameters | 245 | 102 | 6 | 70.6% | 97.6% |
+| ts_nestjs | Body fields | 221 | 274 | 1 | 44.6% | 99.5% |
+
+| Technology | Both guarded | Both open | Document guarded, code open | Document open, code guarded |
+| --- | ---: | ---: | ---: | ---: |
+| cs_aspnet_core_minimal_api | 0 | 16 | 0 | 0 |
+| go_chi | 120 | 3 | 8 | 133 |
+| go_echo | 131 | 11 | 1 | 6 |
+| go_gin | 162 | 56 | 10 | 10 |
+| go_mux | 0 | 26 | 0 | 0 |
+| java_spring | 0 | 0 | 182 | 0 |
+| js_express | 8 | 85 | 0 | 210 |
+| python_django | 0 | 230 | 0 | 5 |
+| python_fastapi | 325 | 17 | 6 | 0 |
+| ts_nestjs | 268 | 19 | 0 | 0 |
 
 | Technology | Resolution claim | Marked endpoints | Share of code endpoints |
 | --- | --- | ---: | ---: |
 | go_chi | `handler:heuristic` | 21 | 4.1% |
 | go_chi | `prefix:unresolved` | 241 | 47.0% |
 | go_echo | `prefix:unresolved` | 4 | 1.5% |
-| go_gin | `handler:heuristic` | 6 | 2.1% |
+| go_gin | `handler:heuristic` | 8 | 2.8% |
 | go_gin | `prefix:unresolved` | 228 | 80.9% |
 | js_express | `prefix:unresolved` | 9 | 1.3% |
 
@@ -74,12 +141,22 @@ A technology measured on one repository is a single data point.
 
 Each entry in [`scripts/scoreboard/corpus.json`](https://github.com/owasp-noir/noir/blob/main/scripts/scoreboard/corpus.json) contains only its repository pin, code technology, service scope, selected in-tree OpenAPI files, optional `spec_prefix` and `exclude_paths`, and a short note. Exclusions are explicit service boundaries passed to Noir's existing `--exclude-path` option and included in snapshot identity: NodeBB's separate web installer (`install/web.js:63-68`) and Gotify's example plugin (`plugin/example/echo/echo.go:74-77`) are outside their scored services. The runner shallow-fetches the pinned object and exports that service and the selected spec files into scratch space. Other OpenAPI entry documents are removed. Compiled WebAssembly (`*.wasm`) and CSV datasets (`*.csv`) are excluded; neither is route source for a scored analyzer. Scanner errors stop publication. Corpus applications are never built, installed, or run.
 
-One Noir scan reads code and OpenAPI together. The counts use its optimized HTTP rows: **matched** has both the scored code technology and a `spec` contributor in `details.technologies`; **spec-only** lacks the scored code contributor; **code-only** lacks a spec contributor. A singleton contributor comes from `details.technology`. Technology totals sum repository counts before computing ratios.
+The original endpoint series uses a combined scan with the pinned code analyzers forced and the OAS2/OAS3 detectors enabled. The counts use its optimized HTTP rows: **matched** has both the scored code technology and a `spec` contributor in `details.technologies`; **spec-only** lacks the scored code contributor; **code-only** lacks a spec contributor. A singleton contributor comes from `details.technology`. Technology totals sum repository counts before computing ratios.
 
 - **Recall** = matched / (matched + spec-only), the share of documented HTTP operations found by the code analyzer.
 - **Agreement** = matched / (matched + code-only), the share of code output also documented. It is a lower bound on precision if matched spec operations are valid, not measured precision. Real undocumented health, admin and UI routes lower it.
-- **Marked** counts code endpoints carrying any nonempty `resolution` map once. Each `claim:status` is also counted separately against the same code denominator; claims can overlap. Unmarked does not mean verified correct. Optional AI context and taggers are not enabled.
-- Empty denominators are `null` in results and `n/a` in tables. Parameters, schemas, authentication, WebSockets and runtime reachability are not scored. Spec operations Noir cannot import are outside the denominator.
+- **Marked** counts code endpoints carrying any nonempty `resolution` map once. Each `claim:status` is also counted separately against the same code denominator; claims can overlap. Unmarked does not mean verified correct. This scan runs with taggers and AI context disabled.
+- Empty denominators are `null` in results and `n/a` in tables. Only HTTP rows that Noir imports can enter the denominators. Schema types, values, WebSocket operations and runtime reachability are outside these measurements.
+
+### Detection, parameters and guards
+
+**Detection.** An unrestricted scan of the same staged files and exclusions supplies the technology inventory, including detectors that emitted no endpoints. Each repository/technology row records whether Noir detected that pin and lists every detected technology outside the repository’s code pins, including OpenAPI. Forced-only and automatic-only count HTTP rows carrying the scored contributor in just one scan. The comparison uses the method, Noir’s normalized whole-segment placeholders and the contributor’s origin scope. Equal keys retain their multiplicity. The per-repository detection files in `tmp/scoreboard/` list the differing methods, URLs and locations. Technology totals sum the differences and list the union of other technologies. Additional detections can be legitimate.
+
+**Parameters.** Credentials a document declares through its security schemes (an `Authorization` header, an API-key header or cookie) are left out of this comparison on both sides; the guard counts below cover them. For each HTTP row matched by the original combined scan, the runner looks up its independent rows in a code-only scan for that technology and an OAS-only scan. It uses the same method and Noir’s placeholder normalization, then the merged row’s source locations and exact URL to distinguish same-shaped candidates. A missing or ambiguous join stops publication. Each side contributes a set of (location, name) pairs per row. Header names are case-insensitive. Whole-segment path parameters compare by slot in their respective URLs. Other path names, query names and cookie names compare literally, including case. A separate set compares JSON, body and form fields by exact name across encodings. A JSON/body input named `body` supplies no identifiable field and is omitted on either side, including a literal JSON property of that name. Named fields on the other side still count. Noir can infer path parameters from URLs and credentials from security schemes, so these counts describe its imported reports. For each set, recall divides the shared count by the document count, and agreement divides it by the code count, after summing across rows.
+
+**Guards.** The OAS-only scan retains the importer’s `auth` tag from `oas2_access` or `oas3_access`. Operation-level `security` overrides the root declaration. An explicit empty list, an anonymous `{}` alternative or no declaration counts as open. The importer filters unknown schemes when a scheme registry exists. The code-only scan enables `--use-all-taggers` and counts an endpoint as guarded when a framework tagger ending in `_auth` emits the endpoint tag `auth`. Authorization-only and credential parameter tags supply no authentication signal. Each matched row contributes to one of four counts according to those two signals. Open on the code side means Noir found no authentication guard. A stale document or a guard beyond the tagger’s coverage can produce a disagreement.
+
+The current corpus has one code technology per repository. It therefore takes four scans per repository instead of one (60 scans across the 15 pins). Allow roughly four times the scanning time as a planning estimate. Automatic detection and tagging costs depend on the service, and each checkout and export is shared.
 
 ### Explicit deployment-prefix adjustment
 

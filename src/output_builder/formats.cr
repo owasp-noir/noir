@@ -91,7 +91,8 @@ module Noir::OutputFormats
                   endpoints : Array(Endpoint),
                   passive_results : Array(PassiveScanResult),
                   errors : Array(AnalyzerFailure) = [] of AnalyzerFailure,
-                  openapi_coverage : Noir::OpenAPICoverage? = nil) : Bool
+                  openapi_coverage : Noir::OpenAPICoverage? = nil,
+                  scan_technologies : Array(String)? = nil) : Bool
     format = "plain" if format == "text"
     {% begin %}
       case format
@@ -101,7 +102,10 @@ module Noir::OutputFormats
         # variable holding the class, and reusing it for the instance makes
         # the two impossible to tell apart when reading the expansion.
         renderer = {{ builder }}.new(options)
-        renderer.openapi_coverage = openapi_coverage if renderer.is_a?(OutputBuilderJson)
+        if renderer.is_a?(OutputBuilderJson)
+          renderer.openapi_coverage = openapi_coverage
+          renderer.scan_technologies = scan_technologies
+        end
         renderer.analyzer_failures = errors
         renderer.print(endpoints, passive_results)
       {% end %}

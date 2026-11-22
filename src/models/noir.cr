@@ -421,7 +421,7 @@ class NoirRunner
   # fourth place a format had to be listed.
   def report
     format = options["format"].to_s
-    return if Noir::OutputFormats.render(format, @options, @endpoints, @passive_results, analyzer_failures, @openapi_coverage)
+    return if Noir::OutputFormats.render(format, @options, @endpoints, @passive_results, analyzer_failures, @openapi_coverage, @techs)
 
     # `CliValidation` rejects an unknown `-f` before a scan starts, so this
     # only catches a library caller that built the options hash itself:

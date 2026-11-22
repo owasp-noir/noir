@@ -8,7 +8,7 @@ weight = 2
 
 <!-- SCOREBOARD -->
 
-Measured: 2026-11-15. Analyzer source: `830b4cfce775d24812f4b0305df6fc24359dcdcb`.
+Measured: 2026-11-22. Analyzer source: `bd9e6c936808b26689f5b1939676db1876aab621`.
 
 저장소 하나에서 측정한 기술은 단일 데이터 포인트입니다.
 
@@ -17,8 +17,8 @@ Measured: 2026-11-15. Analyzer source: `830b4cfce775d24812f4b0305df6fc24359dcdcb
 | cs_aspnet_core_minimal_api | 1 | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | go_chi | 2 | 264 | 41 | 249 | 86.6% | 51.5% | 262 (51.1%) |
 | go_echo | 1 | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
-| go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 228 (80.9%) |
-| go_mux | 1 | 26 | 1 | 60 | 96.3% | 30.2% | 0 (0.0%) |
+| go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 230 (81.6%) |
+| go_mux | 1 | 26 | 1 | 88 | 96.3% | 22.8% | 0 (0.0%) |
 | java_spring | 1 | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
 | js_express | 2 | 303 | 128 | 366 | 70.3% | 45.3% | 9 (1.3%) |
 | python_django | 2 | 235 | 0 | 300 | 100.0% | 43.9% | 0 (0.0%) |
@@ -34,21 +34,88 @@ Measured: 2026-11-15. Analyzer source: `830b4cfce775d24812f4b0305df6fc24359dcdcb
 | dvws-node | 53 | 0 | 11 | 100.0% | 82.8% | 0 (0.0%) |
 | eShop | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | flowable-engine | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
-| gotify | 42 | 0 | 10 | 100.0% | 80.8% | 0 (0.0%) |
+| gotify | 42 | 0 | 10 | 100.0% | 80.8% | 2 (3.8%) |
 | immich | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
 | langflow | 84 | 0 | 111 | 100.0% | 43.1% | 0 (0.0%) |
 | owncast | 241 | 0 | 189 | 100.0% | 56.0% | 262 (60.9%) |
-| podinfo | 26 | 1 | 60 | 96.3% | 30.2% | 0 (0.0%) |
+| podinfo | 26 | 1 | 88 | 96.3% | 22.8% | 0 (0.0%) |
 | pokeapi | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | pretalx | 133 | 0 | 300 | 100.0% | 30.7% | 0 (0.0%) |
 | vikunja | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
+
+| Technology | Detected / repositories | Other technologies detected | Forced-only rows | Automatic-only rows |
+| --- | ---: | --- | ---: | ---: |
+| cs_aspnet_core_minimal_api | 1 / 1 | cs_aspnet_core_mvc, http_file, oas3 | 0 | 0 |
+| go_chi | 2 / 2 | caddy, go_cli, go_http, js_cli, js_egg, js_http, js_nextjs, oas3, supabase | 0 | 0 |
+| go_echo | 1 / 1 | go_cli, go_http, go_huma, oas2 | 0 | 0 |
+| go_gin | 2 / 2 | go_cli, go_http, k8s_ingress, oas2 | 0 | 0 |
+| go_mux | 1 / 1 | go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2 | 0 | 0 |
+| java_spring | 1 / 1 | oas2 | 0 | 0 |
+| js_express | 2 / 2 | js_apollo, js_cli, js_socketio, js_sveltekit, oas3, wsdl | 0 | 0 |
+| python_django | 2 / 2 | graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli | 0 | 0 |
+| python_fastapi | 2 / 2 | oas3, python_cli, python_fastmcp, python_starlette | 0 | 0 |
+| ts_nestjs | 1 / 1 | js_express, js_socketio, oas3 | 0 | 0 |
+
+| Repository | Technology | Detected | Other technologies detected | Forced-only rows | Automatic-only rows |
+| --- | --- | --- | --- | ---: | ---: |
+| InvokeAI | python_fastapi | true | oas3, python_cli, python_starlette | 0 | 0 |
+| NodeBB | js_express | true | js_cli, js_socketio, oas3 | 0 | 0 |
+| answer | go_gin | true | go_cli, k8s_ingress, oas2 | 0 | 0 |
+| auth | go_chi | true | go_cli, go_http, oas3, supabase | 0 | 0 |
+| dvws-node | js_express | true | js_apollo, js_sveltekit, oas3, wsdl | 0 | 0 |
+| eShop | cs_aspnet_core_minimal_api | true | cs_aspnet_core_mvc, http_file, oas3 | 0 | 0 |
+| flowable-engine | java_spring | true | oas2 | 0 | 0 |
+| gotify | go_gin | true | go_cli, go_http, oas2 | 0 | 0 |
+| immich | ts_nestjs | true | js_express, js_socketio, oas3 | 0 | 0 |
+| langflow | python_fastapi | true | oas3, python_cli, python_fastmcp, python_starlette | 0 | 0 |
+| owncast | go_chi | true | caddy, go_cli, go_http, js_cli, js_egg, js_http, js_nextjs, oas3 | 0 | 0 |
+| podinfo | go_mux | true | go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2 | 0 | 0 |
+| pokeapi | python_django | true | graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli | 0 | 0 |
+| pretalx | python_django | true | oas3, python_cli | 0 | 0 |
+| vikunja | go_echo | true | go_cli, go_http, go_huma, oas2 | 0 | 0 |
+
+| Technology | Inputs on matched rows | Both | Document only | Code only | Recall | Agreement |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| cs_aspnet_core_minimal_api | Parameters | 28 | 16 | 0 | 63.6% | 100.0% |
+| cs_aspnet_core_minimal_api | Body fields | 38 | 1 | 0 | 97.4% | 100.0% |
+| go_chi | Parameters | 31 | 27 | 88 | 53.4% | 26.1% |
+| go_chi | Body fields | 16 | 162 | 4 | 9.0% | 80.0% |
+| go_echo | Parameters | 128 | 69 | 0 | 65.0% | 100.0% |
+| go_echo | Body fields | 0 | 364 | 0 | 0.0% | n/a |
+| go_gin | Parameters | 35 | 106 | 5 | 24.8% | 87.5% |
+| go_gin | Body fields | 35 | 307 | 1 | 10.2% | 97.2% |
+| go_mux | Parameters | 7 | 0 | 0 | 100.0% | 100.0% |
+| go_mux | Body fields | 0 | 0 | 0 | n/a | n/a |
+| java_spring | Parameters | 544 | 21 | 109 | 96.3% | 83.3% |
+| java_spring | Body fields | 378 | 67 | 90 | 84.9% | 80.8% |
+| js_express | Parameters | 272 | 18 | 65 | 93.8% | 80.7% |
+| js_express | Body fields | 96 | 78 | 19 | 55.2% | 83.5% |
+| python_django | Parameters | 331 | 297 | 73 | 52.7% | 81.9% |
+| python_django | Body fields | 311 | 142 | 10 | 68.7% | 96.9% |
+| python_fastapi | Parameters | 454 | 20 | 9 | 95.8% | 98.1% |
+| python_fastapi | Body fields | 360 | 33 | 42 | 91.6% | 89.6% |
+| ts_nestjs | Parameters | 245 | 102 | 6 | 70.6% | 97.6% |
+| ts_nestjs | Body fields | 221 | 274 | 1 | 44.6% | 99.5% |
+
+| Technology | Both guarded | Both open | Document guarded, code open | Document open, code guarded |
+| --- | ---: | ---: | ---: | ---: |
+| cs_aspnet_core_minimal_api | 0 | 16 | 0 | 0 |
+| go_chi | 120 | 3 | 8 | 133 |
+| go_echo | 131 | 11 | 1 | 6 |
+| go_gin | 162 | 56 | 10 | 10 |
+| go_mux | 0 | 26 | 0 | 0 |
+| java_spring | 0 | 0 | 182 | 0 |
+| js_express | 8 | 85 | 0 | 210 |
+| python_django | 0 | 230 | 0 | 5 |
+| python_fastapi | 325 | 17 | 6 | 0 |
+| ts_nestjs | 268 | 19 | 0 | 0 |
 
 | Technology | Resolution claim | Marked endpoints | Share of code endpoints |
 | --- | --- | ---: | ---: |
 | go_chi | `handler:heuristic` | 21 | 4.1% |
 | go_chi | `prefix:unresolved` | 241 | 47.0% |
 | go_echo | `prefix:unresolved` | 4 | 1.5% |
-| go_gin | `handler:heuristic` | 6 | 2.1% |
+| go_gin | `handler:heuristic` | 8 | 2.8% |
 | go_gin | `prefix:unresolved` | 228 | 80.9% |
 | js_express | `prefix:unresolved` | 9 | 1.3% |
 
@@ -74,12 +141,22 @@ Measured: 2026-11-15. Analyzer source: `830b4cfce775d24812f4b0305df6fc24359dcdcb
 
 [`scripts/scoreboard/corpus.json`](https://github.com/owasp-noir/noir/blob/main/scripts/scoreboard/corpus.json)에는 저장소 커밋, 코드 기술, 서비스 범위, 선택한 OpenAPI 파일, 선택적 `spec_prefix`와 `exclude_paths`, 짧은 설명만 저장합니다. 제외 경로는 Noir의 기존 `--exclude-path` 옵션으로 전달하는 명시적인 서비스 경계이며 스냅샷 식별자에도 포함됩니다. NodeBB의 별도 웹 설치 서버(`install/web.js:63-68`)와 Gotify의 예제 플러그인(`plugin/example/echo/echo.go:74-77`)은 평가하는 서비스 밖이므로 제외합니다. 실행기는 고정된 커밋을 얕게 가져와 그 서비스와 선택한 명세 파일을 임시 공간에 내보냅니다. 다른 OpenAPI 진입 문서는 제거합니다. 평가 대상 분석기의 경로 소스가 아닌 WebAssembly(`*.wasm`)와 CSV 데이터셋(`*.csv`)은 제외합니다. 스캔 오류가 있으면 게시용 파일 생성을 중단합니다. 코퍼스 애플리케이션은 빌드하거나 설치하거나 실행하지 않습니다.
 
-한 번의 Noir 스캔에서 코드와 OpenAPI를 함께 읽습니다. 최적화된 HTTP 행의 `details.technologies`에 평가 대상 코드 기술과 `spec` 기여자가 함께 있으면 **matched**, 코드 기여자만 없으면 **spec-only**, 명세 기여자만 없으면 **code-only**입니다. 단일 기여자는 `details.technology`에서 읽습니다. 기술별 비율은 저장소별 개수를 합산한 뒤 계산합니다.
+기존 엔드포인트 지표는 고정된 코드 분석기를 강제 지정하고 OAS2/OAS3 탐지기를 활성화한 통합 스캔으로 계산합니다. 최적화된 HTTP 행의 `details.technologies`에 평가 대상 코드 기술과 `spec` 기여자가 함께 있으면 **matched**, 코드 기여자만 없으면 **spec-only**, 명세 기여자만 없으면 **code-only**입니다. 단일 기여자는 `details.technology`에서 읽습니다. 기술별 비율은 저장소별 개수를 합산한 뒤 계산합니다.
 
 - **Recall(재현율)** = matched / (matched + spec-only). 문서의 HTTP 동작 중 코드 분석기가 찾은 비율입니다.
 - **Agreement(일치도)** = matched / (matched + code-only). 코드 출력 중 명세에도 있는 비율입니다. 일치한 명세 동작이 유효하다는 전제에서 정밀도의 하한이며, 측정된 정밀도는 아닙니다. 실제로 존재하지만 문서화되지 않은 health, admin, UI 경로도 이 값을 낮춥니다.
-- **Marked(표시된 행)**는 비어 있지 않은 `resolution` 맵이 있는 코드 엔드포인트를 한 번씩 셉니다. 각 `claim:status`도 같은 코드 분모로 별도 집계하므로 서로 겹칠 수 있습니다. 표시가 없다고 정확성을 보장하지 않습니다. 선택적 AI 컨텍스트와 태거는 활성화하지 않습니다.
-- 분모가 0이면 결과는 `null`, 표는 `n/a`입니다. 파라미터, 스키마, 인증, WebSocket, 실제 실행 시 접근 가능성은 평가하지 않습니다. Noir가 가져오지 못하는 명세 동작은 분모에 포함되지 않습니다.
+- **Marked(표시된 행)**는 비어 있지 않은 `resolution` 맵이 있는 코드 엔드포인트를 한 번씩 셉니다. 각 `claim:status`도 같은 코드 분모로 별도 집계하므로 서로 겹칠 수 있습니다. 표시가 없다고 정확성을 보장하지 않습니다. 이 스캔에서는 AI 컨텍스트와 태거를 끕니다.
+- 분모가 0이면 결과는 `null`, 표는 `n/a`입니다. Noir가 가져온 HTTP 행만 분모에 들어갑니다. 스키마 타입, 값, WebSocket 동작, 실제 실행 시 접근 가능성은 측정 범위 밖입니다.
+
+### 탐지, 파라미터와 인증 가드
+
+**탐지.** 같은 파일과 제외 경로를 사용해 기술 제한 없이 다시 스캔합니다. 탐지 목록에는 엔드포인트를 하나도 출력하지 않은 기술도 들어갑니다. 저장소와 기술별로 고정된 기술의 탐지 여부와 OpenAPI를 포함해 해당 저장소의 코드 기술 목록 밖에서 탐지된 기술을 기록합니다. 강제 스캔 또는 자동 스캔에만 있는 행은 해당 기술이 기여한 HTTP 행끼리 비교해 셉니다. 메서드, Noir가 경로 세그먼트 전체를 차지하는 변수를 정규화한 URL, 해당 기술의 출처 범위를 사용하며 같은 키가 여러 번 나타나면 각각 셉니다. 차이가 난 메서드, URL, 소스 위치는 `tmp/scoreboard/`의 저장소별 탐지 파일에 있습니다. 기술별 집계는 차이가 난 행 수를 합산하고 다른 탐지 기술의 합집합을 표시합니다. 추가로 탐지된 기술도 실제 서비스에 쓰일 수 있습니다.
+
+**파라미터.** 명세가 보안 스킴으로 선언한 자격 증명(`Authorization` 헤더, API 키 헤더나 쿠키)은 양쪽 모두 이 비교에서 제외하며, 아래 guard 집계가 이를 다룹니다. 기존 통합 스캔에서 일치한 HTTP 행마다 해당 기술만 스캔한 코드 결과와 OAS만 스캔한 명세 결과를 찾습니다. 메서드와 Noir의 경로 변수 정규화를 사용하고, 같은 형태의 후보가 여러 개이면 통합 행에 기록된 소스 위치와 정확한 URL로 구분합니다. 행을 찾을 수 없거나 하나로 특정할 수 없으면 결과 생성을 중단합니다. 각 행에서 (위치, 이름) 쌍의 중복을 제거합니다. 헤더 이름은 대소문자를 무시합니다. 세그먼트 전체를 차지하는 경로 변수는 양쪽 URL에서 차지하는 순서로 비교합니다. 나머지 경로 이름과 쿼리·쿠키 이름은 대소문자까지 같아야 합니다. 요청 본문은 별도로 집계하며 JSON, body, form의 필드 이름이 같으면 인코딩에 관계없이 일치합니다. JSON/body 입력의 이름이 `body`이면 본문 전체와 구별할 수 없어 양쪽 모두에서 제외합니다. 실제 JSON 속성 이름이 `body`인 경우도 해당하며 반대쪽에서 식별한 필드는 그대로 셉니다. Noir는 URL에서 경로 변수를, 보안 스킴에서 인증 입력을 추론할 수 있습니다. 각 집합의 일치 수를 전체 행에 걸쳐 합산한 뒤 명세 쪽 개수로 나누면 recall, 코드 쪽 개수로 나누면 agreement입니다.
+
+**인증 가드.** OAS 전용 스캔에서는 `oas2_access` 또는 `oas3_access`가 붙인 `auth` 태그를 읽습니다. 동작에 선언한 `security`가 전역 설정보다 우선합니다. 명시적인 빈 목록, 익명을 허용하는 `{}` 대안, 선언이 없는 경우는 공개로 셉니다. 스킴 목록이 있으면 Noir는 목록에 없는 스킴을 포함한 대안을 제외합니다. 코드 전용 스캔은 `--use-all-taggers`를 켜고 이름이 `_auth`로 끝나는 프레임워크 태거가 엔드포인트에 `auth`를 붙였을 때 가드가 있다고 봅니다. 인가 전용 태그와 인증 정보 파라미터는 이 집계에서 제외합니다. 일치한 행 하나당 명세와 코드의 가드 유무 조합 네 가지 중 하나를 셉니다. 코드 쪽의 공개 판정은 Noir가 인증 가드를 찾지 못했다는 뜻입니다. 오래된 명세나 태거의 탐지 한계로도 차이가 날 수 있습니다.
+
+현재 코퍼스의 저장소마다 고정된 코드 기술이 하나이므로 스캔 횟수는 저장소당 1회에서 4회, 15개 저장소 전체에서 60회로 늘어납니다. 스캔 시간은 약 4배로 예상합니다. 자동 탐지와 태깅에 드는 시간은 서비스마다 다르며 체크아웃과 파일 추출은 한 번만 수행합니다.
 
 ### 명시적인 배포 접두사 보정
 
