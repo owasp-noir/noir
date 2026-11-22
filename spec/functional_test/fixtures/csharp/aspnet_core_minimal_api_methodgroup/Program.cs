@@ -1,9 +1,14 @@
+using Asp.Versioning;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddScoped<Warehouse>();
+builder.Services.AddApiVersioning(options =>
+    options.ApiVersionReader = ApiVersionReader.Combine(
+        new HeaderApiVersionReader("X-Revision"), new QueryStringApiVersionReader("rev")));
 var app = builder.Build();
 
 // Method-group handler: route lives on the Map line, parameters and body
@@ -43,6 +48,15 @@ app.MapPost("/hooks", (WebhookRequest hook, HttpRequest request) =>
     var token = request.Headers[HookTokenHeader];
     return Results.Ok(hook.Url);
 });
+
+var catalog = app.NewVersionedApi().MapGroup("/warehouse").HasApiVersion(1, 0);
+catalog.MapPost("/{id}", InventoryRoutes.Update);
+catalog.MapGet("/status", InventoryRoutes.Status).IsApiVersionNeutral();
+app.MapGet("/local", ReadLocal);
+app.MapGet("/local-service", LocalStatus);
+
+IResult ReadLocal([FromQuery(Name = "q")] string term) => Results.Ok(term);
+IResult LocalStatus(CancellationToken cancellation) => Results.Ok();
 
 app.Run();
 

@@ -1,6 +1,8 @@
+using Asp.Versioning;
 using Microsoft.AspNetCore.Builder;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddApiVersioning();
 var app = builder.Build();
 
 app.MapUserEndpoints();
@@ -19,6 +21,11 @@ void MapShared()
 var dynamicGroup = app.MapGroup(builder.Configuration["Group"]);
 dynamicGroup.MapGet("/summary", () => "summary");
 shared.MapGet("/report" + builder.Configuration["Suffix"], () => "report");
+
+var versions = app.NewVersionedApi();
+var versioned = versions.MapGroup("/revisions").HasApiVersion(1, 0);
+versioned.MapGet("/current", (HttpContext context) => "current");
+app.MapGet("/unversioned", (CancellationToken cancellation) => "current");
 
 app.MapGet("/selection", First.Status);
 

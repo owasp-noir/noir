@@ -4,6 +4,8 @@ require "../../func_spec.cr"
 # `this RouteGroupBuilder group` parameter beside them: every `group` is the
 # one of its own method. A top-level local function sees the top-level group.
 expected_endpoints = [
+  Endpoint.new("/revisions/current", "GET", [Param.new("api-version", "", "query")]),
+  Endpoint.new("/unversioned", "GET"),
   Endpoint.new("/selection", "GET"),
   Endpoint.new("/summary", "GET"),
   Endpoint.new("/shared/report", "GET"),
@@ -24,7 +26,9 @@ tester.perform_tests
 
 describe "aspnet_core_minimal_api_group_scope route resolution", tags: "functional" do
   it "records the evidence for each reported route" do
-    tester.endpoints.find! { |ep| ep.url == "/selection" }.resolution.should eq({"handler" => "heuristic"})
+    selection = tester.endpoints.find! { |ep| ep.url == "/selection" }
+    selection.resolution.should be_nil
+    selection.handler.try { |handler| {handler.name, handler.line} }.should eq({"First.Status", 36})
     tester.endpoints.find! { |ep| ep.url == "/summary" }.resolution.should eq({"prefix" => "unresolved"})
     tester.endpoints.find! { |ep| ep.url == "/shared/report" }.resolution.should eq({"prefix" => "unresolved"})
     tester.endpoints.find! { |ep| ep.url == "/shared/ping" }.resolution.should be_nil

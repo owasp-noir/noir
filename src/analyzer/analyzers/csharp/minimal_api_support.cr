@@ -1,4 +1,5 @@
-require "../../../miniparsers/csharp_decl_parser"
+require "../../../miniparsers/csharp_handler_declarations"
+require "../../../miniparsers/csharp_minimal_api_config"
 
 module Analyzer::CSharp::MinimalApiSupport
   MAP_METHODS = %w[Get Post Put Delete Patch Head Options]
@@ -32,7 +33,6 @@ module Analyzer::CSharp::MinimalApiSupport
   private def analyze_minimal_api_files(include_callee : Bool)
     sources = [] of Tuple(String, String)
     get_files_by_extension(".cs").each do |file|
-      next unless File.exists?(file)
       next if Common.csharp_test_path?(base_relative_path(file))
 
       content = read_file_content(file)
@@ -42,14 +42,28 @@ module Analyzer::CSharp::MinimalApiSupport
       sources << {file, content}
     end
 
-    extension_scopes = route_group_extension_scopes(sources)
-    sources.each do |file, content|
-      next unless minimal_api_source?(content)
-      analyze_minimal_api_content(file, content, include_callee, extension_scopes[file]? || [] of ExtensionScope)
+    roots = Common.project_roots(get_files_by_extension(".csproj"))
+    sources.group_by { |file, _| Common.project_root_for(file, roots) || configured_base_for(file) }.each_value do |project|
+      @binding_config = Noir::CSharpMinimalApiConfig.new
+      project.each { |_, content| @binding_config.read(content) }
+      @binding_config.finish
+      extension_scopes = route_group_extension_scopes(project)
+      project.each do |file, content|
+        next unless minimal_api_source?(content)
+        analyze_minimal_api_content(file, content, include_callee, extension_scopes[file]? || [] of ExtensionScope)
+      end
     end
   end
 
-  record RoutePart, text : String = "", unread : Bool = false
+  @binding_config = Noir::CSharpMinimalApiConfig.new
+  @handler_declarations = Hash(String, Noir::CSharpHandlerDeclarations).new
+
+  record RoutePart, text : String = "", unread : Bool = false, versioned : Bool? = nil
+
+  private def version_metadata(masked : String) : Bool?
+    return false if masked.matches?(Noir::CSharpMinimalApiConfig::NEUTRAL_METADATA)
+    true if masked.matches?(Noir::CSharpMinimalApiConfig::VERSION_METADATA)
+  end
 
   # A `static … MapTodosApi(this RouteGroupBuilder group)` extension method:
   # the routes it registers on `group` take the prefix of whichever
@@ -134,7 +148,7 @@ module Analyzer::CSharp::MinimalApiSupport
       outer_prefixes = outer ? extension_caller_prefixes(outer[0], decls, calls, memo, seen) : [RoutePart.new]
       outer_prefixes.map { |outer_prefix| join_route_parts(outer_prefix, local) }
     end
-    memo[name] = prefixes.uniq.map { |prefix| prefix.text == "/" ? RoutePart.new("", prefix.unread) : prefix }
+    memo[name] = prefixes.uniq.map { |prefix| prefix.text == "/" ? prefix.copy_with(text: "") : prefix }
   end
 
   MINIMAL_API_MARKER_RE = /\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*(?:<[^<>()]*>\s*)?\(/
@@ -237,8 +251,8 @@ module Analyzer::CSharp::MinimalApiSupport
       # Both sides are already normalized (`/a`, `/a/b`), so a plain append
       # joins them without re-normalizing the whole chain on every line.
       part = group_chain_prefix(line, group_prefixes, file, index)
-      line_prefix = RoutePart.new(part.text.rchop("/"), part.unread)
-      chain_prefix = continuation ? RoutePart.new(chain_prefix.text + line_prefix.text, chain_prefix.unread || line_prefix.unread) : line_prefix
+      line_prefix = part.copy_with(text: part.text.rchop("/"))
+      chain_prefix = continuation ? RoutePart.new(chain_prefix.text + line_prefix.text, chain_prefix.unread || line_prefix.unread, inherit_version(chain_prefix, line_prefix)) : line_prefix
     end
   end
 
@@ -290,28 +304,22 @@ module Analyzer::CSharp::MinimalApiSupport
     consts = string_consts(file_lines) if block.matches?(CONST_REFERENCE_RE)
     extra_params = extract_params_from_block(block, consts)
     extra_params.concat(extract_bind_params_from_file(block, file_lines, masked_lines))
-    extra_params.concat(extract_delegate_params(block, route, methods.first, file, file_lines, masked_lines))
+    binding = HandlerInputs.new(extra_params)
+    handler_argument = map_call_arguments(block).last? || ""
+    lambda_params = extract_lambda_param_list(handler_argument)
+    bind_handler_params(binding, lambda_params, route, methods.first, file) unless lambda_params.empty?
 
-    # Method-group handlers — `MapGet("/items", GetItems)` — carry the route
-    # on the `Map` line but keep their parameters and body in the referenced
-    # method. Resolve it so params, callees and ai-context aren't lost. The
-    # dominant style in modern minimal APIs (eShop, vertical-slice/REPR).
-    callee_block = block
-    callee_line = line
-    callee_skip_first = false
-    handler_ref = nil
-    guessed_handler = false
-    if handler = resolve_handler_method(block, file_lines, masked_lines)
-      name, sig, handler_block, handler_line, skip_first, decl_line, guessed_handler = handler
-      extra_params.concat(handler_signature_params(sig, route, methods.first, file, file_lines, masked_lines))
-      consts ||= string_consts(file_lines) if handler_block.matches?(CONST_REFERENCE_RE)
-      extra_params.concat(extract_params_from_block(handler_block, consts))
-      callee_block = handler_block
-      callee_line = handler_line
-      callee_skip_first = skip_first
-      handler_ref = Handler.new(name, file, decl_line)
-    elsif lambda_line = lambda_handler_line(block, line)
-      handler_ref = Handler.new("closure", file, lambda_line)
+    name = handler_method_name(handler_argument)
+    handlers = name ? resolve_handler_methods(name, file, line - 1) : [] of BoundMethod
+    handlers.each do |handler_file, decl|
+      bind_handler_params(binding, decl.parameters, route, methods.first, handler_file)
+      handler_consts = string_consts(csharp_code(handler_file).code_lines) if decl.body.matches?(CONST_REFERENCE_RE)
+      extra_params.concat(extract_params_from_block(decl.body, handler_consts))
+    end
+
+    if versioned_route?(part, block)
+      @binding_config.readers.each { |location, key| extra_params << Param.new(key, "", location) } if @binding_config.versioning?
+      binding.unresolved = true if !@binding_config.versioning? || @binding_config.unknown_reader?
     end
 
     endpoints = [] of Endpoint
@@ -319,13 +327,34 @@ module Analyzer::CSharp::MinimalApiSupport
       endpoint = build_endpoint_from_route(route, method, file, line, extra_params)
       next unless endpoint
 
-      attach_csharp_callees(endpoint, callee_block, file, callee_line, include_callee, skip_first_line: callee_skip_first)
+      if first = handlers.first?
+        endpoint.handler = Handler.new(name.to_s, first[0], first[1].line)
+        handlers.each do |handler_file, decl|
+          attach_csharp_callees(endpoint, decl.body, handler_file, decl.body_line, include_callee)
+        end
+        endpoint.mark_resolution("handler", Endpoint::RESOLUTION_HEURISTIC) if handlers.size > 1
+      else
+        attach_csharp_callees(endpoint, block, file, line, include_callee)
+        endpoint.mark_resolution("handler") if name
+        if lambda_line = lambda_handler_line(block, line)
+          endpoint.handler = Handler.new("closure", file, lambda_line)
+        end
+      end
       endpoint.mark_resolution("prefix") if part.unread
-      endpoint.mark_resolution("handler", Endpoint::RESOLUTION_HEURISTIC) if guessed_handler
-      endpoint.handler = handler_ref
+      endpoint.mark_resolution("params") if binding.unresolved?
       endpoints << endpoint
     end
     endpoints
+  end
+
+  private def versioned_route?(part : RoutePart, block : String) : Bool
+    inherited = part.versioned == true
+    return inherited unless block.includes?("ApiVersion")
+    lexer = Noir::CSharpLexer.new(block)
+    call = lexer.masked_source.match(MAP_CALL_RE) || return inherited
+    close = lexer.matching_delimiter(call.end - 1) || return inherited
+    metadata = version_metadata(lexer.masked_source[close + 1..])
+    metadata.nil? ? inherited : metadata
   end
 
   private def extract_route_and_methods(block : String, group_prefixes : Hash(String, RoutePart), chain_prefix : RoutePart,
@@ -388,7 +417,7 @@ module Analyzer::CSharp::MinimalApiSupport
 
     own_prefix = group_chain_prefix(block[0...map_index], group_prefixes, file, line_index)
     return prepend_route_part(chain_prefix, own_prefix) if chain_prefix.text.empty?
-    return RoutePart.new(chain_prefix.text, chain_prefix.unread || own_prefix.unread) if own_prefix.text.empty?
+    return RoutePart.new(chain_prefix.text, chain_prefix.unread || own_prefix.unread, inherit_version(chain_prefix, own_prefix)) if own_prefix.text.empty?
     join_route_parts(chain_prefix, own_prefix)
   end
 
@@ -398,7 +427,7 @@ module Analyzer::CSharp::MinimalApiSupport
                                  file : String, line_index : Int32) : RoutePart
     parts = map_group_values(prefix_source, file, line_index)
     unread = parts.any?(&.unread)
-    parts.reject!(&.text.empty?)
+    parts.reject! { |part| part.text.empty? && part.versioned.nil? }
     return RoutePart.new("", unread) if parts.empty?
 
     # A chained `group.MapGroup("/sub").Map*(...)` registration carries the
@@ -413,7 +442,7 @@ module Analyzer::CSharp::MinimalApiSupport
     end
 
     joined = join_route_parts_array(parts)
-    RoutePart.new(joined.text, unread || joined.unread)
+    joined.copy_with(unread: unread || joined.unread)
   end
 
   # `first_line` is the line index `content` starts at in `file`.
@@ -423,6 +452,11 @@ module Analyzer::CSharp::MinimalApiSupport
     content.split(';').each do |statement|
       statement_line = line
       line += statement.count('\n')
+      if statement.includes?("ApiVersion") && (call = statement.match(/\A\s*(\w+)\s*\.\s*(?:Has(?:Deprecated)?ApiVersion|WithApiVersionSet|IsApiVersionNeutral)\s*\(/))
+        if group = prefixes[call[1]]?
+          prefixes[call[1]] = group.copy_with(versioned: version_metadata(Noir::CSharpLexer.new(statement).masked_source))
+        end
+      end
       next unless statement.includes?("=") && statement.includes?("MapGroup")
 
       left, right = statement.split("=", 2)
@@ -435,7 +469,7 @@ module Analyzer::CSharp::MinimalApiSupport
       end
 
       parts = map_group_values(right, file, statement_line + left.count('\n'))
-      if parts.all?(&.text.empty?)
+      if parts.all? { |part| part.text.empty? && part.versioned.nil? }
         # No literal was collected, so the old reader kept the prior text.
         if parts.any?(&.unread)
           prefixes[variable] = RoutePart.new(prefixes[variable]?.try(&.text) || "", true)
@@ -464,7 +498,8 @@ module Analyzer::CSharp::MinimalApiSupport
       close = lexer.matching_delimiter(open) || next
       arg = split_csharp_parameters(text[open + 1...close]).first? || next
       value = route_template_value(arg, file, line_index + text[0, open].count('\n'))
-      values << (value || RoutePart.new("", true))
+      part = value || RoutePart.new("", true)
+      values << part.copy_with(versioned: version_metadata(lexer.masked_source[close + 1..]))
     end
     values
   end
@@ -498,8 +533,12 @@ module Analyzer::CSharp::MinimalApiSupport
   end
 
   private def prepend_route_part(prefix : RoutePart, route : RoutePart) : RoutePart
-    return RoutePart.new(route.text, route.unread || prefix.unread) if prefix.text.empty?
+    return route.copy_with(unread: route.unread || prefix.unread, versioned: inherit_version(prefix, route)) if prefix.text.empty?
     join_route_parts(prefix, route)
+  end
+
+  private def inherit_version(prefix : RoutePart, part : RoutePart) : Bool?
+    part.versioned.nil? ? prefix.versioned : part.versioned
   end
 
   private def join_route_parts(*parts : RoutePart) : RoutePart
@@ -511,7 +550,7 @@ module Analyzer::CSharp::MinimalApiSupport
       clean = part.text.strip.gsub(/^\//, "").gsub(/\/$/, "")
       clean.empty? ? nil : clean
     end
-    RoutePart.new("/" + clean_parts.join("/"), parts.any?(&.unread))
+    RoutePart.new("/" + clean_parts.join("/"), parts.any?(&.unread), parts.reverse_each.find { |part| !part.versioned.nil? }.try(&.versioned))
   end
 
   # The registration statement starting at `start_column` of
@@ -597,7 +636,7 @@ module Analyzer::CSharp::MinimalApiSupport
       end
     end
 
-    params.uniq(&.name)
+    params.uniq { |param| {param.name, param.param_type} }
   end
 
   private def extract_bind_params_from_file(block : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
@@ -613,16 +652,7 @@ module Analyzer::CSharp::MinimalApiSupport
       params.concat(extract_params_from_block(body))
     end
 
-    params.uniq(&.name)
-  end
-
-  private def extract_delegate_params(block : String, route : String, http_method : String, file : String,
-                                      lines : Array(String), masked_lines : Array(String)) : Array(Param)
-    lambda_params = extract_lambda_param_list(block)
-    return [] of Param if lambda_params.empty?
-
-    lambda_params = inline_binding_name(lambda_params, string_consts(lines)) if lambda_params.matches?(CONST_REFERENCE_RE)
-    bound_handler_params(lambda_params, route, http_method, file, lines, masked_lines)
+    params.uniq { |param| {param.name, param.param_type} }
   end
 
   private def extract_lambda_param_list(block : String) : String
@@ -664,55 +694,6 @@ module Analyzer::CSharp::MinimalApiSupport
     block[(start_index + 1)..end_index]
   end
 
-  private def delegate_param_to_noir_param(param_def : String, route_params : Array(String), http_method : String) : Param?
-    cleaned = param_def.strip
-    return if cleaned.empty?
-
-    explicit_name = Common.explicit_binding_name(cleaned)
-    param_type = Common.binding_attribute_type(cleaned)
-    cleaned = cleaned.gsub(/\[[^\]]+\]\s*/, "").strip
-    cleaned = cleaned.sub(/=.*/, "").strip
-    cleaned = cleaned.gsub(/\b(ref|out|in|params)\b/, "").strip
-    return if cleaned.empty?
-
-    name_match = cleaned.match(/([A-Za-z_][A-Za-z0-9_]*)\s*$/)
-    return unless name_match
-
-    name = explicit_name || name_match[1]
-    type_name = cleaned[0...(cleaned.size - name_match[1].size)].strip
-      .gsub(/\?$/, "")
-      .split(/\s+/).last? || ""
-    type_name = type_name.split(".").last
-
-    # A lambda parameter with no type annotation only compiles against the
-    # `RequestDelegate` overload — `endpoints.MapGet("/headers", async context
-    # => …)` — so the name is the HttpContext, never a bound request value.
-    # Every such registration used to contribute a phantom `query` param.
-    return if type_name.empty? && param_type.nil?
-
-    return if service_binding?(type_name, cleaned, param_type)
-
-    if route_params.includes?(name)
-      param_type = "path"
-    elsif param_type.nil?
-      param_type = default_delegate_param_type(type_name, http_method)
-    end
-
-    return if param_type == "service"
-    Param.new(name, "", param_type || "query")
-  end
-
-  private def service_binding?(type_name : String, full_definition : String, param_type : String?) : Bool
-    return true if param_type == "service"
-    return true if SERVICE_BINDING_TYPES.includes?(type_name)
-    return true if full_definition.includes?("HttpContext") || full_definition.includes?("HttpRequest") || full_definition.includes?("HttpResponse")
-    return true if type_name.starts_with?("ILogger")
-    # DbContexts, repositories, MediatR senders, mappers and other DI
-    # collaborators injected straight into the handler delegate are not
-    # request-bound values.
-    Common.csharp_service_type?(type_name)
-  end
-
   private def default_delegate_param_type(type_name : String, http_method : String) : String
     return "query" if SIMPLE_BINDING_TYPES.includes?(type_name)
     # `IFormFile` / `IFormFileCollection` / `IFormCollection` bind from the
@@ -746,38 +727,86 @@ module Analyzer::CSharp::MinimalApiSupport
 
   # --- Method-group handler resolution -------------------------------------
 
-  # Resolves a `MapGet("/x", HandlerMethod)` style registration to the
-  # referenced method's signature + body. Returns
-  # `{name, signature, body, body_start_line, skip_first_line, decl_line}`
-  # or nil when the handler is a lambda (already handled) or can't be found
-  # in this file. A qualified `Type.Method` resolves only when this file
-  # declares `Type`, so a same-named method of another class is never taken.
-  private def resolve_handler_method(block : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, String, Int32, Bool, Int32, Bool)?
-    name = handler_method_name(block)
-    return unless name
-    *qualifier, method = name.split('.')
-    unless qualifier.empty?
-      type_re = /\b(?:class|record|struct)\s+#{Regex.escape(qualifier.last)}\b/
-      return unless lines.any? { |l| l.includes?(qualifier.last) && l.matches?(type_re) }
+  alias BoundMethod = Tuple(String, Noir::CSharpHandlerDeclaration)
+
+  private def declarations(file : String)
+    @handler_declarations[file] ||= Noir::CSharpHandlerDeclarations.new(csharp_code(file))
+  end
+
+  # A bare reference is a local function, a member of the enclosing
+  # (possibly partial) type, or a statically imported member.
+  private def resolve_handler_methods(name : String, file : String, line : Int32) : Array(BoundMethod)
+    parts = name.split('.')
+    method = parts.pop
+    if parts.empty?
+      if local = declarations(file).local(method, line)
+        return [{file, local}]
+      end
+      if owner = declarations(file).unit.type_at(line)
+        matches = type_methods(owner.name, method, file)
+        return matches unless matches.empty?
+      end
+      return csharp_code(file).masked_source.scan(/\busing\s+static\s+([\w.]+)\s*;/).flat_map do |m|
+        type_methods(m[1], method, file)
+      end
     end
-    locate_method_definition(method, lines, masked_lines).try do |sig, body, body_line, skip_first, decl_line, ambiguous|
-      {name, sig, body, body_line, skip_first, decl_line, ambiguous}
+    type_methods(parts.join('.'), method, file)
+  end
+
+  private def type_methods(type : String, method : String, file : String, binding_method : Bool = false) : Array(BoundMethod)
+    result = [] of BoundMethod
+    each_handler_type(type, file) do |candidate, decl|
+      decl.methods.each do |member|
+        next unless member.name == method
+        next if binding_method && !binding_method?(member)
+        if handler = declarations(candidate).method(member)
+          result << {candidate, handler}
+        end
+      end
     end
+    result
+  end
+
+  private def each_handler_type(type : String, file : String, &)
+    short = type.split('.').last
+    candidates = csharp_type_files[short]? || return
+    path, namespace = resolve_type_file(type, file) || return
+    root = Common.project_root_for(file, @csharp_project_roots) || configured_base_for(file)
+    candidates.each do |candidate|
+      next unless (Common.project_root_for(candidate, @csharp_project_roots) || configured_base_for(candidate)) == root
+      declarations(candidate).unit.types.each do |decl|
+        next unless decl.name == short && (namespace.nil? || decl.namespace == namespace)
+        next unless path == candidate || decl.partial?
+        full_name = "#{decl.namespace}.#{qualified_type(decl)}"
+        yield candidate, decl if full_name.ends_with?(".#{type}") || full_name == type
+      end
+    end
+  end
+
+  private def binding_method?(member : Noir::CSharpDecl::Member) : Bool
+    return false unless member.public? && member.static?
+    first = member.params.first?.try(&.type.split('.').last)
+    if member.name == "BindAsync"
+      first == "HttpContext" && member.return_type.includes?("ValueTask")
+    else
+      first.in?("string", "String", "string?", "String?") && member.params.last?.try(&.modifiers.includes?("out")) == true && member.return_type.in?("bool", "Boolean", "System.Boolean")
+    end
+  end
+
+  private def qualified_type(decl : Noir::CSharpDecl::TypeDecl) : String
+    decl.outer.try { |outer| "#{qualified_type(outer)}.#{decl.name}" } || decl.name
   end
 
   # Pulls the handler argument out of the `Map*(...)` call and returns it
   # as written (`GetItems`, `Handlers.GetItems`) when it's a method group (a
   # bare/qualified identifier), or nil for lambdas, string literals and
   # inline expressions.
-  private def handler_method_name(block : String) : String?
-    args = map_call_arguments(block)
-    return if args.size < 2
-
-    handler = args.last.strip
+  private def handler_method_name(argument : String) : String?
+    handler = argument.strip.sub(NAMED_ARGUMENT_HEAD_RE, "")
     return if handler.empty?
     return if handler.includes?("=>")   # lambda
     return if handler.starts_with?('"') # string literal
-    return if handler.starts_with?("new")
+    return if handler.starts_with?("new ")
     return unless handler.matches?(/\A@?[A-Za-z_][A-Za-z0-9_]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*\z/)
 
     handler.gsub(/\s+/, "").lchop('@')
@@ -832,112 +861,121 @@ module Analyzer::CSharp::MinimalApiSupport
     split_csharp_parameters(block[(open + 1)...close])
   end
 
-  # Finds a method declaration by name in the file and returns its
-  # signature, body block, body start line (1-based) and whether the
-  # callee scanner should skip the first body line, then the declaration
-  # line (1-based). Skips the registration call itself and assignment/call
-  # sites.
-  private def locate_method_definition(name : String, lines : Array(String), masked_lines : Array(String)) : Tuple(String, String, Int32, Bool, Int32, Bool)?
-    decl = /(?:public|private|internal|protected|static|async)\b[^;={(]*\b#{Regex.escape(name)}\s*\(/
+  class HandlerInputs
+    getter params : Array(Param)
 
-    lines.each_with_index do |line, idx|
-      next unless line.includes?(name)
-      next unless line.matches?(decl)
-      # The `Map*("/x", Name)` line also references the handler — skip it.
-      next if line.matches?(MAP_CALL_RE)
-
-      sig, end_idx = build_signature(lines, masked_lines, idx)
-      block, body_idx, skip_first = extract_callable_body(lines, masked_lines, end_idx)
-      return if block.empty?
-      ambiguous = lines.each.skip(idx + 1).any? { |other| other.includes?(name) && other.matches?(decl) && !other.matches?(MAP_CALL_RE) }
-      return {sig, block, body_idx + 1, skip_first, idx + 1, ambiguous}
+    def initialize(@params)
     end
 
-    nil
-  end
-
-  # Builds params from a resolved handler's signature, reusing the delegate
-  # binding rules and expanding `[AsParameters]` bundle types.
-  private def handler_signature_params(signature : String, route : String, http_method : String, file : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
-    list = extract_balanced_param_list(signature)
-    return [] of Param unless list
-
-    list = list.strip
-    return [] of Param if list.empty?
-
-    list = inline_binding_name(list, string_consts(lines)) if list.matches?(CONST_REFERENCE_RE)
-    bound_handler_params(list, route, http_method, file, lines, masked_lines)
+    property? unresolved = false
   end
 
   # Params bound from a handler's parameter list — an inline lambda's or a
   # method group's — expanding `[AsParameters]` bundle types and body DTOs
   # (`CreateOrderRequest request` is the members a client sends, not a
   # field called `request`).
-  private def bound_handler_params(list : String, route : String, http_method : String, file : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
+  private def bind_handler_params(binding : HandlerInputs, list : String, route : String, method : String, file : String)
     route_params = Noir::URLPath.template_names(route)
-    params = [] of Param
-    split_csharp_parameters(list).each do |pdef|
-      if pdef.includes?("[AsParameters]") || pdef.includes?("[AsParameters ")
-        params.concat(expand_as_parameters(pdef, file, lines, masked_lines, route_params, http_method))
-      elsif param = delegate_param_to_noir_param(pdef, route_params, http_method)
-        members = body_type_params(pdef, param.param_type, file, lines, masked_lines) if param.param_type.in?("json", "form")
-        members ? params.concat(members) : (params << param)
+    split_csharp_parameters(list).each do |definition|
+      bind_argument(binding, definition, route_params, method, file)
+    end
+  end
+
+  BIND_ATTRIBUTE = /\[(?:(?:property|param)\s*:\s*)?(?:[\w.]+\.)?(AsParameters|From(?:Query|Route|Header|Body|Form|Services|KeyedServices))(?:Attribute)?\b/
+
+  private def expand_bundle(binding : HandlerInputs, type : String, file : String, route_params : Array(String), method : String)
+    expand_bundle(binding, type, file, route_params, method, Set(String).new, Set(String).new)
+  end
+
+  private def expand_bundle(binding : HandlerInputs, type : String, file : String, route_params : Array(String), method : String,
+                            seen : Set(String), hidden : Set(String))
+    return unless seen.add?(type)
+    found = false
+    bases = [] of Tuple(String, String)
+    each_handler_type(type, file) do |path, decl|
+      found = true
+      ctors = decl.constructors.select(&.public?)
+      ctor = decl.params || (ctors.first.params if ctors.size == 1)
+      if decl.kind == "record" && (positional = decl.params)
+        positional.each do |param|
+          bind_argument(binding, param.text, route_params, method, path, member: true) if hidden.add?(param.name)
+        end
+      end
+      decl.members.each do |prop|
+        next if prop.static?
+        next unless prop.kind == :property && prop.public? && hidden.add?(prop.name)
+        property_type = prop.header.rchop(prop.name).strip
+        prop.modifiers.each { |modifier| property_type = property_type.lchop(modifier).lstrip }
+        arg = ctor.try(&.find { |param| param.name.compare(prop.name, case_insensitive: true) == 0 && param.type == property_type })
+        next unless arg || prop.accessors.try(&.matches?(Common::PUBLIC_SETTER_RE))
+        attrs = (arg.try(&.attributes) || [] of Noir::CSharpDecl::Attribute) + prop.attributes
+        definition = attrs.join(" ") { |attr| "[#{attr.text}]" } + " #{property_type} #{prop.name}"
+        bind_argument(binding, definition, route_params, method, path, member: true)
+      end
+      if base = decl.bases.first?
+        bases << {base, path}
       end
     end
-    params.uniq(&.name)
+    binding.unresolved = true unless found
+    bases.each { |base, path| expand_bundle(binding, base, path, route_params, method, seen, hidden) }
   end
 
-  # `[AsParameters] SomeType arg` binds each public member of `SomeType`
-  # from the query/route/header — never the body. Expand to those members,
-  # dropping the DI-service members (a bundle like `CatalogServices` yields
-  # nothing, which is exactly right).
-  private def expand_as_parameters(param_def : String, file : String, lines : Array(String), masked_lines : Array(String), route_params : Array(String), http_method : String) : Array(Param)
-    cleaned = param_def.gsub(Common::ATTRIBUTE_LIST_RE, "").strip
-    type_token = cleaned.split(/\s+/).first?
-    return [] of Param unless type_token
-
-    base = type_token.gsub(/<.*>/, "").split('.').last
-    return [] of Param if base.empty?
-    return [] of Param if Common.csharp_service_type?(base)
-
-    params = [] of Param
-    type_member_defs(base, file, lines, masked_lines).each do |member|
-      param = as_parameters_member_to_param(member, route_params, http_method)
-      params << param if param
+  private def bind_argument(binding : HandlerInputs, definition : String, route_params : Array(String), method : String, file : String, member : Bool = false)
+    lexer = csharp_code(file)
+    definition = definition.gsub(BIND_ATTRIBUTE) { |_, match| "[#{match[1]}" }
+    if definition.matches?(CONST_REFERENCE_RE)
+      definition = inline_binding_name(definition, string_consts(lexer.code_lines))
+      binding.unresolved = true if definition.matches?(CONST_REFERENCE_RE)
     end
-    params.uniq(&.name)
-  end
+    cleaned = definition.gsub(Common::ATTRIBUTE_LIST_RE, "").sub(/=.*/m, "").strip
+    type = cleaned.sub(/\s*[A-Za-z_]\w*\z/, "").strip.rchop('?')
+    if definition.includes?("[AsParameters]")
+      if member
+        binding.unresolved = true
+      else
+        expand_bundle(binding, type, file, route_params, method)
+      end
+      return
+    end
 
-  # Maps a single `[AsParameters]` member to a Param. Defaults to query
-  # (members bind from query/route/header, never the body) and honours an
-  # explicit `[FromHeader]`/`[FromQuery]`/`[FromRoute]` on the member.
-  private def as_parameters_member_to_param(member_def : String, route_params : Array(String), http_method : String) : Param?
-    explicit_name = Common.explicit_binding_name(member_def)
-    param_type = Common.binding_attribute_type(member_def)
-    cleaned = member_def.gsub(Common::ATTRIBUTE_LIST_RE, "").strip
-    cleaned = cleaned.sub(/=.*/, "").strip
-    cleaned = cleaned.gsub(/\b(ref|out|in|params)\b/, "").strip
-    return if cleaned.empty?
+    name = Common.explicit_binding_name(definition) || Common.member_name(cleaned)
+    return if name.empty? || type.empty?
+    source = Common.binding_attribute_type(definition)
+    return if source == "service"
 
-    name_match = cleaned.match(/([A-Za-z_][A-Za-z0-9_]*)\s*$/)
-    return unless name_match
-
-    name = explicit_name || name_match[1]
-    type_name = cleaned[0...(cleaned.size - name_match[1].size)].strip
-      .gsub(/\?$/, "")
-      .split(/\s+/).last? || ""
-    type_name = type_name.split('.').last
-
-    return if service_binding?(type_name, cleaned, param_type)
-    return if param_type == "service"
-
-    param_type ||= if route_params.includes?(name)
-                     "path"
-                   elsif Common::SERVICE_FORM_INPUT_TYPES.includes?(type_name)
-                     "form"
-                   else
-                     "query"
-                   end
-    Param.new(name, "", param_type)
+    if source.nil?
+      key = Noir::CSharpDecl.simple_name(type)
+      slot = route_params.find { |part| part.compare(name, case_insensitive: true) == 0 }
+      # A custom binder takes precedence over inferred DI and body binding.
+      if csharp_type_files.has_key?(key)
+        binders = type_methods(type, "BindAsync", file, binding_method: true)
+        unless binders.empty?
+          opaque = false
+          binders.each do |path, decl|
+            keys = extract_params_from_block(decl.body, string_consts(csharp_code(path).code_lines))
+            binding.params.concat(keys)
+            opaque = true if keys.empty?
+          end
+          return unless opaque
+          # Preserve the normal binding candidate when the custom binder
+          # delegates the read or uses a key we cannot recover.
+          binding.unresolved = true
+        end
+        scalar = !type_methods(type, "TryParse", file, binding_method: true).empty?
+      end
+      unless scalar || SIMPLE_BINDING_TYPES.includes?(key)
+        return if @binding_config.services.includes?(type) || Common.csharp_service_type?(key) || SERVICE_BINDING_TYPES.includes?(key)
+      end
+      name = slot if slot
+      source = if slot
+                 "path"
+               elsif scalar
+                 "query"
+               else
+                 default_delegate_param_type(key, method)
+               end
+    end
+    members = body_type_params(definition, source, file, lexer.code_lines, lexer.masked_lines) if source.in?("json", "form")
+    members ? binding.params.concat(members) : (binding.params << Param.new(name, "", source))
   end
 end
