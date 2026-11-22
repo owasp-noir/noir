@@ -7,6 +7,8 @@ module Noir
     # `quotes` open a string literal in which a backslash escapes the next
     # char; `raw_quotes` open one that takes no escapes (Go's backtick).
     #
+    # With mask_literals, both fences and contents become spaces, one per
+    # character, keeping newlines for callers that slice the original source.
     # An unterminated `/*` is blanked through the end of the text. With
     # `leak_unterminated_tail` the scan instead stops one char early and the
     # text's final character passes through verbatim — the Java/Go strippers
@@ -14,12 +16,14 @@ module Noir
     def self.strip(text : String,
                    quotes : String = %("'),
                    raw_quotes : String = "",
-                   leak_unterminated_tail : Bool = false) : String
-      return text unless text.includes?("//") || text.includes?("/*")
+                   leak_unterminated_tail : Bool = false,
+                   mask_literals : Bool = false) : String
+      return text unless mask_literals || text.includes?("//") || text.includes?("/*")
 
       result = String::Builder.new
       chars = text.chars
       i = 0
+      escaped = false
       in_string = false
       string_quote = '\0'
 
@@ -27,13 +31,14 @@ module Noir
         c = chars[i]
 
         if in_string
-          if c == '\\' && i + 1 < chars.size && !raw_quotes.includes?(string_quote)
-            result << c << chars[i + 1]
-            i += 2
-            next
+          if escaped
+            escaped = false
+          elsif c == '\\' && !raw_quotes.includes?(string_quote)
+            escaped = true
+          elsif c == string_quote
+            in_string = false
           end
-          in_string = false if c == string_quote
-          result << c
+          result << (mask_literals && c != '\n' ? ' ' : c)
           i += 1
           next
         end
@@ -41,7 +46,7 @@ module Noir
         if quotes.includes?(c) || raw_quotes.includes?(c)
           in_string = true
           string_quote = c
-          result << c
+          result << (mask_literals ? ' ' : c)
           i += 1
           next
         end

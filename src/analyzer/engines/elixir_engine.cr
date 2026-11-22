@@ -1,3 +1,4 @@
+require "../../utils/line_comment"
 require "../../models/analyzer"
 require "./file_scan_engine"
 require "../../miniparsers/elixir_callee_extractor"
@@ -113,28 +114,7 @@ module Analyzer::Elixir
     # No `#` → return the original slice (zero allocation). The common
     # path for route / controller lines.
     protected def strip_trailing_comment(line : String) : String
-      return line unless line.includes?('#')
-
-      in_string = false
-      escaped = false
-      quote = '\0'
-      line.each_char_with_index do |char, i|
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '#'
-          return line[0, i]
-        end
-      end
-      line
+      Noir::LineComment.strip(line, '#')
     end
 
     # ExUnit's conventions are rigid: every test module sits in a file

@@ -1,0 +1,650 @@
+# Text helper inventory. Each heading gives masking / matching / splitting counts.
+# Counts include overloads, forwarding methods and lexer operations. Token-only
+# predicates and route extraction methods that happen to count depth are out of scope.
+# At the start of the batch there were 144 masking, 133 matching and 116 splitting
+# definitions. The retired signatures below are historical, outside the allowlist.
+# src/analyzer/analyzers/specification/apache_httpd.cr: private def strip_comment(line : String) : String
+# src/miniparsers/java_route_extractor_ts.cr: private def visible_java_code(source : String) : String
+# src/analyzer/analyzers/java/javalin.cr: private def find_matching_paren(code : String, open_idx : Int32) : Int32?
+# src/analyzer/analyzers/java/spring.cr: private def find_matching_paren(code : String, open_idx : Int32) : Int32?
+# src/analyzer/engines/java_engine.cr: def self.find_matching_delimiter(code : String,
+# src/miniparsers/java_route_extractor_ts.cr: private def find_matching_delimiter(code : String,
+# src/analyzer/analyzers/java/spring.cr: private def split_top_level_concat(expression : String) : Array(String)
+# src/miniparsers/java_route_extractor_ts.cr: private def split_gateway_args(args : String) : Array(String)
+# src/miniparsers/kotlin_route_extractor_ts/helpers.cr: private def find_matching_paren(source : String, open_idx : Int32) : Int32?
+# src/miniparsers/kotlin_route_extractor_ts/helpers.cr: private def top_level_plus_parts(value : String) : Array(String)
+# src/analyzer/analyzers/python/http_server.cr: private def strip_comment(line : ::String) : ::String
+# src/analyzer/analyzers/python/masonite.cr: private def split_masonite_args(text : ::String) : Array(::String)
+# src/analyzer/analyzers/ruby/rails.cr: private def strip_inline_comment(line : String) : String
+# src/analyzer/analyzers/ruby/grape.cr: private def split_grape_top_level_args(text : String) : Array(String)
+# Remove signatures as helpers migrate. Never admit a new copy here.
+
+# apache_httpd (0 / 0 / 1)
+# Directive arguments honor both quotes and backslash inside quotes. Whitespace splits arguments, and an unquoted # ends the line. No multiline state.
+# Split
+src/analyzer/analyzers/specification/apache_httpd.cr: private def split_args(value : String) : Array(String)
+
+# apex (0 / 1 / 0)
+# Brace scan skips escaped single-quoted Apex strings. An unclosed block ends at EOF.
+# Match
+src/miniparsers/apex_extractor.cr: private def close_of(bytes : Bytes, open : Int32) : Int32
+
+# apigee (0 / 0 / 1)
+# OR at parenthesis depth zero outside double quotes. Quotes toggle without escape processing.
+# Split
+src/analyzer/analyzers/specification/apigee.cr: private def disjuncts(condition : String) : Array(String)
+
+# asp (1 / 0 / 0)
+# VBScript apostrophe comments are blanked outside double quotes. The scan resets at LF and does not recognize REM.
+# Mask
+src/analyzer/analyzers/asp/classic.cr: private def strip_vbscript_comments(content : String) : String
+
+# aspnet (2 / 0 / 0)
+# WebForms selects apostrophe or // by extension and processes one line at a time. Block comments cross this boundary.
+# Mask
+src/analyzer/analyzers/aspnet/webforms.cr: private def strip_comments(path : String, content : String) : String
+src/analyzer/analyzers/aspnet/webforms.cr: private def strip_line_comment(line : String, vb : Bool) : String
+
+# c (0 / 0 / 1)
+# C call_args pairs the C++ byte matcher with the double-quote-only CPP argument rules. Commas in character literals remain visible to the splitter.
+# Split
+src/miniparsers/c_http_support.cr: def call_args(source : String, open_paren : Int32) : Tuple(Array(String), Int32)?
+
+# caddy (1 / 0 / 0)
+# The first # ends the line even inside a quote.
+# Mask
+src/analyzer/analyzers/specification/caddy.cr: private def strip_comment(line : String) : String
+
+# cfml (4 / 5 / 1)
+# Tag and script comments use separate passes. Delimiter matching recognizes doubled single and double quotes. Argument splitting uses both quotes, no backslash escaping, and shared depth that can go negative.
+# Mask
+src/analyzer/analyzers/cfml/pure.cr: private def strip_cfscript_block_comments(content : String) : String
+src/analyzer/engines/cfml_engine.cr: protected def strip_cfml_comments(content : String) : String
+src/analyzer/engines/cfml_engine.cr: protected def strip_script_comments(content : String) : String
+src/analyzer/engines/cfml_engine.cr: protected def strip_all_comments(content : String) : String
+# Match
+src/analyzer/engines/cfml_engine.cr: protected def paren_content(content : String, open_paren : Int32) : String?
+src/analyzer/engines/cfml_engine.cr: protected def matching_paren(content : String, open_paren : Int32) : Int32?
+src/analyzer/engines/cfml_engine.cr: protected def matching_bracket(content : String, open_bracket : Int32) : Int32?
+src/analyzer/engines/cfml_engine.cr: protected def matching_brace(content : String, open_brace : Int32) : Int32?
+src/analyzer/engines/cfml_engine.cr: protected def matching_delimiter(content : String, open_index : Int32,
+# Split
+src/analyzer/engines/cfml_engine.cr: protected def split_arguments(raw : String) : Array(String)
+
+# clojure (0 / 3 / 0)
+# ClojureScanner reads byte offsets and skips semicolon comments, escaped strings and backslash character literals. The CLI builds a brace-pair index. Form ends and closing-character indices have different contracts.
+# Match
+src/analyzer/analyzers/clojure/cli.cr: private def brace_pairs(content : String) : Array({Int32, Int32})
+src/miniparsers/clojure_scanner.cr: def end_of_form(source : String, index : Int32, limit : Int32) : Int32
+src/miniparsers/clojure_scanner.cr: def find_matching_delimiter(source : String, index : Int32, open_char : Char, close_char : Char, limit : Int32) : Int32
+
+# cpp (2 / 1 / 3)
+# The callee extractor handles line/block comments, escaped chars, digit separators and delimited raw strings. Adapter splitters share CPP rules, which only protect double quotes.
+# Mask
+src/miniparsers/cpp_callee_extractor.cr: def strip_comments(source : String) : String
+src/miniparsers/cpp_callee_extractor.cr: private def strip_non_code_with_state(line : String,
+# Match
+src/miniparsers/cpp_callee_extractor.cr: def find_matching_delimiter(source : String,
+# Split
+src/analyzer/analyzers/cpp/drogon.cr: private def split_top_level_args(raw : String) : Array(String)
+src/analyzer/analyzers/cpp/httplib.cr: private def split_top_level_args(raw : String) : Array(String)
+src/analyzer/analyzers/cpp/oatpp.cr: private def split_top_level_args(raw : String) : Array(String)
+
+# crystal (2 / 0 / 0)
+# The line scanner preserves both simple quotes and escapes around #. The engine masks heredoc lines separately. A call on an isolated heredoc line has no delimiter state.
+# Mask
+src/analyzer/engines/crystal_engine.cr: protected def mask_crystal_heredocs(lines : Array(String)) : Array(String)
+src/miniparsers/crystal_callee_extractor.cr: def strip_comment(line : String) : String
+
+# csharp (12 / 9 / 6)
+# The masking lexer understands chars, verbatim, interpolated and fenced raw strings plus // and block comments. Several matchers consume previously masked text. The parameter splitter protects double quotes and counts angle brackets. Razor has a separate comment grammar.
+# Mask
+src/analyzer/analyzers/csharp/razor.cr: private def strip_comments(source : String) : String
+src/minilexers/csharp_lexer.cr: private def scan
+src/minilexers/csharp_lexer.cr: private def mask_line_comment(start : Int32, record_span : Bool = true) : Int32
+src/minilexers/csharp_lexer.cr: private def mask_block_comment(start : Int32, record_span : Bool = true) : Int32
+src/minilexers/csharp_lexer.cr: private def mask_char_literal(start : Int32, record_span : Bool = true) : Int32
+src/minilexers/csharp_lexer.cr: private def mask_string(start : Int32, quote_pos : Int32, verbatim : Bool, interpolated : Bool) : Int32
+src/minilexers/csharp_lexer.cr: private def mask_raw_string(start : Int32, quote_pos : Int32, fence : Int32) : Int32
+src/minilexers/csharp_lexer.cr: private def mask_nested_hole_string(quote_pos : Int32) : Int32
+src/minilexers/csharp_lexer.cr: def masked_lines : Array(String)
+src/minilexers/csharp_lexer.cr: def masked_source : String
+src/miniparsers/csharp_callee_extractor.cr: private def strip_line_comment(line : String) : String
+src/miniparsers/csharp_decl_parser.cr: private def masked_text(from : Int32, to : Int32) : String
+# Match
+src/analyzer/analyzers/csharp/abp.cr: private def attribute_end(masked : String, bracket : Int32) : Tuple(Int32, Int32)
+src/analyzer/analyzers/csharp/common.cr: protected def extract_balanced_param_list(signature : String) : String?
+src/analyzer/analyzers/csharp/common.cr: private def accessor_list(masked : Array(Char), open : Int32) : Tuple(String, Int32)
+src/analyzer/analyzers/csharp/common.cr: protected def gather_balanced_parens(lines : Array(String), masked : Array(String), start_index : Int32, open_pos : Int32) : String
+src/analyzer/analyzers/csharp/minimal_api_support.cr: private def extract_lambda_param_list(block : String) : String
+src/analyzer/analyzers/csharp/servicestack.cr: private def attribute_section_end(masked_lines : Array(String), start : Int32) : Tuple(Int32, Int32)
+src/miniparsers/csharp_decl_parser.cr: private def matching(open : Int32, stop : Int32) : Int32?
+src/miniparsers/csharp_decl_parser.cr: private def matching_angle(open : Int32, stop : Int32) : Int32?
+src/tagger/framework_taggers/csharp/aspnet_auth.cr: private def closing_brace(text : String, open : Int32) : Int32?
+# Split
+src/analyzer/analyzers/csharp/aspnet_core_mvc.cr: private def top_level_args(code : String, masked : String) : Array(String)
+src/analyzer/analyzers/csharp/common.cr: protected def split_csharp_parameters(param_list : String) : Array(String)
+src/analyzer/analyzers/csharp/minimal_api_support.cr: private def map_call_arguments(block : String) : Array(String)
+src/miniparsers/csharp_decl_parser.cr: private def split_top(open : Int32, close : Int32, angles : Bool = false) : Array(Tuple(Int32, Int32))
+src/tagger/framework_taggers/csharp/aspnet_auth.cr: private def top_level_statements(body : String) : Array(String)
+src/tagger/framework_taggers/csharp/aspnet_auth.cr: private def split_top(condition : String, operator : String) : Array(String)
+
+# dart (2 / 3 / 5)
+# The callee scanner recognizes raw prefixes and triple quotes. Serverpod tracks ordinary quotes and comments separately. Its type splitter counts angle brackets and parentheses without string protection.
+# Mask
+src/analyzer/analyzers/dart/serverpod.cr: private def strip_dart_comments(text : String) : String
+src/miniparsers/dart_callee_extractor.cr: private def strip_non_code_with_state(line : String, state : StripState) : Tuple(String, StripState)
+# Match
+src/analyzer/analyzers/dart/dart_helper.cr: def find_matching_paren(text : String, open_idx : Int32, offsets : Noir::CharOffsets? = nil) : Int32?
+src/analyzer/analyzers/dart/serverpod.cr: private def extract_braced_block(text : String, start : Int32) : Tuple(String, Int32)?
+src/miniparsers/dart_callee_extractor.cr: def find_matching_delimiter(source : String,
+# Split
+src/analyzer/analyzers/dart/dart_helper.cr: def first_top_level_comma(text : String, start : Int32, limit : Int32) : Int32?
+src/analyzer/analyzers/dart/dart_helper.cr: def split_top_level_args(text : String) : Array(String)
+src/analyzer/analyzers/dart/get_server.cr: private def top_level_colon(text : String) : Int32?
+src/analyzer/analyzers/dart/serverpod.cr: private def last_top_level_space(text : String) : Int32?
+src/analyzer/analyzers/dart/serverpod.cr: private def split_top_level_commas(text : String) : Array(String)
+
+# elixir (2 / 1 / 1)
+# The engine preserves quoted text while removing # comments. The callee extractor drops quoted text too. Neither line helper remembers heredocs or sigils across calls.
+# Mask
+src/analyzer/engines/elixir_engine.cr: protected def strip_trailing_comment(line : String) : String
+src/miniparsers/elixir_callee_extractor.cr: def strip_comment(line : String) : String
+# Match
+src/analyzer/analyzers/elixir/elixir_phoenix.cr: private def enclosed_span(text : String, open : Char, close : Char) : String?
+# Split
+src/analyzer/analyzers/elixir/elixir_phoenix.cr: private def split_top_level_commas(text : String) : Array(String)
+
+# erlang (1 / 1 / 1)
+# Percent comments respect strings, quoted atoms and dollar chars (including escaped chars). Cowboy's balanced span skips ordinary quotes, and its splitter permits negative depth.
+# Mask
+src/analyzer/analyzers/erlang/erlang_helper.cr: def strip_erlang_comments(text : String) : String
+# Match
+src/analyzer/analyzers/erlang/cowboy.cr: private def balanced_span(text : String,
+# Split
+src/analyzer/analyzers/erlang/cowboy.cr: private def split_top_level(body : String) : Array(String)
+
+# fsharp (2 / 3 / 0)
+# The callee scanner carries nested block-comment depth and triple-string state. Giraffe distinguishes a char literal from a primed identifier. These states are unavailable to simple C-style comment stripping.
+# Mask
+src/analyzer/analyzers/fsharp/giraffe.cr: private def strip_fsharp_comments(text : String) : String
+src/miniparsers/fsharp_callee_extractor.cr: private def strip_non_code_with_state(line : String, state : StripState) : Tuple(String, StripState)
+# Match
+src/analyzer/analyzers/fsharp/giraffe.cr: private def find_matching_paren(chars : Array(Char), open_idx : Int32) : Int32?
+src/analyzer/analyzers/fsharp/giraffe.cr: private def find_matching_bracket(chars : Array(Char), open_idx : Int32) : Int32?
+src/analyzer/analyzers/fsharp/giraffe.cr: private def find_matching_delimiter(chars : Array(Char), open_idx : Int32,
+
+# gleam (1 / 1 / 3)
+# The comment stripper skips escaped double-quoted strings before deleting // to LF. Pattern and alternative splitters track their own nesting.
+# Mask
+src/analyzer/analyzers/gleam/gleam_helper.cr: def strip_gleam_comments(text : String) : String
+# Match
+src/analyzer/analyzers/gleam/gleam_helper.cr: def balanced_span(text : String, open_idx : Int32) : String?
+# Split
+src/analyzer/analyzers/gleam/gleam_helper.cr: def split_alternatives(pattern : String) : Array(String)
+src/analyzer/analyzers/gleam/gleam_helper.cr: def split_pattern_segments(body : String) : Array(String)
+src/analyzer/analyzers/gleam/wisp.cr: private def top_level_arrow(line : String) : Int32?
+
+# go (1 / 3 / 4)
+# CComments preserves escaped interpreted literals and unescaped backtick raw strings. The legacy unterminated block-comment tail is observable. Several structural consumers count braces on different representations.
+# Mask
+src/analyzer/engines/go_engine.cr: def self.strip_comments(text : String) : String
+# Match
+src/analyzer/analyzers/go/connect_rpc.cr: private def extract_brace_block(content : String, chars : Array(Char), open_pos : Int32) : String?
+src/analyzer/analyzers/go/huma.cr: private def brace_body(content : String, from : Int32) : String?
+src/tagger/framework_taggers/go/go_auth.cr: private def closing_paren(text : String, open : Int32) : Int32?
+# Split
+src/analyzer/analyzers/go/cli.cr: private def cobra_call_args(call : String, open_paren : Int32) : Array(String)
+src/analyzer/analyzers/go/http.cr: private def call_argument(text : String, index : Int32) : String?
+src/tagger/framework_taggers/go/go_auth.cr: private def call_args(inner : String) : Array(String)
+src/tagger/framework_taggers/go/go_auth.cr: private def split_top_level(expr : String, op : String) : Array(String)
+
+# graphql_sdl_parser (1 / 4 / 0)
+# The mask blanks # comments, regular and triple-quoted descriptions before counting delimiters. It also replaces non-ASCII code characters with spaces.
+# Mask
+src/analyzer/analyzers/specification/graphql_sdl_parser.cr: private def strip_comments(content : String) : String
+# Match
+src/analyzer/analyzers/specification/graphql_sdl_parser.cr: private def extract_brace_block(content : String, chars : Array(Char), open_pos : Int32) : String?
+src/analyzer/analyzers/specification/graphql_sdl_parser.cr: private def extract_paren_block(content : String, chars : Array(Char), open_pos : Int32) : String?
+src/analyzer/analyzers/specification/graphql_sdl_parser.cr: private def extract_paired_block(content : String, chars : Array(Char), open_pos : Int32,
+src/analyzer/analyzers/specification/graphql_sdl_parser.cr: private def matching_close_index(chars : Array(Char), open_pos : Int32,
+
+# graphql_typedefs (0 / 1 / 0)
+# The JS template wrapper looks for a closing backtick and tracks template substitutions, a different delimiter from SDL braces.
+# Match
+src/analyzer/analyzers/specification/graphql_typedefs.cr: private def find_closing_backtick(chars : Array(Char), start : Int32) : Int32?
+
+# groovy (2 / 2 / 0)
+# Grails and the callee extractor consult GroovyLiteralScanner for slashy, dollar-slashy and quoted literals. One preserves literal text while the other masks it.
+# Mask
+src/analyzer/analyzers/groovy/grails.cr: private def strip_groovy_comments(text : String) : String
+src/miniparsers/groovy_callee_extractor.cr: private def strip_non_code(body : String) : String
+# Match
+src/analyzer/analyzers/groovy/grails.cr: private def find_matching_brace(text : String, open_idx : Int32) : Int32?
+src/analyzer/analyzers/groovy/grails.cr: private def extract_braced_block(text : String, start : Int32, chars : Array(Char) = text.chars) : Tuple(String, Int32)?
+
+# grpc (0 / 3 / 0)
+# The character-indexed matcher skips double quotes with even/odd backslash parity, // lines and non-nesting /* */ blocks. Single-quoted literals do not hide delimiters.
+# Match
+src/analyzer/analyzers/specification/grpc.cr: private def extract_brace_block(content : String, open_pos : Int32,
+src/analyzer/analyzers/specification/grpc.cr: private def find_matching_delimiter(content : String, open_pos : Int32, open_char : Char, close_char : Char) : Int32?
+src/analyzer/analyzers/specification/grpc.cr: private def find_matching_delimiter(chars : Array(Char), open_pos : Int32, open_char : Char, close_char : Char) : Int32?
+
+# haskell (4 / 0 / 3)
+# The shared comment pass handles --, nested {- -} and double quotes. CLI handles line comments alone. Servant splits type operators, and Yesod's route tokenizer counts braces while splitting whitespace.
+# Mask
+src/analyzer/analyzers/haskell/cli.cr: private def strip_line_comment(line : String) : String
+src/analyzer/analyzers/haskell/haskell_helper.cr: def strip_haskell_comments(text : String) : String
+src/analyzer/analyzers/haskell/yesod.cr: private def strip_route_comment(line : String) : String
+src/miniparsers/haskell_callee_extractor.cr: private def strip_non_code(source : String) : String
+# Split
+src/analyzer/analyzers/haskell/servant.cr: private def split_head_args(segment : String) : Tuple(String, String)
+src/analyzer/analyzers/haskell/servant.cr: private def split_top_level(input : String, separator : String) : Array(String)
+src/analyzer/analyzers/haskell/yesod.cr: private def split_route_tokens(line : String) : Array(String)
+
+# java (6 / 12 / 15)
+# CComments preserves escaped string/char literals. Spring and Javalin's paren walkers only protect double quotes. Gateway also protects char literals. Neither matcher lexes comments. Gateway's visible code mask blanks literals, whereas the engine's comment stripper preserves them. Splitters disagree on generics, quote set and empty arguments.
+# Mask
+src/analyzer/analyzers/java/armeria.cr: private def build_non_code_mask(content : String) : Array(Bool)
+src/analyzer/engines/java_engine.cr: def self.strip_comments(text : String) : String
+src/tagger/framework_taggers/java/jaxrs_auth.cr: private def masked(code : String) : String
+src/tagger/framework_taggers/java/jaxrs_auth.cr: private def masked_lines(path : String, content : String) : Array(String)
+src/tagger/framework_taggers/java/spring_auth.cr: private def mask_literals(text : String) : String
+src/tagger/framework_taggers/java/spring_auth.cr: private def mask_strings(code : String) : String
+# Match
+src/analyzer/analyzers/java/armeria.cr: private def self.matching(chars : Array(Char), open_idx : Int32, open_char : Char, close_char : Char) : Int32?
+src/analyzer/analyzers/java/httpserver.cr: private def matching_delimiter(chars : Array(Char), open_index : Int32) : Int32?
+src/analyzer/analyzers/java/jsp.cr: private def extract_balanced_block(content : String, open_index : Int32) : String
+src/analyzer/analyzers/java/struts2.cr: private def matching_brace(chars : Array(Char), open_index : Int32) : Int32?
+src/analyzer/analyzers/java/struts2.cr: private def matching_open_paren(chars : Array(Char), close_index : Int32) : Int32?
+src/analyzer/analyzers/java/struts2.cr: private def matching_close_paren(content : String, open_index : Int32) : Int32?
+src/tagger/framework_taggers/java/spring_auth.cr: private def paren_inner(text : String, open : Int32) : {String, Int32}?
+src/tagger/framework_taggers/java/spring_auth.cr: private def paren_close(text : String, open : Int32) : Int32?
+src/tagger/framework_taggers/java/spring_auth.cr: private def brace_body(masked : String, start : Int32) : String
+src/tagger/framework_taggers/java/spring_security.cr: private def call_arguments(stmt : String, marker : String) : Array(String)
+src/utils/jvm_delimiter.cr: def find_matching_paren(code : String, open_idx : Int32) : Int32?
+src/utils/jvm_delimiter.cr: def find_matching_delimiter(code : String,
+# Split
+src/analyzer/analyzers/java/armeria.cr: private def split_top_level_concat(expr : String) : Array(String)
+src/analyzer/analyzers/java/armeria.cr: private def split_top_level_args(expr : String) : Array(String)
+src/analyzer/analyzers/java/dropwizard.cr: private def split_top_level_args(source : String) : Array(String)
+src/analyzer/analyzers/java/quarkus.cr: private def split_top_level_args(source : String) : Array(String)
+src/analyzer/analyzers/java/spring.cr: private def top_level_equals(expression : String) : Int32?
+src/analyzer/analyzers/java/spring.cr: private def top_level_arguments(args : String) : Array(String)
+src/analyzer/analyzers/java/vertx.cr: private def first_top_level_arg(args : String) : String
+src/analyzer/analyzers/java/vertx.cr: private def split_top_level_args(args : String) : Array(String)
+src/analyzer/analyzers/java/vertx.cr: private def split_top_level(expr : String, separator : Char) : Array(String)
+src/analyzer/analyzers/java/wicket.cr: private def split_named_argument(argument : String) : Tuple(String, String)
+src/analyzer/analyzers/java/wicket.cr: private def split_arguments(args : String) : Array(String)
+src/analyzer/analyzers/java/wicket.cr: private def split_string_concat_parts(expression : String) : Array(String)
+src/analyzer/engines/java_engine.cr: private def first_argument(args : String) : String
+src/miniparsers/java_type_model_extractor_ts.cr: def type_arguments(text : String) : Array(String)
+src/tagger/framework_taggers/java/spring_auth.cr: private def each_statement(code : String, &)
+
+# java/scala (0 / 0 / 2)
+# Play route parameters and operators skip escaped double and single quotes and count ()[]{} with shared, clamped depth. These fragment readers do not consume comments.
+# Split
+src/analyzer/engines/play_route_support.cr: private def split_route_action_params(params_str : String) : Array(String)
+src/analyzer/engines/play_route_support.cr: private def top_level_operator_index(text : String, operator : String) : Int32?
+
+# javascript (9 / 22 / 20)
+# JSLiteralScanner handles regex context, character classes and nested template substitutions. JSRouteExtractor additionally handles URL slashes and line resynchronization. Positional splitting treats backticks as flat quotes and keeps empty slots. The CLI and parser also match already-tokenized input.
+# Mask
+src/analyzer/analyzers/javascript/egg.cr: private def controller_code(file : String) : String
+src/analyzer/engines/javascript_engine.cr: protected def string_literal_mask(content : String) : Array(Bool)
+src/miniparsers/js_route_extractor.cr: private def self.stripped_source(path : String) : String
+src/miniparsers/js_route_extractor.cr: def self.strip_js_comments(content : String) : String
+src/tagger/framework_taggers/javascript/express_auth.cr: private def code_with_words(text : String) : String
+src/tagger/framework_taggers/javascript/js_read_shape.cr: private def blank_strings(code : String) : String
+src/tagger/framework_taggers/javascript/nextjs_auth.cr: private def typed_code(line : String) : String
+src/tagger/framework_taggers/javascript/socketio_auth.cr: private def stripped(path : String, raw : String) : String
+src/utils/js_literal_scanner.cr: def self.blank_literals(content : String) : String
+# Match
+src/analyzer/analyzers/javascript/cli.cr: private def matching_token(tokens : Array(Noir::JSToken), start : Int32, opening : Symbol, closing : Symbol) : Int32?
+src/analyzer/analyzers/javascript/nestjs.cr: private def find_matching_bracket(text : String, open_idx : Int32) : Int32?
+src/miniparsers/js_handler_table.cr: private def braced_contents(node : Node) : String
+src/miniparsers/js_parser.cr: private def type_argument_end(tokens : Array(JSToken), open : Int32) : Int32?
+src/miniparsers/js_parser.cr: private def skip_matching_paren(lparen_idx : Int32) : Int32?
+src/miniparsers/js_parser.cr: private def matching_lparen(rparen_idx : Int32) : Int32?
+src/miniparsers/js_route_extractor.cr: def self.find_matching_brace(content : String, open_brace_idx : Int32) : Int32?
+src/miniparsers/js_route_extractor.cr: def self.find_matching_paren(content : String, open_paren_idx : Int32) : Int32?
+src/tagger/framework_taggers/javascript/js_option_gate.cr: private def closing_brace(text : String) : Int32?
+src/utils/js_literal_scanner.cr: def self.extract_paren_content(content : String, start_pos : Int32) : ScanResult?
+src/utils/js_literal_scanner.cr: def self.find_matching_brace(content : String, open_brace_idx : Int32) : Int32?
+src/utils/js_literal_scanner.cr: def self.find_matching_paren(content : String, open_paren_idx : Int32) : Int32?
+src/utils/js_literal_scanner.cr: def self.find_matching_bracket(content : String, open_bracket_idx : Int32) : Int32?
+src/utils/js_literal_scanner.cr: def self.find_matching_brace(chars : Array(Char), open_brace_idx : Int32) : Int32?
+src/utils/js_literal_scanner.cr: def self.find_matching_paren(chars : Array(Char), open_paren_idx : Int32) : Int32?
+src/utils/js_literal_scanner.cr: def self.find_matching_brace(offsets : CharOffsets, open_brace_idx : Int32) : Int32?
+src/utils/js_literal_scanner.cr: def self.find_matching_paren(offsets : CharOffsets, open_paren_idx : Int32) : Int32?
+src/utils/js_literal_scanner.cr: def self.find_matching_brace_at_byte(content : String, open_brace_byte : Int32) : Int32?
+src/utils/js_literal_scanner.cr: def self.find_matching_paren_at_byte(content : String, open_paren_byte : Int32) : Int32?
+src/utils/js_literal_scanner.cr: def self.extract_paren_content_at_byte(content : String, start_byte : Int32) : ScanResult?
+src/utils/js_literal_scanner.cr: private def self.extract_paren_content_impl(src, start_pos : Int32) : ScanResult
+src/utils/js_literal_scanner.cr: private def self.find_matching_impl(src, open_idx : Int32, open_char : Char, close_char : Char) : Int32?
+# Split
+src/analyzer/analyzers/javascript/express/router_mount_scanner.cr: private def first_top_level_argument(args : String) : String
+src/analyzer/analyzers/javascript/express/router_mount_scanner.cr: private def split_at_top_level_commas(input : String) : Array(String)
+src/analyzer/analyzers/javascript/nestjs.cr: private def split_top_level(text : String, delimiter : Char) : Array(String)
+src/analyzer/analyzers/javascript/nextjs.cr: private def split_top_level_commas(s : String) : Array(String)
+src/analyzer/analyzers/javascript/remix.cr: private def split_flat_segments(name : String) : Array(String)
+src/analyzer/engines/javascript_engine.cr: protected def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
+src/miniparsers/azure_functions_extractor.cr: private def call_args(code : String, open : Int32, rules : TopLevelSplit::Rules) : Array(String)?
+src/miniparsers/encore_extractor.cr: def generic_args(type : String) : Array(String)
+src/miniparsers/encore_extractor.cr: private def handler_params(handler : String?) : Array(String)
+src/miniparsers/js_http_route_extractor.cr: private def self.split_param_list(params : String) : Array(String)
+src/miniparsers/js_http_route_extractor.cr: private def self.split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
+src/miniparsers/js_http_route_extractor.cr: private def self.split_top_level_args(src : CharOffsets, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
+src/miniparsers/js_parser.cr: private def trailing_arg_starts(lparen_idx : Int32) : Array(Int32)
+src/miniparsers/js_parser.cr: private def next_top_level_arg_index(start_idx : Int32) : Int32?
+src/miniparsers/js_route_extractor.cr: def self.route_arguments(content : String, start_byte : Int32) : Array(String)
+src/miniparsers/js_route_extractor.cr: private def self.argument_end(bytes : Bytes, from : Int32) : Int32
+src/tagger/framework_taggers/javascript/express_auth.cr: private def array_elements(code : String) : Array(String)?
+src/tagger/framework_taggers/javascript/express_auth.cr: private def middleware_array(lines : Array(String), idx : Int32) : Array(String)?
+src/tagger/framework_taggers/javascript/js_option_gate.cr: private def split(text : String) : Array(String)
+src/tagger/framework_taggers/javascript/nextjs_auth.cr: private def call_args(code : Array(String), i : Int32, open : Int32) : Tuple(Array(String), Int32)
+
+# json (2 / 1 / 0)
+# JSONC removes slash comments outside double quotes and preserves block-comment newlines. Response cleanup matches structural JSON bytes while skipping escaped string content.
+# Mask
+src/utils/json.cr: def strip_jsonc(content : String) : String
+src/utils/json.cr: private def strip_json_comments(content : String) : String
+# Match
+src/llm/response_cleanup.cr: private def self.balanced_end(bytes : Bytes, start : Int32) : Int32?
+
+# k8s_ingress (1 / 0 / 0)
+# The fallback cuts at the first # regardless of YAML quoting.
+# Mask
+src/analyzer/analyzers/specification/k8s_ingress.cr: private def strip_yaml_comment(value : String) : String
+
+# kotlin (5 / 1 / 3)
+# KotlinSourceMask knows raw triple strings, nested comments and interpolation. Some matchers consume this mask, others use simple quote and backslash state. Splitters differ on interior empty arguments.
+# Mask
+src/miniparsers/kotlin_parameter_extractor_ts.cr: private def mask_strings(text : String) : String
+src/miniparsers/kotlin_route_extractor_ts/helpers.cr: private def visible_kotlin_code(source : String) : String
+src/miniparsers/kotlin_source_mask.cr: def code_only(source : String) : String
+src/miniparsers/kotlin_source_mask.cr: def visible(source : String, *, include_template_code : Bool = false) : String
+src/miniparsers/kotlin_source_mask.cr: private def mask(source : String, mask_strings : Bool, include_template_code : Bool = false) : String
+# Match
+src/tagger/framework_taggers/kotlin/ktor_auth.cr: private def matching_close(text : String, open : Int32) : Int32?
+# Split
+src/miniparsers/kotlin_route_extractor_ts/core.cr: private def each_statement(line : String, structural : String, &)
+src/miniparsers/kotlin_route_extractor_ts/helpers.cr: private def top_level_arguments(args : String) : Array(String)
+src/tagger/framework_taggers/kotlin/ktor_auth.cr: private def top_level_statements(text : String) : Array(String)
+
+# lua (5 / 3 / 0)
+# The callee scanner understands -- comments, quoted strings and long brackets. Lapis maintains a separate source-preserving comment walk. Some overloads take an already-indexed array and a limit.
+# Mask
+src/analyzer/analyzers/lua/lapis.cr: private def strip_lua_comments(text : String) : String
+src/miniparsers/lua_callee_extractor.cr: def strip_non_code(source : String) : String
+src/miniparsers/lua_callee_extractor.cr: def strip_non_code(chars : Array(Char)) : String
+src/miniparsers/lua_callee_extractor.cr: def strip_comments(source : String) : String
+src/miniparsers/lua_callee_extractor.cr: def strip_comments(chars : Array(Char)) : String
+# Match
+src/miniparsers/lua_callee_extractor.cr: def find_matching_delimiter(source : String, open_index : Int32, open_char : Char, close_char : Char,
+src/miniparsers/lua_callee_extractor.cr: def find_matching_delimiter(chars : Array(Char), open_index : Int32, open_char : Char, close_char : Char,
+src/miniparsers/lua_callee_extractor.cr: private def matching_function_end(chars : Array(Char), function_index : Int32, limit : Int32) : Int32?
+
+# nginx (1 / 0 / 0)
+# Strips Jinja comment spans, then recognizes # only at accepted boundaries. Ordinary quoting alone does not control the boundary.
+# Mask
+src/detector/detectors/specification/nginx.cr: def self.strip_comment(line : String) : String
+
+# perl (9 / 2 / 0)
+# Engine recognizes q-like operators, regex contexts and the $# exception. POD and heredocs are handled by separate whole-file passes. A line without its preceding state cannot reproduce the mask.
+# Mask
+src/analyzer/analyzers/perl/catalyst.cr: private def code_only_lines(sanitized : Array(String)) : Array(String)
+src/analyzer/analyzers/perl/dancer2.cr: private def code_only_lines(pod_blanked : Array(String)) : Array(String)
+src/analyzer/engines/perl_engine.cr: protected def sanitize_perl_lines(lines : Array(String)) : Array(String)
+src/analyzer/engines/perl_engine.cr: def self.sanitize_lines(lines : Array(String)) : Array(String)
+src/analyzer/engines/perl_engine.cr: def self.strip_line_comment(line : String) : String
+src/miniparsers/perl_callee_extractor.cr: def strip_non_code(source : String) : String
+src/miniparsers/perl_callee_extractor.cr: private def mask_heredocs(chars : Array(Char)) : Array(Char)
+src/miniparsers/perl_callee_extractor.cr: private def blank_heredoc_body(chars : Array(Char), masked : Array(Char),
+src/miniparsers/perl_callee_extractor.cr: def strip_non_code(chars : Array(Char)) : String
+# Match
+src/miniparsers/perl_callee_extractor.cr: def find_matching_delimiter(chars : Array(Char), open_index : Int32, open_char : Char, close_char : Char,
+src/miniparsers/perl_callee_extractor.cr: private def find_matching_sub_end(chars : Array(Char), sub_index : Int32) : Int32?
+
+# php (9 / 12 / 6)
+# PhpLexer handles comments, PHP 8 attributes, strings, heredoc/nowdoc and HTML boundaries. PhpBlockParser indexes the masked pairs. Laminas blanks comments byte-for-byte, while WordPress deletes them and its # scan includes attributes. Regex parentheses and PHP parentheses have distinct rules.
+# Mask
+src/analyzer/analyzers/php/laminas.cr: private def strip_php_comments(content : String) : String
+src/analyzer/analyzers/php/wordpress.cr: private def strip_php_comments(code : String) : String
+src/minilexers/php_lexer.cr: private def scan(php_mode : Bool)
+src/minilexers/php_lexer.cr: private def mask_line_comment(start : Int32) : Int32
+src/minilexers/php_lexer.cr: private def mask_block_comment(start : Int32) : Int32
+src/minilexers/php_lexer.cr: private def mask_string(start : Int32, quote : Char) : Int32
+src/minilexers/php_lexer.cr: private def mask_heredoc(start : Int32) : Int32?
+src/minilexers/php_lexer.cr: def without_comments(keep_docblocks : Bool = true) : String
+src/miniparsers/php_callee_extractor.cr: def strip_comments(content : String) : String
+# Match
+src/analyzer/analyzers/php/cli.cr: private def extract_brace_body(lines : Array(String), start_index : Int32) : {String, Int32}
+src/analyzer/analyzers/php/laminas.cr: private def find_matching_delimiter(bytes : Bytes, open_pos : Int32) : Int32?
+src/analyzer/analyzers/php/laminas.cr: private def find_matching_delimiter(content : String, open_pos : Int32) : Int32?
+src/analyzer/analyzers/php/lumen.cr: private def find_matching_bracket(content : String, open_pos : Int32) : Int32?
+src/analyzer/analyzers/php/phalcon.cr: private def find_matching_close_paren(content : String, start : Int32) : Int32?
+src/analyzer/analyzers/php/slim.cr: private def find_matching_close_brace(content : String, start : Int32) : Int32?
+src/analyzer/analyzers/php/wordpress.cr: private def matching_regex_paren(s : String, open : Int32) : Int32?
+src/analyzer/analyzers/php/wordpress.cr: private def find_matching_paren(content : String, open_pos : Int32) : Int32?
+src/analyzer/engines/php_engine.cr: protected def find_matching_php_close_brace(content : String, open_pos : Int32) : Int32?
+src/analyzer/engines/php_engine.cr: protected def find_matching_php_close_brace_at_byte(content : String, start : Int32) : Int32?
+src/miniparsers/php_block_parser.cr: def close_of(open : Int32) : Int32?
+src/miniparsers/php_block_parser.cr: private def pair_delimiters : Array(Int32)
+# Split
+src/analyzer/analyzers/php/api_platform.cr: private def split_args(args : String) : Tuple(Hash(String, String), Array(String))
+src/analyzer/analyzers/php/laminas.cr: private def split_top_level_args(content : String) : Array(String)
+src/analyzer/analyzers/php/laravel_middleware.cr: private def split_condition(condition : String, op : String) : Array(String)
+src/analyzer/analyzers/php/symfony_route_attributes.cr: private def split_php_args(args : String) : Array(String)
+src/analyzer/analyzers/php/wordpress.cr: private def split_top_level_args(args : String) : Array(String)
+src/analyzer/engines/php_engine.cr: private def top_level_args(lexer : Noir::PhpLexer, source : String, from : Int32, to : Int32) : Array(String)
+
+# postgres (1 / 0 / 2)
+# The DDL mask handles single quotes, dollar quotes and block/line comments; statement and column boundaries are scanned separately on masked text.
+# Mask
+src/miniparsers/postgres_ddl_parser.cr: private def mask(content : String) : String
+# Split
+src/miniparsers/postgres_ddl_parser.cr: private def each_statement(masked : String, &)
+src/miniparsers/postgres_ddl_parser.cr: private def column_list(statement : String) : Array(String)
+
+# python (5 / 6 / 16)
+# Line helpers protect ordinary single/double quotes and escapes before #. Flask's local helper truncates and rstrips even inside quotes. Triple strings require file context. Argument splitters differ on independent vs shared bracket depth, escapes and preservation of empty slots.
+# Mask
+src/analyzer/analyzers/python/cherrypy.cr: private def sanitize_python_lines(lines : Array(::String)) : Array(::String)
+src/analyzer/analyzers/python/flask.cr: private def strip_python_line_comment(line : ::String) : ::String
+src/analyzer/analyzers/python/python_helper.cr: def strip_python_comment(line : ::String) : ::String
+src/analyzer/engines/python_engine.cr: def strip_python_comment(line : ::String) : ::String
+src/tagger/framework_taggers/python/django_middleware_guard.cr: private def mw_mask(text : String) : {String, Int32}
+# Match
+src/analyzer/analyzers/python/django.cr: private def python_close_paren_byte(bytes : Bytes, open : Int32) : Int32?
+src/analyzer/analyzers/python/django.cr: private def django_named_group_end(route : ::String, start_index : Int32) : Int32?
+src/analyzer/analyzers/python/django_view_registry.cr: private def matching_brace(text : ::String, open : Int32) : Int32?
+src/analyzer/analyzers/python/litestar.cr: private def python_call_body(source : ::String, open : Int32) : ::String?
+src/analyzer/analyzers/python/masonite.cr: private def matching_close(text : ::String, open_index : Int32, open_char : Char, close_char : Char) : Int32?
+src/tagger/framework_taggers/python/flask_auth.cr: private def call_arguments_after(code : String, index : Int32) : String?
+# Split
+src/analyzer/analyzers/python/django.cr: private def split_python_expression_terms(expression : ::String) : Array(::String)
+src/analyzer/analyzers/python/django_ninja.cr: private def split_python_arguments(args : ::String) : Array(::String)
+src/analyzer/analyzers/python/falcon.cr: private def split_python_arguments(args : ::String) : Array(::String)
+src/analyzer/analyzers/python/fastapi.cr: private def split_python_arguments(args : ::String) : Array(::String)
+src/analyzer/analyzers/python/fastapi.cr: private def split_python_expression(expression : ::String, delimiter : Char) : Array(::String)?
+src/analyzer/analyzers/python/fastapi.cr: private def split_python_top_level(input : ::String, delimiter : Char) : Array(::String)
+src/analyzer/analyzers/python/flask.cr: private def split_add_url_rule_positional_args(args_str : ::String) : Array(::String)
+src/analyzer/analyzers/python/flask_family.cr: private def split_python_call_args(args_str : ::String) : Array(::String)
+src/analyzer/analyzers/python/strawberry.cr: private def split(text : ::String, delimiter : Char = ',') : Array(::String)
+src/analyzer/engines/python_engine.cr: protected def split_python_arguments(args : ::String) : Array(::String)
+src/miniparsers/python_graphql_extractor_ts.cr: def call_args(text : String) : {Array(String), Hash(String, String)}?
+src/tagger/framework_taggers/python/django_auth.cr: private def urlconf_args(entry : String) : Array(String)
+src/tagger/framework_taggers/python/django_middleware_guard.cr: private def mw_split_inline(text : String) : {String, String?}
+src/tagger/framework_taggers/python/django_middleware_guard.cr: private def mw_split(text : String, masked : String, word : Regex) : Array(String)
+src/tagger/framework_taggers/python/fastapi_auth.cr: private def call_arguments(text : String) : Array(String)
+src/tagger/framework_taggers/python/fastapi_auth.cr: private def top_level_or(expr : String) : Array(String)
+
+# r (1 / 0 / 1)
+# Plumber removes # comments while preserving #* documentation, quotes and escapes. Its argument reader extracts names while splitting and has its own parenthesis depth.
+# Mask
+src/analyzer/analyzers/r/plumber.cr: private def strip_r_comments(text : String) : String
+# Split
+src/analyzer/analyzers/r/plumber.cr: private def parse_function_args(args_str : String) : Array(String)
+
+# ruby (8 / 2 / 3)
+# Rails' inline helper protects ordinary quotes. RubyEngine separately masks regexes, percent literals and heredocs. Grape's argument splitter has shared clamped depth. CanCan has a quote-blind splitter; Rails callback cleanup uses a whitespace-anchored regex.
+# Mask
+src/analyzer/analyzers/ruby/rails.cr: private def blank_quoted(line : String) : String
+src/analyzer/analyzers/ruby/roda.cr: private def strip_comment(line : String) : String
+src/analyzer/engines/ruby_engine.cr: def self.mask_non_code(content : String) : String
+src/analyzer/engines/ruby_engine.cr: def self.mask_hinted(content : String) : String
+src/miniparsers/cancan_ability.cr: private def code_only(line : String) : String
+src/miniparsers/rails_callback_chain.cr: private def self.uncomment(line : String) : String
+src/miniparsers/ruby_callee_extractor.cr: def strip_comment(line : String, preserve_strings : Bool = false) : String
+src/tagger/framework_taggers/ruby/ruby_auth.cr: private def code_only(text : String) : String
+# Match
+src/analyzer/analyzers/ruby/rails.cr: private def group_close(path : String, open : Int32) : Int32?
+src/analyzer/analyzers/ruby/roda.cr: private def extract_ruby_brace_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
+# Split
+src/analyzer/analyzers/ruby/graphql.cr: private def split_call(text : String) : Array(String)
+src/miniparsers/cancan_ability.cr: private def split_args(text : String) : Array(String)
+src/miniparsers/cancan_ability.cr: private def split_top(text : String, sep : Regex) : Array(String)
+
+# rust (4 / 5 / 1)
+# The engine's structural scanner skips raw strings and nested block comments. The callee line scanner carries a boolean block state. The routes macro regex strips // even inside strings.
+# Mask
+src/miniparsers/rust_callee_extractor.cr: def strip_comment(line : String, preserve_strings : Bool = false) : String
+src/miniparsers/rust_callee_extractor.cr: def strip_comment_with_state(line : String, in_block_comment : Bool, preserve_strings : Bool = false) : Tuple(String, Bool)
+src/miniparsers/rust_request_guards.cr: private def self.blank_literals(source : String) : String
+src/miniparsers/rust_routes_macro_extractor.cr: private def self.strip_comments(text : String) : String
+# Match
+src/analyzer/engines/rust_engine.cr: private def self.find_matching_close_brace(bytes : Slice(UInt8), open_idx : Int32) : Int32?
+src/miniparsers/rust_request_guards.cr: private def self.matching_brace(bytes : Bytes, open : Int32) : Int32?
+src/miniparsers/rust_routes_macro_extractor.cr: private def self.matching_paren(text : String, open : Int32) : Int32?
+src/miniparsers/rust_routes_macro_extractor.cr: private def self.matching_delim(chars : Array(Char), open : Int32, opener : Char, closer : Char) : Int32?
+src/tagger/framework_taggers/rust/rust_auth.cr: private def matching_brace(code : String, open : Int) : Int32?
+# Split
+src/miniparsers/rust_request_guards.cr: private def self.top_level_args(tree : String) : Array(String)
+
+# scala (8 / 8 / 0)
+# ScalaLexer tracks interpolation, triple strings, chars and nested block comments. Engine block extraction can consume masked lines. Play's local brace counter expects the caller's representation.
+# Mask
+src/minilexers/scala_lexer.cr: private def scan
+src/minilexers/scala_lexer.cr: private def mask_line_comment(start : Int32) : Int32
+src/minilexers/scala_lexer.cr: private def mask_block_comment(start : Int32) : Int32
+src/minilexers/scala_lexer.cr: private def mask_triple_string(start : Int32) : Int32
+src/minilexers/scala_lexer.cr: private def mask_string(start : Int32) : Int32
+src/minilexers/scala_lexer.cr: private def mask_char_literal(start : Int32) : Int32
+src/minilexers/scala_lexer.cr: def masked_lines : Array(String)
+src/miniparsers/scala_callee_extractor.cr: def strip_non_code_with_state(line : String,
+# Match
+src/analyzer/analyzers/scala/play.cr: private def matching_brace(chars : Array(Char), open_index : Int32) : Int32?
+src/analyzer/engines/scala_engine.cr: protected def extract_scala_brace_block(lines : Array(String), start_index : Int32) : Tuple(String, Int32)?
+src/analyzer/engines/scala_engine.cr: protected def extract_scala_brace_block(code_lines : Array(String),
+src/analyzer/engines/scala_engine.cr: protected def extract_scala_brace_block_with_end(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Int32)?
+src/analyzer/engines/scala_engine.cr: protected def extract_scala_brace_block_with_end(code_lines : Array(String),
+src/analyzer/engines/scala_engine.cr: protected def extract_scala_brace_block_with_end_at(lines : Array(String),
+src/analyzer/engines/scala_engine.cr: protected def extract_scala_brace_block_with_end_at(code_lines : Array(String),
+src/analyzer/engines/scala_engine.cr: private def body_after_scala_opening_brace(code_lines : Array(String),
+
+# shared (9 / 3 / 7)
+# CComments parameterizes normal and raw quotes and unterminated block tails. MaskedLexer matches pre-masked characters. TopLevelSplit parameterizes nesting, escapes, trimming and empty fields; it has no comment state. Context builders also have extension-specific masks.
+# Mask
+src/ai_context/builder.cr: private def without_hash_comments(segments : Array(String)) : Array(String)
+src/ai_context/builder.cr: private def hash_comment_start(code : String) : Int32?
+src/ai_context/outbound_request.cr: private def code_mask(source : String, hash_comments : Bool, slash_comments : Bool) : String
+src/ai_context/source_reader.cr: private def sanitize_for_structure(line : String) : String
+src/ai_context/transitive_sinks.cr: private def strip_line_comments_and_strings(raw : String, ext : String, in_block_comment : Bool) : Tuple(String, String, Bool)
+src/miniparsers/import_graph.cr: private def self.strip_import_comment(line : String) : String
+src/models/framework_tagger.cr: def code_only(text : String) : String
+src/utils/c_comments.cr: def self.strip(text : String,
+src/utils/line_comment.cr: def self.strip(line : String, marker : Char) : String
+# Match
+src/ai_context/transitive_sinks.cr: private def extract_brace_body_lines(lines : Array(String), def_line : Int32, ext : String) : Array(Tuple(Int32, String, String))
+src/minilexers/masked_lexer.cr: def matching_delimiter(open_pos : Int32) : Int32?
+src/optimizer/optimizer/path_params.cr: private def skip_paren_group(bytes : Bytes, start : Int32) : Int32
+# Split
+src/ai_context/builder.cr: private def first_call_argument(args : String) : String
+src/utils/route_matcher.cr: private def split_alternatives(body : String) : Array(String)
+src/utils/top_level_split.cr: def split(text : String, delimiter : Char, rules : Rules) : Array(String)
+src/utils/top_level_split.cr: def split(text : String, delimiter : String, rules : Rules) : Array(String)
+src/utils/top_level_split.cr: def split_spans(
+src/utils/top_level_split.cr: private def split_impl(text : String, delim : Array(Char), rules : Rules) : Array(String)
+src/utils/top_level_split.cr: private def scan(
+
+# smithy (0 / 1 / 0)
+# The brace walk counts every brace including braces in quoted text it receives.
+# Match
+src/analyzer/analyzers/specification/smithy.cr: private def take_brace_block(text : String) : String
+
+# swift (10 / 4 / 1)
+# SwiftLexer tracks hash-counted raw and multiline strings, interpolation and nested block comments. Body helpers can receive a mask or individual lines with different offset and recovery contracts.
+# Mask
+src/analyzer/engines/swift_engine.cr: protected def strip_code_lines(lines : Array(String), keep_strings : Bool = false) : Array(String)
+src/analyzer/engines/swift_engine.cr: protected def strip_code_lines(content : String, keep_strings : Bool = false) : Array(String)
+src/minilexers/swift_lexer.cr: private def scan
+src/minilexers/swift_lexer.cr: private def mask_line_comment(start : Int32) : Int32
+src/minilexers/swift_lexer.cr: private def mask_block_comment(start : Int32) : Int32
+src/minilexers/swift_lexer.cr: private def mask_single_string(start : Int32, hashes : Int32) : Int32
+src/minilexers/swift_lexer.cr: private def mask_multiline_string(start : Int32, hashes : Int32) : Int32
+src/minilexers/swift_lexer.cr: def masked_source : String
+src/minilexers/swift_lexer.cr: def masked_lines : Array(String)
+src/miniparsers/swift_callee_extractor.cr: def strip_non_code_with_state(line : String,
+# Match
+src/analyzer/engines/swift_engine.cr: private def call_arguments(line : String, args_start : Int32, masked_line : String? = nil) : Tuple(String, Int32)?
+src/analyzer/engines/swift_engine.cr: private def body_after_opening_brace(lines : Array(String), opening_index : Int32, opening_brace : Int32) : Tuple(String, Int32)
+src/analyzer/engines/swift_engine.cr: private def body_after_opening_brace(lines : Array(String), mlines : Array(String), opening_index : Int32, opening_brace : Int32) : Tuple(String, Int32)
+src/mobile/swift_body.cr: def body_after_opening_brace(lines : Array(String), opening_index : Int32, col : Int32) : Tuple(String, Int32)
+# Split
+src/analyzer/analyzers/swift/hummingbird.cr: private def first_positional_arg(args : String) : String?
+
+# terraform (0 / 2 / 0)
+# Both HCL walkers skip # and // lines, flat /* */ blocks, double-quoted strings and heredocs. A missing closer consumes the available suffix; read_block returns its contents and the position after it.
+# Match
+src/analyzer/analyzers/specification/terraform.cr: private def read_block(chars : Array(Char), i : Int32, len : Int32) : Tuple(Array(Char), Int32)
+src/analyzer/analyzers/specification/terraform.cr: private def skip_bracket(chars : Array(Char), i : Int32, len : Int32) : Int32
+
+# thrift (1 / 2 / 0)
+# Comment masking recognizes #, // and /* */ outside escaped single/double quotes. An unescaped LF ends a malformed literal. Delimiter matching works on tokens.
+# Mask
+src/miniparsers/thrift_idl.cr: def self.strip_comments(text : String) : String
+# Match
+src/miniparsers/thrift_idl.cr: private def matching(pos : Int32) : Int32
+src/miniparsers/thrift_idl.cr: private def matching_angle(pos : Int32, limit : Int32) : Int32?
+
+# traefik (0 / 0 / 1)
+# TopLevelSplit tracks parentheses and matches the full boolean operator. Quotes and backslashes carry no state, so an operator in a flat quoted fragment can split.
+# Split
+src/analyzer/analyzers/specification/traefik.cr: private def split_top_level(input : String, delimiter : String) : Array(String)
+
+# typescript (0 / 0 / 2)
+# LoopBack uses JS quote rules including backticks. TanStack skips to a top-level comma and returns an offset. The former returns trimmed parts.
+# Split
+src/analyzer/analyzers/typescript/loopback.cr: private def split_top_level(text : String, delimiter : Char) : Array(String)
+src/analyzer/analyzers/typescript/tanstack_router.cr: private def skip_top_level_to_comma(text : String, start : Int32) : Int32
+
+# typespec (1 / 2 / 1)
+# The comment pass deletes slash comments while preserving double-quoted strings. Type and argument splitting counts angle brackets as well as the other brackets.
+# Mask
+src/analyzer/analyzers/specification/typespec.cr: private def strip_comments(source : String) : String
+# Match
+src/analyzer/analyzers/specification/typespec.cr: private def find_matching(pos : Int32, stop : Int32, open : Char, close : Char) : Int32
+src/analyzer/analyzers/specification/typespec.cr: private def find_matching_str(s : String, pos : Int32, open : Char, close : Char) : Int32
+# Split
+src/analyzer/analyzers/specification/typespec.cr: private def split_top_level(text : String, delim : Char) : Array(String)
+
+# vb (1 / 0 / 0)
+# Leading REM and apostrophe comments outside double quotes are removed. The second result is the net parenthesis depth on the surviving line.
+# Mask
+src/analyzer/analyzers/vb/aspnet_mvc.cr: private def strip_comment(line : String) : {String, Int32}
+
+# xml (1 / 0 / 0)
+# XML comment stripping keeps line breaks and skips CDATA, processing instructions and DOCTYPE regions. It does not use C-style quote/escape rules.
+# Mask
+src/utils/xml_comments.cr: def self.strip(content : String) : String
+
+# zig (4 / 1 / 0)
+# Separate callee passes preserve or mask double-quoted strings; // comments, chars and multiline string lines also affect the mask. The structural matcher can operate on prepared characters.
+# Mask
+src/miniparsers/zig_callee_extractor.cr: def strip_non_code(source : String) : String
+src/miniparsers/zig_callee_extractor.cr: def strip_comments(source : String) : String
+src/miniparsers/zig_callee_extractor.cr: def strip_non_code(chars : Array(Char)) : Array(Char)
+src/miniparsers/zig_callee_extractor.cr: def strip_comments(chars : Array(Char)) : Array(Char)
+# Match
+src/miniparsers/zig_callee_extractor.cr: def find_matching(chars : Array(Char), open_index : Int32, open : Char, close : Char) : Int32?

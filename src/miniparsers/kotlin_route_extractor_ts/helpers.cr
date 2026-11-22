@@ -1,3 +1,6 @@
+require "../../utils/jvm_delimiter"
+require "../../utils/top_level_split"
+
 # Part of Noir::TreeSitterKotlinRouteExtractor: shared annotation/string/expression decoding helpers.
 module Noir
   module TreeSitterKotlinRouteExtractor
@@ -260,7 +263,7 @@ module Noir
 
         open_idx = visible.index('(', marker)
         next unless open_idx
-        close_idx = find_matching_paren(visible, open_idx)
+        close_idx = JvmDelimiter.find_matching_delimiter(visible, open_idx, '(', ')')
         next unless close_idx
 
         args = source[(open_idx + 1)...close_idx]
@@ -281,43 +284,7 @@ module Noir
     end
 
     private def top_level_arguments(args : String) : Array(String)
-      args = Noir::KotlinSourceMask.code_only(args)
-      result = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      escaped = false
-
-      args.each_char.with_index do |char, index|
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          if depth.zero?
-            result << args[start...index].strip
-            start = index + 1
-          end
-        end
-      end
-
-      tail = args[start..]?.try(&.strip)
-      result << tail if tail && !tail.empty?
-      result
+      TopLevelSplit.split(KotlinSourceMask.code_only(args), ',', TopLevelSplit::Rules::JVM_STRINGS)
     end
 
     private def resolve_route_expression(expression : String,
@@ -341,7 +308,7 @@ module Noir
       end
 
       if value.includes?('+')
-        parts = top_level_plus_parts(value)
+        parts = TopLevelSplit.split(value, '+', TopLevelSplit::Rules::JVM_STRINGS)
         if parts.size > 1
           resolved_parts = parts.compact_map do |part|
             resolve_route_expression(part, string_constants, local_string_constants, depth + 1)
@@ -391,80 +358,6 @@ module Noir
       else
         [] of String
       end
-    end
-
-    private def top_level_plus_parts(value : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      escaped = false
-
-      value.each_char.with_index do |char, index|
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when '+'
-          if depth.zero?
-            parts << value[start...index].strip
-            start = index + 1
-          end
-        end
-      end
-
-      tail = value[start..]?.try(&.strip)
-      parts << tail if tail && !tail.empty?
-      parts
-    end
-
-    private def find_matching_paren(source : String, open_idx : Int32) : Int32?
-      depth = 0
-      in_string = false
-      escaped = false
-      quote = '\0'
-
-      source.each_char.with_index do |char, index|
-        next if index < open_idx
-
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return index if depth.zero?
-        end
-      end
-
-      nil
     end
 
     # `RequestMethod.GET` is parsed as `navigation_expression` with a

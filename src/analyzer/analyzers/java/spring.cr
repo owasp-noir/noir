@@ -729,7 +729,7 @@ module Analyzer::Java
 
           open_idx = content.index('(', marker)
           next unless open_idx
-          close_idx = find_matching_paren(content, open_idx)
+          close_idx = JavaEngine.find_matching_paren(content, open_idx)
           next unless close_idx
 
           args = top_level_arguments(content[(open_idx + 1)...close_idx])
@@ -758,7 +758,7 @@ module Analyzer::Java
 
         open_idx = code.index('(', marker)
         next unless open_idx
-        close_idx = find_matching_paren(code, open_idx)
+        close_idx = JavaEngine.find_matching_paren(code, open_idx)
         next unless close_idx
 
         args = code[(open_idx + 1)...close_idx]
@@ -1057,7 +1057,7 @@ module Analyzer::Java
       code.scan(REGEX_ROUTE_CALL) do |match|
         open_idx = (match.end || 0) - 1
         next if open_idx < 0
-        close_idx = find_matching_paren(code, open_idx)
+        close_idx = JavaEngine.find_matching_paren(code, open_idx)
         next unless close_idx
 
         args = code[(open_idx + 1)...close_idx]
@@ -1080,7 +1080,7 @@ module Analyzer::Java
         handler_arg = path_less ? first_arg : arg_list[1]?
         if handler_arg.nil? && match[1] != "."
           outer_open = (match.end(1) || 0) - 1
-          if outer_close = find_matching_paren(code, outer_open)
+          if outer_close = JavaEngine.find_matching_paren(code, outer_open)
             handler_arg = top_level_arguments(code[(outer_open + 1)...outer_close])[1]?
           end
         end
@@ -1116,7 +1116,7 @@ module Analyzer::Java
         group_version = CUSTOM_ENDPOINT_DEFAULT
         if found = body.match(CUSTOM_GROUP_VERSION_RE)
           paren = found.end(0) - 1
-          next unless stop = find_matching_paren(body, paren)
+          next unless stop = JavaEngine.find_matching_paren(body, paren)
           args = body[(paren + 1)...stop]
           group_version = if found[1] == "parseAPIVersion"
                             resolve_router_path(args, constants)
@@ -1374,7 +1374,7 @@ module Analyzer::Java
       # plain first argument.
       code.scan(NEST_CALL_RE) do |match|
         open_idx = (match.end || 0) - 1
-        close_idx = find_matching_paren(code, open_idx)
+        close_idx = JavaEngine.find_matching_paren(code, open_idx)
         next unless close_idx
 
         args = code[(open_idx + 1)...close_idx]
@@ -1395,42 +1395,7 @@ module Analyzer::Java
     NEST_CALL_RE = /(?<![\w$])(?:(nest|andNest)|(?<=\.)path)\s*\(/
 
     private def top_level_arguments(args : String) : Array(String)
-      args = JavaEngine.strip_comments(args)
-      values = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      escape = false
-
-      args.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          if depth.zero?
-            values << args[start...index]
-            start = index + 1
-          end
-        end
-      end
-
-      values << args[start..]
-      values.map(&.strip).reject(&.empty?)
+      Noir::TopLevelSplit.split(JavaEngine.strip_comments(args), ',', Noir::TopLevelSplit::Rules::JVM_STRINGS).reject(&.empty?)
     end
 
     private def path_predicate_prefix(predicate : String,
@@ -1442,7 +1407,7 @@ module Analyzer::Java
 
         open_idx = predicate.index('(', path_marker)
         next unless open_idx
-        close_idx = find_matching_paren(predicate, open_idx)
+        close_idx = JavaEngine.find_matching_paren(predicate, open_idx)
         next unless close_idx
 
         args = predicate[(open_idx + 1)...close_idx]
@@ -1480,7 +1445,7 @@ module Analyzer::Java
       end
 
       if expr.includes?("+")
-        parts = split_top_level_concat(expr)
+        parts = Noir::TopLevelSplit.split(expr, '+', Noir::TopLevelSplit::Rules::JVM_STRINGS).reject(&.empty?)
         return if parts.empty?
         values = parts.compact_map { |part| resolve_router_path(part, constants, depth + 1) }
         return unless values.size == parts.size
@@ -1505,31 +1470,10 @@ module Analyzer::Java
       nil
     end
 
-    # `Rules::JAVA` minus the single-quote quote style, and dropping EVERY
-    # empty part rather than only a trailing one — the old body ended in
-    # `.map(&.strip).reject(&.empty?)`, so `"a" + + "b"` yielded two terms, not
-    # three. Both matter to the caller, which concatenates the terms it gets
-    # back into a route path. File-local because spring is the only splitter
-    # with this combination.
-    SPLIT_CONCAT_RULES = Noir::TopLevelSplit::Rules.new(
-      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
-            Noir::TopLevelSplit::Nest::Brace,
-      quotes: "\"",
-      escape: Noir::TopLevelSplit::Escape::InQuotes,
-      strip: true,
-      empties: Noir::TopLevelSplit::Empties::DropAll,
-      per_kind: false,
-      clamp: true,
-    )
-
-    private def split_top_level_concat(expression : String) : Array(String)
-      Noir::TopLevelSplit.split(expression, '+', SPLIT_CONCAT_RULES)
-    end
-
     private def strip_wrapping_parentheses(expression : String) : String
       result = expression
       while result.starts_with?('(') && result.ends_with?(')')
-        close_idx = find_matching_paren(result, 0)
+        close_idx = JavaEngine.find_matching_paren(result, 0)
         break unless close_idx == result.size - 1
         result = result[1...-1].strip
       end
@@ -1539,36 +1483,6 @@ module Analyzer::Java
     private def decode_router_string(raw : String) : String
       return raw unless raw.size >= 2 && raw.starts_with?('"') && raw.ends_with?('"')
       raw[1...-1].gsub(/\\(["\\])/, "\\1")
-    end
-
-    # Find the matching `)` for the `(` at `open_idx`, skipping
-    # string literals so `"(foo)"` doesn't perturb depth.
-    private def find_matching_paren(code : String, open_idx : Int32) : Int32?
-      # Scan by CHARACTER (not byte): open_idx comes from char-based String#index
-      # / MatchData and callers char-slice with the returned index. A byte scan
-      # corrupts both on multi-byte UTF-8 (i18n comments/literals). ASCII-identical.
-      depth = 1
-      in_string = false
-      escape = false
-      JavaEngine.each_char_after(code, open_idx) do |c, i|
-        if in_string
-          if escape
-            escape = false
-          elsif c == '\\'
-            escape = true
-          elsif c == '"'
-            in_string = false
-          end
-        else
-          case c
-          when '"' then in_string = true
-          when '(' then depth += 1
-          when ')' then depth -= 1
-          end
-        end
-        return i if depth.zero?
-      end
-      nil
     end
 
     private def collect_stomp_application_prefixes(content : String,
@@ -1582,7 +1496,7 @@ module Analyzer::Java
 
         open_idx = content.index('(', marker)
         next unless open_idx
-        close_idx = find_matching_paren(content, open_idx)
+        close_idx = JavaEngine.find_matching_paren(content, open_idx)
         next unless close_idx
 
         args = content[(open_idx + 1)...close_idx]
