@@ -68,6 +68,20 @@ expected_endpoints = [
   inventory,
   create_order,
   hooks,
+  Endpoint.new("/warehouse/{id}", "POST", [
+    Param.new("id", "", "path"),
+    Param.new("id", "", "json"),
+    Param.new("since", "", "query"),
+    Param.new("X-Store", "", "header"),
+    Param.new("filter", "", "query"),
+    Param.new("code", "", "query"),
+    Param.new("session", "", "cookie"),
+    Param.new("rev", "", "query"),
+    Param.new("X-Revision", "", "header"),
+  ]),
+  Endpoint.new("/warehouse/status", "GET"),
+  Endpoint.new("/local", "GET", [Param.new("q", "", "query")]),
+  Endpoint.new("/local-service", "GET"),
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_minimal_api_methodgroup/", {
@@ -113,10 +127,17 @@ describe "ASP.NET Core Minimal API method-group analyzer edge cases", tags: "fun
 
   it "names the handler at its definition: a method group's declaration, a lambda's first line" do
     handler = ->(url : String, method : String) { tester.app.endpoints.find! { |e| e.url == url && e.method == method }.handler }
-    handler.call("/products", "GET").try { |h| {h.name, h.line} }.should eq({"GetProducts", 49})
-    handler.call("/products/{id}", "GET").try { |h| {h.name, h.line} }.should eq({"GetProductById", 55})
-    handler.call("/orders", "POST").try { |h| {h.name, h.line} }.should eq({"closure", 34})
+    handler.call("/products", "GET").try { |h| {h.name, h.line} }.should eq({"GetProducts", 63})
+    handler.call("/products/{id}", "GET").try { |h| {h.name, h.line} }.should eq({"GetProductById", 69})
+    handler.call("/orders", "POST").try { |h| {h.name, h.line} }.should eq({"closure", 39})
     handler.call("/hooks", "POST").try(&.path).to_s.should end_with("Program.cs")
+  end
+
+  it "locates a qualified handler in its own source file" do
+    handler = tester.endpoints.find! { |ep| ep.url == "/warehouse/{id}" }.handler.not_nil!
+    handler.name.should eq("InventoryRoutes.Update")
+    handler.path.to_s.should end_with("InventoryRoutes.cs")
+    handler.line.should eq(8)
   end
 
   it "drops a [JsonIgnore] body member" do
