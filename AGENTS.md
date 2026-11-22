@@ -140,7 +140,7 @@ When adding a new framework in a language that already has an extractor, extend 
 
 ## Adding New Components
 
-**There are no registration lists to edit.** Analyzers, detectors and output formats each join their registry by declaring their own name on the class; the registry is derived from the classes by macro. Adding a name to a hand-maintained list used to be a second place to remember, where forgetting produced no error and no failing spec — just a component that never ran.
+**There are no registration lists to edit.** Analyzers, class-based detectors and output formats declare their names on the class. Declarative detectors register through their YAML rule files. Adding a name to a hand-maintained list used to be a second place to remember, where forgetting produced no error and no failing spec — just a component that never ran.
 
 ### Technology tiers
 
@@ -154,6 +154,10 @@ New catalog entries default to `extended` and are covered by fixtures. Every sco
 5. Add technology metadata: create `src/techs/catalog/{language}/{framework}.cr` (mirrors the analyzer's path)
 
 ### Detectors
+Prefer a YAML rule for a detector expressed by a file gate, dependency helper, or content check. Add an entry to `src/detector/rules/{Language}.yml` with the technology key, file selector, match condition, and positive and negative examples. The file registers the detector and its examples serve as the unit spec. See `src/detector/rules/README.md` for the operators and `spec/unit_test/detector/rule_examples_spec.cr` for the runner. Add the corresponding technology metadata under `src/techs/catalog/{language}/{framework}.cr`.
+
+For detectors that register paths, parse structured files, or need procedural logic:
+
 1. Create `src/detector/detectors/{language}/{framework}.cr`
 2. Declare the tech and its file gate inside the class: `detector_for "go_hertz", extensions: %w[.go], path_segments: %w[go.mod]` (`src/models/detector.cr`). The gate keys are `extensions:`, `basenames:` and `path_segments:`; pass `idempotent: false` only if `detect` has side effects, such as registering paths in `CodeLocator`.
 3. Add unit test: `spec/unit_test/detector/{language}/{framework}_spec.cr` — required; `spec/unit_test/techs/detector_coverage_spec.cr` fails without it

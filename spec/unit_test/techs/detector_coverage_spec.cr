@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../../src/detector/detector"
 
 # Every detector registered with `detector_for` must have a unit spec.
 #
@@ -71,10 +72,8 @@ UNTESTED_DETECTORS = [
   "php/thinkphp",
   "python/cli",
   "ruby/cli",
-  "rust/actix_web",
   "rust/cli",
   "scala/cli",
-  "scala/http4s",
   "specification/odata",
   "specification/typespec",
   "swift/cli",
@@ -90,7 +89,7 @@ UNTESTED_DETECTORS = [
 ]
 
 describe "detector spec coverage" do
-  it "gives every registered detector a unit spec" do
+  it "gives every class detector a unit spec" do
     missing = detector_paths.reject do |detector|
       File.exists?(spec_path_for(detector)) || UNTESTED_DETECTORS.includes?(detector)
     end
@@ -102,6 +101,16 @@ describe "detector spec coverage" do
       `spec/unit_test/detector/<language>/<framework>_spec.cr` for each:
         #{missing.join("\n  ")}
       MSG
+  end
+
+  it "gives each rule detector positive and negative examples" do
+    Noir::DetectorRules.each_definition do |name, rule|
+      examples = rule["examples"]?
+      %w[match no_match].each do |group|
+        cases = examples.try(&.[group]?).try(&.as_a?)
+        fail "#{name}: missing #{group} examples" if cases.nil? || cases.empty?
+      end
+    end
   end
 
   # A stale entry silently re-exempts a detector that now has a spec, so the
@@ -143,6 +152,11 @@ describe "detector spec coverage" do
   # Guards the guard: a broken glob would make every example above pass
   # vacuously.
   it "finds every registered detector" do
-    detector_paths.size.should eq 324
+    rule_files = Dir.glob("src/detector/rules/*.{yaml,yml}")
+    keys = rule_files.flat_map { |file| YAML.parse(File.read(file)).as_h.values.map(&.["key"].as_s) }
+    keys.sort.should eq(Noir::DetectorRules::BUILTIN.map(&.key).sort!)
+    total = detector_paths.size + keys.size
+    total.should eq 324
+    build_detector_list(create_test_options).size.should eq(total)
   end
 end

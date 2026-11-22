@@ -1,0 +1,395 @@
+Beego:
+  key: go_beego
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/beego/beego'
+  examples:
+    match:
+      - {path: go.mod, content: "github.com/beego/beego"}
+    no_match:
+      - {path: go.mod, content: "github.com/beego/beego // indirect"}
+
+Chi:
+  key: go_chi
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/go-chi/chi'
+  examples:
+    match:
+      - {path: go.mod, content: "github.com/go-chi/chi"}
+    no_match:
+      - {path: go.mod, content: "github.com/go-chi/chi // indirect"}
+
+ConnectRpc:
+  key: go_connect_rpc
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'connectrpc\.com/connect'
+  examples:
+    match:
+      - {path: go.mod, content: "require connectrpc.com/connect v1.16.0"}
+      - {path: main.go, content: "import \"connectrpc.com/connect\""}
+    no_match:
+      - {path: go.mod, content: "require github.com/gin-gonic/gin v1.9.0"}
+      - {path: main.go, content: "import \"github.com/gin-gonic/gin\""}
+      - {path: README.md, content: "connectrpc.com/connect"}
+
+Echo:
+  key: go_echo
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/labstack/echo'
+  examples:
+    match:
+      - {path: go.mod, content: "github.com/labstack/echo"}
+      - path: go.mod
+        content: |
+          require github.com/labstack/echo/v4 v4.13.3 // pinned, not indirect
+      - path: go.mod
+        content: |
+          require github.com/labstack/echo/v4 v4.13.3 // indirectly via plugin
+      - path: go.mod
+        content: |
+          require github.com/labstack/echo/v4 v4.13.3 // indirect foo
+      - path: main.go
+        content: |
+          package main
+
+          import "github.com/labstack/echo/v4"
+      - path: main.go
+        content: |
+          /* License */
+          package main
+
+          import (
+          	"net/http"
+
+          	mw "github.com/labstack/echo/v4"
+          )
+      - path: main.go
+        content: |
+          package main
+
+          import (
+          	"net/http" // stdlib (HTTP)
+          	"github.com/labstack/echo/v4"
+          )
+      - path: main.go
+        content: |
+          package main
+
+          import (
+          	// helpers (internal)
+          	web "github.com/labstack/echo/v4"
+          )
+      - path: go.mod
+        content: |-
+          module example.com/myapp
+
+          go 1.21
+
+          require (
+            github.com/labstack/echo/v4 v4.13.3
+            github.com/other/lib v1.0.0 // indirect
+          )
+    no_match:
+      - path: go.mod
+        content: |-
+          module example.com/myapp
+
+          go 1.21
+
+          require github.com/labstack/echo/v4 v4.13.3 // indirect
+      - path: go.mod
+        content: |
+          require github.com/labstack/echo/v4 v4.13.3 //indirect
+      - path: go.mod
+        content: |
+          require github.com/labstack/echo/v4 v4.13.3 // indirect; used by tools
+      - path: doc.go
+        content: |
+          // Works with routers such as github.com/labstack/echo.
+          package adapter
+      - path: gen.go
+        content: |
+          package gen
+
+          import "fmt"
+
+          const t = `package main
+
+          import "github.com/labstack/echo/v4"
+          `
+      - path: gen.go
+        content: |
+          package gen
+
+          import (
+          	// "github.com/labstack/echo/v4"
+          	"fmt"
+          )
+      - path: gen.go
+        content: |
+          //go:build ignore
+
+          package main
+
+          import "github.com/labstack/echo/v4"
+      - path: lib_test.go
+        content: |
+          package main
+
+          import "github.com/labstack/echo/v4"
+      - path: testdata/src/app/main.go
+        content: |
+          package main
+
+          import "github.com/labstack/echo/v4"
+      - path: vendor/example.com/x/main.go
+        content: |
+          package main
+
+          import "github.com/labstack/echo/v4"
+
+Fiber:
+  key: go_fiber
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/gofiber/fiber'
+  examples:
+    match:
+      - {path: go.mod, content: "github.com/gofiber/fiber"}
+    no_match:
+      - {path: go.mod, content: "github.com/gofiber/fiber // indirect"}
+
+Gf:
+  key: go_gf
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/gogf/gf'
+  examples:
+    match:
+      - {path: go.mod, content: "require github.com/gogf/gf/v2 v2.7.0"}
+      - {path: main.go, content: "import \"github.com/gogf/gf/v2/net/ghttp\""}
+    no_match:
+      - {path: go.mod, content: "require github.com/gin-gonic/gin v1.9.0"}
+      - {path: main.go, content: "import \"github.com/gin-gonic/gin\""}
+      - {path: README.md, content: "github.com/gogf/gf"}
+
+Gin:
+  key: go_gin
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/gin-gonic/gin'
+  examples:
+    match:
+      - {path: go.mod, content: "github.com/gin-gonic/gin"}
+    no_match:
+      - {path: go.mod, content: "github.com/gin-gonic/gin // indirect"}
+
+GoRestful:
+  key: go_restful
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/emicklei/go-restful'
+  examples:
+    match:
+      - {path: go.mod, content: "require github.com/emicklei/go-restful/v3 v3.12.0"}
+      - {path: main.go, content: "import \"github.com/emicklei/go-restful/v3\""}
+    no_match:
+      - {path: go.mod, content: "require github.com/gin-gonic/gin v1.9.0"}
+      - {path: main.go, content: "import \"github.com/gin-gonic/gin\""}
+      - {path: README.md, content: "github.com/emicklei/go-restful"}
+
+GoZero:
+  key: go_gozero
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/zeromicro/go-zero'
+  examples:
+    match:
+      - {path: go.mod, content: "github.com/zeromicro/go-zero"}
+      - path: internal/handler/routes.go
+        content: |
+          package handler
+
+          import "github.com/zeromicro/go-zero/rest"
+    no_match:
+      - {path: go.mod, content: "github.com/gin-gonic/gin"}
+      - {path: main.go, content: "github.com/gin-gonic/gin"}
+
+Goyave:
+  key: go_goyave
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'goyave\.dev/goyave'
+  examples:
+    match:
+      - {path: go.mod, content: "require goyave.dev/goyave/v5 v5.0.0"}
+      - {path: main.go, content: "import \"goyave.dev/goyave/v5\""}
+    no_match:
+      - {path: go.mod, content: "require github.com/gin-gonic/gin v1.9.0"}
+      - {path: README.md, content: "goyave.dev/goyave"}
+
+Hertz:
+  key: go_hertz
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/cloudwego/hertz'
+  examples:
+    match:
+      - {path: go.mod, content: "require github.com/cloudwego/hertz v0.9.0"}
+      - {path: main.go, content: "import \"github.com/cloudwego/hertz/pkg/app\""}
+    no_match:
+      - {path: go.mod, content: "require github.com/gin-gonic/gin v1.9.0"}
+      - {path: README.md, content: "github.com/cloudwego/hertz"}
+
+Http:
+  key: go_http
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  files: {extensions: [.go]}
+  match:
+    all:
+      - contains: net/http
+      - any:
+          - contains: NewServeMux
+          - regex: 'http\.HandleFunc\s*\('
+          - regex: 'http\.Handle\s*\(\s*["`/]'
+  examples:
+    match:
+      - path: main.go
+        content: |-
+          package main
+          import "net/http"
+          func main() {
+              http.HandleFunc("/hello", handler)
+          }
+      - path: main.go
+        content: |-
+          package main
+          import h "net/http"
+          func main() {
+              m := h.NewServeMux()
+              m.HandleFunc("/api", h2)
+          }
+    no_match:
+      - path: main.go
+        content: |-
+          package main
+          import "net/http"
+          func handler(w http.ResponseWriter, r *http.Request) {}
+      - {path: go.mod, content: "module example.com/app"}
+
+Httprouter:
+  key: go_httprouter
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/julienschmidt/httprouter'
+  examples:
+    match:
+      - {path: go.mod, content: "github.com/julienschmidt/httprouter"}
+    no_match:
+      - {path: go.mod, content: "github.com/julienschmidt/httprouter // indirect"}
+
+Huma:
+  key: go_huma
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/danielgtaylor/huma'
+  examples:
+    match:
+      - {path: go.mod, content: "require github.com/danielgtaylor/huma/v2 v2.27.0"}
+      - {path: main.go, content: "import \"github.com/danielgtaylor/huma/v2\""}
+    no_match:
+      - {path: go.mod, content: "require github.com/gin-gonic/gin v1.9.0"}
+      - {path: main.go, content: "import \"github.com/gin-gonic/gin\""}
+      - {path: README.md, content: "github.com/danielgtaylor/huma"}
+
+Iris:
+  key: go_iris
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/kataras/iris'
+  examples:
+    match:
+      - {path: go.mod, content: "github.com/kataras/iris/v12"}
+      - path: main.go
+        content: |
+          package main
+
+          import "github.com/kataras/iris/v12"
+    no_match:
+      - {path: main.go, content: "github.com/gin-gonic/gin"}
+
+Kratos:
+  key: go_kratos
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'go-kratos/kratos/v\d+'
+  examples:
+    match:
+      - {path: go.mod, content: "github.com/go-kratos/kratos/v2 v2.9.2"}
+      - {path: go.mod, content: "github.com/go-kratos/kratos/v3 v3.0.0"}
+      - path: server.go
+        content: |-
+          import (
+            http "github.com/go-kratos/kratos/v2/transport/http"
+          )
+    no_match:
+      - path: server.go
+        content: |-
+          import (
+            "github.com/gin-gonic/gin"
+          )
+
+Mux:
+  key: go_mux
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/gorilla/mux|github\.com/minio/mux'
+  examples:
+    match:
+      - {path: go.mod, content: "github.com/gorilla/mux"}
+      - {path: go.mod, content: "github.com/minio/mux v1.9.2"}
+    no_match:
+      - {path: go.mod, content: "github.com/go-chi/chi/v5 v5.0.0"}
+
+Pocketbase:
+  key: go_pocketbase
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    any:
+      - go_mod_dependency: github.com/pocketbase/pocketbase
+      - all:
+          - files: {extensions: [.go]}
+          - contains: pocketbase/tools/router
+  examples:
+    match:
+      - {path: go.mod, content: "require github.com/pocketbase/pocketbase v0.22.0"}
+      - {path: main.go, content: "import \"github.com/pocketbase/pocketbase/tools/router\""}
+    no_match:
+      - {path: go.mod, content: "require github.com/gin-gonic/gin v1.9.0"}
+      - {path: main.go, content: "import \"github.com/pocketbase/pocketbase\""}
+      - {path: main.go, content: "import \"github.com/gin-gonic/gin\""}
+      - {path: README.md, content: "github.com/pocketbase/pocketbase"}
+
+Revel:
+  key: go_revel
+  gate: {extensions: [.go], path_segments: [go.mod]}
+  match:
+    go_dependency: 'github\.com/revel/revel'
+  examples:
+    match:
+      - path: go.mod
+        content: |-
+          module myapp
+
+          require github.com/revel/revel v1.1.0
+      - {path: app/controllers/app.go, content: "import \"github.com/revel/revel\""}
+    no_match:
+      - {path: conf/routes, content: "GET /  controllers.HomeController.index"}
+      - path: go.mod
+        content: |-
+          module myapp
+
+          require github.com/gin-gonic/gin v1.9.0

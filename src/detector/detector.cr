@@ -1,4 +1,5 @@
 require "./detectors/**"
+require "./rule_detector"
 require "../models/detector"
 require "../models/passive_scan"
 require "../techs/techs.cr" # Added to define NoirTechs
@@ -416,28 +417,6 @@ module Noir::Detection
     end
   end
 
-  # The complete detector registry.
-  #
-  # Derived from the classes themselves rather than a hand-maintained list.
-  # Every detector under the `Detector::` namespace is registered by existing;
-  # there is no second place to add it to and therefore no way to write a
-  # detector that silently never runs. That was a real failure mode — it is
-  # how `zap_sites_tree` ended up detectable but unnameable (see
-  # `spec/unit_test/techs/registry_integrity_spec.cr`, which still checks the
-  # remaining hand-maintained lists it cannot yet be derived from).
-  #
-  # The `Detector::` filter is the production contract. `crystal spec`
-  # compiles the suite into one binary, so `all_subclasses` also sees the
-  # throwaway subclasses `spec/unit_test/detector/detector_for_spec.cr`
-  # defines to exercise the base class; those must never join a real scan.
-  #
-  # Sorted by class name so the order is a property of the source, not of
-  # whatever sequence `require "./detectors/**"` happened to produce. Order is
-  # not load-bearing — `techs` is accumulated concurrently across worker
-  # fibers and the optimizer sorts endpoints before output — but a stable
-  # order keeps debug logs and `detector_list` indices comparable between
-  # runs.
-
   # One file the detect walk kept, on its way from the walker to the
   # sequencer (see `detect_techs`). `reply` is nil for a file whose content
   # nothing will inspect: it is registered by path only, never read.
@@ -453,14 +432,18 @@ module Noir::Detection
   READ_WINDOW = 64
 end
 
+# Production classes live under Detector::. The namespace filter excludes the
+# throwaway subclasses in specs as well as the shared RuleDetector adapter.
+# Sort both forms together so a migration preserves the detector indices.
 def build_detector_list(options : Hash(String, YAML::Any)) : Array(Detector)
-  detector_list = [] of Detector
-
-  {% for detector in Detector.all_subclasses.select { |sub| !sub.abstract? && sub.name.starts_with?("Detector::") }.sort_by(&.name) %}
-    detector_list << {{ detector }}.new(options)
+  entries = [] of Tuple(String, Detector)
+  {% for detector in Detector.all_subclasses.select { |sub| !sub.abstract? && sub.name.starts_with?("Detector::") } %}
+    entries << { {{ detector.name.stringify }}, {{ detector }}.new(options).as(Detector) }
   {% end %}
-
-  detector_list
+  Noir::DetectorRules::BUILTIN.each do |rule|
+    entries << {rule.registry_name, RuleDetector.new(options, rule).as(Detector)}
+  end
+  entries.sort_by!(&.[0]).map(&.[1])
 end
 
 def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger,

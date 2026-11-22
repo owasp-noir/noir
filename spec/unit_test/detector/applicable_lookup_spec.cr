@@ -1,37 +1,33 @@
 require "../../spec_helper"
 require "../../../src/detector/detector"
-require "../../../src/detector/detectors/specification/supabase"
-require "../../../src/detector/detectors/groovy/grails"
-require "../../../src/detector/detectors/specification/vercel"
-require "../../../src/detector/detectors/java/spring"
 require "../../../src/models/detector"
 
 describe "Noir::Detection.path_sensitive?" do
-  options = create_test_options
+  registry = build_detector_list(create_test_options).index_by(&.name)
 
   it "flags Supabase (migrations / supabase/ path gates)" do
-    Noir::Detection.path_sensitive?(Detector::Specification::Supabase.new(options)).should be_true
+    Noir::Detection.path_sensitive?(registry["supabase"]).should be_true
   end
 
   it "flags Grails (grails-app path gate)" do
-    Noir::Detection.path_sensitive?(Detector::Groovy::Grails.new(options)).should be_true
+    Noir::Detection.path_sensitive?(registry["groovy_grails"]).should be_true
   end
 
   it "flags Vercel (root-placed vercel.json)" do
-    Noir::Detection.path_sensitive?(Detector::Specification::Vercel.new(options)).should be_true
+    Noir::Detection.path_sensitive?(registry["vercel"]).should be_true
   end
 
   it "does not flag extension-only Spring detector" do
-    Noir::Detection.path_sensitive?(Detector::Java::Spring.new(options)).should be_false
+    Noir::Detection.path_sensitive?(registry["java_spring"]).should be_false
   end
 end
 
 describe "Noir::Detection.build_applicable_lookup" do
-  options = create_test_options
+  registry = build_detector_list(create_test_options).index_by(&.name)
 
   it "includes Supabase for a migration path but not a bare .sql basename probe" do
-    supabase = Detector::Specification::Supabase.new(options)
-    spring = Detector::Java::Spring.new(options)
+    supabase = registry["supabase"]
+    spring = registry["java_spring"]
     detectors = [supabase.as(Detector), spring.as(Detector)]
     lookup = Noir::Detection.build_applicable_lookup(detectors)
 
@@ -44,7 +40,7 @@ describe "Noir::Detection.build_applicable_lookup" do
   end
 
   it "includes Grails for a grails-app path via path-sensitive recheck" do
-    grails = Detector::Groovy::Grails.new(options)
+    grails = registry["groovy_grails"]
     detectors = [grails.as(Detector)]
     lookup = Noir::Detection.build_applicable_lookup(detectors)
 

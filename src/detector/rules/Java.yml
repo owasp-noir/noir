@@ -1,0 +1,175 @@
+Armeria:
+  key: java_armeria
+  gate: {extensions: [pom.xml, build.gradle, build.gradle.kts, settings.gradle.kts]}
+  files: {path_segments: [pom.xml, build.gradle, build.gradle.kts, settings.gradle.kts]}
+  match:
+    contains: com.linecorp.armeria
+  examples:
+    match:
+      - {path: pom.xml, content: "com.linecorp.armeria"}
+      - {path: build.gradle, content: "com.linecorp.armeria"}
+    no_match:
+      - {path: pom.xml, content: "# unrelated framework"}
+
+Dropwizard:
+  key: java_dropwizard
+  files: {extensions: [.java]}
+  match:
+    contains: io.dropwizard
+  examples:
+    match:
+      - {path: App.java, content: "import io.dropwizard.core.Application;"}
+    no_match:
+      - {path: pom.xml, content: "<groupId>io.dropwizard</groupId>"}
+      - {path: App.java, content: "import jakarta.ws.rs.Path;"}
+
+HelidonMp:
+  key: java_helidon_mp
+  gate: {extensions: [.java, pom.xml, build.gradle, build.gradle.kts]}
+  files: {extensions: [.java], path_segments: [pom.xml, build.gradle, build.gradle.kts]}
+  match:
+    contains: io.helidon.microprofile
+  examples:
+    match:
+      - {path: Main.java, content: "import io.helidon.microprofile.server.Server;"}
+      - path: pom.xml
+        content: |-
+          <artifactId>helidon-microprofile-core</artifactId>
+          <groupId>io.helidon.microprofile.bundles</groupId>
+      - {path: build.gradle, content: "implementation 'io.helidon.microprofile.bundles:helidon-microprofile-core'"}
+    no_match:
+      - {path: GreetResource.java, content: "import jakarta.ws.rs.Path;"}
+
+HelidonSe:
+  key: java_helidon_se
+  files: {extensions: [.java]}
+  match:
+    contains: io.helidon.webserver
+  examples:
+    match:
+      - {path: GreetService.java, content: "import io.helidon.webserver.http.HttpService;"}
+      - {path: Main.java, content: "import io.helidon.webserver.http.HttpRouting;"}
+    no_match:
+      - {path: Application.java, content: "import org.springframework.boot.SpringApplication;"}
+      - {path: pom.xml, content: "io.helidon.webserver"}
+
+HttpServer:
+  key: java_httpserver
+  files: {extensions: [.java]}
+  match:
+    all:
+      - contains: com.sun.net.httpserver
+      - contains: createContext
+  examples:
+    match:
+      - path: src/App.java
+        content: |-
+          import com.sun.net.httpserver.HttpServer;
+          import java.net.InetSocketAddress;
+
+          public class App {
+              public static void main(String[] args) throws Exception {
+                  HttpServer server = HttpServer.create(new InetSocketAddress(8000), 0);
+                  server.createContext("/", exchange -> exchange.sendResponseHeaders(200, 0));
+                  server.start();
+              }
+          }
+      - path: src/App.java
+        content: |-
+          public class App {
+              public static void main(String[] args) throws Exception {
+                  com.sun.net.httpserver.HttpServer server =
+                      com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress(8000), 0);
+                  server.createContext("/api", new ApiHandler());
+              }
+          }
+    no_match:
+      - path: src/LoggingHandler.java
+        content: |-
+          import com.sun.net.httpserver.HttpHandler;
+          import com.sun.net.httpserver.HttpExchange;
+
+          public class LoggingHandler implements HttpHandler {
+              public void handle(HttpExchange exchange) {
+              }
+          }
+      - path: src/App.java
+        content: |-
+          import io.vertx.core.http.HttpServer;
+
+          public class App {
+              public void start(HttpServer server) {
+                  server.requestHandler(req -> req.response().end("ok"));
+              }
+          }
+      - {path: notes.txt, content: "com.sun.net.httpserver.HttpServer server; server.createContext(\"/\");"}
+
+Javalin:
+  key: java_javalin
+  files: {extensions: [.java, .kt]}
+  match:
+    contains: io.javalin
+  examples:
+    match:
+      - {path: App.java, content: "import io.javalin.Javalin;"}
+      - {path: App.kt, content: "import io.javalin.Javalin"}
+    no_match:
+      - {path: pom.xml, content: "<groupId>io.javalin</groupId>"}
+      - {path: App.java, content: "import java.util.List;"}
+
+Micronaut:
+  key: java_micronaut
+  files: {extensions: [.java, .kt]}
+  match:
+    contains: [io.micronaut, micronaut.io]
+  examples:
+    match:
+      - {path: Controller.java, content: "import io.micronaut.http.annotation.Controller;"}
+      - {path: Controller.java, content: "// https://micronaut.io"}
+      - {path: Controller.kt, content: "import io.micronaut.http.annotation.Controller"}
+    no_match:
+      - {path: pom.xml, content: "<groupId>io.micronaut</groupId>"}
+      - {path: Controller.java, content: "import jakarta.ws.rs.Path;"}
+
+Spark:
+  key: java_spark
+  files: {extensions: [.java]}
+  match:
+    any:
+      - regex: '(?<![\w.])spark\.Spark\b'
+      - contains: ['import spark.', 'import static spark.']
+  examples:
+    match:
+      - {path: App.java, content: "import static spark.Spark.*;"}
+      - {path: App.java, content: "import spark.Request;"}
+      - {path: App.java, content: "spark.Spark.get(\"/hi\", (q, r) -> \"hi\");"}
+    no_match:
+      - {path: Job.java, content: "import org.apache.spark.SparkConf;"}
+      - {path: Job.java, content: "import org.apache.spark.SparkContext;"}
+      - {path: pom.xml, content: "import org.apache.spark.SparkConf;"}
+
+Spring:
+  key: java_spring
+  files: {extensions: [.java]}
+  match:
+    contains: org.springframework
+  examples:
+    match:
+      - {path: test.java, content: "import org.springframework.boot.SpringApplication;"}
+    no_match:
+      - {path: test.java, content: "# unrelated framework"}
+
+Vertx:
+  key: java_vertx
+  files: {extensions: [.java, pom.xml, build.gradle, build.gradle.kts, settings.gradle.kts]}
+  match:
+    contains: io.vertx
+  examples:
+    match:
+      - {path: pom.xml, content: "io.vertx"}
+      - {path: build.gradle, content: "io.vertx"}
+      - {path: build.gradle.kts, content: "io.vertx"}
+      - {path: settings.gradle.kts, content: "io.vertx"}
+    no_match:
+      - {path: random.txt, content: "io.vertx"}
+      - {path: pom.xml, content: "some.other.dependency"}

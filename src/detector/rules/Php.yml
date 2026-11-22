@@ -1,0 +1,34 @@
+ApiPlatform:
+  key: php_api_platform
+  gate: {extensions: [.php], basenames: [composer.json, composer.lock]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [composer.json, composer.lock]}
+          - composer_dependency: [api-platform/core, api-platform/symfony, api-platform/laravel, api-platform/metadata]
+      - all:
+          - files: {extensions: [.php]}
+          - regex: '(?ms)^\s*use\s+ApiPlatform\\Metadata\\'
+  examples:
+    match:
+      - {path: composer.json, content: "{\"require\": {\"api-platform/core\": \"^3.2\"}}"}
+      - {path: composer.json, content: "{\"require\": {\"api-platform/laravel\": \"^4.1\"}}"}
+      - {path: composer.lock, content: "{\"packages\": [{\"name\": \"api-platform/core\", \"version\": \"v3.2.0\"}]}"}
+      - path: src/Entity/Book.php
+        content: |
+          <?php
+          namespace App\Entity;
+
+          use ApiPlatform\Metadata\ApiResource;
+
+          #[ApiResource]
+          class Book {}
+    no_match:
+      - {path: composer.lock, content: "{\"packages-dev\": [{\"name\": \"roave/security-advisories\", \"conflict\": {\"api-platform/core\": \"<3.4.17\"}}]}"}
+      - {path: composer.json, content: "{\"require\": {\"symfony/framework-bundle\": \"^7.0\"}}"}
+      - {path: composer.json, content: "{\"require\": {\"api-platform/core-extra\": \"^1.0\"}}"}
+      - path: src/Controller/Home.php
+        content: |-
+          <?php
+          // see ApiPlatform\Metadata\ApiResource
+          class Home {}

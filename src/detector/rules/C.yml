@@ -1,0 +1,38 @@
+Civetweb:
+  key: c_civetweb
+  gate: {extensions: [.c, .h, .cc, .cpp, .cxx, .hpp]}
+  match:
+    contains: [civetweb.h, CivetServer.h]
+  examples:
+    match:
+      - {path: server.c, content: "#include \"civetweb.h\""}
+      - {path: server.cpp, content: "#include \"CivetServer.h\""}
+    no_match:
+      - {path: server.c, content: "#include <string.h>"}
+
+Libmicrohttpd:
+  key: c_libmicrohttpd
+  gate: {extensions: [.c, .h, .cc, .cpp, .cxx, .hpp]}
+  match:
+    contains: [microhttpd.h, MHD_start_daemon]
+  examples:
+    match:
+      - {path: server.c, content: "#include <microhttpd.h>"}
+      - {path: server.c, content: "d = MHD_start_daemon (flags, 8080, NULL, NULL, &ahc, NULL, MHD_OPTION_END);"}
+    no_match:
+      - {path: server.c, content: "#include <stdlib.h>"}
+
+Mongoose:
+  key: c_mongoose
+  gate: {extensions: [.c, .h, .cc, .cpp, .cxx, .hpp]}
+  match:
+    contains: mongoose.h
+  examples:
+    match:
+      - {path: main.c, content: "#include \"mongoose.h\""}
+      - {path: main.cpp, content: "#include <mongoose.h>"}
+    no_match:
+      - path: main.c
+        content: |-
+          #include <stdio.h>
+          int main(void){return 0;}
