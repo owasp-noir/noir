@@ -1,0 +1,82 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/catalog/books"
+  },
+  {
+    "method": "POST",
+    "path": "/api/catalog/books"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/books/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/editions/:year?"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/files/*"
+  },
+  {
+    "method": "GET",
+    "path": "/api/catalog/isbn/:number{[0-9]+}"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/books"
+  },
+  {
+    "method": "POST",
+    "path": "/archive/books"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/books/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/editions/:year?"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/files/*"
+  },
+  {
+    "method": "GET",
+    "path": "/archive/isbn/:number{[0-9]+}"
+  },
+  {
+    "method": "ALL",
+    "path": "/echo"
+  },
+  {
+    "method": "GET",
+    "path": "/featured"
+  },
+  {
+    "method": "POST",
+    "path": "/orders"
+  },
+  {
+    "method": "DELETE",
+    "path": "/orders/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/orders/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/popular"
+  },
+  {
+    "method": "GET",
+    "path": "/recent"
+  },
+  {
+    "method": "GET",
+    "path": "/status/ready"
+  }
+]

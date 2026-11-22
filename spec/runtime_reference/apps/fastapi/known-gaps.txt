@@ -1,0 +1,10 @@
+# One normalized difference per line: missed METHOD /path or extra METHOD /path.
+# Initial entries inferred from registrations and a Noir scan; verify with the first container dump.
+extra GET /api/catalog/files/{*name}
+extra GET /archive/files/{*name}
+extra GET /unpublished
+missed GET /api/catalog/files/{}
+missed GET /archive/files/{}
+missed GET /featured
+missed GET /popular
+missed GET /recent

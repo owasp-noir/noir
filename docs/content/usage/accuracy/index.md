@@ -137,6 +137,14 @@ A technology measured on one repository is a single data point.
 
 <!-- /SCOREBOARD -->
 
+## Runtime route reference
+
+For Express, Hono, FastAPI and Gin, Noir also compares its HTTP endpoints with the framework's registered routes. On these small purpose-written apps, precision is the share of reported method/path pairs in the route table. Recall is the share of registered pairs Noir finds. The scoreboard measures agreement with real repositories’ OpenAPI contracts, where an undocumented route can still be live. The runtime corpus covers selected routing features and cannot estimate accuracy across production applications. It scores registration only. Parameters, guards and implicit dispatch such as HEAD falling back to GET are outside the comparison.
+
+Run `just runtime-reference` to generate the sorted tables and their framework versions and UTC dates. Express records a route-level `.all()` as `_all`, rendered as `ALL`. Hono reports `ALL` and its pass-through middleware is excluded. FastAPI lists the methods supplied to `api_route` and the reference app disables automatic docs. Gin lists each verb registered by `Any`. The comparison preserves these method differences and applies Noir’s placeholder normalization on both sides.
+
+The functional suite scans only each app’s `src/`. A missing `routes.json` makes that example pending. Each app’s `known-gaps.txt` records missed and extra pairs. A new difference fails the spec, and a resolved difference fails until its entry is removed.
+
 ## Method
 
 Each entry in [`scripts/scoreboard/corpus.json`](https://github.com/owasp-noir/noir/blob/main/scripts/scoreboard/corpus.json) contains only its repository pin, code technology, service scope, selected in-tree OpenAPI files, optional `spec_prefix` and `exclude_paths`, and a short note. Exclusions are explicit service boundaries passed to Noir's existing `--exclude-path` option and included in snapshot identity: NodeBB's separate web installer (`install/web.js:63-68`) and Gotify's example plugin (`plugin/example/echo/echo.go:74-77`) are outside their scored services. The runner shallow-fetches the pinned object and exports that service and the selected spec files into scratch space. Other OpenAPI entry documents are removed. Compiled WebAssembly (`*.wasm`) and CSV datasets (`*.csv`) are excluded; neither is route source for a scored analyzer. Scanner errors stop publication. Corpus applications are never built, installed, or run.

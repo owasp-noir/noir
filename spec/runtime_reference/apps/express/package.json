@@ -1,0 +1,7 @@
+{
+  "name": "express-runtime-reference",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "start": "node src/app.js" },
+  "dependencies": { "express": "5.0.0" }
+}

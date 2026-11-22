@@ -192,6 +192,14 @@ Key design notes:
 
 **After any new component: run `just test` to validate.**
 
+## Runtime route reference
+
+`spec/runtime_reference/apps/{express,hono,fastapi,gin}/src/` contains runnable applications. Only `src/` goes through the functional runner with default detection. Keep dump scripts, installed dependencies, route manifests, provenance and gap files outside that directory. The ordinary fixture corpus stays under `spec/functional_test/fixtures/`. With dependencies installed, start a reference server from its app directory with `npm start` (Express and Hono), `uvicorn --app-dir src app:app` (FastAPI) or `go run ./src/cmd/server` (Gin).
+
+Run `just runtime-reference` with Docker and Python 3 to regenerate `routes.json` and `provenance.json`. Image builds install pinned dependencies. Dumps run with networking disabled. Commit the two generated files together. A missing manifest makes that app's functional example pending. Never construct a manifest from source or from Noir's output.
+
+Each `known-gaps.txt` line is a normalized `missed METHOD /path` or `extra METHOD /path`. Once established, entries may only be removed. Investigate new differences and delete entries flagged as stale. Run `./bin/noir_spec -e "runtime reference"` after refreshing the manifests.
+
 ## Before Committing
 
 1. `just build` - Ensure compilation succeeds
