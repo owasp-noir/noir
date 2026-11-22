@@ -32,6 +32,7 @@ FunctionalTester.new("fixtures/specification/graphql_sdl/schema_block/", {
   Endpoint.new("/graphql#Mutation.publish", "POST", [
     Param.new("channel", "", "json"),
     Param.new("body", "", "json"),
+    Param.new("graphql_mutation_publish", "", "json"),
   ]),
 ]).perform_tests
 
@@ -42,10 +43,12 @@ FunctionalTester.new("fixtures/specification/graphql_sdl/extend_federation/", {
 }, [
   Endpoint.new("/graphql#Query.searchProducts", "POST", [
     Param.new("q", "", "json"),
+    Param.new("graphql_query_searchProducts", "", "json"),
   ]),
   Endpoint.new("/graphql#Mutation.addToCart", "POST", [
     Param.new("productId", "", "json"),
     Param.new("quantity", "", "json"),
+    Param.new("graphql_mutation_addToCart", "", "json"),
   ]),
 ]).perform_tests
 
@@ -60,12 +63,15 @@ FunctionalTester.new("fixtures/specification/graphql_sdl/split/", {
   Endpoint.new("/graphql#Query.users", "POST", [
     Param.new("page.first", "", "json"),
     Param.new("page.after", "", "json"),
+    Param.new("graphql_query_users", "", "json"),
   ]),
   Endpoint.new("/graphql#Mutation.createUser", "POST", [
     Param.new("name", "", "json"),
+    Param.new("graphql_mutation_createUser", "", "json"),
   ]),
   Endpoint.new("/graphql#Query.orders", "POST", [
     Param.new("page.first", "", "json"),
     Param.new("page.after", "", "json"),
+    Param.new("graphql_query_orders", "", "json"),
   ]),
 ]).perform_tests

@@ -67,8 +67,13 @@ FunctionalTester.new("fixtures/elixir/absinthe_multi_app/", {
   :techs     => 2,
   :endpoints => 3,
 }, [
-  Endpoint.new("/gql#Query.list_items", "POST", [Param.new("page_size", "", "json")]),
-  Endpoint.new("/graphql#Query.allUsers", "POST"),
+  Endpoint.new("/gql#Query.list_items", "POST", [
+    Param.new("page_size", "", "json"),
+    Param.new("graphql_query_list_items", "", "json"),
+  ]),
+  Endpoint.new("/graphql#Query.allUsers", "POST", [
+    Param.new("graphql_query_allUsers", "", "json"),
+  ]),
 ]).perform_tests
 
 # Same shapes without Absinthe: nothing is detected.

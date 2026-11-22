@@ -7,7 +7,9 @@ tester = FunctionalTester.new("fixtures/python/graphene_sdl_duplicate/", {
   :techs     => 3,
   :endpoints => 2,
 }, [
-  Endpoint.new("/graphql/#Query.me", "POST"),
+  Endpoint.new("/graphql/#Query.me", "POST", [
+    Param.new("graphql_query_me", "", "json"),
+  ]),
   Endpoint.new("/graphql/", "GET"),
 ])
 tester.perform_tests

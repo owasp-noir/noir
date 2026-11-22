@@ -19,19 +19,24 @@ expected_endpoints = [
     Param.new("order_by", "", "json"),
   ]),
   # movies names an `id` column, so the by-pk fields exist.
-  Endpoint.new("/v1/graphql#Query.movies_by_pk", "POST"),
+  Endpoint.new("/v1/graphql#Query.movies_by_pk", "POST", [
+    Param.new("graphql_query_movies_by_pk", "", "json"),
+  ]),
   Endpoint.new("/v1/graphql#Query.movies_aggregate", "POST", [
     Param.new("where.id", "", "json"),
     Param.new("where.release_year", "", "json"),
     Param.new("where.title", "", "json"),
+    Param.new("graphql_query_movies_aggregate", "", "json"),
   ]),
   Endpoint.new("/v1/graphql#Mutation.insert_movies", "POST", [
     Param.new("objects.release_year", "", "json"),
     Param.new("objects.title", "", "json"),
+    Param.new("graphql_mutation_insert_movies", "", "json"),
   ]),
   Endpoint.new("/v1/graphql#Mutation.insert_movies_one", "POST", [
     Param.new("object.release_year", "", "json"),
     Param.new("object.title", "", "json"),
+    Param.new("graphql_mutation_insert_movies_one", "", "json"),
   ]),
   Endpoint.new("/v1/graphql#Mutation.update_movies", "POST", [
     Param.new("_set.release_year", "", "json"),
@@ -39,14 +44,20 @@ expected_endpoints = [
     Param.new("where.id", "", "json"),
     Param.new("where.release_year", "", "json"),
     Param.new("where.title", "", "json"),
+    Param.new("graphql_mutation_update_movies", "", "json"),
   ]),
-  Endpoint.new("/v1/graphql#Mutation.update_movies_by_pk", "POST"),
+  Endpoint.new("/v1/graphql#Mutation.update_movies_by_pk", "POST", [
+    Param.new("graphql_mutation_update_movies_by_pk", "", "json"),
+  ]),
   Endpoint.new("/v1/graphql#Mutation.delete_movies", "POST", [
     Param.new("where.id", "", "json"),
     Param.new("where.release_year", "", "json"),
     Param.new("where.title", "", "json"),
+    Param.new("graphql_mutation_delete_movies", "", "json"),
   ]),
-  Endpoint.new("/v1/graphql#Mutation.delete_movies_by_pk", "POST"),
+  Endpoint.new("/v1/graphql#Mutation.delete_movies_by_pk", "POST", [
+    Param.new("graphql_mutation_delete_movies_by_pk", "", "json"),
+  ]),
 
   # directors names only `name`, so no primary key is invented for it.
   Endpoint.new("/v1/graphql#Query.directors", "POST", [
@@ -55,17 +66,25 @@ expected_endpoints = [
     Param.new("offset", "", "json"),
     Param.new("order_by", "", "json"),
     Param.new("where.name", "", "json"),
+    Param.new("graphql_query_directors", "", "json"),
   ]),
   Endpoint.new("/v1/graphql#Query.directors_aggregate", "POST", [
     Param.new("where.name", "", "json"),
+    Param.new("graphql_query_directors_aggregate", "", "json"),
   ]),
-  Endpoint.new("/v1/graphql#Mutation.insert_directors", "POST"),
-  Endpoint.new("/v1/graphql#Mutation.insert_directors_one", "POST"),
+  Endpoint.new("/v1/graphql#Mutation.insert_directors", "POST", [
+    Param.new("graphql_mutation_insert_directors", "", "json"),
+  ]),
+  Endpoint.new("/v1/graphql#Mutation.insert_directors_one", "POST", [
+    Param.new("graphql_mutation_insert_directors_one", "", "json"),
+  ]),
   Endpoint.new("/v1/graphql#Mutation.update_directors", "POST", [
     Param.new("where.name", "", "json"),
+    Param.new("graphql_mutation_update_directors", "", "json"),
   ]),
   Endpoint.new("/v1/graphql#Mutation.delete_directors", "POST", [
     Param.new("where.name", "", "json"),
+    Param.new("graphql_mutation_delete_directors", "", "json"),
   ]),
 
   # The only real REST surface is what rest_endpoints.yaml declares.
