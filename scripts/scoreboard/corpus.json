@@ -141,6 +141,32 @@
       "note": "docs/openapi/generate_openapi.py:83-93 writes create_app().openapi(); lines 96-103 select this committed document. Pinned to the schema-generator introduction, before workflow routes moved into the separate lfx package, so src/backend/base contains all service routers (langflow/main.py:532-534). Component examples, frontend and tests are outside scope. No prefix adjustment."
     },
     {
+      "name": "listmonk",
+      "url": "https://github.com/knadh/listmonk",
+      "commit": "878b5313d51942b722c33d33f9d1be955578d7e3",
+      "technologies": [
+        "go_echo"
+      ],
+      "scope": "cmd",
+      "specs": [
+        "docs/swagger/collections.yaml"
+      ],
+      "note": ".github/workflows/github-pages.yml renders Swagger UI from this hand-maintained collection. cmd/handlers.go registers both the mailing-list API and subscriber-facing pages. Keep its literal /api prefix. The collection omits GET /api/subscribers/:id/activity and the user-management endpoints."
+    },
+    {
+      "name": "meshery",
+      "url": "https://github.com/meshery/meshery",
+      "commit": "016b42910216f2072b4f6a1527cf3a90f1191c00",
+      "technologies": [
+        "go_mux"
+      ],
+      "scope": "server",
+      "specs": [
+        "docs/data/openapi.yml"
+      ],
+      "note": "The Meshery Server contract is bundled from API definitions maintained in meshery/schemas. The contributing-schemas guide describes the OSS bundle. server/router/server.go registers the Gorilla mux routes, including /api/registry and its deprecated /api/meshmodels alias through registerRegistryRoute. The contract includes controller status subscriptions but omits GET /api/system/events/subscribe and the /api/user/prefs routes."
+    },
+    {
       "name": "owncast",
       "url": "https://github.com/owncast/owncast",
       "commit": "c3a9ac1c46c043358fe7382a6d62d5227e4b2efe",
