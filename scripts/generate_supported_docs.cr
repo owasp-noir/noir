@@ -148,10 +148,13 @@ def chip_row(flags : Hash(String, Bool), features : Array(NamedTuple(key: String
 end
 
 # Render a single framework card.
-def framework_card(name : String, flags : Hash(String, Bool)) : String
+def framework_card(name : String, tier : String, flags : Hash(String, Bool)) : String
   io = IO::Memory.new
   io << %(  <article class="tech-card">\n)
-  io << %(    <h3 class="tech-card-title">#{name}</h3>\n)
+  # Only `core` is labelled: `extended` is the default for nearly every
+  # card, and a chip on all of them would say nothing.
+  chip = tier == "core" ? %( <span class="tech-chip">core</span>) : ""
+  io << %(    <h3 class="tech-card-title">#{name}#{chip}</h3>\n)
   io << chip_row(flags, ROUTE_FEATURES, "Route")
   io << chip_row(flags, AI_FEATURES, "AI Context")
   io << %(  </article>\n)
@@ -167,16 +170,16 @@ LEGEND_HTML = <<-HTML
 
 # Generate language/framework card grids grouped by language.
 def generate_language_tables(data : JSON::Any) : String
-  by_language = Hash(String, Array({name: String, flags: Hash(String, Bool)})).new { |h, k| h[k] = [] of {name: String, flags: Hash(String, Bool)} }
+  by_language = Hash(String, Array({name: String, tier: String, flags: Hash(String, Bool)})).new { |h, k| h[k] = [] of {name: String, tier: String, flags: Hash(String, Bool)} }
 
-  data.as_h.each do |_key, info|
+  data.as_h.each do |key, info|
     h = info.as_h
     next unless h.has_key?("language")
 
     language = h["language"].as_s
     framework = h["framework"]?.try(&.as_s) || ""
     framework = "Pure" if framework.empty?
-    by_language[language] << {name: framework, flags: feature_flags(_key, h["supported"])}
+    by_language[language] << {name: framework, tier: NoirTechs::TIERS[key], flags: feature_flags(key, h["supported"])}
   end
 
   io = IO::Memory.new
@@ -187,7 +190,7 @@ def generate_language_tables(data : JSON::Any) : String
     io << "## #{lang}\n\n"
     io << %(<div class="tech-grid">\n)
     entries.each do |e|
-      io << framework_card(e[:name], e[:flags])
+      io << framework_card(e[:name], e[:tier], e[:flags])
     end
     io << %(</div>\n\n)
   end

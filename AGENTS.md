@@ -142,6 +142,10 @@ When adding a new framework in a language that already has an extractor, extend 
 
 **There are no registration lists to edit.** Analyzers, detectors and output formats each join their registry by declaring their own name on the class; the registry is derived from the classes by macro. Adding a name to a hand-maintained list used to be a second place to remember, where forgetting produced no error and no failing spec — just a component that never ran.
 
+### Technology tiers
+
+New catalog entries default to `extended` and are covered by fixtures. Every scoreboard run measures `core` technologies against real repositories at pinned commits. To promote a technology, set `:tier => "core"` in its catalog entry and include its key in a pinned repository's `technologies` in `scripts/scoreboard/corpus.json`. Run `just docs-supported` to update the support pages.
+
 ### Analyzers
 1. Create `src/analyzer/analyzers/{language}/{framework}.cr` — framework adapter only. Delegate parsing to the language's route extractor (see **Analyzer Layering** above).
 2. Declare the tech inside the class: `analyzer_for "{language}_{framework}"`. This is the whole registration (`src/models/analyzer.cr`); `initialize_analyzers` reads it off `Analyzer.all_subclasses`. Omitting it is a compile error.

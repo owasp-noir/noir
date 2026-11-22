@@ -96,6 +96,8 @@ describe Noir::CLI::ListCommand do
       supported["ai_context"]["guards"].as_bool?.should_not be_nil
       doc["go_gin"]["view"].should eq("code")
       doc["nginx"]["view"].should eq("gateway")
+      doc["go_gin"]["tier"].as_s.should eq("core")
+      doc["nginx"]["tier"].as_s.should eq("extended")
     end
 
     it "emits valid YAML" do
@@ -103,6 +105,7 @@ describe Noir::CLI::ListCommand do
       Noir::CLI::ListCommand.print_techs("yaml", io)
       doc = YAML.parse(io.to_s)
       doc["js_express"]["supported"]["callee"].as_bool.should be_true
+      doc["js_express"]["tier"].as_s.should eq("core")
     end
 
     it "renders nested params and lists in the text view, not Crystal inspect" do
@@ -112,6 +115,8 @@ describe Noir::CLI::ListCommand do
       out.should_not contain("=>")
       out.should_not contain("[\"")
       out.should contain("similar: asp, classic-asp")
+      out.should contain("   tier: core\n")
+      out.should contain("   tier: extended\n")
       out.should match(/^     params:\n       query: true$/m)
       out.should match(/^       guards: (true|false)$/m)
     end
