@@ -15,12 +15,12 @@ class Api::Callees < Lucky::Action
   put "/lucky/users/:id" do
     id = params.get(:id)
     UserUpdater.call(id)
-    json({ok: true})
+    json({ok: true, query_id: params.from_query["id"]})
   end
 
   delete "/lucky/users/:id" do
     UserDestroyer.call(params.get(:id))
-    head 204
+    plain_text params.get(:reason)
   end
 
   patch "/lucky/users/:id" do

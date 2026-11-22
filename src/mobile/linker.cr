@@ -50,6 +50,7 @@ module NoirMobileLinker
     getter code_paths : Array(PathInfo)
     getter callees : Array(Callee)
     getter params : Array(Param)
+    getter fragment_arguments = Set(String).new
 
     def initialize
       @code_paths = [] of PathInfo
@@ -58,7 +59,7 @@ module NoirMobileLinker
     end
 
     def empty? : Bool
-      @code_paths.empty? && @callees.empty? && @params.empty?
+      @code_paths.empty? && @callees.empty? && @params.empty? && @fragment_arguments.empty?
     end
   end
 end

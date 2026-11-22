@@ -18,7 +18,7 @@
 		.scope(path="admin", package="admin")
 			.resources(name="users", nested=true)
 				// Nested under the parent's key.
-				.resources(name="permissions", controller="userpermissions", only="index,create")
+				.resources(name="permissions", controller="userpermissions", only="index,create,show")
 				.member()
 					.post("assume")
 					.put("reset")

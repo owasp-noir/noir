@@ -95,6 +95,13 @@ expected_endpoints = [
   build.call("myapp://users/:userId", "mobile-scheme", [
     Param.new("userId", "", "path"),
     Param.new("ref", "", "query"),
+    Param.new("ref", "", "extra"),
+  ], ["loadProfile"]),
+  build.call("myapp://${missingHost}/profiles/:userId", "mobile-scheme", [
+    Param.new("userId", "", "path"),
+    Param.new("source", "", "query"),
+    Param.new("ref", "", "query"),
+    Param.new("ref", "", "extra"),
   ], ["loadProfile"]),
   # Scheme-less Navigation URI: http/https implied, emitted under https;
   # the trailing `.*` wildcard keeps the literal prefix only.

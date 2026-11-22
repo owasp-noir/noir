@@ -38,8 +38,10 @@ expected_endpoints = [
   Endpoint.new("/admin/users/:key", "DELETE", [Param.new("key", "", "path")]),
 
   # `nested=true` scopes the child resource under the parent's key.
-  Endpoint.new("/admin/users/:key/permissions", "GET"),
-  Endpoint.new("/admin/users/:key/permissions", "POST"),
+  Endpoint.new("/admin/users/:userKey/permissions", "GET", [Param.new("userKey", "", "path")]),
+  Endpoint.new("/admin/users/:userKey/permissions", "POST", [Param.new("userKey", "", "path")]),
+
+  Endpoint.new("/admin/users/:userKey/permissions/:key", "GET", [Param.new("userKey", "", "path"), Param.new("key", "", "path")]),
 
   # `member()` routes act on the existing record.
   Endpoint.new("/admin/users/:key/assume", "POST", [Param.new("key", "", "path")]),

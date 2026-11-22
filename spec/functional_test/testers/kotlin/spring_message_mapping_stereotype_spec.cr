@@ -7,11 +7,11 @@ require "../../func_spec.cr"
 # be a controller and stays. A mapping an interface declares is read too.
 expected_endpoints = [
   Endpoint.new("/ws", "GET").tap(&.protocol=("ws")),
-  Endpoint.new("/app/chat", "SEND").tap(&.protocol=("ws")),
-  Endpoint.new("/app/external", "SEND").tap(&.protocol=("ws")),
-  Endpoint.new("/app/lobby", "SEND").tap(&.protocol=("ws")),
-  Endpoint.new("/app/ping", "SEND").tap(&.protocol=("ws")),
-  Endpoint.new("/app/score", "SEND").tap(&.protocol=("ws")),
+  Endpoint.new("/app/chat", "SEND", [Param.new("text", "", "json")]).tap(&.protocol=("ws")),
+  Endpoint.new("/app/external", "SEND", [Param.new("text", "", "json")]).tap(&.protocol=("ws")),
+  Endpoint.new("/app/lobby", "SEND", [Param.new("text", "", "json")]).tap(&.protocol=("ws")),
+  Endpoint.new("/app/ping", "SEND", [Param.new("text", "", "json")]).tap(&.protocol=("ws")),
+  Endpoint.new("/app/score", "SEND", [Param.new("text", "", "json")]).tap(&.protocol=("ws")),
 ]
 
 tester = FunctionalTester.new("fixtures/kotlin/spring_message_mapping_stereotype/", {

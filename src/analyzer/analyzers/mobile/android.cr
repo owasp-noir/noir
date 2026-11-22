@@ -577,13 +577,18 @@ module Analyzer::Mobile
       endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(nav_path)))
       endpoint.protocol = protocol
       action = attr(node, "action") || NAV_VIEW_ACTION
-      endpoint.metadata = build_metadata(via, [action], [] of String, host, package)
-
+      metadata = build_metadata(via, [action], [] of String, host, package)
+      # Navigation puts the URI template values in the destination's arguments.
+      # The query key and its argument can differ (e.g. ?from={referrer}).
+      arguments = raw_path.scan(NAV_ARGUMENT_RE).map(&.[1])
       query.split('&').each do |pair|
-        name = pair.partition('=')[0]
+        name, _, value = pair.partition('=')
+        value.scan(NAV_ARGUMENT_RE) { |match| arguments << match[1] }
         endpoint.push_param(Param.new(name, "", "query")) unless name.empty?
       end
 
+      metadata["navigation_arguments"] = arguments.uniq!.join(",") unless arguments.empty?
+      endpoint.metadata = metadata
       mark_unresolved(endpoint, url)
       @result << endpoint
     end
@@ -887,8 +892,10 @@ module Analyzer::Mobile
 
     # The `$` lookbehind keeps an unresolved gradle `${placeholder}` intact
     # (for the unresolved tag) while `{id}` still becomes `:id`.
+    NAV_ARGUMENT_RE = /(?<!\$)\{([^}]+)\}/
+
     private def templatize(path : String) : String
-      path.gsub(/(?<!\$)\{([^}]+)\}/, ":\\1")
+      path.gsub(NAV_ARGUMENT_RE, ":\\1")
     end
 
     # Per-endpoint gate, evaluated for every emitted deep-link/provider URL.

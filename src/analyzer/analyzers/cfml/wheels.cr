@@ -1,4 +1,5 @@
 require "../../engines/cfml_engine"
+require "../../../utils/ruby_inflector"
 
 module Analyzer::Cfml
   # Wheels routing.
@@ -32,8 +33,12 @@ module Analyzer::Cfml
     # Wheels writes path variables in brackets, not colons.
     PLACEHOLDER_RE = /\[([A-Za-z_]\w*)\]/
 
-    # Default key segment for a member route.
-    KEY_SEGMENT = "[key]"
+    # Members use [key]. A child resource qualifies that same capture with the parent name.
+    private record Scope, path : String, child_path : String do
+      def initialize(path : String)
+        initialize(path, path)
+      end
+    end
 
     VERB_CALLS = Set{"get", "post", "put", "patch", "delete", "head", "options"}
 
@@ -85,7 +90,7 @@ module Analyzer::Cfml
       # marks the end of the chain: `.get`/`.post`/`.delete` are ordinary
       # method names, and a routes file legitimately holds other setup
       # code, so anything outside these bounds is not a route.
-      prefixes = [""]
+      prefixes = [Scope.new("")]
       finished = false
 
       content.scan(DSL_CALL_RE) do |match|
@@ -101,7 +106,8 @@ module Analyzer::Cfml
         next unless close_paren
 
         arguments = call_arguments(content[(open_paren + 1)...close_paren])
-        prefix = prefixes.last
+        scope = prefixes.last
+        prefix = scope.path
         line = line_number_for_index(content, start)
 
         case call
@@ -110,26 +116,30 @@ module Analyzer::Cfml
           finished = prefixes.empty?
         when "scope", "namespace"
           segment = arguments["path"]? || arguments["name"]? || arguments["0"]?
-          prefixes << join(prefix, segment || "")
+          prefixes << Scope.new(join(prefix, segment || ""), join(scope.child_path, segment || ""))
         when "member"
-          prefixes << prefix
+          prefixes << Scope.new(prefix)
         when "collection"
           # A collection block acts on the set, so it drops back to the
           # resource root that the enclosing `resources` pushed.
-          prefixes << prefix.sub(/\/\[[^\]]+\]\z/, "")
+          prefixes << Scope.new(prefix.sub(/\/\[[^\]]+\]\z/, ""))
         when "resources"
           name = arguments["name"]? || arguments["0"]?
           next if name.nil? || name.empty?
 
-          base = join(prefix, arguments["path"]? || name)
+          base = join(scope.child_path, arguments["path"]? || name)
           emit_resource_set(RESOURCES_ROUTES, base, arguments, path, line)
           # A nested resource scopes its children under its key.
-          prefixes << join(base, KEY_SEGMENT) if truthy?(arguments["nested"]?)
+          if truthy?(arguments["nested"]?)
+            # Keep the generic capture for names outside the placeholder grammar.
+            parent_key = name.matches?(/\A[A-Za-z_]\w*\z/) ? "#{Noir::RubyInflector.singularize(name)}Key" : "key"
+            prefixes << Scope.new(join(base, "[key]"), join(base, "[#{parent_key}]"))
+          end
         when "resource"
           name = arguments["name"]? || arguments["0"]?
           next if name.nil? || name.empty?
 
-          base = join(prefix, arguments["path"]? || name)
+          base = join(scope.child_path, arguments["path"]? || name)
           emit_resource_set(RESOURCE_ROUTES, base, arguments, path, line)
         when "root"
           emit(path, "/", (arguments["method"]? || "GET").upcase, line)
