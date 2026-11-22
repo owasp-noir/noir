@@ -8,7 +8,7 @@ require "../../func_spec.cr"
 # and every sub-route loses it (`/me` instead of `/users/me`).
 expected_endpoints = [
   Endpoint.new("/users/me", "GET"),
-  Endpoint.new("/users/:id", "GET"),
+  Endpoint.new("/users/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/posts/", "GET"),
   Endpoint.new("/posts/", "POST"),
 ]

@@ -21,7 +21,7 @@ expected_endpoints = [
     Param.new("q", "", "query"),
   ]),
   # #3090: overloads, params= conditions, collection bodies, nullable id, by lazy.
-  Endpoint.new("/zoo/{sid}/hints", "GET", [Param.new("x-a", "", "header")]),
+  Endpoint.new("/zoo/{sid}/hints", "GET", [Param.new("x-a", "", "header"), Param.new("sid", "", "path")]),
   Endpoint.new("/zoo/hints", "POST", [
     Param.new("x-a", "", "header"),
     Param.new("items", "", "json"),
@@ -51,9 +51,9 @@ expected_endpoints = [
   # constants read from Kotlin, imported (a Kotlin `Decoy.GROUP_MAPPING`
   # shares the simple name) and qualified.
   Endpoint.new("/admin/items/list", "GET"),
-  Endpoint.new("/admin/items/{id}/notice", "POST"),
-  Endpoint.new("/groups/{id}/members", "GET"),
-  Endpoint.new("/squads/{id}", "GET"),
+  Endpoint.new("/admin/items/{id}/notice", "POST", [Param.new("id", "", "path")]),
+  Endpoint.new("/groups/{id}/members", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/squads/{id}", "GET", [Param.new("id", "", "path")]),
   # Simple names in scope without qualification: a same-package top-level
   # const, an imported top-level const (two packages declare `TOP_A`), a
   # star import and a named companion's const.
@@ -72,7 +72,7 @@ FunctionalTester.new("fixtures/kotlin/spring_param_gaps/", {
 }, expected_endpoints).perform_tests
 
 describe "Kotlin Spring param gaps: no extra params", tags: "functional" do
-  it "emits exactly the expected params per endpoint" do
+  it "emits exactly the expected non-path params per endpoint" do
     CodeLocator.instance.clear_all
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/kotlin/spring_param_gaps/")])
@@ -83,8 +83,9 @@ describe "Kotlin Spring param gaps: no extra params", tags: "functional" do
 
     expected_endpoints.each do |expected|
       actual = app.endpoints.find! { |ep| ep.method == expected.method && ep.url == expected.url }
+      expected_params = expected.params.reject { |p| p.param_type == "path" }
       actual.params.reject { |p| p.param_type == "path" }.map { |p| {p.name, p.param_type} }
-        .should eq(expected.params.map { |p| {p.name, p.param_type} })
+        .should eq(expected_params.map { |p| {p.name, p.param_type} })
     end
   end
 end

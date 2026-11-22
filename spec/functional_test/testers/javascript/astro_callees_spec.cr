@@ -7,7 +7,7 @@ create = Endpoint.new("/api/users", "POST")
 create.push_callee(Callee.new("request.json"))
 create.push_callee(Callee.new("JSON.stringify"))
 
-update = Endpoint.new("/api/users/{id}", "PUT")
+update = Endpoint.new("/api/users/{id}", "PUT", [Param.new("id", "", "path")])
 update.push_callee(Callee.new("request.json"))
 update.push_callee(Callee.new("JSON.stringify"))
 

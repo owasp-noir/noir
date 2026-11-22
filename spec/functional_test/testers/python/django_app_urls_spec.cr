@@ -15,7 +15,7 @@ require "../../func_spec.cr"
 extracted_endpoints = [
   Endpoint.new("/api/ping/", "GET"),
   Endpoint.new("/api/items/", "GET"),
-  Endpoint.new("/api/items/<int:item_id>/", "GET"),
+  Endpoint.new("/api/items/<int:item_id>/", "GET", [Param.new("item_id", "", "path")]),
   Endpoint.new("/posts/", "GET"),
   Endpoint.new("/admin/dashboard/", "GET"),
 ]

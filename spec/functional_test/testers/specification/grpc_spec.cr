@@ -95,6 +95,7 @@ expected_endpoints = [
   # custom: { kind, path } maps to a non-standard HTTP method (HEAD).
   Endpoint.new("/v1/items/{item_id}/watch", "HEAD", [
     Param.new("item_id", "", "path"),
+    Param.new("name", "", "query"),
   ]),
   # Request message imported from another .proto and referenced by its
   # fully-qualified name: `city` resolves to a query param across files.

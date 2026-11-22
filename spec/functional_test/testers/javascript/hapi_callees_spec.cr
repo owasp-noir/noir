@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-destroy = Endpoint.new("/users/{id}", "DELETE")
+destroy = Endpoint.new("/users/{id}", "DELETE", [Param.new("id", "", "path")])
 destroy.push_callee(Callee.new("h.response().code"))
 
 FunctionalTester.new("fixtures/javascript/hapi/", {

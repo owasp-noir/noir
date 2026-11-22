@@ -7,7 +7,9 @@ expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/", "POST"),
   Endpoint.new("/users", "GET"),
-  Endpoint.new("/items/{id}", "GET"),
+  Endpoint.new("/items/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
   Endpoint.new("/inline-openapi", "POST"),
   Endpoint.new("/inline-any", "ANY"),
 ]

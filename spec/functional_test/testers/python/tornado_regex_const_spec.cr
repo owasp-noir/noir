@@ -14,7 +14,7 @@ tester = FunctionalTester.new("fixtures/python/tornado_regex_const/", {
   Endpoint.new("/api/pct/{kernel_id}", "DELETE", kid),
   Endpoint.new("/api/fstr/{kernel_id}", "GET", kid),
   Endpoint.new("/api/fstr/{kernel_id}", "DELETE", kid),
-  Endpoint.new("/(robots.txt|favicon.ico)", "GET"),
+  Endpoint.new("/(robots.txt|favicon.ico)", "GET", [Param.new("name", "", "path")]),
 ])
 tester.perform_tests
 

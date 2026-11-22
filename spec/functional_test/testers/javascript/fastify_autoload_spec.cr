@@ -6,8 +6,8 @@ require "../../func_spec.cr"
 # `/api/tasks/:id`; a route file directly in `routes/` keeps `/`.
 expected_endpoints = [
   Endpoint.new("/", "GET"),
-  Endpoint.new("/api/tasks/:id", "GET"),
-  Endpoint.new("/api/tasks/", "POST"),
+  Endpoint.new("/api/tasks/:id", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/tasks/", "POST", [Param.new("title", "", "json")]),
 ]
 
 FunctionalTester.new("fixtures/javascript/fastify_autoload/", {

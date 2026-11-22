@@ -8,6 +8,14 @@ expected_endpoints = [
     Param.new("pagination[page]", "", "query"),
     # Bare attribute names are not Strapi query keys.
     Param.new("filters[title][$eq]", "", "query"),
+    Param.new("fields", "", "query"),
+    Param.new("filters[body][$eq]", "", "query"),
+    Param.new("filters[featured][$eq]", "", "query"),
+    Param.new("filters[publishedAt][$eq]", "", "query"),
+    Param.new("filters[slug][$eq]", "", "query"),
+    Param.new("filters[views][$eq]", "", "query"),
+    Param.new("pagination[pageSize]", "", "query"),
+    Param.new("status", "", "query"),
   ]),
   Endpoint.new("/api/articles", "POST", [
     # Strapi wraps the payload in a data envelope.
@@ -20,13 +28,29 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/articles/{documentId}", "GET", [
     Param.new("documentId", "", "path"),
+    Param.new("fields", "", "query"),
+    Param.new("populate", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("status", "", "query"),
   ]),
   Endpoint.new("/api/articles/{documentId}", "PUT", [
     Param.new("data.title", "string", "json"),
+    Param.new("data.body", "", "json"),
+    Param.new("data.featured", "", "json"),
+    Param.new("data.slug", "", "json"),
+    Param.new("data.views", "", "json"),
+    Param.new("documentId", "", "path"),
   ]),
-  Endpoint.new("/api/articles/{documentId}", "DELETE"),
+  Endpoint.new("/api/articles/{documentId}", "DELETE", [
+    Param.new("documentId", "", "path"),
+  ]),
   # singleType -> read/update/delete on the singular name, no listing.
-  Endpoint.new("/api/homepage", "GET"),
+  Endpoint.new("/api/homepage", "GET", [
+    Param.new("fields", "", "query"),
+    Param.new("populate", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("status", "", "query"),
+  ]),
   Endpoint.new("/api/homepage", "PUT", [
     Param.new("data.heading", "string", "json"),
     Param.new("data.subheading", "string", "json"),

@@ -13,10 +13,30 @@ expected_endpoints = [
     Param.new("page", "", "query"),
     Param.new("username", "", "body"),
     Param.new("email", "", "body"),
+    Param.new("limit", "", "query"),
+    Param.new("search", "", "query"),
   ]),
-  Endpoint.new("/api/users", "PUT"),
-  Endpoint.new("/api/users", "DELETE"),
-  Endpoint.new("/api/users", "PATCH"),
+  Endpoint.new("/api/users", "PUT", [
+    Param.new("email", "", "body"),
+    Param.new("limit", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("search", "", "query"),
+    Param.new("username", "", "body"),
+  ]),
+  Endpoint.new("/api/users", "DELETE", [
+    Param.new("email", "", "body"),
+    Param.new("limit", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("search", "", "query"),
+    Param.new("username", "", "body"),
+  ]),
+  Endpoint.new("/api/users", "PATCH", [
+    Param.new("email", "", "body"),
+    Param.new("limit", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("search", "", "query"),
+    Param.new("username", "", "body"),
+  ]),
 
   # ---- Pages Router: /api/users/{id} ([id].ts) ----
   Endpoint.new("/api/users/{id}", "GET", [
@@ -28,19 +48,33 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/users/{id}", "POST", [
     Param.new("id", "", "path"),
+    Param.new("session", "", "cookie"),
+    Param.new("x-token", "", "header"),
   ]),
-  Endpoint.new("/api/users/{id}", "PUT"),
-  Endpoint.new("/api/users/{id}", "DELETE"),
-  Endpoint.new("/api/users/{id}", "PATCH"),
+  Endpoint.new("/api/users/{id}", "PUT", [
+    Param.new("id", "", "path"),
+    Param.new("session", "", "cookie"),
+    Param.new("x-token", "", "header"),
+  ]),
+  Endpoint.new("/api/users/{id}", "DELETE", [
+    Param.new("id", "", "path"),
+    Param.new("session", "", "cookie"),
+    Param.new("x-token", "", "header"),
+  ]),
+  Endpoint.new("/api/users/{id}", "PATCH", [
+    Param.new("id", "", "path"),
+    Param.new("session", "", "cookie"),
+    Param.new("x-token", "", "header"),
+  ]),
 
   # ---- Pages Router: /api/posts/{*slug} ([...slug] catch-all) ----
   Endpoint.new("/api/posts/{*slug}", "GET", [
     Param.new("slug", "", "path"),
   ]),
-  Endpoint.new("/api/posts/{*slug}", "POST"),
-  Endpoint.new("/api/posts/{*slug}", "PUT"),
-  Endpoint.new("/api/posts/{*slug}", "DELETE"),
-  Endpoint.new("/api/posts/{*slug}", "PATCH"),
+  Endpoint.new("/api/posts/{*slug}", "POST", [Param.new("slug", "", "path")]),
+  Endpoint.new("/api/posts/{*slug}", "PUT", [Param.new("slug", "", "path")]),
+  Endpoint.new("/api/posts/{*slug}", "DELETE", [Param.new("slug", "", "path")]),
+  Endpoint.new("/api/posts/{*slug}", "PATCH", [Param.new("slug", "", "path")]),
 
   # ---- Pages Router: /api/auth/login (POST-only inferred from req.method check) ----
   Endpoint.new("/api/auth/login", "POST", [

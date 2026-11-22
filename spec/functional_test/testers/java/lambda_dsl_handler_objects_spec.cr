@@ -8,12 +8,12 @@ require "../../func_spec.cr"
 # `put` inside a `before(ctx -> ..)` handler body) must stay suppressed.
 expected_endpoints = [
   Endpoint.new("/users", "GET"),
-  Endpoint.new("/users/{id}", "GET"),
+  Endpoint.new("/users/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/users/new", "POST"),
   Endpoint.new("/reports", "GET"),
-  Endpoint.new("/users/{id}/profile", "GET"),
+  Endpoint.new("/users/{id}/profile", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/health", "GET"),
-  Endpoint.new("/items/{id}", "GET"),
+  Endpoint.new("/items/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/files/list", "GET"),
 ]
 

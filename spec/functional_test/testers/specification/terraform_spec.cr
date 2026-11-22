@@ -4,10 +4,14 @@ expected_endpoints = [
   # API Gateway v2 (HTTP API) — self-contained route_key
   Endpoint.new("/items", "GET"),
   Endpoint.new("/items", "POST"),
-  Endpoint.new("/items/{id}", "GET"),
+  Endpoint.new("/items/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
   # API Gateway v1 (REST) — resource graph resolved across files in the module
   Endpoint.new("/users", "GET"),
-  Endpoint.new("/users/{id}", "GET"),
+  Endpoint.new("/users/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
   # Terraform JSON (.tf.json), routed through the real file-walk .json filter
   Endpoint.new("/health", "GET"),
 ]

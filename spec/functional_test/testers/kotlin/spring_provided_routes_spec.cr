@@ -18,10 +18,11 @@ expected_endpoints = [
     Param.new("password", "", "form"),
   ]),
   Endpoint.new("/bye", "POST"),
-  Endpoint.new("/oauth/start/{registrationId}", "GET"),
+  Endpoint.new("/oauth/start/{registrationId}", "GET", [Param.new("registrationId", "", "path")]),
   Endpoint.new("/login/oauth2/code/{registrationId}", "GET", [
     Param.new("code", "", "query"),
     Param.new("state", "", "query"),
+    Param.new("registrationId", "", "path"),
   ]),
 ]
 

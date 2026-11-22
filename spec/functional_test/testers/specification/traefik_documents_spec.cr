@@ -7,7 +7,9 @@ expected_endpoints = [
   Endpoint.new("/first", "ANY"),
   Endpoint.new("/second", "ANY"),
   Endpoint.new("/api/(v1|v2)/items", "ANY"),
-  Endpoint.new("/legacy/{name}", "ANY"),
+  Endpoint.new("/legacy/{name}", "ANY", [
+    Param.new("name", "", "path"),
+  ]),
   Endpoint.new("/swarm-api", "ANY"),
 ]
 

@@ -24,9 +24,9 @@ expected_endpoints = [
   Endpoint.new("/api/users/{id}", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/api/items", "GET"),
   Endpoint.new("/api/items", "POST"),
-  Endpoint.new("/api/items/{item-id}", "GET"),
-  Endpoint.new("/api/items/{item-id}", "PATCH"),
-  Endpoint.new("/api/items/{item-id}", "DELETE"),
+  Endpoint.new("/api/items/{item-id}", "GET", [Param.new("item-id", "", "path")]),
+  Endpoint.new("/api/items/{item-id}", "PATCH", [Param.new("item-id", "", "path")]),
+  Endpoint.new("/api/items/{item-id}", "DELETE", [Param.new("item-id", "", "path")]),
   Endpoint.new("/hello", "GET", [
     Param.new("name", "", "query"),
     Param.new("X-Trace", "", "header"),

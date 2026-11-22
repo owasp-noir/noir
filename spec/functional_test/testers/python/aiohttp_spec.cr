@@ -18,6 +18,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/users/{id}", "PATCH", [
     Param.new("id", "", "path"),
+    Param.new("role", "", "form"),
   ]),
   Endpoint.new("/alias/{alias_id}", "GET", [
     Param.new("alias_id", "", "path"),

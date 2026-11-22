@@ -50,7 +50,7 @@ FunctionalTester.new("fixtures/typescript/tsoa/", {
   :techs     => 1,
   :endpoints => 4,
 }, [
-  Endpoint.new("/users/{userId}", "GET", [Param.new("userId", "", "path")]),
+  Endpoint.new("/users/{userId}", "GET", [Param.new("userId", "", "path"), Param.new("name", "", "query")]),
   Endpoint.new("/v1/items/{itemId}", "GET", [Param.new("itemId", "", "path")]),
 ], {
   "base" => YAML::Any.new([

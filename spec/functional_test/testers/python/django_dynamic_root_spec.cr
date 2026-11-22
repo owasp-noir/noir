@@ -33,7 +33,7 @@ extracted_endpoints = [
   Endpoint.new("/billing/invoices/", "GET"),
   Endpoint.new("/profile/", "GET"),
   Endpoint.new("/tokens/", "GET"),
-  Endpoint.new("/tokens/<uuid:pk>/", "GET"),
+  Endpoint.new("/tokens/<uuid:pk>/", "GET", [Param.new("pk", "", "path")]),
   Endpoint.new("/gateway/status", "GET"),
 ]
 
