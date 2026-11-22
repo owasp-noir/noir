@@ -3,7 +3,7 @@ require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_handler_resolver"
 require "../../../miniparsers/js_route_extractor"
-require "../../../miniparsers/ts_class_fields"
+require "../../../miniparsers/ts_dto_resolver"
 require "../../../miniparsers/ts_decorator_extractor"
 require "../../../utils/top_level_split"
 
@@ -54,13 +54,7 @@ module Analyzer::Javascript
     # file. nil until `analyze_with_extensions` seeds it.
     @nest_global_literals : Hash(String, Array(String))? = nil
 
-    # DTO declarations, read lazily while routes are scanned: each file's
-    # classes/interfaces, and every declared type name => the files
-    # declaring it. Guarded by `@nest_dto_mutex` (lookups run in the scan's
-    # fibers); the mutex only wraps cache reads and writes.
-    @nest_decls_by_file = {} of String => Hash(String, Noir::TsClassFields::Decl)
-    @nest_decl_index : Hash(String, Array(String))? = nil
-    @nest_dto_mutex = Mutex.new
+    @nest_dtos : Noir::TsDtoResolver?
 
     # Extensions worth scanning for cross-file enum/object constants —
     # the enum may live in a `.ts` file even when the route-scan pass only
@@ -313,6 +307,7 @@ module Analyzer::Javascript
       # table can fall back to them (immich mounts every asset/user/...
       # controller via `@Controller(RouteKey.User)` where `RouteKey` lives
       # in `src/enum.ts`). Built once, single-fiber, then read-only.
+      @nest_dtos = Noir::TsDtoResolver.new { |path| read_file_content(path) } if reads_dto?
       @nest_global_literals = collect_global_literal_values
       @nest_versioning = collect_versioning_configs
 
@@ -1333,144 +1328,62 @@ module Analyzer::Javascript
       {"UploadedFiles", "body", "files"},
     ] of Tuple(String, String, String?)
 
-    private def extract_decorator_parameters(params : Array(Noir::TsDecoratorExtractor::Parameter), endpoint : Endpoint,
-                                             dto_fields : Hash(String, Array(String)) = {} of String => Array(String))
-      # A whole-object `@Query()` / `@Body()` typed with a DTO is the DTO's
-      # fields; one whose type does not resolve stays a single generic param.
-      dto_fields.each do |param_type, names|
-        names.each { |name| endpoint.push_param(Param.new(name, "", param_type)) }
-      end
+    # Each argument can have its own fallback even when two arguments read
+    # the same part of the request. Key by decorator too, since decorators
+    # can be stacked on one argument.
+    alias DtoFields = Hash(Tuple(Int32, String), Array(String))
 
+    private def extract_decorator_parameters(params : Array(Noir::TsDecoratorExtractor::Parameter), endpoint : Endpoint,
+                                             dto_fields : DtoFields)
       NEST_PARAM_DECORATORS.each do |decorator_name, param_type, whole_name|
-        whole = false
-        params.each do |param|
+        params.each_with_index do |param, index|
           param.decorators.each do |decorator|
             next unless decorator.called && decorator.name == decorator_name
             if name = string_arg(decorator.args.first?)
               endpoint.push_param(Param.new(name, "", param_type))
-            else
-              whole = true
+            elsif fields = dto_fields[{index, decorator_name}]?
+              fields.each { |field| endpoint.push_param(Param.new(field, "", param_type)) }
+            elsif whole_name
+              type = param.type_text
+              # Preserve the whole-query placeholder for unstructured query
+              # bags. An unresolved DTO gives us no concrete query keys.
+              next if decorator_name == "Query" && decorator.args.empty? && type && !type.matches?(/\A(?:any|unknown|object|Object|Record\s*<[\s\S]*>)\z/)
+              fallback = Param.new(whole_name, "", param_type)
+              if type && decorator_name == "Body" && decorator.args.empty?
+                fallback.add_tag(Tag.new("unresolved", "Could not determine body fields from #{type}", "analyzer"))
+              end
+              endpoint.push_param(fallback)
             end
           end
         end
-        next unless whole && whole_name
-        next if DTO_PARAM_TYPES.has_key?(decorator_name) && dto_fields.has_key?(param_type)
-        endpoint.push_param(Param.new(whole_name, "", param_type))
       end
     end
 
-    DTO_PARAM_TYPES = {"Body" => "body", "Query" => "query"}
-    DTO_TYPE_NAME   = /\A([A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*\s*(?:<[\s\S]*>)?\z/
-    DTO_DECL_NAME   = /\b(?:class|interface)\s+([A-Za-z_$][\w$]*)/
-    DTO_DEPTH_LIMIT = 6
-
-    # Whether a whole-object `@Body()` / `@Query()` is read as its DTO's
-    # fields. The other decorator-controller frameworks name their own
-    # whole-object decorators (`@QueryParams`, `@BodyParams`).
     protected def reads_dto? : Bool
       true
     end
 
-    # Param type => field names, for every whole-object `@Body()` /
-    # `@Query()` whose declared type resolves to fields: an inline object
-    # type, or a class/interface declared in the scan, with the fields it
-    # inherits (`extends Base`, `PickType(Base, [...])`, ...).
-    private def dto_params(params : Array(Noir::TsDecoratorExtractor::Parameter), file_path : String) : Hash(String, Array(String))
-      result = {} of String => Array(String)
-      return result unless reads_dto?
-      params.each do |param|
-        decorator = param.decorators.find { |d| DTO_PARAM_TYPES.has_key?(d.name) && param_decorator?(d) } || next
-        # `@Body('field')` names one field; it is read elsewhere.
-        next if decorator.args.first?.try(&.matches?(/\A['"`]/))
+    private def dto_params(params : Array(Noir::TsDecoratorExtractor::Parameter), file_path : String) : DtoFields
+      result = DtoFields.new
+      resolver = @nest_dtos || return result
+      params.each_with_index do |param, index|
         type = param.type_text || next
-        fields = type_fields(type, file_path, 0)
-        next if fields.empty?
-        names = result[DTO_PARAM_TYPES[decorator.name]] ||= [] of String
-        fields.each { |name| names << name unless names.includes?(name) }
+        param.decorators.each do |decorator|
+          next unless {"Body", "Query", "Param", "Headers"}.includes?(decorator.name) && param_decorator?(decorator)
+          # Nest also accepts pipes on whole-object decorators. Only a
+          # string key selects an individual field.
+          next if string_arg(decorator.args.first?)
+          if fields = resolver.fields(type, file_path)
+            result[{index, decorator.name}] = fields
+          end
+        end
       end
       result
-    end
-
-    private def type_fields(type : String, from_path : String, depth : Int32) : Array(String)
-      text = type.strip
-      return Noir::TsClassFields.object_type_fields(text) if text.starts_with?('{')
-      name = text.match(DTO_TYPE_NAME).try { text.split('<').first.split('.').last.strip } || return [] of String
-      named_type_fields(name, from_path, depth)
-    end
-
-    private def named_type_fields(name : String, from_path : String, depth : Int32) : Array(String)
-      return [] of String if depth > DTO_DEPTH_LIMIT
-      decl, decl_path = find_type_decl(name, from_path) || return [] of String
-      fields = decl.fields.dup
-      decl.bases.each do |base|
-        inherited = named_type_fields(base.name, decl_path, depth + 1)
-        if pick = base.pick
-          inherited = inherited.select { |field| pick.includes?(field) }
-        end
-        inherited.each { |field| fields << field unless fields.includes?(field) || base.omit.includes?(field) }
-      end
-      fields
     end
 
     NAMED_IMPORT   = /\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/
     STAR_REEXPORT  = /\bexport\s+\*\s+from\s*['"](\.[^'"]+)['"]/
     NAMED_REEXPORT = /\bexport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"](\.[^'"]+)['"]/
-
-    # The declaration of `name` visible from `from_path`: its own file's,
-    # else the one its import resolves to (relative specifiers, through
-    # `export *` / `export { }` barrels), else the scanned file declaring it
-    # that shares the most directories with `from_path`. Two equally near
-    # declarations are ambiguous: nil, so the caller keeps the generic param.
-    # ponytail: package and tsconfig-path specifiers fall to the nearest
-    # declaration; resolving them through tsconfig `paths` is the upgrade.
-    private def find_type_decl(name : String, from_path : String) : Tuple(Noir::TsClassFields::Decl, String)?
-      if decl = type_decls(from_path)[name]?
-        return {decl, from_path}
-      end
-      if found = imported_type_decl(name, from_path)
-        return found
-      end
-      candidates = (type_decl_index[name]? || return).reject(from_path).select { |path| type_decls(path).has_key?(name) }
-      return if candidates.empty?
-      best = candidates.max_of { |path| shared_dir_depth(path, from_path) }
-      nearest = candidates.select { |path| shared_dir_depth(path, from_path) == best }
-      {type_decls(nearest[0])[name], nearest[0]} if nearest.size == 1
-    end
-
-    private def imported_type_decl(name : String, from_path : String) : Tuple(Noir::TsClassFields::Decl, String)?
-      read_file_content(from_path).scan(NAMED_IMPORT) do |imp|
-        declared = imported_name(imp[1], name) || next
-        return unless imp[2].starts_with?('.')
-        target = Noir::ImportGraph.resolve_relative_import(from_path, imp[2], boundary: import_boundary_for(from_path)) || return
-        return exported_type_decl(declared, target, 0)
-      end
-      nil
-    rescue
-      nil
-    end
-
-    # `name` as declared in `file` or re-exported by it from a relative module.
-    private def exported_type_decl(name : String, file : String, depth : Int32) : Tuple(Noir::TsClassFields::Decl, String)?
-      if decl = type_decls(file)[name]?
-        return {decl, file}
-      end
-      return if depth >= 4
-      content = read_file_content(file)
-      content.scan(NAMED_REEXPORT) do |m|
-        declared = imported_name(m[1], name) || next
-        target = Noir::ImportGraph.resolve_relative_import(file, m[2], boundary: import_boundary_for(file)) || next
-        return exported_type_decl(declared, target, depth + 1)
-      end
-      content.scan(STAR_REEXPORT) do |m|
-        target = Noir::ImportGraph.resolve_relative_import(file, m[1], boundary: import_boundary_for(file)) || next
-        if found = exported_type_decl(name, target, depth + 1)
-          return found
-        end
-      end
-      nil
-    rescue
-      nil
-    end
 
     # The exported name behind local `name` in an `{ A, B as name }` list.
     private def imported_name(list : String, name : String) : String?
@@ -1479,38 +1392,6 @@ module Analyzer::Javascript
         return declared.strip if (local.presence || declared).strip == name
       end
       nil
-    end
-
-    private def type_decls(path : String) : Hash(String, Noir::TsClassFields::Decl)
-      cached = @nest_dto_mutex.synchronize { @nest_decls_by_file[path]? }
-      return cached if cached
-      decls = begin
-        Noir::TsClassFields.declarations(Noir::JSRouteExtractor.strip_js_comments(read_file_content(path)))
-      rescue
-        {} of String => Noir::TsClassFields::Decl
-      end
-      @nest_dto_mutex.synchronize { @nest_decls_by_file[path] = decls }
-    end
-
-    private def type_decl_index : Hash(String, Array(String))
-      @nest_dto_mutex.synchronize do
-        @nest_decl_index ||= begin
-          index = {} of String => Array(String)
-          all_files.each do |path|
-            next unless GLOBAL_LITERAL_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
-            next if ignored_nest_path?(path)
-            content = read_file_content(path)
-            next unless content.includes?("class ") || content.includes?("interface ")
-            content.scan(DTO_DECL_NAME) do |m|
-              paths = index[m[1]] ||= [] of String
-              paths << path unless paths.includes?(path)
-            end
-          rescue
-            next
-          end
-          index
-        end
-      end
     end
 
     # Per-endpoint hook for a decorator-controller framework that reads

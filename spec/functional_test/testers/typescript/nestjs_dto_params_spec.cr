@@ -13,6 +13,14 @@ expected_endpoints = [
   Endpoint.new("/items/:id", "PATCH", [Param.new("id", "", "path"), Param.new("name", "", "body")]),
   Endpoint.new("/items/:id/actions", "POST", [Param.new("id", "", "path"), Param.new("payload", "", "body"), Param.new("status", "", "body")]),
   Endpoint.new("/items/shared", "GET", [Param.new("region", "", "query"), Param.new("owner", "", "query")]),
+  Endpoint.new("/items/edit", "PATCH", [
+    Param.new("name", "", "body"), Param.new("revision", "", "body"), Param.new("reason", "", "body"),
+    Param.new("context", "", "body"), Param.new("if-match", "", "header"),
+  ]),
+  Endpoint.new("/items/scope/:id/*rest", "GET", [Param.new("id", "", "path"), Param.new("rest", "", "path"), Param.new("if-none-match", "", "header")]),
+  Endpoint.new("/items/attributes", "POST", [Param.new("body", "", "body")]),
+  Endpoint.new("/items/mixed", "POST", [Param.new("name", "", "body"), Param.new("body", "", "body")]),
+  Endpoint.new("/items/union", "POST", [Param.new("body", "", "body")]),
   Endpoint.new("/items/raw", "POST", [Param.new("body", "", "body")]),
 ]
 
@@ -26,5 +34,11 @@ describe "ts_nestjs DTO params", tags: "functional" do
     tester = FunctionalTester.new("fixtures/typescript/nestjs_dto_params/", {:techs => 1}, [] of Endpoint)
     create = tester.endpoints.find! { |ep| ep.url == "/items" && ep.method == "POST" }
     create.params.map(&.name).sort!.should eq(["kind", "name", "refs", "tags"])
+  end
+
+  it "marks the opaque body when its DTO cannot be resolved" do
+    tester = FunctionalTester.new("fixtures/typescript/nestjs_dto_params/", {:techs => 1}, [] of Endpoint)
+    mixed = tester.endpoints.find! { |ep| ep.url == "/items/mixed" }
+    mixed.params.find! { |param| param.name == "body" }.tags.map(&.name).should contain("unresolved")
   end
 end

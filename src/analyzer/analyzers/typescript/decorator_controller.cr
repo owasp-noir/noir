@@ -41,16 +41,15 @@ module Analyzer::Typescript
     end
 
     private def extract_decorator_parameters(params : Array(Noir::TsDecoratorExtractor::Parameter), endpoint : Endpoint,
-                                             dto_fields : Hash(String, Array(String)) = {} of String => Array(String))
-      dto_fields.each do |param_type, names|
-        names.each { |name| endpoint.push_param(Param.new(name, "", param_type)) }
-      end
-      params.each do |param|
+                                             dto_fields : DtoFields)
+      params.each_with_index do |param, index|
         param.decorators.each do |decorator|
           next unless param_decorator?(decorator)
           type, fallback = {{ "#{@type}::PARAMS".id }}[decorator.name]? || next
-          # A resolved DTO already named its fields.
-          next if fallback && dto_fields.has_key?(type)
+          if fields = dto_fields[{index, decorator.name}]?
+            fields.each { |field| endpoint.push_param(Param.new(field, "", type)) }
+            next
+          end
           name = string_arg(decorator.args.first?) || fallback || param.name
           endpoint.push_param(Param.new(name, "", type)) if name
         end

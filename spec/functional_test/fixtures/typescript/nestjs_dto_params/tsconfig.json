@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "paths": {
+      "@acme/shared": ["./libs/shared/src/filter.dto"],
+      "@models/*": ["./src/dtos/*"]
+    }
+  }
+}
