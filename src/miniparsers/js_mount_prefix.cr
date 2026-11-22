@@ -9,20 +9,94 @@ module Noir
     extend self
     include JSTSAstHelpers
 
-    UNREAD = '\u{FDD0}'
+    UNREAD  = '\u{FDD0}'
+    DEFAULT = '\u{FDD1}'
+
+    def marked?(path : String) : Bool
+      path.includes?(UNREAD) || path.includes?(DEFAULT)
+    end
+
+    def visible(path : String) : String
+      marked?(path) ? path.delete("#{UNREAD}#{DEFAULT}") : path
+    end
 
     def join(parent : String, child : String) : String
-      return URLPath.join(parent, child) unless parent.includes?(UNREAD) || child.includes?(UNREAD)
-      "#{UNREAD}#{URLPath.join(parent.delete(UNREAD), child.delete(UNREAD))}"
+      marker = if parent.includes?(UNREAD) || child.includes?(UNREAD)
+                 UNREAD
+               elsif parent.includes?(DEFAULT) || child.includes?(DEFAULT)
+                 DEFAULT
+               else
+                 return URLPath.join(parent, child)
+               end
+      "#{marker}#{URLPath.join(visible(parent), visible(child))}"
     end
 
     def finish(endpoint : Endpoint) : Endpoint
-      if endpoint.url.includes?(UNREAD)
-        endpoint.url = endpoint.url.delete(UNREAD)
+      if marked?(endpoint.url)
+        unresolved = endpoint.url.includes?(UNREAD) || endpoint.resolution.try(&.["prefix"]?) == Endpoint::RESOLUTION_UNRESOLVED
+        endpoint.url = visible(endpoint.url)
         endpoint.url = "/" if endpoint.url.empty?
-        endpoint.resolution = (endpoint.resolution || {} of String => String).merge({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
+        endpoint.mark_resolution("prefix", unresolved ? Endpoint::RESOLUTION_UNRESOLVED : Endpoint::RESOLUTION_HEURISTIC)
       end
       endpoint
+    end
+
+    ENV_PROPERTY = /\Aprocess\.env(?:\.[\w$]+|\[(['"])[^'"]+\1\])\z/
+
+    private def env_default(node, source) : String?
+      return unless TreeSitter.node_type(node) == "binary_expression"
+      op = TreeSitter.field(node, "operator") || return
+      return unless TreeSitter.node_text(op, source).in?("||", "??")
+      lhs = TreeSitter.field(node, "left") || return
+      return unless TreeSitter.node_text(lhs, source).matches?(ENV_PROPERTY)
+      rhs = TreeSitter.field(node, "right") || return
+      return unless TreeSitter.node_type(rhs) == "string"
+      decode_string(rhs, source) + DEFAULT
+    end
+
+    # Keep provenance on values until all mounts and template substitutions
+    # have been composed. Only declarations depending on the environment are
+    # added to the ordinary table of string constants.
+    def environment_constants(source : String, path : String, constants : Hash(String, String)) : Nil
+      # Boolean guards, equality checks and finished property reads cannot
+      # seed a default. A bare object, subscript, comment or unfamiliar
+      # expression still goes through the AST, as do imported defaults.
+      unless constants.any? { |_, value| value.includes?(DEFAULT) }
+        return unless source.includes?("process.env") && (source.includes?("||") || source.includes?("??") || source.matches?(/}\s*=\s*process\.env/))
+        return unless source.matches?(/process\.env(?!\s*&&|\.[\w$]+\s*(?:[,;)\]}]|[!=]==?|&&))/)
+      end
+      TreeSitter.parse_js_family(source, path) do |root|
+        TreeSitter.walk(root) do |node|
+          next unless TreeSitter.node_type(node) == "variable_declarator"
+          name = TreeSitter.field(node, "name") || next
+          value = TreeSitter.field(node, "value") || next
+          key = TreeSitter.node_text(name, source)
+          value = TreeSitter.unwrap_expression(value)
+          if TreeSitter.node_type(value) == "call_expression" && TreeSitter.field(value, "function").try { |fn| TreeSitter.node_text(fn, source) } == "Object.freeze"
+            value = arguments_node(value).try { |args| TreeSitter.first_named_arg(args) } || next
+          end
+          if TreeSitter.node_type(name) == "object_pattern" && TreeSitter.node_text(value, source) == "process.env"
+            TreeSitter.each_named_child(name) do |item|
+              item = TreeSitter.field(item, "value") || item
+              left = TreeSitter.field(item, "left") || next
+              right = TreeSitter.field(item, "right") || next
+              next unless TreeSitter.node_type(right) == "string"
+              constants[TreeSitter.node_text(left, source)] = decode_string(right, source) + DEFAULT
+            end
+          elsif TreeSitter.node_type(name) == "identifier"
+            if TreeSitter.node_type(value) == "object"
+              TreeSitter.each_named_child(value) do |prop|
+                member = TreeSitter.field(prop, "key") || prop
+                expr = TreeSitter.field(prop, "value") || prop
+                default = env_default(expr, source) || constants[TreeSitter.node_text(expr, source)]?
+                constants["#{key}.#{TreeSitter.node_text(member, source)}"] = default if default && default.includes?(DEFAULT)
+              end
+            elsif default = env_default(value, source) || constants[TreeSitter.node_text(value, source)]?
+              constants[key] = default if default.includes?(DEFAULT)
+            end
+          end
+        end
+      end
     end
 
     # A function reference in the first slot is middleware, not a path.
@@ -36,6 +110,7 @@ module Noir
     # ponytail: helper mount keys are file-wide; omit shadowed names until bindings are keyed by declaration scope.
     def unique_bindings(content : String, path : String, names : Array(String)) : Set(String)
       counts = names.to_h { |name| {name, 0} }
+      patterns = names.map { |name| {name, /(?<![\w$])#{Regex.escape(name)}(?![\w$])/} }
       TreeSitter.parse_js_family(content, path) do |root|
         TreeSitter.walk(root) do |node|
           pattern = case TreeSitter.node_type(node)
@@ -52,8 +127,8 @@ module Noir
                     end
           next unless pattern
           text = TreeSitter.node_text(pattern, content)
-          names.each do |name|
-            counts[name] += 1 if text.matches?(/(?<![\w$])#{Regex.escape(name)}(?![\w$])/)
+          patterns.each do |name, name_pattern|
+            counts[name] += 1 if text.matches?(name_pattern)
           end
         end
       end
@@ -66,7 +141,9 @@ module Noir
       result = UNREAD.to_s
       # A bare constant keeps the scanner's existing read. New expressions
       # must not trust a legacy seed taken from only the first literal.
-      return legacy_constants[expression.strip] if legacy_constants && legacy_constants.has_key?(expression.strip)
+      if legacy_constants && legacy_constants.has_key?(expression.strip)
+        return constants[expression.strip]? || legacy_constants[expression.strip]
+      end
       source = "(#{expression})"
       TreeSitter.parse_js_family(source, "prefix.js") do |root|
         next if TreeSitter.node_has_error?(root)
@@ -99,6 +176,9 @@ module Noir
       when "identifier", "member_expression"
         constants[TreeSitter.node_text(node, source)]?
       when "binary_expression"
+        if default = env_default(node, source)
+          return default
+        end
         operator = TreeSitter.field(node, "operator")
         return unless operator && TreeSitter.node_text(operator, source) == "+"
         left = TreeSitter.field(node, "left")

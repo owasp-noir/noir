@@ -124,18 +124,18 @@ module Noir
         content = strip_js_comments(content)
         # `${BASE_URL}/items` or `BASE_URL + '/items'`, `BASE_URL` imported
         # from `./config`.
-        constants = content.includes?("${") || content.includes?('+') || content.matches?(MEMBER_PATH_ARG_RE, options: Noir::TextFile::MATCH_OPTIONS) ? file_string_constants(file_path, content) : nil
-        mount_constants = resolve_mount_prefixes ? (constants || file_string_constants(file_path, content)) : nil
+        constants = content.includes?("${") || content.includes?('+') || content.matches?(MEMBER_PATH_ARG_RE, options: Noir::TextFile::MATCH_OPTIONS) ? file_string_constants(file_path, content, resolve_mount_prefixes || on_routes) : nil
+        mount_constants = (resolve_mount_prefixes || on_routes) ? (constants || file_string_constants(file_path, content, true)) : nil
         mount_middleware = resolve_mount_prefixes ? ->(expression : String) { mount_middleware?(expression, content, file_path) } : nil
-        parser = JSParser.new(content, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants, mount_constants: mount_constants, resolve_mount_prefixes: resolve_mount_prefixes, mount_middleware: mount_middleware, on_routes: on_routes, record_middleware: !middleware.nil?)
+        parser = JSParser.new(content, source_path: file_path, this_receiver_ok: content_matches?(content, SERVER_EVIDENCE_MARKER), constants: constants, mount_constants: mount_constants, resolve_mount_prefixes: resolve_mount_prefixes, mount_middleware: mount_middleware, on_routes: on_routes, record_middleware: !middleware.nil?)
         route_patterns = parser.parse_routes
         # Helpers run after extraction and need the same relative local mounts.
         if resolve_mount_prefixes
-          unread_bindings = parser.router_prefixes.select { |_, prefixes| prefixes.any?(&.includes?(JSMountPrefix::UNREAD)) }
+          unread_bindings = parser.router_prefixes.select { |_, prefixes| prefixes.any? { |p| JSMountPrefix.marked?(p) } }
           unique = unread_bindings.empty? ? Set(String).new : JSMountPrefix.unique_bindings(content, file_path, unread_bindings.keys)
           unread_bindings.each do |binding, prefixes|
             next unless unique.includes?(binding)
-            local_mounts.try { |mounts| mounts[binding] = prefixes.select(&.includes?(JSMountPrefix::UNREAD)) }
+            local_mounts.try { |mounts| mounts[binding] = prefixes }
           end
         end
 
@@ -1939,13 +1939,13 @@ module Noir
 
     # The file's own string constants plus those it imports by name from a
     # relative module (`import { BASE_URL } from './config'`); local wins.
-    def self.file_string_constants(file_path : String, content : String) : Hash(String, String)
+    def self.file_string_constants(file_path : String, content : String, mark_defaults : Bool = false) : Hash(String, String)
       constants = Hash(String, String).new
       if content.includes?('{') && (content.includes?("from") || content.includes?("require"))
         content.scan(NAMED_RELATIVE_IMPORT_RE) do |m|
           names = m[1]? || m[3]
           target = Noir::ImportGraph.resolve_relative_import(file_path, m[2]? || m[4]) || next
-          exported = exported_string_constants(target)
+          exported = exported_string_constants(target, mark_defaults)
           names.split(',').each do |item|
             parts = item.strip.split(/\s*:\s*|\s+as\s+/)
             if value = exported[parts.first]?
@@ -1961,19 +1961,23 @@ module Noir
         end
       end
       constants.merge!(string_constants(content))
+      JSMountPrefix.environment_constants(content, file_path, constants) if mark_defaults
+      constants
     end
 
     # `string_constants` of an imported module, once per module: a constants
     # file is imported by hundreds of route files.
-    @@exported_constants = Hash(String, Hash(String, String)).new
+    @@exported_constants = Hash(Tuple(String, Bool), Hash(String, String)).new
     @@exported_constants_mutex = Mutex.new
 
-    private def self.exported_string_constants(path : String) : Hash(String, String)
-      if hit = @@exported_constants_mutex.synchronize { @@exported_constants[path]? }
+    private def self.exported_string_constants(path : String, mark_defaults : Bool) : Hash(String, String)
+      if hit = @@exported_constants_mutex.synchronize { @@exported_constants[{path, mark_defaults}]? }
         return hit
       end
-      constants = string_constants(stripped_source(path))
-      @@exported_constants_mutex.synchronize { ExtractionResultCache.store_capped(@@exported_constants, path, constants, 512) }
+      source = stripped_source(path)
+      constants = string_constants(source)
+      JSMountPrefix.environment_constants(source, path, constants) if mark_defaults
+      @@exported_constants_mutex.synchronize { ExtractionResultCache.store_capped(@@exported_constants, {path, mark_defaults}, constants, 512) }
     end
 
     # Substitutes every `${NAME}` that `constants` knows; the rest stay.
@@ -1986,9 +1990,9 @@ module Noir
     TEMPLATE_PLACEHOLDER_RE = /\$\{\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*\}/
 
     # A template-literal mount path (`` `/${rootPath}` ``) as a rooted path.
-    def self.resolve_mount_template(template : String, file_path : String, content : String) : String
+    def self.resolve_mount_template(template : String, file_path : String, content : String, mark_defaults : Bool = false) : String
       return template unless template.includes?("${")
-      "/#{resolve_template(template, file_string_constants(file_path, content))}".squeeze('/')
+      "/#{resolve_template(template, file_string_constants(file_path, content, mark_defaults))}".squeeze('/')
     end
 
     # Pushes mount prefixes along `{parent, prefix, child}` edges into

@@ -199,7 +199,7 @@ module Noir
           site = frame.registration
           append_scoped(steps, site.file, site.receiver, site.offset, frame.parent_prefix, url)
           frame.before_child.each do |arg|
-            steps << RouteMiddleware.new(arg, site.file, :mount, false, site.receiver, site.prefix, site.verb)
+            steps << RouteMiddleware.new(arg, site.file, :mount, false, site.receiver, site.prefix.try { |p| JSMountPrefix.visible(p) }, site.verb)
           end
         end
         append_scoped(steps, file, receiver, offset, prefix, url)
@@ -224,7 +224,7 @@ module Noir
           append_use(steps, site, :fallback, nil)
         end
       end
-      visible = url.delete(JSMountPrefix::UNREAD)
+      visible = JSMountPrefix.visible(url)
       fallback_scopes.each do |base, site|
         append_use(steps, site, :fallback, site.written) if PrefixScope.prefix_covers?(base, visible)
       end
@@ -245,12 +245,13 @@ module Noir
         end
       end
       scope = binding_at(key, offset)
+      url = JSMountPrefix.visible(url)
       sites.each do |site|
         break if site.offset >= offset
         next unless binding_at(key, site.offset) == scope
         if prefix = site.prefix
           next if prefix.includes?(JSMountPrefix::UNREAD) || base.includes?(JSMountPrefix::UNREAD)
-          path = URLPath.join(base, prefix)
+          path = URLPath.join(JSMountPrefix.visible(base), JSMountPrefix.visible(prefix))
           if path.ends_with?("/*") || path.ends_with?("/(.*)")
             next unless url.starts_with?(path.rpartition('/')[0] + "/")
           elsif site.verb == "all"
@@ -265,7 +266,7 @@ module Noir
 
     private def append_use(steps, site, origin, prefix)
       site.args.each_with_index do |arg, i|
-        steps << RouteMiddleware.new(arg, site.file, origin, i == site.args.size - 1, site.receiver, prefix, site.verb)
+        steps << RouteMiddleware.new(arg, site.file, origin, i == site.args.size - 1, site.receiver, prefix.try { |p| JSMountPrefix.visible(p) }, site.verb)
       end
     end
   end

@@ -30,5 +30,11 @@ module.exports = function (app) {
 	_mounts.feed(router, controllers);
 	helpers.setupApiRoute(router, 'get', '/api/v3/ping', controllers.write.utilities.ping.get);
 
+	const { installShelves } = require('./shelves');
+	const { STAFF_PATH: staffPath = '/team' } = process.env;
+	const settings = { staff: staffPath };
+	installShelves(router, '/public');
+	installShelves(router, settings.staff);
+
 	app.use(router);
 };

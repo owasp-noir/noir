@@ -6,6 +6,8 @@ require "../../../../src/cli/inspect"
 # `events.on('get', '/room/1', cb)` in the same file is not a route.
 expected_endpoints = [
   Endpoint.new("/healthz", "GET"),
+  Endpoint.new("/fixed/counter/total", "GET", [Param.new("unit", "", "query")]),
+  Endpoint.new("/seasonal/counter/total", "GET", [Param.new("unit", "", "query")]),
   Endpoint.new("/books/", "GET"),
   Endpoint.new("/books/:id", "PUT", [Param.new("id", "", "path"), Param.new("title", "", "json")]),
   Endpoint.new("/books/:id", "PATCH", [Param.new("id", "", "path"), Param.new("title", "", "json")]),
@@ -26,6 +28,8 @@ tester.perform_tests
 describe "Hono on() routes of a mounted sub-app", tags: "functional" do
   it "resolves the handler and its callees, and traces under the mount prefix" do
     endpoints = tester.app.endpoints
+    endpoints.find!(&.url.==("/fixed/counter/total")).resolution.should be_nil
+    endpoints.find!(&.url.==("/seasonal/counter/total")).resolution.should eq({"prefix" => "heuristic"})
     put = endpoints.find! { |ep| ep.method == "PUT" && ep.url == "/books/:id" }
     put.handler.try(&.name).should eq("closure")
     put.callees.map(&.name).should contain("c.req.json")

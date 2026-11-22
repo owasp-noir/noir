@@ -222,6 +222,18 @@ module Analyzer::Javascript
 
     private record DefaultArgument, span : Range(Int32, Int32), parameter : String, value : String
 
+    private record Registrar, name : String, local_name : String, params_open : Int32,
+      positions : Hash(String, Int32), calls = [] of Hash(String, String)
+
+    private record HelperCall, spec : HelperSpec, open : Int32, offset : Int32, line : Int32,
+      args : Array(Tuple(String, Int32))
+    private record HelperFile, source : Noir::CharOffsets, calls : Array(HelperCall)
+
+    @registrar_sites = Hash(Tuple(String, Int32), Registrar).new
+    @helper_files = Hash(String, HelperFile?).new
+    @helper_names : Regex?
+    @registrars = Hash(String, Hash(String, Registrar)).new
+
     @defaults = Hash(String, Array(DefaultArgument)).new
     @registrar_files = [] of String
     @registrar_lock = Mutex.new
@@ -245,6 +257,7 @@ module Analyzer::Javascript
     def index : Nil
       # {target file, argument position} -> module passed there (nil: callers disagree)
       module_arguments = Hash(Tuple(String, Int32), String?).new
+      js_files = [] of String
       @all_files.each do |file|
         next unless ExpressConstants::JS_EXTENSIONS.any? { |ext| file.ends_with?(ext) }
         next unless @base_paths.any? { |base| Noir::PathScope.under_root?(file, base) }
@@ -261,6 +274,10 @@ module Analyzer::Javascript
           @registrar_files << file
         end
 
+        # An outside reference needs an import. A file defining its own
+        # helper is included below even when it imports nothing.
+        imports = content.includes?("require") || content.includes?("import")
+        js_files << file if imports
         next unless content.matches?(FORWARD_CALL_GATE, options: Noir::TextFile::MATCH_OPTIONS)
         next unless content.matches?(FORWARD_CALL_RE, options: Noir::TextFile::MATCH_OPTIONS)
         next if Noir::JSRouteExtractor.minified_content?(content)
@@ -270,9 +287,135 @@ module Analyzer::Javascript
         found = index_file(file, Noir::JSRouteExtractor.strip_js_comments(content))
         # Keyed absolute, because `JsModuleResolver` hands back absolute
         # paths and `@all_files` is relative whenever the scan base is.
-        @helpers[Noir::PathScope.expand(file)] = found unless found.empty?
+        unless found.empty?
+          @helpers[Noir::PathScope.expand(file)] = found
+          js_files << file unless imports
+        end
       end
       bind_module_parameters(module_arguments)
+      return if @helpers.empty?
+      @helper_names = reference_names(@helpers)
+      index_nested_registrars(js_files)
+    end
+
+    # Named imports and property calls mention the exported name, even if
+    # aliased. Default imports mention the module basename, except directory
+    # indexes and tsconfig aliases. Leave the gate open for those.
+    private def reference_names(definitions) : Regex?
+      names = Set(String).new
+      definitions.each do |file, specs|
+        specs.each_value do |spec|
+          if spec.local_name == "module.exports"
+            stem = File.basename(file, File.extname(file))
+            return if stem == "index" || !CodeLocator.instance.files_by_basename("tsconfig.json").empty?
+            names << stem
+          else
+            names << spec.name
+          end
+        end
+      end
+      Regex.union(names.to_a)
+    end
+
+    private def refers_to_helper?(source, names) : Bool
+      !names || source.matches?(names, options: Noir::TextFile::MATCH_OPTIONS)
+    end
+
+    # Both import forms in callable_helpers end in one of these literal
+    # specifiers. Look ahead at the literal without consuming it, since a
+    # match in a comment or string can overlap the actual import. If a
+    # comment separates the tokens, defer to the comment-stripped reader.
+    IMPORT_SPECIFIER = /(?:require\s*\(\s*|from\s*)(?=['"]([^'"]+)['"])|(?:require\s*(?:\(\s*)?|from\s*)\/[\/*]/
+
+    private def import_targets(file, raw) : Set(String)?
+      targets = Set(String).new
+      root = Noir::PathScope.longest_base(file, @base_paths) || @base_path
+      raw.scan(IMPORT_SPECIFIER) do |match|
+        specifier = match[1]? || return
+        return if specifier.includes?("/*") || specifier.includes?("//")
+        target = resolve_module(file, specifier, root)
+        targets << target if target
+      end
+      targets
+    end
+
+    @resolved_modules = Hash(Tuple(String, String, String), String?).new
+
+    private def resolve_module(file, specifier, root)
+      key = {File.dirname(file), specifier, root}
+      @resolved_modules.fetch(key) { @resolved_modules[key] = JsModuleResolver.resolve(file, specifier, root) }
+    end
+
+    private def imports_definition?(file, raw, definitions, imports)
+      targets = imports.fetch(file) { imports[file] = import_targets(file, raw) }
+      targets.nil? || targets.any? { |path| definitions.has_key?(path) }
+    end
+
+    # Bind the outer call's arguments to a registrar that calls a forwarding
+    # helper. Keep one environment per invocation so arguments from different
+    # calls cannot combine, and reuse the same module/alias rules at both hops.
+    private def index_nested_registrars(js_files)
+      imports = Hash(String, Set(String)?).new
+      js_files.each do |file|
+        raw = CodeLocator.instance.read_source(file) || next
+        target = Noir::PathScope.expand(file)
+        next unless refers_to_helper?(raw, @helper_names) || @helpers.has_key?(target)
+        next if test_tree?(file) || Noir::JSRouteExtractor.minified_content?(raw)
+        helper_file = read_helper_file(file, raw) if @helpers.has_key?(target) || imports_definition?(file, raw, @helpers, imports)
+        @helper_files[file] = helper_file
+        next unless helper_file
+        src = helper_file.source
+        functions = nil
+        params_by_function = {} of Int32 => Hash(String, Int32)
+        helper_file.calls.each do |call|
+          open = call.open
+          helper = call.spec
+          path_args = helper.forwards.compact_map { |f| call.args[f.path_arg]?.try(&.[0]) }.uniq!
+          next unless path_args.any? { |arg| arg.includes?("${") || arg.matches?(IDENTIFIER) }
+          functions ||= function_defs(src)
+          func = functions.select { |f| f.body_start < open < f.body_end }.min_by? { |f| f.body_end - f.body_start } || next
+          positions = params_by_function[func.params_open] ||= parameter_positions(src, func)
+          next unless positions.has_key?(call.args[helper.router_arg]?.try(&.[0]))
+          next unless positions.any? { |name, _| path_args.any? { |path| path == name || path.includes?("${" + name + "}") } }
+          specs = @registrars[target] ||= {} of String => Registrar
+          unless registrar = specs[func.name]?
+            declaration = "function registrar" + src.slice(func.params_open, func.body_end + 1)
+            unique = Noir::JSMountPrefix.unique_bindings(declaration, file, positions.keys)
+            registrar = specs[func.name] = Registrar.new(func.name, func.local_name, func.params_open,
+              positions.select { |name, _| unique.includes?(name) })
+          end
+          @registrar_sites[{target, open}] = registrar
+        end
+      end
+      return if @registrars.empty?
+      names = reference_names(@registrars)
+      js_files.each do |file|
+        next if test_tree?(file)
+        raw = CodeLocator.instance.read_source(file) || next
+        own = @registrars[Noir::PathScope.expand(file)]?
+        next unless own || refers_to_helper?(raw, names)
+        next if Noir::JSRouteExtractor.minified_content?(raw)
+        next unless own || imports_definition?(file, raw, @registrars, imports)
+        content = @helper_files[file]?.try(&.source.content) || Noir::JSRouteExtractor.strip_js_comments(raw)
+        constants = nil
+        callable_helpers(file, content, @registrars).each do |expr, registrar|
+          content.scan(call_regex(expr)) do |m|
+            open = m.end(0) - 1
+            next if registrar.params_open == open && own.try(&.has_key?(registrar.name))
+            close = Noir::JSRouteExtractor.find_matching_paren(content, open) || next
+            args = Noir::TopLevelSplit.split(content[open + 1...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS)
+            values = {} of String => String
+            registrar.positions.each do |name, position|
+              raw_arg = args[position]?.try(&.strip) || next
+              constants ||= path_constants(file, content) unless string_literal(raw_arg)
+              if value = argument_value(raw_arg, constants)
+                values[name] = value
+              end
+            end
+            registrar.calls << values unless registrar.calls.includes?(values)
+          end
+        end
+      end
     end
 
     # ------------------------------------------------------------------
@@ -328,13 +471,13 @@ module Analyzer::Javascript
       root = Noir::PathScope.longest_base(file, @base_paths) || @base_path
       calls = [] of Tuple(String, Int32) # {target, open paren}
       content.scan(MODULE_REQUIRE_CALL) do |m|
-        target = JsModuleResolver.resolve(file, m[1], root) || next
+        target = resolve_module(file, m[1], root) || next
         calls << {target, src.end(m) - 1}
       end
       callees = Hash(String, String).new
       content.scan(MODULE_REQUIRE_BIND) do |m|
         next unless called.includes?(m[1])
-        target = JsModuleResolver.resolve(file, m[2], root) || next
+        target = resolve_module(file, m[2], root) || next
         callees[m[1]] = target
       end
       content.scan(MODULE_REQUIRE_OBJ) do |m|
@@ -343,7 +486,7 @@ module Analyzer::Javascript
         src.slice(open, close + 1).scan(MODULE_OBJ_MEMBER) do |mm|
           callee = "#{m[1]}.#{mm[1]? || mm[2]}"
           next unless called.includes?(callee)
-          target = JsModuleResolver.resolve(file, mm[3], root) || next
+          target = resolve_module(file, mm[3], root) || next
           callees[callee] = target
         end
       end
@@ -359,17 +502,18 @@ module Analyzer::Javascript
       return if calls.empty?
 
       imports = Noir::JSHandlerResolver.imports_of(content, file)
-      functions = function_defs(src)
+      functions = nil
       calls.each do |target, open|
         close = Noir::JSLiteralScanner.find_matching_paren(src, open) || next
         args = Noir::TopLevelSplit.split(src.slice(open + 1, close), ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip)
         args.each_with_index do |arg, idx|
           passed = nil.as(String?)
           if arg.matches?(IDENTIFIER) && (spec = imports[arg]?) && spec[1].nil?
+            functions ||= function_defs(src)
             shadowed = functions.any? do |func|
               func.body_start < open && open < func.body_end && parameter_positions(src, func).has_key?(arg)
             end
-            passed = JsModuleResolver.resolve(file, spec[0], root) unless shadowed
+            passed = resolve_module(file, spec[0], root) unless shadowed
           end
           key = {target, idx}
           if module_arguments.has_key?(key)
@@ -433,7 +577,7 @@ module Analyzer::Javascript
         root = Noir::PathScope.longest_base(file, @base_paths) || @base_path
         candidates.each do |candidate|
           if specifier = candidate.import_path
-            target = JsModuleResolver.resolve(file, specifier, root) || next
+            target = resolve_module(file, specifier, root) || next
             name = "module.exports"
           else
             target = Noir::PathScope.expand(file)
@@ -507,95 +651,104 @@ module Analyzer::Javascript
       sites
     end
 
+    private def read_helper_file(file, raw) : HelperFile?
+      source = Noir::JSRouteExtractor.strip_js_comments(raw)
+      callables = callable_helpers(file, source)
+      return if callables.empty?
+
+      src = Noir::CharOffsets.new(source)
+      calls = [] of HelperCall
+      callables.each do |expr, spec|
+        source.scan(call_regex(expr)) do |match|
+          open = src.end(match) - 1
+          close = Noir::JSLiteralScanner.find_matching_paren(src, open) || next
+          args = Noir::TopLevelSplit.split_spans(source, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, open + 1, close)
+          calls << HelperCall.new(spec, open, match.byte_begin(0), src.line(src.begin(match)), args)
+        end
+      end
+      HelperFile.new(src, calls)
+    end
+
     def helper_candidate?(file : String, content : String) : Bool
-      any_helpers? && (content.includes?("require") || content.includes?("import") || @helpers.has_key?(Noir::PathScope.expand(file)))
+      return !@helper_files[file].nil? if @helper_files.has_key?(file)
+      any_helpers? && (@helpers.has_key?(Noir::PathScope.expand(file)) ||
+        ((content.includes?("require") || content.includes?("import")) && refers_to_helper?(content, @helper_names)))
     end
 
     # PASS 2: routes registered by calling an indexed helper from `file`.
     def routes_for(file : String, content : String) : Array(HelperRoute)
       routes = [] of HelperRoute
-      return routes unless helper_candidate?(file, content)
-      # Same two exclusions `JSRouteExtractor.extract_routes` applies to
-      # its own call sites. A test file that drives the API through the
-      # project's own helper would otherwise mint the routes a second
-      # time — and NodeBB's `test/` tree was already the source of a
-      # ~250-endpoint false-positive class once.
-      return routes if Noir::JSRouteExtractor.minified_content?(content)
-      return routes if test_tree?(file)
+      helper_file = @helper_files.fetch(file) do
+        return routes unless helper_candidate?(file, content)
+        return routes if test_tree?(file) || Noir::JSRouteExtractor.minified_content?(content)
+        read_helper_file(file, content)
+      end
+      return routes unless helper_file
       return routes if Noir::JSRouteExtractor.test_stub_only?(file, content)
-
-      # Blank out comments before looking for imports and call sites. NodeBB
-      # parks a commented-out `// setupApiRoute(router, 'post', '/', …)` in
-      # src/routes/write/search.js, and without this it becomes an endpoint;
-      # a comment inside `const {\n  // v3\n  setupApiRoute } = helpers`
-      # hid the import. `strip_js_comments` replaces comment characters in
-      # place, so every offset and line number below still refers to the
-      # real file.
-      content = Noir::JSRouteExtractor.strip_js_comments(content)
-
-      callables = callable_helpers(file, content)
-      return routes if callables.empty?
+      content = helper_file.source.content
 
       prefixes = file_prefixes(file)
-      lines = LineIndex.new(content)
       constants = nil
+      loops = nil
+      target_file = Noir::PathScope.expand(file)
 
-      callables.each do |call_expr, spec|
-        content.scan(call_regex(call_expr)) do |m|
-          match_end = m.end(0)
-          next unless match_end
-          open_paren = match_end - 1
-          next if file == spec.file && open_paren == spec.params_open
-          close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
-          next unless close_paren
+      helper_file.calls.each do |call|
+        spec = call.spec
+        open_paren = call.open
+        next if file == spec.file && open_paren == spec.params_open
+        args = call.args
+        next if args.size <= spec.router_arg
 
-          args = Noir::TopLevelSplit.split_spans(content, ',',
-            Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, open_paren + 1, close_paren)
-          next if args.size <= spec.router_arg
-
-          line = lines.line_at(m.begin(0) || open_paren)
-
-          spec.forwards.each do |forward|
-            method = call_site_verb(forward, args)
-            next unless method
-            raw = args[forward.path_arg]?.try(&.[0].strip) || next
-            next if raw.empty?
-            constants ||= path_constants(file, content) if !string_literal(raw) || raw.includes?("${")
-            path, unread = call_site_path(forward, raw, constants)
-            paths = [] of String
-            if unread
-              load_registrar_defaults
-              @defaults[Noir::PathScope.expand(file)]?.try &.each do |binding|
-                next unless binding.span.includes?(open_paren)
-                values = (constants || {} of String => String).merge({binding.parameter => binding.value})
-                possible, partial = call_site_path(forward, raw, values)
-                paths << possible if !partial && possible.starts_with?('/')
+        spec.forwards.each do |forward|
+          method = call_site_verb(forward, args)
+          next unless method
+          raw = args[forward.path_arg]?.try(&.[0].strip) || next
+          next if raw.empty?
+          constants ||= path_constants(file, content) if !string_literal(raw) || raw.includes?("${")
+          path, unread = call_site_path(forward, raw, constants)
+          paths = [] of {String, String?, Bool}
+          if unread
+            load_registrar_defaults
+            registrar = @registrar_sites[{target_file, open_paren}]?
+            bindings = registrar.try(&.calls.map { |values| {values, false} }) || [] of {Hash(String, String), Bool}
+            @defaults[target_file]?.try &.each do |binding|
+              next unless binding.span.includes?(open_paren)
+              default_values = {binding.parameter => binding.value + Noir::JSMountPrefix::DEFAULT}
+              bindings << {default_values, true}
+            end
+            bindings << {Hash(String, String).new, false} if bindings.empty?
+            loops ||= Noir::JSRegistrarDefaults.loop_calls(content, file)
+            loop_binding = loops[open_paren]?
+            bindings.each do |binding, registry_default|
+              values = (constants || {} of String => String).merge(binding)
+              arguments = [raw]
+              if loop_binding && (expanded = loop_binding.expand(string_literal(raw) || raw))
+                arguments = expanded.map { |arg| "`#{arg}`" }
+              end
+              arguments.each do |argument|
+                candidate, partial = call_site_path(forward, argument, values)
+                paths << {candidate, partial ? Endpoint::RESOLUTION_UNRESOLVED : nil, registry_default} if candidate.starts_with?('/')
               end
             end
-            resolution = if paths.empty?
-                           next unless path.starts_with?('/')
-                           paths << path
-                           Endpoint::RESOLUTION_UNRESOLVED if unread
-                         else
-                           Endpoint::RESOLUTION_HEURISTIC
-                         end
-            site = forward.site(spec.file) if spec.template_only?
-            binding = args[spec.router_arg][0].strip
-            local = CodeLocator.instance.all(ExpressConstants.binding_key(Noir::PathScope.expand(file), binding))
-            mounted = local.empty? ? prefixes : prefixes.flat_map { |outer| local.map { |inner| Noir::JSMountPrefix.join(outer, inner) } }
-            paths.uniq!
-            verbs = method == "ALL" ? ANY_ROUTE_HTTP_METHODS : [method]
-            mounted.each do |prefix|
-              template = if resolution == Endpoint::RESOLUTION_HEURISTIC
+          elsif path.starts_with?('/')
+            paths << {path, nil, false}
+          end
+          site = forward.site(spec.file) if spec.template_only?
+          binding = args[spec.router_arg][0].strip
+          local = CodeLocator.instance.all(ExpressConstants.binding_key(target_file, binding))
+          mounted = local.empty? ? prefixes : prefixes.flat_map { |outer| local.map { |inner| Noir::JSMountPrefix.join(outer, inner) } }
+          paths.uniq!
+          verbs = method == "ALL" ? ANY_ROUTE_HTTP_METHODS : [method]
+          mounted.each do |prefix|
+            steps = helper_middleware(forward, spec, file, args, prefix)
+            paths.each do |candidate, resolution, registry_default|
+              template = if registry_default
                            symbolic = prefix.empty? ? path : Noir::JSMountPrefix.join(prefix, path)
-                           Endpoint::PrefixTemplate.new(symbolic.delete(Noir::JSMountPrefix::UNREAD))
+                           Endpoint::PrefixTemplate.new(Noir::JSMountPrefix.visible(symbolic))
                          end
-              steps = helper_middleware(forward, spec, file, args, prefix)
-              paths.each do |candidate|
-                url = prefix.empty? ? candidate : Noir::JSMountPrefix.join(prefix, candidate)
-                verbs.each do |verb|
-                  routes << HelperRoute.new(verb, url, line, args, forward.path_arg, binding, prefix, m.byte_begin(0), resolution, template, site, steps, call_site_handler(forward, args))
-                end
+              url = prefix.empty? ? candidate : Noir::JSMountPrefix.join(prefix, candidate)
+              verbs.each do |verb|
+                routes << HelperRoute.new(verb, url, call.line, args, forward.path_arg, binding, prefix, call.offset, resolution, template, site, steps, call_site_handler(forward, args))
               end
             end
           end
@@ -635,7 +788,7 @@ module Analyzer::Javascript
       # held the whole scan for 12 s. `CharOffsets` keeps them O(1)/O(log n).
       src = Noir::CharOffsets.new(content)
       matches = forward_matches(src)
-      return specs if matches.empty?
+      return specs unless matches.any?(&.receiver.matches?(ROUTER_PARAM_RE))
 
       functions = function_defs(src)
       return specs if functions.empty?
@@ -647,8 +800,6 @@ module Analyzer::Javascript
         @logger.debug "Skipping #{file} for route helpers (#{functions.size} functions x #{matches.size} forwards)"
         return specs
       end
-
-      lines = LineIndex.new(content)
 
       # Attribute each forwarded call to the innermost function containing
       # it, so a callback nested in a helper does not turn its enclosing
@@ -675,7 +826,7 @@ module Analyzer::Javascript
 
         forwards = [] of Forward
         func_matches.each do |match|
-          forward = build_forward(file, src, match, param_index, lines)
+          forward = build_forward(file, src, match, param_index)
           next unless forward
           next if forwards.any? { |f| same_forward?(f, forward) }
           forwards << forward
@@ -712,7 +863,7 @@ module Analyzer::Javascript
     end
 
     private def build_forward(file : String, src : Noir::CharOffsets, match : ForwardMatch,
-                              param_index : Hash(String, Int32), lines : LineIndex) : Forward?
+                              param_index : Hash(String, Int32)) : Forward?
       return unless param_index.has_key?(match.receiver)
 
       return unless match.receiver.matches?(ROUTER_PARAM_RE)
@@ -745,7 +896,7 @@ module Analyzer::Javascript
         inner = Noir::JSHandlerResolver.unwrap(text, src.content, file) || break
         text = inner[0]
       end
-      Forward.new(match.receiver, verb, verb_arg, path_arg, path_parameter, before, after, lines.line_at(match.pos), middleware, param_index[text]?)
+      Forward.new(match.receiver, verb, verb_arg, path_arg, path_parameter, before, after, src.line(match.pos), middleware, param_index[text]?)
     end
 
     # Fixed signatures let us follow each argument of the actual registration
@@ -855,10 +1006,10 @@ module Analyzer::Javascript
     # Helper call expressions reachable from `file`: helpers it defines
     # itself, helpers it destructures out of a relative import, and
     # `module.helper` property access on a whole-module import.
-    private def callable_helpers(file : String, content : String) : Array(Tuple(String, HelperSpec))
-      callables = [] of Tuple(String, HelperSpec)
+    private def callable_helpers(file : String, content : String, definitions : Hash(String, Hash(String, T)) = @helpers) forall T
+      callables = [] of Tuple(String, T)
 
-      if own = @helpers[Noir::PathScope.expand(file)]?
+      if own = definitions[Noir::PathScope.expand(file)]?
         own.each_value { |spec| callables << {spec.local_name, spec} }
       end
 
@@ -866,7 +1017,7 @@ module Analyzer::Javascript
 
       NAMED_IMPORT_RES.each do |pattern|
         content.scan(pattern) do |m|
-          specs = imported_helpers(file, m[2], root)
+          specs = resolve_module(file, m[2], root).try { |target| definitions[target]? }
           next unless specs
           destructured_names(m[1]).each do |local, source|
             if spec = specs[source]?
@@ -877,10 +1028,10 @@ module Analyzer::Javascript
       end
 
       # Whole-module imports, reachable two ways.
-      module_specs = Hash(String, Hash(String, HelperSpec)).new
+      module_specs = Hash(String, Hash(String, T)).new
       MODULE_IMPORT_RES.each do |pattern|
         content.scan(pattern) do |m|
-          specs = imported_helpers(file, m[2], root)
+          specs = resolve_module(file, m[2], root).try { |target| definitions[target]? }
           next unless specs
           module_specs[m[1]] = specs
           #   const routeHelpers = require('../helpers')
@@ -911,12 +1062,6 @@ module Analyzer::Javascript
       end
 
       callables.uniq { |entry| entry[0] }
-    end
-
-    private def imported_helpers(file : String, specifier : String, root : String) : Hash(String, HelperSpec)?
-      target = JsModuleResolver.resolve(file, specifier, root)
-      return unless target
-      @helpers[target]?
     end
 
     # `{ a, b: c, d as e }` → `{local, exported}` pairs:
@@ -972,15 +1117,22 @@ module Analyzer::Javascript
     # The extractor's constants are file-wide. A parameter or reassignment
     # of the same name prevents using that value as a definite call argument.
     private def path_constants(file : String, content : String) : Hash(String, String)
-      constants = Noir::JSRouteExtractor.file_string_constants(file, content)
+      constants = Noir::JSRouteExtractor.file_string_constants(file, content, true)
       return constants if constants.empty?
       names = constants.keys.map(&.split('.').first).uniq!
       unique = Noir::JSMountPrefix.unique_bindings(content, file, names)
       constants.select { |key, _| unique.includes?(key.split('.').first) }
     end
 
-    private def call_site_path(forward : Forward, raw : String, constants : Hash(String, String)?) : Tuple(String, Bool)
+    private def argument_value(raw : String, constants : Hash(String, String)?) : String?
       value = string_literal(raw) || constants.try(&.[raw]?)
+      return value if value || !raw.starts_with?("process.env")
+      default = Noir::JSMountPrefix.read(raw, constants || {} of String => String)
+      default if default.includes?(Noir::JSMountPrefix::DEFAULT)
+    end
+
+    private def call_site_path(forward : Forward, raw : String, constants : Hash(String, String)?) : Tuple(String, Bool)
+      value = argument_value(raw, constants)
       value = Noir::JSRouteExtractor.resolve_template(value, constants) if value && constants && raw.starts_with?('`')
       unread = value.nil? || value.includes?("${")
       value ||= "${" + forward.path_parameter + "}"
@@ -1012,33 +1164,6 @@ module Analyzer::Javascript
     private def file_prefixes(file : String) : Array(String)
       prefixes = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(file)))
       prefixes.empty? ? [""] : prefixes
-    end
-
-    # Char offset → 1-based line, in O(log n) per lookup after one linear
-    # build. The alternative — `content[0...pos].count('\n')` per call —
-    # is quadratic over a file with a couple of hundred helper calls, and
-    # NodeBB has files with sixty of them.
-    private class LineIndex
-      def initialize(content : String)
-        @newlines = [] of Int32
-        content.each_char_with_index do |char, idx|
-          @newlines << idx if char == '\n'
-        end
-      end
-
-      def line_at(pos : Int32) : Int32
-        low = 0
-        high = @newlines.size
-        while low < high
-          mid = (low + high) // 2
-          if @newlines[mid] < pos
-            low = mid + 1
-          else
-            high = mid
-          end
-        end
-        low + 1
-      end
     end
   end
 end

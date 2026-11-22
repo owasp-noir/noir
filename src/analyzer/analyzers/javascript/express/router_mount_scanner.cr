@@ -713,7 +713,7 @@ module Analyzer::Javascript
       function_map = imports[:function_map]
       var_to_function = imports[:var_to_function]
       prefix_constants = extract_string_constants(content)
-      prefix_constants.merge!(Noir::JSRouteExtractor.file_string_constants(main_file, content)) if @framework == :express
+      prefix_constants.merge!(mount_constants(main_file, content)) if @framework.in?(:express, :hono)
       # `const { API_PATH } = require('./paths')`: the module's own constant.
       function_map.each do |name, file|
         next if prefix_constants.has_key?(name)
@@ -937,12 +937,12 @@ module Analyzer::Javascript
       global_deferred_mounts : Array(Mount),
       prefix_constants : Hash(String, String),
     )
-      if @framework == :express && call_name != "route"
+      if (@framework == :express && call_name != "route") || (@framework == :hono && call_name == "route")
         content.scan(/([\w$]+)\s*\.\s*#{Regex.escape(call_name)}\s*\(/) do |m|
           args = extract_use_call_args(content, m.byte_end(0))
           first = first_top_level_argument(args)
-          next unless explicit_mount_prefix_args?(args, prefix_constants)
-          next if Noir::JSRouteExtractor.mount_middleware?(first, content, main_file)
+          next unless @framework == :hono ? first.bytesize < args.bytesize : explicit_mount_prefix_args?(args, prefix_constants)
+          next if @framework == :express && Noir::JSRouteExtractor.mount_middleware?(first, content, main_file)
           prefixes = express_mount_prefixes(first, prefix_constants, content, main_file)
           prefixes.each do |prefix|
             process_use_call(content, m.byte_end(0) + first.bytesize + 1, m[1], prefix, main_file, locator,
@@ -1007,11 +1007,17 @@ module Analyzer::Javascript
       end
     end
 
+    @mount_constants = {} of String => Hash(String, String)
+
+    private def mount_constants(file, content)
+      @mount_constants[file] ||= Noir::JSRouteExtractor.file_string_constants(file, content, true)
+    end
+
     private def express_mount_prefixes(first : String, constants : Hash(String, String), content : String, file : String) : Array(String)
       expression = first.strip
       return extract_mount_prefixes_from_array(first, constants) if expression.starts_with?('[')
       previous = expression.starts_with?('`') && expression.ends_with?('`') ? Noir::JSRouteExtractor.resolve_mount_template(expression[1...-1], file, content) : nil
-      [Noir::JSMountPrefix.read(expression, Noir::JSRouteExtractor.file_string_constants(file, content), content, previous, legacy_constants: constants)]
+      [Noir::JSMountPrefix.read(expression, mount_constants(file, content), content, previous, legacy_constants: constants)]
     end
 
     private def extract_string_constants(content : String) : Hash(String, String)

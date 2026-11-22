@@ -1,10 +1,1 @@
 # One normalized difference per line: missed METHOD /path or extra METHOD /path.
-missed DELETE /branches/mobile/circulation/holds/{}
-missed DELETE /branches/mobile/circulation/loans/{}
-missed GET /branches/mobile/circulation/holds
-missed GET /branches/mobile/circulation/hours
-missed GET /branches/mobile/circulation/loans
-missed GET /branches/mobile/circulation/loans/{}
-missed POST /branches/mobile/circulation/holds
-missed POST /branches/mobile/circulation/loans
-missed POST /branches/mobile/circulation/loans/{}/renew

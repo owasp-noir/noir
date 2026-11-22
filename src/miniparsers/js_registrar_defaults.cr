@@ -1,4 +1,7 @@
 require "./js_ts_ast_helpers"
+require "./js_mount_prefix"
+require "../utils/char_offsets"
+require "../utils/text_file"
 
 module Noir
   # Possible arguments of a registry dispatch such as callbacks[key](app, mounts[key]).
@@ -58,6 +61,61 @@ module Noir
         child = scope
       end
       nil
+    end
+
+    # Key by the opening parenthesis of the registration. Identically named
+    # loop variables in adjacent blocks can have different domains.
+    record Loop, name : String, values : Array(String) do
+      def expand(path : String) : Array(String)?
+        slot = "${" + name + "}"
+        return unless path == name || path.includes?(slot)
+        values.map { |value| path == name ? value : path.gsub(slot, value) }
+      end
+    end
+
+    private def iteration(node, source) : {String, Node, Node}?
+      if TS.node_type(node) == "for_in_statement"
+        return unless field_text(node, "operator", source) == "of"
+        name = field_text(node, "left", source)
+        list = TS.field(node, "right") || return
+        body = TS.field(node, "body") || return
+      elsif pair = member_call(node, source, {"forEach"})
+        list, callback = pair
+        name = parameters(callback, source).first? || return
+        body = TS.field(callback, "body") || return
+      else
+        return
+      end
+      {name, list, body} if name.matches?(/\A[A-Za-z_$][\w$]*\z/)
+    end
+
+    def loop_calls(source : String, path : String) : Hash(Int32, Loop)
+      calls = {} of Int32 => Loop
+      return calls unless source.matches?(/\bfor\s*\(\s*(?:let|const)\s+[\w$]+\s+of\b|\.\s*forEach\s*\(/, options: Noir::TextFile::MATCH_OPTIONS)
+      offsets = CharOffsets.new(source)
+      TS.parse_js_family(source, path) do |root|
+        TS.walk(root) do |node|
+          name, list, body = iteration(node, source) || next
+          if TS.node_type(list) == "identifier"
+            list = declaration(node, TS.node_text(list, source), source)
+          end
+          list = TS.unwrap_expression(list) if list
+          items = children(list)
+          values = if list && TS.node_type(list) == "array" && items.all? { |item| TS.node_type(item) == "string" }
+                     items.map { |item| decode_string(item, source) }
+                   else
+                     ["${" + name + "}" + JSMountPrefix::UNREAD]
+                   end
+          statements = TS.node_type(body) == "statement_block" ? children(body) : [body]
+          statements.each do |statement|
+            call = TS.node_type(statement) == "expression_statement" ? TS.first_named_child(statement) : statement
+            next unless call && TS.node_type(call) == "call_expression"
+            args = TS.field(call, "arguments") || next
+            calls[offsets.char(LibTreeSitter.ts_node_start_byte(args).to_i)] = Loop.new(name, values)
+          end
+        end
+      end
+      calls
     end
 
     # Stay inside this function. Nested closures have their own parameters.

@@ -271,7 +271,7 @@ module Analyzer::Javascript
       prefixes = [""] if prefixes.empty?
 
       content.scan(USE_PATH_RE) do |m|
-        raw_path = m[2]? || Noir::JSRouteExtractor.resolve_mount_template(m[3], path, content)
+        raw_path = m[2]? || Noir::JSRouteExtractor.resolve_mount_template(m[3], path, content, mark_defaults: true)
         call_start = m.begin(0)
         paren_open = content.index('(', call_start) || next
         paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open) || next

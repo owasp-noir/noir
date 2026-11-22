@@ -34,6 +34,21 @@ describe "Express route-helper handlers, guards and params", tags: "functional" 
       find.call(method, url).params.map { |p| "#{p.name}:#{p.param_type}" }.sort!
     end
 
+    shelf_rows = endpoints.select { |ep| ep.details.code_paths.any? { |loc| File.basename(loc.path) == "shelves.js" } }
+    shelf_rows.size.should eq(12)
+    ["/public", "/team"].each do |base|
+      ["", "/feed"].each do |prefix|
+        ["fiction", "reference"].each do |shelf|
+          url = "#{prefix}#{base}/#{shelf}/:id"
+          params_of.call("GET", url).should eq(["id:path"])
+          find.call("GET", url).resolution.should eq(base == "/team" ? {"prefix" => "heuristic"} : nil)
+        end
+        url = "#{prefix}#{base}/custom/{shelf}"
+        params_of.call("GET", url).should eq(["shelf:path"])
+        find.call("GET", url).resolution.should eq({"prefix" => "unresolved"})
+      end
+    end
+
     # `Posts.vote = …` through controllers/index.js -> write/index.js -> posts.js.
     handler_of.call("PUT", "/api/v3/posts/:pid/vote").should eq({"posts.js", 11})
     params_of.call("PUT", "/api/v3/posts/:pid/vote").should eq(["delta:json", "pid:path"])
