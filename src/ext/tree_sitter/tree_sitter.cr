@@ -20,6 +20,7 @@ class Fiber
   # Descent depth of the tree-sitter walk on this fiber's stack, see
   # `Noir::TreeSitter.each_named_child`.
   property noir_ts_walk_depth = 0
+  property noir_go_tree : Noir::TreeSitter::ParsedSource?
 end
 
 @[Link(ldflags: "`sh #{__DIR__}/build.sh`")]
@@ -269,9 +270,52 @@ module Noir::TreeSitter
     parse(source, LibTreeSitter.tree_sitter_python) { |root| yield root }
   end
 
+  # Borrowed nodes are valid only inside with_go_tree. The slices in the
+  # declaration index point into the file's existing source buffer.
+  class ParsedSource
+    getter source : String, root : LibTreeSitter::TSNode
+    @declarations : Hash(Bytes, LibTreeSitter::TSNode)?
+
+    def initialize(@source, @root)
+    end
+
+    def top_level_node(text : String) : LibTreeSitter::TSNode?
+      return if TreeSitter.node_has_error?(@root)
+      declarations = @declarations ||= begin
+        table = Hash(Bytes, LibTreeSitter::TSNode).new
+        TreeSitter.each_named_child(@root) do |node|
+          start = LibTreeSitter.ts_node_start_byte(node).to_i
+          size = LibTreeSitter.ts_node_end_byte(node).to_i - start
+          table[@source.to_slice[start, size]] = node
+        end
+        table
+      end
+      declarations[text.to_slice]?
+    end
+  end
+
+  # The Go route, middleware and binding extractors run in the same file
+  # callback. Let them borrow that tree until the worker leaves the file.
+  def self.with_go_tree(source : String, &)
+    fiber = Fiber.current
+    previous = fiber.noir_go_tree
+    parse_go(source) do |root|
+      fiber.noir_go_tree = ParsedSource.new(source, root)
+      begin
+        yield
+      ensure
+        fiber.noir_go_tree = previous
+      end
+    end
+  end
+
   # Parses `source` with the Go grammar and yields the root node.
   def self.parse_go(source : String, &)
-    parse(source, LibTreeSitter.tree_sitter_go) { |root| yield root }
+    if (tree = Fiber.current.noir_go_tree) && tree.source.same?(source)
+      yield tree.root
+    else
+      parse(source, LibTreeSitter.tree_sitter_go) { |root| yield root }
+    end
   end
 
   # Parses `source` with the Java grammar and yields the root node.

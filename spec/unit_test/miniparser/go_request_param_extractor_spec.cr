@@ -63,3 +63,72 @@ describe Noir::GoRequestParamExtractor do
     end
   end
 end
+
+describe Noir::GoRequestParamExtractor::Resolver do
+  it "shares binding reachability across adapters and clears it between scans" do
+    source = <<-GO
+      package app
+      func first(c *gin.Context, dst any) { second(c, dst) }
+      func second(c *gin.Context, dst any) { first(c, dst); c.ShouldBindJSON(dst) }
+      func unrelated(c *gin.Context) { c.Status(204) }
+      GO
+    files = {"routes.go" => source}
+    bodies = Noir::GoCalleeExtractor::LazyPackageBodies.new(files)
+    gin = Noir::GoRequestParamExtractor::Resolver.new(bodies, files, {} of String => String, "gin")
+    echo = Noir::GoRequestParamExtractor::Resolver.new(bodies, files.dup, {} of String => String, "echo")
+    helpers = gin.binding_helpers.not_nil!
+    helpers.should eq(Set{"first", "second"})
+    echo.binding_helpers.not_nil!.should be(helpers)
+
+    Noir::ExtractionResultCache.clear_all
+    Noir::GoRequestParamExtractor.binding_helpers(files).not_nil!.should_not be(helpers)
+    changed = {"routes.go" => source.gsub("c.ShouldBindJSON(dst)", "c.Status(200)")}
+    Noir::GoRequestParamExtractor.binding_helpers(changed).should eq(Set(String).new)
+  end
+end
+
+describe Noir::GoRequestParamExtractor do
+  it "applies a shared binding helper to each caller's destination" do
+    source = <<-GO
+      package app
+      type A struct { First string `json:"first"` }
+      type B struct { Second string `json:"second"` }
+      func read(c *gin.Context, dst any) error { return c.ShouldBindJSON(dst) }
+      GO
+    files = {"handlers.go" => source}
+    bodies = Noir::GoCalleeExtractor::LazyPackageBodies.new(files)
+    resolver = Noir::GoRequestParamExtractor::Resolver.new(bodies, files, {} of String => String, "gin")
+    {"A" => "first", "B" => "second", "Unknown" => "body"}.each do |type, expected|
+      lines = ["func handle(c *gin.Context) {", "var request #{type}", "read(c, &request)", "}"]
+      params = Noir::GoRequestParamExtractor.binding_params(lines, "handlers.go", "POST", resolver)
+      params.map { |p| {p.name, p.param_type} }.should eq([{expected, "json"}])
+      params.first.tags.map(&.name).should eq(type == "Unknown" ? ["unresolved"] : [] of String)
+    end
+  end
+end
+
+describe "Go binding tree lifetime" do
+  it "borrows exact declarations and releases the file tree when the worker raises" do
+    handler = "func handle() { read() }"
+    source = "package app\n#{handler}"
+    files = {"app.go" => source}
+    bodies = Noir::GoCalleeExtractor::LazyPackageBodies.new(files)
+    resolver = Noir::GoRequestParamExtractor::Resolver.new(bodies, files, {} of String => String, "gin")
+
+    expect_raises(Exception, "worker failed") do
+      Noir::TreeSitter.with_go_tree(source) do
+        Noir::TreeSitter.parse_go(source) do |root|
+          resolver.with_binding_tree(handler, "app.go") do |node, text|
+            node.tree.should eq(root.tree)
+            Noir::TreeSitter.node_text(node, text).should eq(handler)
+          end
+          resolver.with_binding_tree(handler.gsub("read", "other"), "app.go") do |node, _|
+            node.tree.should_not eq(root.tree)
+          end
+        end
+        raise "worker failed"
+      end
+    end
+    Fiber.current.noir_go_tree.should be_nil
+  end
+end

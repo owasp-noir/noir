@@ -144,7 +144,7 @@ module Analyzer::Go
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       named_scope = named_handler_scope(file_contents)
       router_fields = package_router_fields(file_contents, {IMPORT_MARKER => ["ServeMux"]}, named_scope.import_dirs, {} of String => Hash(String, String)).fields
-      resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs)
+      resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs, structs: named_scope.structs)
       # `route_dirs` exists only to bound the two request-param pre-passes
       # below, and those maps are consulted exclusively from
       # `params_for_routes`, which returns immediately when the file

@@ -41,12 +41,7 @@ module Analyzer::Go
       named_scope = named_handler_scope(file_contents, infer_module: true)
       resolver = Noir::GoRequestParamExtractor::Resolver.new(named_scope.bodies, file_contents, named_scope.import_dirs, "gin", named_scope.structs)
       router_fields = package_router_fields(file_contents, ROUTER_TYPES, named_scope.import_dirs, package_groups)
-      parallel_analyze(get_files_by_extension(".go")) do |path|
-        next if go_test_path?(path)
-        next unless File.exists?(path)
-        content = file_contents[path]? || read_file_content(path)
-        dir = File.dirname(path)
-        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Handle", "Static"])
+      each_framework_route_file(file_contents, framework_dirs, IMPORT_MARKER, ["Handle", "Static"]) do |path, content, dir|
         lines = GoEngine.strip_comments(content).lines
         last_endpoints = [] of Endpoint
 
