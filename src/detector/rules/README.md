@@ -23,6 +23,8 @@ HttpServer:
 
 Use `gate` when the cheap dispatch filter differs from the matcher's filename check. For example, Rust's dispatch filter admits Rust source and manifests, while its Cargo dependency check inspects paths containing `Cargo.toml`. A rule with just `gate` leaves filename checks to its match expression. Within `all` or `any`, a `files` condition restricts a single branch.
 
+A rule can specify a `fallback` with a `match` condition and a `missing_siblings` list of basenames. The scanner evaluates it against the completed file index and logs a possible detection in verbose mode when the listed files are all outside the scan.
+
 ## Match conditions
 
 Each condition has one operator. Regex values are PCRE patterns. Use YAML single quotes or a literal block to preserve backslashes.
@@ -34,6 +36,8 @@ Each condition has one operator. Regex values are PCRE patterns. Use YAML single
 | `all`, `any` | A nonempty list of conditions, evaluated in order with short-circuiting. |
 | `not` | One condition. Matches when that condition fails, including a branch-local filename exclusion. |
 | `files` | A filename selector, as above. |
+| `javascript_import` | A package name used in a JavaScript or TypeScript import, re-export or require call. |
+| `json_path` | A path of exact JSON object keys from the root. A list at one level accepts any listed key. |
 | `go_dependency` | A regex passed to the shared Go import and direct go.mod dependency check. |
 | `go_mod_dependency` | A literal module marker passed to the go.mod check. |
 | `cargo_dependency` | A crate name passed to the shared Cargo dependency-key matcher. |

@@ -2,7 +2,7 @@
 # fluent-generic `Ep.Req<T>.Res<U>` / `Ep.NoReq.Res<U>` bases, and a route
 # held in a constant.
 fixture: fixtures/csharp/fastendpoints_attributes/
-counts: {techs: 2, endpoints: 7}
+counts: {techs: 1, endpoints: 7}
 endpoints:
   - url: "/f01/address"
     method: "POST"

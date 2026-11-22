@@ -1,5 +1,5 @@
 fixture: fixtures/csharp/wolverine/
-counts: {techs: 2, endpoints: 9}
+counts: {techs: 1, endpoints: 9}
 options:
   include_callee: true
 endpoints:
@@ -49,5 +49,4 @@ endpoints:
       - {name: "id", type: "path"}
   - url: "/status"
     method: "HEAD"
-# The csproj also trips cs_aspnet_core_mvc (Web SDK); it must add nothing.
 # The commented-out route and the tests/ file are not endpoints.

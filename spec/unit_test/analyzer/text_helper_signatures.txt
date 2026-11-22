@@ -442,7 +442,7 @@ src/analyzer/engines/php_engine.cr: private def top_level_args(lexer : Noir::Php
 # postgres (1 / 0 / 2)
 # The DDL mask handles single quotes, dollar quotes and block/line comments; statement and column boundaries are scanned separately on masked text.
 # Mask
-src/miniparsers/postgres_ddl_parser.cr: private def mask(content : String) : String
+src/miniparsers/postgres_ddl_parser.cr: def mask(content : String) : String
 # Split
 src/miniparsers/postgres_ddl_parser.cr: private def each_statement(masked : String, &)
 src/miniparsers/postgres_ddl_parser.cr: private def column_list(statement : String) : Array(String)

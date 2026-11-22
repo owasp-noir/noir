@@ -145,7 +145,7 @@ module Noir
     # Replaces comment and string bodies with spaces. Positions and
     # newlines are preserved so statement offsets and line numbers stay
     # valid against the original text.
-    private def mask(content : String) : String
+    def mask(content : String) : String
       chars = content.chars
       size = chars.size
       i = 0

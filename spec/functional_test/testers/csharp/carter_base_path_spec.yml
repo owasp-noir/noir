@@ -2,7 +2,7 @@
 # primary-constructor base (`: CarterModule("/k04")`), and route and group
 # templates held in constants.
 fixture: fixtures/csharp/carter_base_path/
-counts: {techs: 2, endpoints: 3}
+counts: {techs: 1, endpoints: 3}
 endpoints:
   - url: "/c10/orders/{id}"
     method: "GET"
