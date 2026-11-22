@@ -1,0 +1,104 @@
+Cli:
+  key: swift_cli
+  files: {extensions: [.swift]}
+  match:
+    any:
+      - contains: 'import ArgumentParser'
+      - regex:
+          - '\b(?:struct|enum|class)\s+\w+\s*:\s*[^\{]*\b(?:Async)?ParsableCommand\b'
+          - '@(?:Option|Argument|Flag|OptionGroup)\b'
+          - '\bimport\s+SwiftCLI\b'
+          - '\bimport\s+Commander\b'
+          - '\bCommandLine\.arguments\b'
+  examples:
+    match:
+      - {path: 'app.swift', content: "import ArgumentParser"}
+    no_match:
+      - {path: 'app.swift', content: "import Foundation"}
+
+Hummingbird:
+  key: swift_hummingbird
+  gate: {basenames: [Package.swift]}
+  files: {path_segments: [Package.swift]}
+  match:
+    all:
+      - contains: 'dependencies'
+      - any:
+          - contains: 'hummingbird-project/hummingbird'
+          - all:
+              - contains: 'Hummingbird'
+              - contains: '.package('
+  examples:
+    match:
+      - path: 'Package.swift'
+        content: |-
+          dependencies: [
+              .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
+          ]
+    no_match:
+      - {path: 'Package.swift', content: "dependencies: [.package(url: \"https://example.org/server.git\")]"}
+    applicable:
+      - 'Package.swift'
+    inapplicable:
+      - 'Sources/App/App.swift'
+
+Kitura:
+  key: swift_kitura
+  gate: {basenames: [Package.swift]}
+  files: {path_segments: [Package.swift]}
+  match:
+    all:
+      - contains: 'dependencies'
+      - any:
+          - contains: 'Kitura/Kitura'
+          - all:
+              - contains: 'Kitura'
+              - contains: '.package('
+  examples:
+    match:
+      - path: 'Package.swift'
+        content: |-
+          dependencies: [
+              .package(url: "https://github.com/Kitura/Kitura.git", from: "2.9.0"),
+          ]
+    no_match:
+      - {path: 'Package.swift', content: "dependencies: [.package(url: \"https://example.org/server.git\")]"}
+    applicable:
+      - 'Package.swift'
+    inapplicable:
+      - 'Sources/App/main.swift'
+
+Vapor:
+  key: swift_vapor
+  gate: {basenames: [Package.swift]}
+  files: {path_segments: [Package.swift]}
+  match:
+    all:
+      - contains: 'dependencies'
+      - contains:
+          - 'vapor/vapor'
+          - 'package: "vapor"'
+          - 'name: "Vapor"'
+  examples:
+    match:
+      - path: 'Package.swift'
+        content: |-
+          dependencies: [
+              .package(url: "https://github.com/vapor/vapor.git", from: "4.89.0"),
+          ]
+      - path: 'Package.swift'
+        content: |-
+          dependencies: [ .package(url: "https://github.com/example/web.git", from: "1.0.0") ]
+          .product(name: "Vapor", package: "vapor")
+    no_match:
+      - path: 'Package.swift'
+        content: |-
+          dependencies: [
+              .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
+              .package(url: "https://github.com/vapor/fluent-sqlite-driver.git", from: "4.7.0"),
+              .package(url: "https://github.com/vapor/jwt-kit.git", from: "5.0.0"),
+          ]
+    applicable:
+      - 'Package.swift'
+    inapplicable:
+      - 'Sources/App/routes.swift'

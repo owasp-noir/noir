@@ -1,0 +1,35 @@
+Giraffe:
+  key: fs_giraffe
+  gate: {extensions: [.fs, .fsx, .fsproj, .csproj], basenames: [paket.dependencies]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [paket.dependencies]}
+          - regex: '(?ms)^\s*nuget\s+Giraffe(?:\s|$)'
+      - all:
+          - files: {extensions: [.fsproj, .csproj]}
+          - regex: '<PackageReference\s+Include="Giraffe"'
+      - all:
+          - files: {extensions: [.fs, .fsx]}
+          - any:
+              - regex: '(?ms)^\s*open\s+Giraffe(\.|\s|$)'
+              - all:
+                  - contains: 'HttpHandler'
+                  - regex: '\b(?:route|routef|routeCi|subRoute|subRouteCi|subRoutef|choose)\s+'
+  examples:
+    match:
+      - path: 'paket.dependencies'
+        content: |-
+          source https://api.nuget.org/v3/index.json
+
+          nuget Giraffe
+      - {path: 'App.fsproj', content: "<Project Sdk=\"Microsoft.NET.Sdk.Web\"><ItemGroup><PackageReference Include=\"Giraffe\" Version=\"6.0.0\" /></ItemGroup></Project>"}
+      - path: 'Program.fs'
+        content: |-
+          open Giraffe
+
+          let webApp = route "/" >=> text "ok"
+      - {path: 'Program.fs', content: "let app: HttpHandler = choose [ route \"/x\" >=> text \"\" ]"}
+    no_match:
+      - {path: 'Program.fs', content: "let main () = printfn \"hi\""}
+      - {path: 'Program.cs', content: "open Giraffe"}

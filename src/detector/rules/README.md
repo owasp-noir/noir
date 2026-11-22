@@ -32,6 +32,7 @@ Each condition has one operator. Regex values are PCRE patterns. Use YAML single
 | `contains` | A literal string or list of alternatives. Matching is case-sensitive. |
 | `regex` | A pattern or list of alternative patterns matched against the file contents. Lists compile to one regex union. |
 | `all`, `any` | A nonempty list of conditions, evaluated in order with short-circuiting. |
+| `not` | One condition. Matches when that condition fails, including a branch-local filename exclusion. |
 | `files` | A filename selector, as above. |
 | `go_dependency` | A regex passed to the shared Go import and direct go.mod dependency check. |
 | `go_mod_dependency` | A literal module marker passed to the go.mod check. |

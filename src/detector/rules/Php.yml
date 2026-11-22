@@ -32,3 +32,760 @@ ApiPlatform:
           <?php
           // see ApiPlatform\Metadata\ApiResource
           class Home {}
+
+CakePHP:
+  key: php_cakephp
+  gate: {extensions: [.php, .phtml], basenames: [composer.json, composer.lock, cake]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [composer.json]}
+          - contains: 'cakephp/cakephp'
+      - all:
+          - files: {basenames: [cake, cake.php]}
+          - contains: 'Cake\Console\CommandRunner'
+      - all:
+          - files: {path_segments: [config/routes.php]}
+          - contains:
+              - 'Cake\Routing\RouteBuilder'
+              - '$routes->connect'
+              - '$builder->connect'
+  examples:
+    match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "php": ">=8.1",
+              "cakephp/cakephp": "^5.0"
+            }
+          }
+      - path: 'bin/cake'
+        content: |-
+          #!/usr/bin/php -q
+          <?php
+          require dirname(__DIR__) . '/vendor/autoload.php';
+          require dirname(__DIR__) . '/config/bootstrap.php';
+          exit((new Cake\Console\CommandRunner(new App\Application(dirname(__DIR__) . '/config')))->run($argv));
+      - path: 'cake'
+        content: |-
+          #!/usr/bin/php
+          <?php
+          use Cake\Console\CommandRunner;
+          exit((new CommandRunner())->run($argv));
+      - path: 'config/routes.php'
+        content: |-
+          <?php
+          use Cake\Routing\RouteBuilder;
+          $routes->scope('/', function (RouteBuilder $builder): void {
+              $builder->connect('/', ['controller' => 'Pages', 'action' => 'display', 'home']);
+          });
+    no_match:
+      - path: 'cake'
+        content: |-
+          #!/bin/bash
+          echo hello
+      - path: 'bin/cake'
+        content: |-
+          #!/usr/bin/php
+          <?php
+          // dummy script without CommandRunner
+      - {path: 'index.php', content: "<?php echo 'Hello World';"}
+      - {path: 'composer.json', content: "{\"name\": \"app\", \"require\": {\"php\": \"^8.0\"}}"}
+    applicable:
+      - 'cake'
+      - 'bin/cake'
+      - 'bin/cake.php'
+      - 'composer.json'
+      - 'config/routes.php'
+    inapplicable:
+      - 'cake.py'
+      - 'app.rb'
+
+Cli:
+  key: php_cli
+  files: {extensions: [.php]}
+  match:
+    regex:
+      - '\buse\s+Symfony\\Component\\Console\b'
+      - '\bclass\s+\w+\s+extends\s+(?:\\?Symfony\\Component\\Console\\Command\\)?Command\b'
+      - '#\[\s*AsCommand\b'
+      - '\buse\s+LaravelZero\\Framework\b'
+      - '\buse\s+League\\CLImate\\CLImate\b'
+      - '\buse\s+Minicli\\(?:App|Command)\b'
+      - '\bgetopt\s*\('
+      - '\$argv\s*\['
+      - 'protected\s+(?:static\s+)?\$signature\s*=\s*[''"]'
+      - 'Robo\\Tasks\b'
+      - 'WP_CLI::add_command\s*\('
+      - 'extends\s+WP_CLI_Command\b'
+  examples:
+    match:
+      - {path: 'app.php', content: "<?php $options = getopt(\"hv\");"}
+    no_match:
+      - {path: 'app.php', content: "<?php echo $argc;"}
+
+CodeIgniter:
+  key: php_codeigniter
+  gate: {extensions: [.php, .phtml], basenames: [composer.json, composer.lock, spark]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [composer.json]}
+          - contains:
+              - 'codeigniter4/framework'
+              - 'codeigniter4/codeigniter4'
+              - 'codeigniter/framework'
+      - all:
+          - files: {basenames: [spark]}
+          - contains:
+              - 'CodeIgniter'
+              - 'Config\Paths'
+      - all:
+          - files: {path_segments: [Config/Routes.php]}
+          - contains:
+              - 'CodeIgniter\Router'
+              - 'Services::routes()'
+              - '$routes->'
+      - all:
+          - files: {path_segments: [application/config/routes.php]}
+          - contains: '$route['
+      - all:
+          - files: {extensions: [.php]}
+          - any:
+              - contains:
+                  - 'use CodeIgniter\'
+                  - 'namespace CodeIgniter\'
+                  - 'extends \CodeIgniter\Controller'
+                  - 'extends CodeIgniter\Controller'
+              - all:
+                  - contains: 'extends ResourceController'
+                  - contains: 'CodeIgniter\RESTful'
+  examples:
+    match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "php": "^8.1",
+              "codeigniter4/framework": "^4.4"
+            }
+          }
+      - path: 'spark'
+        content: |-
+          #!/usr/bin/env php
+          <?php
+          $paths = new Config\Paths();
+          require __DIR__ . '/vendor/autoload.php';
+      - path: 'app/Config/Routes.php'
+        content: |-
+          <?php
+          use CodeIgniter\Router\RouteCollection;
+          $routes->get('/', 'Home::index');
+      - path: 'app/Controllers/Home.php'
+        content: |-
+          <?php
+          namespace App\Controllers;
+          use CodeIgniter\Controller;
+          class Home extends BaseController {}
+      - path: 'application/config/routes.php'
+        content: |-
+          <?php
+          $route['default_controller'] = 'home';
+          $route['products/(:num)'] = 'catalog/product_lookup_by_id/$1';
+    no_match:
+      - {path: 'index.php', content: "<?php echo 'Hello World';"}
+      - {path: 'composer.json', content: "{\"name\": \"app\", \"require\": {\"php\": \"^8.0\"}}"}
+    applicable:
+      - 'spark'
+      - './spark'
+      - 't5/spark'
+      - 'composer.json'
+      - 'app/Config/Routes.php'
+    inapplicable:
+      - 'spark.py'
+
+Drupal:
+  key: php_drupal
+  gate: {extensions: [.php, .module, .install, .theme, .profile, .inc, .yml, .yaml], basenames: [composer.json]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [composer.json]}
+          - contains:
+              - 'drupal/core'
+              - 'drupal/recommended-project'
+              - 'drupal/legacy-project'
+      - files: {extensions: [.routing.yml, .routing.yaml]}
+      - all:
+          - files: {extensions: [.info.yml, .info.yaml]}
+          - contains:
+              - 'core_version_requirement'
+              - 'type: module'
+              - 'type: theme'
+              - 'type: profile'
+      - all:
+          - files: {extensions: [.module, .install, .theme, .profile]}
+          - contains:
+              - '<?php'
+              - 'Drupal'
+              - 'hook_'
+      - all:
+          - files: {extensions: [.php]}
+          - contains:
+              - 'use Drupal\'
+              - 'namespace Drupal\'
+              - 'extends ControllerBase'
+  examples:
+    match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "drupal/core-recommended": "^10.2"
+            }
+          }
+      - path: 'web/modules/custom/example/example.routing.yml'
+        content: |-
+          example.list:
+            path: '/example'
+            defaults:
+              _controller: '\Drupal\example\Controller\ExampleController::listing'
+      - path: 'example.info.yml'
+        content: |-
+          name: Example
+          type: module
+          core_version_requirement: ^10
+      - path: 'example.module'
+        content: |-
+          <?php
+          function example_help() {}
+      - path: 'src/Controller/ExampleController.php'
+        content: |-
+          <?php
+          namespace Drupal\example\Controller;
+          use Drupal\Core\Controller\ControllerBase;
+          class ExampleController extends ControllerBase {}
+    no_match:
+      - {path: 'index.php', content: "<?php echo 'Hello World';"}
+      - path: 'services.yml'
+        content: |-
+          services:
+            foo.bar:
+              class: Foo
+      - {path: 'composer.json', content: "{\"require\": {\"symfony/framework-bundle\": \"^6.0\"}}"}
+      - path: '.profile'
+        content: |-
+          export PATH=$PATH:/usr/local/bin
+          alias ll='ls -la'
+      - path: 'index.theme'
+        content: |-
+          [Icon Theme]
+          Name=Hicolor
+          Directories=16x16
+
+Folio:
+  key: php_folio
+  gate: {extensions: [.php], basenames: [composer.json]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [composer.json]}
+          - contains: '"laravel/folio"'
+      - all:
+          - files: {extensions: [.php]}
+          - contains: 'Folio'
+          - regex: '\bLaravel\\Folio\\|\bFolio::path\s*\('
+  examples:
+    match:
+      - {path: 'composer.json', content: "{\"require\": {\"laravel/folio\": \"^1.1\"}}"}
+      - path: 'app/Providers/FolioServiceProvider.php'
+        content: |-
+          <?php
+          Folio::path(resource_path('views/pages'));
+      - path: 'resources/views/pages/index.blade.php'
+        content: |-
+          <?php
+          use function Laravel\Folio\{middleware};
+          middleware(['auth']); ?>
+    no_match:
+      - {path: 'composer.json', content: "{\"require\": {\"laravel/framework\": \"^11.0\"}}"}
+      - path: 'routes/web.php'
+        content: |-
+          <?php
+          Route::get('/portfolio', fn () => view('portfolio'));
+
+Hyperf:
+  key: php_hyperf
+  gate: {extensions: [.php, .phtml], basenames: [composer.json, composer.lock]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [composer.json]}
+          - contains:
+              - 'hyperf/hyperf'
+              - 'hyperf/framework'
+              - 'hyperf/http-server'
+      - all:
+          - files: {extensions: [.php]}
+          - any:
+              - regex: '(?:^|\n|<\?php\s)[ \t]*use\s+Hyperf\\[^;\n]*;'
+              - contains:
+                  - 'Hyperf\HttpServer\Router'
+                  - 'Hyperf\HttpServer\Annotation'
+  examples:
+    match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "php": "^8.1",
+              "hyperf/hyperf": "^3.1"
+            }
+          }
+      - {path: 'composer.json', content: "{\"require\": {\"hyperf/http-server\": \"^3.1\"}}"}
+      - path: 'UserController.php'
+        content: |
+          <?php
+          use Hyperf\HttpServer\Annotation\Controller;
+      - path: 'config/routes.php'
+        content: |
+          <?php
+          use Hyperf\HttpServer\Router\Router;
+          Router::get('/x', $h);
+    no_match:
+      - {path: 'index.php', content: "<?php echo 'hi';"}
+      - {path: 'composer.json', content: "{\"require\": {\"slim/slim\": \"^4.12\"}}"}
+
+Laminas:
+  key: php_laminas
+  gate: {extensions: [.php, .phtml], basenames: [composer.json, composer.lock]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [composer.json, composer.lock]}
+          - composer_dependency:
+              - 'laminas/laminas-mvc'
+              - 'laminas/laminas-router'
+              - 'mezzio/mezzio'
+              - 'mezzio/mezzio-router'
+              - 'zendframework/zend-mvc'
+              - 'zendframework/zend-router'
+              - 'zendframework/zend-expressive'
+      - all:
+          - files: {extensions: [.php]}
+          - any:
+              - regex:
+                  - '(?:^|\n|<\?php\s)[ \t]*use\s+(?:Laminas|Zend)\\(?:Mvc|Router)\\[^;\n]*;'
+                  - '(?:^|\n|<\?php\s)[ \t]*use\s+Mezzio\\[^;\n]*;'
+              - contains:
+                  - 'Laminas\Router\RouteStackInterface'
+                  - 'Zend\Router\RouteStackInterface'
+                  - 'Mezzio\Application'
+  examples:
+    match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "php": "^8.1",
+              "laminas/laminas-mvc": "^3.7"
+            }
+          }
+      - {path: 'composer.lock', content: "{\"packages\": [{\"name\": \"mezzio/mezzio\"}]}"}
+      - {path: 'composer.json', content: "{\"require\": {\"zendframework/zend-mvc\": \"^3.0\"}}"}
+      - path: 'module.config.php'
+        content: |
+          <?php
+          use Laminas\Router\Http\Segment;
+      - path: 'public/index.php'
+        content: |
+          <?php
+          use Mezzio\Application;
+    no_match:
+      - {path: 'index.php', content: "<?php echo 'Hello World';"}
+      - {path: 'composer.json', content: "{\"require\": {\"slim/slim\": \"^4.12\"}}"}
+      - {path: 'composer.lock', content: "{\"packages\": [{\"name\": \"zendframework/zend-diactoros\"}]}"}
+      - {path: 'composer.lock', content: "{\"packages\": [{\"name\": \"laminas/laminas-diactoros\"}]}"}
+      - {path: 'composer.lock', content: "{\"packages\": [{\"name\": \"mezzio/mezzio-swoole\"}]}"}
+
+Livewire:
+  key: php_livewire
+  gate: {extensions: [.php], basenames: [composer.json]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [composer.json]}
+          - regex: '"livewire/(?:livewire|volt)"\s*:'
+      - all:
+          - files: {extensions: [.php]}
+          - contains: 'Livewire\'
+          - regex: '\bLivewire\\(?:Volt\\)?Component\b'
+  examples:
+    match:
+      - {path: 'composer.json', content: "{\"require\": {\"livewire/livewire\": \"^3.5\"}}"}
+      - {path: 'composer.json', content: "{\"require\": {\"livewire/volt\": \"^1.6\"}}"}
+      - path: 'app/Livewire/EditPost.php'
+        content: |-
+          <?php
+          use Livewire\Component;
+          class EditPost extends Component {}
+      - path: 'app/Livewire/EditPost.php'
+        content: |-
+          <?php
+          class EditPost extends \Livewire\Component {}
+      - path: 'resources/views/livewire/counter.blade.php'
+        content: |-
+          <?php
+          use Livewire\Volt\Component;
+          new class extends Component {} ?>
+    no_match:
+      - path: 'app/View/Components/Alert.php'
+        content: |-
+          <?php
+          use Illuminate\View\Component;
+          class Alert extends Component {}
+      - {path: 'composer.json', content: "{\"require\": {\"laravel/framework\": \"^11.0\"}}"}
+
+Lumen:
+  key: php_lumen
+  gate: {extensions: [.php, .phtml], basenames: [composer.json, composer.lock]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [composer.json]}
+          - contains: 'laravel/lumen-framework'
+      - all:
+          - files: {path_segments: [bootstrap/app.php]}
+          - contains: 'Laravel\Lumen\Application'
+      - all:
+          - files: {extensions: [.php]}
+          - contains:
+              - 'use Laravel\Lumen\'
+              - 'namespace Laravel\Lumen\'
+  examples:
+    match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "php": "^8.1",
+              "laravel/lumen-framework": "^10.0"
+            }
+          }
+      - path: 'bootstrap/app.php'
+        content: |-
+          <?php
+          $app = new Laravel\Lumen\Application(
+            dirname(__DIR__)
+          );
+      - path: 'app/Http/Controllers/UserController.php'
+        content: |-
+          <?php
+          namespace App\Http\Controllers;
+          use Laravel\Lumen\Routing\Controller as BaseController;
+
+          class UserController extends BaseController {}
+    no_match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "php": "^8.0.2",
+              "laravel/framework": "^10.0"
+            }
+          }
+      - {path: 'index.php', content: "<?php echo 'Hello World';"}
+      - {path: 'composer.json', content: "{\"require\": {\"php\": \"^8.0\"}}"}
+
+Mautic:
+  key: php_mautic
+  gate: {extensions: [.php], basenames: [composer.json, composer.lock]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [composer.json, composer.lock]}
+          - composer_dependency: 'mautic/core-lib'
+      - all:
+          - files: {path_segments: [Config/config.php]}
+          - files: {extensions: [.php]}
+          - contains: '''routes'''
+          - contains: 'Mautic\'
+  examples:
+    match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "php": "^8.1",
+              "mautic/core-lib": "^5.0"
+            }
+          }
+      - path: 'app/bundles/CoreBundle/Config/config.php'
+        content: |-
+          <?php
+          return [
+              'routes' => [
+                  'main' => [
+                      'mautic_x' => ['path' => '/x', 'controller' => 'Mautic\CoreBundle\Controller\XController::indexAction'],
+                  ],
+              ],
+          ];
+    no_match:
+      - {path: 'index.php', content: "<?php echo 'Hello World';"}
+      - {path: 'composer.json', content: "{\"require\": {\"symfony/framework-bundle\": \"^6.0\"}}"}
+      - {path: 'composer.lock', content: "{\"packages-dev\": [{\"name\": \"roave/security-advisories\", \"conflict\": {\"mautic/core-lib\": \"<4.4.13\"}}]}"}
+      - {path: 'config/routes.php', content: "<?php return ['routes' => []];"}
+
+Nextcloud:
+  key: php_nextcloud
+  gate: {extensions: [.php], basenames: [info.xml]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [appinfo/info.xml]}
+          - contains: '<nextcloud'
+      - all:
+          - files: {extensions: [.php]}
+          - contains: 'OCP\AppFramework\'
+  examples:
+    match:
+      - {path: 'notes/appinfo/info.xml', content: "<info><id>notes</id><dependencies><nextcloud min-version=\"28\" max-version=\"31\"/></dependencies></info>"}
+      - path: 'lib/Controller/NoteController.php'
+        content: |-
+          <?php
+          use OCP\AppFramework\Controller;
+    no_match:
+      - {path: 'docs/info.xml', content: "<nextcloud/>"}
+      - {path: 'appinfo/info.xml', content: "<info><id>x</id></info>"}
+      - {path: 'index.php', content: "<?php echo 'hi';"}
+
+Phalcon:
+  key: php_phalcon
+  gate: {extensions: [.php, .phtml, .ini], basenames: [composer.json, composer.lock, php.ini]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [composer.json, composer.lock]}
+          - composer_dependency:
+              - 'ext-phalcon'
+              - 'phalcon/ide-stubs'
+              - 'phalcon/incubator'
+              - 'phalcon/devtools'
+              - 'phalcon/migrations'
+      - all:
+          - files: {extensions: [.ini], basenames: [php.ini]}
+          - regex: '(?i)extension\s*=\s*["'']?phalcon(?:\.(?:so|dll))?["'']?'
+      - all:
+          - files: {extensions: [.php, .phtml]}
+          - any:
+              - regex: '(?:^|\n|<\?php\s)[ \t]*use\s+Phalcon\\[^;\n]*;'
+              - contains:
+                  - 'Phalcon\Mvc\Micro'
+                  - 'Phalcon\Mvc\Application'
+                  - 'Phalcon\Mvc\Controller'
+                  - 'Phalcon\Mvc\Router'
+                  - 'Phalcon\Mvc\Model'
+                  - 'Phalcon\Di\FactoryDefault'
+                  - 'Phalcon\Di\Di'
+  examples:
+    match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "php": ">=8.0",
+              "ext-phalcon": ">=5.0"
+            }
+          }
+      - {path: 'composer.json', content: "{\"require-dev\": {\"phalcon/ide-stubs\": \"^5.0\"}}"}
+      - {path: 'php.ini', content: "extension=phalcon.so"}
+      - {path: 'php.ini', content: "extension=phalcon"}
+      - path: 'index.php'
+        content: |
+          <?php
+          use Phalcon\Mvc\Micro;
+          $app = new Micro();
+      - path: 'public/index.php'
+        content: |
+          <?php
+          $app = new \Phalcon\Mvc\Micro();
+      - path: 'ProductsController.php'
+        content: |
+          <?php
+          class ProductsController extends \Phalcon\Mvc\Controller {}
+    no_match:
+      - {path: 'index.php', content: "<?php echo 'Hello World';"}
+      - {path: 'controller.php', content: "<?php use Illuminate\\Http\\Request;"}
+      - {path: 'composer.json', content: "{\"require\": {\"laravel/framework\": \"^10.0\"}}"}
+      - {path: 'php.ini', content: "extension=redis.so"}
+
+Php:
+  key: php_pure
+  gate: {extensions: [.php, .phtml], basenames: [composer.json, composer.lock]}
+  files: {extensions: [.php]}
+  match:
+    contains:
+      - '<?'
+      - '?>'
+  examples:
+    match:
+      - {path: '1.php', content: "<? phpinfo(); ?>"}
+      - {path: 'admin.php', content: "<?php TITLE!!! ?>"}
+    no_match:
+      - {path: 'admin.js', content: "<? This is template ?>"}
+
+Slim:
+  key: php_slim
+  gate: {extensions: [.php, .phtml], basenames: [composer.json, composer.lock]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [composer.json]}
+          - contains: 'slim/slim'
+      - all:
+          - files: {extensions: [.php]}
+          - contains:
+              - 'use Slim\'
+              - 'namespace Slim\'
+              - 'Slim\Factory\AppFactory'
+              - 'SlimFramework'
+  examples:
+    match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "php": "^8.1",
+              "slim/slim": "^4.12"
+            }
+          }
+      - path: 'index.php'
+        content: |
+          <?php
+          use Slim\Factory\AppFactory;
+          $app = AppFactory::create();
+      - path: 'public/index.php'
+        content: |
+          <?php
+          $app = Slim\Factory\AppFactory::create();
+      - {path: 'bootstrap.php', content: "<?php // SlimFramework bootstrap"}
+    no_match:
+      - {path: 'index.php', content: "<?php echo 'Hello World';"}
+      - {path: 'controller.php', content: "<?php use Illuminate\\Http\\Request;"}
+      - {path: 'composer.json', content: "{\"require\": {\"laravel/framework\": \"^10.0\"}}"}
+
+Symfony:
+  key: php_symfony
+  gate: {extensions: [.php, .phtml], basenames: [composer.json, composer.lock]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [composer.json]}
+          - contains: 'symfony/'
+      - all:
+          - files: {path_segments: [config/bundles.php]}
+          - contains: 'Symfony\'
+      - all:
+          - files: {path_segments: [config/services.yaml]}
+          - contains: 'App\'
+      - all:
+          - files: {extensions: [.php]}
+          - regex: '(?:^|\n|<\?php\s)[ \t]*use\s+Symfony\\[^;\n]*;'
+      - all:
+          - files: {path_segments: [src/Kernel.php, public/index.php]}
+          - contains: 'Symfony'
+  examples:
+    match:
+      - path: 'composer.json'
+        content: |-
+          {
+            "require": {
+              "symfony/framework-bundle": "^6.4"
+            }
+          }
+      - path: 'src/Controller/MyController.php'
+        content: |-
+          <?php
+          namespace App\Controller;
+          use Symfony\Component\HttpFoundation\Response;
+
+          class MyController {}
+      - {path: 'src/Controller/MyController.php', content: "<?php use Symfony\\Component\\HttpFoundation\\Response; class MyController {}"}
+      - path: 'config/bundles.php'
+        content: |-
+          <?php
+          return [
+              Symfony\Bundle\FrameworkBundle\FrameworkBundle::class => ['all' => true],
+          ];
+      - path: 'src/Kernel.php'
+        content: |-
+          <?php
+          namespace App;
+          use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
+          use Symfony\Component\HttpKernel\Kernel as BaseKernel;
+          class Kernel extends BaseKernel { use MicroKernelTrait; }
+      - path: 'public/index.php'
+        content: |-
+          <?php
+          // Symfony front controller
+          use App\Kernel;
+          require Symfony\Runtime\Autoloader;
+    no_match:
+      - path: 'public/index.php'
+        content: |-
+          <?php
+          use App\Kernel;
+          require_once dirname(__DIR__).'/vendor/autoload_runtime.php';
+          return function (array $context) {
+              return new Kernel($context['APP_ENV'], (bool) $context['APP_DEBUG']);
+          };
+      - path: 'tests/integration/TraceTest.php'
+        content: |-
+          <?php
+          namespace Tests\Integration;
+          use PHPUnit\Framework\TestCase;
+
+          class TraceTest extends TestCase {
+              public function testTrace(): void {
+                  $class = 'Symfony\Bundle\FrameworkBundle\FrameworkBundle';
+                  $this->assertNotEmpty($class);
+              }
+          }
+      - path: 'src/Controller/HomeController.php'
+        content: |-
+          <?php
+          namespace App\Controller;
+
+          /** @Route("/home") */
+          class HomeController {}
+      - {path: 'composer.json', content: "{\"name\": \"app\", \"require\": {\"php\": \"^8.0\"}}"}
+      - {path: 'index.html', content: "<html></html>"}
+      - {path: 'app.js', content: "console.log('hello')"}
+    inapplicable:
+      - config/services.yaml
+
+ThinkPHP:
+  key: php_thinkphp
+  gate: {extensions: [.php, .phtml], basenames: [composer.json, composer.lock, think]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [composer.json]}
+          - contains: 'topthink/framework'
+      - all:
+          - files: {basenames: [think]}
+          - contains:
+              - 'think\App'
+              - 'think\Console'
+      - files: {path_segments: [route/route.php, route/app.php]}
+      - all:
+          - files: {extensions: [.php]}
+          - regex:
+              - '(?:^|\n|<\?php\s)[ \t]*use\s+think\\[^;\n]*;'
+              - 'extends\s+(?:\\?think\\(?:facade\\)?(?:Controller|App|Route))'
+  examples:
+    match:
+      - {path: 'app.php', content: "<?php use think\\App;"}
+    no_match:
+      - {path: 'app.php', content: "<?php echo 'think';"}

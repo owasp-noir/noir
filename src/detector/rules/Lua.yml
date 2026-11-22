@@ -1,0 +1,90 @@
+Cli:
+  key: lua_cli
+  files: {extensions: [.lua]}
+  match:
+    regex: '\brequire\s*\(?\s*[''"]argparse[''"]|\bargparse\s*\(|(?<!\w)(?<!\w\.)arg\s*\[\s*\d+\s*\]|\brequire\s*\(?\s*[''"]cliargs[''"]'
+  examples:
+    match:
+      - {path: 'tool.lua', content: "local argparse = require \"argparse\""}
+      - {path: 'tool.lua', content: "local parser = argparse(\"tool\", \"A tool\")"}
+      - {path: 'tool.lua', content: "local cli = require('cliargs')"}
+      - {path: 'script.lua', content: "local port = tonumber(arg[1])"}
+      - {path: 'script.lua', content: "print(\"usage: \"..arg[0])"}
+    no_match:
+      - path: 'body_filter.lua'
+        content: |-
+          local chunk, eof = ngx.arg[1], ngx.arg[2]
+          ngx.arg[1] = string.upper(chunk)
+      - {path: 'plugin.lua', content: "local v = ctx.arg[1]"}
+      - {path: 'plugin.lua', content: "local v = myarg[1]"}
+      - {path: 'app.lua', content: "print('hi')"}
+      - {path: 'tool.rb', content: "local argparse = require 'argparse'"}
+
+Lapis:
+  key: lua_lapis
+  gate: {extensions: [.lua, .moon, .rockspec]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.rockspec]}
+          - regex: '\blapis\b'
+          - contains:
+              - 'dependencies'
+              - 'dependency'
+      - all:
+          - files: {basenames: [config.lua, config.moon]}
+          - regex: '\blapis\.(?:config|util|application)\b'
+      - all:
+          - files: {extensions: [.lua, .moon]}
+          - any:
+              - regex:
+                  - 'require\s*\(?\s*[''"]lapis(?:\.|[''"])'
+                  - 'class\s+\w*\s*extends\s+lapis\.Application'
+                  - 'extends\s+lapis\.Application'
+              - contains: 'lapis.Application'
+  examples:
+    match:
+      - path: 'x.rockspec'
+        content: |-
+          package = "x"
+          dependencies = { "lua", "lapis" }
+      - {path: 'config.lua', content: "local config = require(\"lapis.config\")"}
+      - {path: 'app.lua', content: "local lapis = require(\"lapis\")"}
+      - {path: 'app.lua', content: "local app = lapis.Application()"}
+      - {path: 'app.moon', content: "class extends lapis.Application"}
+    no_match:
+      - {path: 'app.lua', content: "print('hi')"}
+      - {path: 'app.rb', content: "require 'lapis'"}
+
+Lor:
+  key: lua_lor
+  gate: {extensions: [.lua, .moon, .rockspec]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.rockspec]}
+          - regex: '[''"]lor(?:\s|[''"~<>=])'
+          - contains:
+              - 'dependencies'
+              - 'dependency'
+      - all:
+          - files: {extensions: [.lua, .moon]}
+          - regex:
+              - 'require\s*\(?\s*[''"]lor(?:\.|[''"])'
+              - '\blor\s*[:.]\s*[Rr]outer\s*\('
+              - '=\s*lor\s*\(\s*\)'
+  examples:
+    match:
+      - path: 'x.rockspec'
+        content: |-
+          package = "x"
+          dependencies = { "lua", "lor" }
+      - {path: 'app.lua', content: "local lor = require(\"lor.index\")"}
+      - {path: 'main.lua', content: "local s = require('lor.lib.middleware.session')"}
+      - {path: 'routes.lua', content: "local r = lor:Router()"}
+      - {path: 'main.lua', content: "local app = lor()"}
+    no_match:
+      - {path: 'app.lua', content: "print('hi')"}
+      - {path: 'app.lua', content: "local color = require('palette')"}
+      - {path: 'app.lua', content: "local app = lapis.Application()"}
+      - {path: 'app.rb', content: "require 'lor'"}

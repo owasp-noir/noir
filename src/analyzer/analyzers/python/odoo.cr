@@ -1,11 +1,13 @@
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 require "./python_helper"
-require "../../../detector/detectors/python/odoo"
+require "../../../detector/rule_detector"
 
 module Analyzer::Python
   class Odoo < PythonEngine
     analyzer_for "python_odoo"
+
+    include RuleDetector::SourceCheck
 
     # Reference: https://www.odoo.com/documentation/master/developer/reference/backend/http.html
     #
@@ -24,7 +26,7 @@ module Analyzer::Python
 
     private def analyze_file(path : ::String, base_path : ::String) : Array(Endpoint)?
       source = read_file_content(path)
-      return unless source.includes?("route") && source.matches?(Detector::Python::Odoo::IMPORT_RE)
+      return unless source.includes?("route") && source_detector.detect(path, source)
 
       lines = source.lines
       endpoints = [] of Endpoint

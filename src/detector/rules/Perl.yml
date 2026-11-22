@@ -1,0 +1,208 @@
+Catalyst:
+  key: perl_catalyst
+  gate: {extensions: [.pl, .pm, .psgi, .t], basenames: [cpanfile, Makefile.PL, dist.ini, META.json, META.yml]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [cpanfile, Makefile.PL, dist.ini, META.json, META.yml]}
+          - contains: 'Catalyst'
+      - all:
+          - files: {extensions: [.pl, .pm, .psgi, .t]}
+          - contains:
+              - 'use Catalyst'
+              - 'extends ''Catalyst::Controller'
+              - 'extends "Catalyst::Controller'
+              - 'use base ''Catalyst::Controller'
+              - 'use base "Catalyst::Controller'
+              - 'parent ''Catalyst::Controller'
+              - 'parent "Catalyst::Controller'
+              - 'Catalyst::Controller::REST'
+              - 'CatalystX::Routes'
+  examples:
+    match:
+      - path: 'cpanfile'
+        content: |-
+          requires 'Catalyst::Runtime', '5.90132';
+          requires 'Catalyst::Controller::REST';
+      - path: 'Makefile.PL'
+        content: |-
+          use ExtUtils::MakeMaker;
+          WriteMakefile(
+            NAME => 'MyApp',
+            PREREQ_PM => {
+              'Catalyst' => '5.90',
+            },
+          );
+      - path: 'lib/MyApp.pm'
+        content: |-
+          package MyApp;
+          use Moose;
+          use Catalyst qw/ConfigLoader Static::Simple/;
+          __PACKAGE__->setup;
+      - path: 'lib/MyApp/Controller/Users.pm'
+        content: |-
+          package MyApp::Controller::Users;
+          use Moose;
+          BEGIN { extends 'Catalyst::Controller' }
+          sub index : Path Args(0) {}
+      - path: 'lib/MyApp/Controller/Api.pm'
+        content: |-
+          package MyApp::Controller::Api;
+          use CatalystX::Routes;
+    no_match:
+      - path: 'script/plain.pl'
+        content: |-
+          use strict;
+          use warnings;
+          sub hello { print "hi\n" }
+
+Cli:
+  key: perl_cli
+  files: {extensions: [.pl, .pm, .t]}
+  match:
+    regex: '\buse\s+Getopt::(?:Long|Std)\b|\bGetOptions\s*\(|\bgetopts?\s*\(|\buse\s+App::Cmd\b|\bMooseX::Getopt\b|\$ARGV\s*\[\s*\d+\s*\]|\buse\s+Getopt::Long::Descriptive\b|\bdescribe_options\s*\(|\buse\s+MooX::Options\b'
+  examples:
+    match:
+      - {path: 'app.pl', content: "use Getopt::Long;"}
+    no_match:
+      - {path: 'app.pl', content: "use File::Spec;"}
+
+Dancer2:
+  key: perl_dancer2
+  gate: {extensions: [.pl, .pm, .psgi, .t], basenames: [cpanfile, cpanfile.snapshot, Makefile.PL, dist.ini, META.json, META.yml]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [cpanfile, cpanfile.snapshot, Makefile.PL, dist.ini, META.json, META.yml]}
+          - contains: 'Dancer2'
+      - all:
+          - files: {extensions: [.pl, .pm, .psgi, .t]}
+          - contains:
+              - 'use Dancer2'
+              - 'use Dancer2;'
+              - 'Dancer2::Plugin'
+              - 'Dancer2::Core'
+              - 'extends ''Dancer2'
+              - 'extends "Dancer2'
+              - 'use base ''Dancer2'
+              - 'use base "Dancer2'
+              - 'parent ''Dancer2'
+              - 'parent "Dancer2'
+  examples:
+    match:
+      - path: 'cpanfile'
+        content: |-
+          requires 'perl', '5.020';
+          requires 'Dancer2', '>= 1.0.0';
+          requires 'DBI';
+      - path: 'Makefile.PL'
+        content: |-
+          use ExtUtils::MakeMaker;
+          WriteMakefile(
+            NAME => 'MyApp',
+            PREREQ_PM => {
+              'Dancer2' => '1.0.0',
+            },
+          );
+      - path: 'bin/app.pl'
+        content: |-
+          use Dancer2;
+
+          get '/' => sub { 'Hello!' };
+
+          dance;
+      - path: 'lib/MyApp.pm'
+        content: |-
+          package MyApp;
+          use Dancer2;
+
+          get '/ping' => sub { 'pong' };
+
+          1;
+      - path: 'lib/Dancer2/Plugin/Custom.pm'
+        content: |-
+          package Dancer2::Plugin::Custom;
+          use Dancer2::Plugin;
+
+          1;
+    no_match:
+      - path: 'script/plain.pl'
+        content: |-
+          use strict;
+          use warnings;
+
+          sub hello { print "hi\n" }
+          hello();
+      - path: 'bin/app.pl'
+        content: |-
+          use Dancer;
+
+          get '/' => sub { 'Hello!' };
+
+          dance;
+      - path: 'cpanfile'
+        content: |-
+          requires 'DBI';
+          requires 'JSON';
+
+Mojolicious:
+  key: perl_mojolicious
+  gate: {extensions: [.pl, .pm, .psgi, .t], basenames: [cpanfile, Makefile.PL, dist.ini, META.json, META.yml]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [cpanfile, Makefile.PL, dist.ini, META.json, META.yml]}
+          - contains: 'Mojolicious'
+      - all:
+          - files: {extensions: [.pl, .pm, .psgi, .t]}
+          - contains:
+              - 'use Mojolicious::Lite'
+              - 'Mojolicious::Lite'
+              - 'Mojo::Base ''Mojolicious'
+              - 'Mojo::Base "Mojolicious'
+              - 'use Mojolicious'
+  examples:
+    match:
+      - path: 'cpanfile'
+        content: |-
+          requires 'perl', '5.020';
+          requires 'Mojolicious', '>= 9.0';
+          requires 'DBI';
+      - path: 'Makefile.PL'
+        content: |-
+          use ExtUtils::MakeMaker;
+          WriteMakefile(
+            NAME => 'MyApp',
+            PREREQ_PM => {
+              'Mojolicious' => '9.0',
+            },
+          );
+      - path: 'script/myapp.pl'
+        content: |-
+          use Mojolicious::Lite -signatures;
+
+          get '/' => sub ($c) { $c->render(text => 'Hello!') };
+
+          app->start;
+      - path: 'lib/MyApp/Controller/Foo.pm'
+        content: |-
+          package MyApp::Controller::Foo;
+          use Mojo::Base 'Mojolicious::Controller', -signatures;
+
+          sub welcome ($c) {
+            $c->render(text => 'Welcome');
+          }
+
+          1;
+    no_match:
+      - path: 'script/plain.pl'
+        content: |-
+          use strict;
+          use warnings;
+
+          sub hello { print "hi\n" }
+          hello();
+      - path: 'cpanfile'
+        content: |-
+          requires 'DBI';
+          requires 'JSON';

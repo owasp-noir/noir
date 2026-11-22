@@ -1,0 +1,121 @@
+Cli:
+  key: zig_cli
+  files: {extensions: [.zig]}
+  match:
+    regex: '@import\s*\(\s*"cli"\s*\)|@import\s*\(\s*"clap"\s*\)|@import\s*\(\s*"args"\s*\)|@import\s*\(\s*"yazap"\s*\)|\b(?:std\.)?process\.argsAlloc\s*\(|\bclap\.(?:parseParamsComptime|parse)\b|\bcli\.(?:Command|App|Runner)\b'
+  examples:
+    match:
+      - {path: 'app.zig', content: "const clap = @import(\"clap\");"}
+    no_match:
+      - {path: 'app.zig', content: "const std = @import(\"std\");"}
+
+Http:
+  key: zig_http
+  gate: {extensions: [.zig], basenames: [build.zig.zon]}
+  files: {extensions: [.zig]}
+  match:
+    any:
+      - contains: 'std.http.Server'
+      - all:
+          - contains:
+              - '@import("std")'
+              - 'std.http'
+          - contains: '.receiveHead('
+          - contains: '.head.target'
+          - contains: '.respond('
+  examples:
+    match:
+      - {path: 'src/main.zig', content: "const Request = std.http.Server.Request;"}
+      - path: 'src/main.zig'
+        content: |-
+          const std = @import("std");
+          fn handle(server: *std.http.Server) !void {
+              var request = try server.receiveHead();
+              if (std.mem.eql(u8, request.head.target, "/")) {
+                  try request.respond("ok", .{});
+              }
+          }
+    no_match:
+      - {path: 'src/main.zig', content: "const std = @import(\"std\");"}
+      - {path: 'main.txt', content: "const Request = std.http.Server.Request;"}
+
+Httpz:
+  key: zig_httpz
+  gate: {extensions: [.zig], basenames: [build.zig.zon]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.zig]}
+          - contains: '@import("httpz")'
+      - all:
+          - files: {basenames: [build.zig.zon]}
+          - any:
+              - regex: '\.httpz\s*=\s*\.\{'
+              - contains: 'karlseguin/http.zig'
+  examples:
+    match:
+      - {path: 'src/main.zig', content: "const httpz = @import(\"httpz\");"}
+      - {path: 'build.zig.zon', content: ".httpz = .{ .url = \"x\" }"}
+    no_match:
+      - {path: 'src/main.zig', content: "const std = @import(\"std\");"}
+
+Jetzig:
+  key: zig_jetzig
+  gate: {extensions: [.zig], basenames: [build.zig.zon]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.zig]}
+          - contains: '@import("jetzig")'
+      - all:
+          - files: {basenames: [build.zig.zon]}
+          - any:
+              - regex: '\.jetzig\s*=\s*\.\{'
+              - contains: 'jetzig-framework/jetzig'
+  examples:
+    match:
+      - {path: 'src/app/views/root.zig', content: "const jetzig = @import(\"jetzig\");"}
+      - {path: 'build.zig.zon', content: ".{ .dependencies = .{ .jetzig = .{ .url = \"x\" } } }"}
+    no_match:
+      - {path: 'src/main.zig', content: "const std = @import(\"std\");"}
+      - {path: 'main.rb', content: "@import(\"jetzig\")"}
+
+Tokamak:
+  key: zig_tokamak
+  gate: {extensions: [.zig], basenames: [build.zig.zon]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.zig]}
+          - contains: '@import("tokamak")'
+      - all:
+          - files: {basenames: [build.zig.zon]}
+          - any:
+              - regex: '\.tokamak\s*=\s*\.\{'
+              - contains: 'cztomsik/tokamak'
+  examples:
+    match:
+      - {path: 'src/main.zig', content: "const tk = @import(\"tokamak\");"}
+      - {path: 'build.zig.zon', content: ".tokamak = .{ .url = \"https://github.com/cztomsik/tokamak\" }"}
+    no_match:
+      - {path: 'src/main.zig', content: "const zap = @import(\"zap\");"}
+
+Zap:
+  key: zig_zap
+  gate: {extensions: [.zig], basenames: [build.zig.zon]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.zig]}
+          - contains: '@import("zap")'
+      - all:
+          - files: {basenames: [build.zig.zon]}
+          - any:
+              - regex: '\.zap\s*=\s*\.\{'
+              - contains: 'zigzap/zap'
+  examples:
+    match:
+      - {path: 'src/main.zig', content: "const zap = @import(\"zap\");"}
+      - {path: 'build.zig.zon', content: ".zap = .{ .url = \"https://github.com/zigzap/zap\" }"}
+    no_match:
+      - {path: 'src/main.zig', content: "const httpz = @import(\"httpz\");"}

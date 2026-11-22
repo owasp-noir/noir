@@ -1,11 +1,13 @@
 require "../../../miniparsers/python_graphql_extractor_ts"
 require "../../engines/python_engine"
 require "../specification/graphql_sdl_parser"
-require "../../../detector/detectors/python/strawberry"
+require "../../../detector/rule_detector"
 
 module Analyzer::Python
   class Strawberry < PythonEngine
     analyzer_for "python_strawberry"
+
+    include RuleDetector::SourceCheck
 
     # Reference: https://strawberry.rocks/docs/types/schema
     #
@@ -38,7 +40,7 @@ module Analyzer::Python
     def analyze
       outlines = ordered_parallel_analyze(python_source_files) do |path|
         source = read_file_content(path)
-        X.outline(path, source, source.includes?("strawberry") && source.matches?(Detector::Python::Strawberry::IMPORT_RE))
+        X.outline(path, source, source_detector.detect(path, source))
       end
       index = X::Index.new(outlines)
 

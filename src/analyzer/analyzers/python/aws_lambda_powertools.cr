@@ -2,12 +2,13 @@ require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 require "./mounted_router_support"
 require "./python_helper"
-require "../../../detector/detectors/python/aws_lambda_powertools"
 
 module Analyzer::Python
   class AwsLambdaPowertools < PythonEngine
     include MountedRouterSupport
     analyzer_for "python_aws_lambda_powertools"
+
+    IMPORT_RE = /^\s*(?:from\s+aws_lambda_powertools\.event_handler(?:\.[\w.]+)?\s+import\b|import\s+aws_lambda_powertools\.event_handler\b)/m
 
     # Reference: https://docs.powertools.aws.dev/lambda/python/latest/core/event_handler/api_gateway/
     #
@@ -43,7 +44,7 @@ module Analyzer::Python
 
     private def scan_file(path : ::String, base_path : ::String) : FileScan?
       source = read_file_content(path)
-      return unless source.includes?("aws_lambda_powertools") && source.matches?(Detector::Python::AwsLambdaPowertools::IMPORT_RE)
+      return unless source.includes?("aws_lambda_powertools") && source.matches?(IMPORT_RE)
 
       # `include_router(router, prefix=None)`
       mounts = collect_mounts(source, path, base_path, "include_router", "router", "prefix", 1)

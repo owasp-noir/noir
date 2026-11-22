@@ -1,0 +1,49 @@
+Wisp:
+  key: gleam_wisp
+  gate: {extensions: [.gleam], basenames: [gleam.toml, manifest.toml]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [gleam.toml, manifest.toml]}
+          - regex:
+              - '(?ms)^\s*wisp\s*='
+              - 'name\s*=\s*"wisp"'
+      - all:
+          - files: {extensions: [.gleam]}
+          - any:
+              - regex: '(?ms)^\s*import\s+wisp(?:/[a-z_]+)?(?:\s|\.|$)'
+              - contains: 'wisp.path_segments'
+  examples:
+    match:
+      - path: 'gleam.toml'
+        content: |-
+          name = "my_app"
+          version = "1.0.0"
+
+          [dependencies]
+          gleam_stdlib = ">= 0.49.0 and < 2.0.0"
+          wisp = ">= 1.4.0 and < 2.0.0"
+      - path: 'src/app/router.gleam'
+        content: |-
+          import wisp.{type Request, type Response}
+
+          pub fn handle_request(req: Request) -> Response {
+            case wisp.path_segments(req) {
+              [] -> wisp.ok()
+              _ -> wisp.not_found()
+            }
+          }
+    no_match:
+      - path: 'src/main.gleam'
+        content: |-
+          import gleam/io
+
+          pub fn main() {
+            io.println("Hello, Joe!")
+          }
+      - path: 'gleam.toml'
+        content: |-
+          name = "my_app"
+
+          [dependencies]
+          gleam_stdlib = ">= 0.49.0 and < 2.0.0"

@@ -1,0 +1,137 @@
+Cli:
+  key: clojure_cli
+  files: {extensions: [.clj, .cljs, .cljc]}
+  match:
+    regex: 'clojure\.tools\.cli\b|\(\s*(?:[\w.-]+/)?parse-opts\b|\bcli-matic\b|\*command-line-args\*|\bbabashka\.cli\b'
+  examples:
+    match:
+      - {path: 'app.clj', content: "(require '[clojure.tools.cli :as cli])"}
+    no_match:
+      - {path: 'app.clj', content: "(require '[clojure.string :as str])"}
+
+Compojure:
+  key: clojure_compojure
+  gate: {extensions: [.clj, .cljs, .cljc, .edn], basenames: [project.clj, deps.edn]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [project.clj, deps.edn]}
+          - contains: 'compojure'
+      - all:
+          - files: {extensions: [.clj, .cljs, .cljc]}
+          - not:
+              files: {basenames: [project.clj]}
+          - any:
+              - contains:
+                  - 'compojure.core'
+                  - 'compojure.api'
+              - all:
+                  - contains: 'defroutes'
+                  - regex: '\([A-Z]+?\s+"'
+  examples:
+    match:
+      - {path: 'project.clj', content: "(defproject demo \"0.1.0\" :dependencies [[compojure \"1.7.1\"]])"}
+      - {path: 'src/demo/core.clj', content: "(ns demo.core (:require [compojure.core :refer [defroutes GET]]))"}
+    no_match:
+      - {path: 'demo.txt', content: "compojure"}
+      - {path: 'project.clj', content: "(defroutes api (GET \"/\" [] \"\"))"}
+
+Pedestal:
+  key: clojure_pedestal
+  gate: {extensions: [.clj, .cljs, .cljc, .edn], basenames: [project.clj, deps.edn]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [project.clj, deps.edn]}
+          - contains:
+              - 'io.pedestal/pedestal'
+              - 'pedestal.service'
+              - 'pedestal.route'
+              - 'pedestal.jetty'
+              - 'pedestal.http-kit'
+      - all:
+          - files: {extensions: [.clj, .cljs, .cljc]}
+          - not:
+              files: {basenames: [project.clj]}
+          - contains:
+              - 'io.pedestal.http'
+              - 'io.pedestal.connector'
+              - 'io.pedestal.route'
+              - 'io.pedestal.service'
+  examples:
+    match:
+      - {path: 'project.clj', content: "(defproject demo \"0.1.0\" :dependencies [[io.pedestal/pedestal.service \"0.7.2\"]])"}
+      - {path: 'deps.edn', content: "{:deps {io.pedestal/pedestal.route {:mvn/version \"0.8.1\"}}}"}
+      - {path: 'src/demo/core.clj', content: "(ns demo.core (:require [io.pedestal.http.route :as route]))"}
+    no_match:
+      - {path: 'demo.txt', content: "io.pedestal.http"}
+      - {path: 'src/demo/core.clj', content: "(ns demo.core (:require [compojure.core]))"}
+      - {path: 'project.clj', content: "io.pedestal.connector"}
+
+Reitit:
+  key: clojure_reitit
+  gate: {extensions: [.clj, .cljs, .cljc, .edn], basenames: [project.clj, deps.edn]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [project.clj, deps.edn]}
+          - contains:
+              - 'metosin/reitit'
+              - 'reitit/reitit'
+              - 'reitit.core'
+              - 'reitit.ring'
+              - 'reitit.http'
+      - all:
+          - files: {extensions: [.clj, .cljs, .cljc]}
+          - not:
+              files: {basenames: [project.clj]}
+          - contains: 'reitit.'
+  examples:
+    match:
+      - {path: 'project.clj', content: "(defproject demo \"0.1.0\" :dependencies [[metosin/reitit \"0.7.2\"]])"}
+      - {path: 'src/demo/core.clj', content: "(ns demo.core (:require [reitit.ring :as ring]))"}
+      - {path: 'src/demo/core.clj', content: "(ns demo.core (:require [reitit.core]))"}
+    no_match:
+      - {path: 'demo.txt', content: "reitit.ring"}
+      - {path: 'src/demo/core.clj', content: "(ns demo.core (:require [compojure.core]))"}
+      - {path: 'project.clj', content: "reitit.middleware"}
+
+Ring:
+  key: clojure_ring
+  gate: {extensions: [.clj, .cljs, .cljc, .edn], basenames: [project.clj, deps.edn]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [project.clj, deps.edn]}
+          - all:
+              - not:
+                  contains:
+                    - 'compojure'
+                    - 'metosin/reitit'
+                    - 'reitit/reitit'
+              - contains:
+                  - 'ring/ring-core'
+                  - 'ring/ring-jetty-adapter'
+                  - 'ring/ring-servlet'
+                  - 'ring/ring-devel'
+      - all:
+          - files: {extensions: [.clj, .cljs, .cljc]}
+          - not:
+              files: {basenames: [project.clj]}
+          - any:
+              - contains:
+                  - 'ring.adapter'
+                  - 'ring.core.protocols'
+                  - 'ring.middleware'
+              - all:
+                  - contains: ':request-method'
+                  - contains: ':uri'
+  examples:
+    match:
+      - {path: 'project.clj', content: "(defproject demo \"0.1.0\" :dependencies [[ring/ring-core \"1.12.2\"]])"}
+      - {path: 'src/demo/core.clj', content: "(ns demo.core (:require [ring.adapter.jetty :as jetty]))"}
+      - {path: 'src/demo/core.clj', content: "(defn handler [req] (case [(:request-method req) (:uri req)]))"}
+    no_match:
+      - {path: 'project.clj', content: "(defproject demo \"0.1.0\" :dependencies [[compojure \"1.7.1\"]])"}
+      - {path: 'demo.txt', content: "ring.adapter.jetty"}
+      - {path: 'project.clj', content: "ring/ring-core compojure ring.middleware"}

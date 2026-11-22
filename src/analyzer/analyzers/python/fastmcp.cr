@@ -1,12 +1,14 @@
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 require "./starlette_endpoint_support"
-require "../../../detector/detectors/python/fastmcp"
+require "../../../detector/rule_detector"
 
 module Analyzer::Python
   class FastMCP < PythonEngine
     include StarletteEndpointSupport
     analyzer_for "python_fastmcp"
+
+    include RuleDetector::SourceCheck
 
     # Reference: https://gofastmcp.com/deployment/running-server#custom-routes
     #
@@ -22,7 +24,7 @@ module Analyzer::Python
 
     private def analyze_file(path : ::String, base_path : ::String) : Array(Endpoint)?
       source = read_file_content(path)
-      return unless source.includes?("custom_route") && source.matches?(Detector::Python::FastMCP::IMPORT_RE)
+      return unless source.includes?("custom_route") && source_detector.detect(path, source)
 
       constructors = ["FastMCP"]
       source.scan(ALIAS_RE) { |m| constructors << m[1] }

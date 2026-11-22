@@ -1,0 +1,98 @@
+Cowboy:
+  key: erlang_cowboy
+  gate: {extensions: [.erl, .hrl, .app.src], basenames: [rebar.config, erlang.mk]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.app.src], basenames: [rebar.config, erlang.mk]}
+          - regex: '(?:^|[\s,{"])cowboy(?:_[a-z]+)?(?=$|[\s,}"])'
+      - all:
+          - files: {extensions: [.erl, .hrl]}
+          - any:
+              - contains:
+                  - 'cowboy_router:compile'
+                  - 'cowboy:start_clear'
+                  - 'cowboy:start_tls'
+                  - 'cowboy_req:'
+              - regex: '-(?:behaviour|behavior)\s*\(\s*cowboy_(?:handler|rest|loop|websocket)\s*\)'
+  examples:
+    match:
+      - path: 'rebar.config'
+        content: |-
+          {erl_opts, [debug_info]}.
+
+          {deps, [
+              {cowboy, "2.10.0"},
+              {jsx, "3.1.0"}
+          ]}.
+      - path: 'src/my_app.erl'
+        content: |-
+          -module(my_app).
+
+          start(_Type, _Args) ->
+              Dispatch = cowboy_router:compile([
+                  {'_', [{"/", hello_handler, []}]}
+              ]),
+              cowboy:start_clear(http, [{port, 8080}], #{env => #{dispatch => Dispatch}}).
+      - path: 'src/user_handler.erl'
+        content: |-
+          -module(user_handler).
+          -behaviour(cowboy_rest).
+
+          init(Req, State) -> {cowboy_rest, Req, State}.
+    no_match:
+      - path: 'mix.exs'
+        content: |-
+          defmodule MyApp.MixProject do
+            use Mix.Project
+
+            defp deps do
+              [
+                {:plug, "~> 1.14"},
+                {:plug_cowboy, "~> 2.5"}
+              ]
+            end
+          end
+      - path: 'src/math_utils.erl'
+        content: |-
+          -module(math_utils).
+          -export([add/2]).
+
+          add(A, B) -> A + B.
+    inapplicable:
+      - 'mix.exs'
+
+Elli:
+  key: erlang_elli
+  gate: {extensions: [.erl, .hrl, .app.src], basenames: [rebar.config, erlang.mk]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.app.src], basenames: [rebar.config, erlang.mk]}
+          - regex: '(?:^|[\s,{"])elli(?:_[a-z]+)?(?=$|[\s,}"])'
+      - all:
+          - files: {extensions: [.erl, .hrl]}
+          - any:
+              - contains:
+                  - 'elli_request:'
+                  - 'elli:start_link'
+              - regex: '-(?:behaviour|behavior)\s*\(\s*elli_handler\s*\)'
+  examples:
+    match:
+      - path: 'rebar.config'
+        content: |-
+          {deps, [
+              {elli, "3.3.0"}
+          ]}.
+      - path: 'src/my_callback.erl'
+        content: |-
+          -module(my_callback).
+          -behaviour(elli_handler).
+
+          handle(Req, _Args) ->
+              handle(Req#req.method, elli_request:path(Req), Req).
+    no_match:
+      - path: 'src/math_utils.erl'
+        content: |-
+          -module(math_utils).
+          add(A, B) -> A + B.

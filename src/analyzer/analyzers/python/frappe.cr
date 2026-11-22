@@ -1,10 +1,12 @@
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
-require "../../../detector/detectors/python/frappe"
+require "../../../detector/rule_detector"
 
 module Analyzer::Python
   class Frappe < PythonEngine
     analyzer_for "python_frappe"
+
+    include RuleDetector::SourceCheck
 
     # Reference: https://frappeframework.com/docs/user/en/api/rest#remote-method-calls
     #
@@ -21,7 +23,7 @@ module Analyzer::Python
 
     private def analyze_file(path : ::String, base_path : ::String) : Array(Endpoint)?
       source = read_file_content(path)
-      return unless source.includes?("whitelist") && source.matches?(Detector::Python::Frappe::IMPORT_RE)
+      return unless source.includes?("whitelist") && source_detector.detect(path, source)
 
       lines = source.lines
       mod = nil

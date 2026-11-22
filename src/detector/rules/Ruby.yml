@@ -28,6 +28,67 @@ ActionCable:
           class FooController < ApplicationController
           end
 
+Cli:
+  key: ruby_cli
+  gate: {extensions: [.rb, .gemspec], basenames: [Gemfile]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.gemspec], basenames: [Gemfile]}
+          - regex: '\b(?:gem|add(?:_runtime)?_dependency)\s*\(?\s*[''"](?:thor|gli|slop|tty-option|commander|optimist|clamp|dry-cli)[''"]'
+      - all:
+          - files: {extensions: [.rb]}
+          - any:
+              - regex:
+                  - '\brequire\s+["'']optparse["'']'
+                  - '\bOptionParser\.new\b'
+                  - '<\s*Thor\b'
+                  - '\binclude\s+GLI::App\b'
+                  - '\bSlop\.(?:parse|new)\b'
+                  - '\binclude\s+TTY::Option\b'
+                  - '\binclude\s+Commander::Methods\b'
+                  - '\bARGV\s*\[\s*\d+\s*\]'
+                  - '\bOptimist(?:::|\.)options\b'
+                  - '<\s*Clamp::Command\b'
+                  - '<\s*Dry::CLI::Command\b'
+              - contains:
+                  - 'require "thor"'
+                  - 'require ''thor'''
+  examples:
+    match:
+      - {path: 'Gemfile', content: "s.add_runtime_dependency('thor')"}
+    no_match:
+      - {path: 'Gemfile', content: "require 'optparse_extra'"}
+
+Grape:
+  key: ruby_grape
+  gate: {extensions: [.rb, .ru, .gemspec], basenames: [Gemfile, Gemfile.lock]}
+  match:
+    any:
+      - all:
+          - files: {path_segments: [Gemfile]}
+          - regex: '\bgem\s*\(?\s*[''"](?:grape)[''"]'
+      - all:
+          - files: {extensions: [.gemspec]}
+          - regex: '\badd(?:_runtime)?_dependency\s*\(?\s*[''"](?:grape)[''"]'
+      - all:
+          - files: {extensions: [.rb]}
+          - any:
+              - contains: 'Grape::API'
+              - regex: 'require\s+[''"]grape[''"]'
+  examples:
+    match:
+      - {path: 'Gemfile', content: "gem 'grape'"}
+      - {path: 'Gemfile', content: "gem \"grape\""}
+      - path: 'app.rb'
+        content: |-
+          class API < Grape::API
+          end
+      - {path: 'app.rb', content: "require 'grape'"}
+      - {path: 'Gemfile.d/my.gemspec', content: "s.add_dependency('grape')"}
+    no_match:
+      - {path: 'app.rb', content: "puts 'hi'"}
+
 Graphql:
   key: ruby_graphql
   files: {extensions: [.rb]}
@@ -75,6 +136,204 @@ Hanami:
             spec.name = "hanami"
             spec.add_dependency 'dry-system'
           end
+
+Padrino:
+  key: ruby_padrino
+  gate: {extensions: [.rb, .ru, .gemspec], basenames: [Gemfile, Gemfile.lock]}
+  match:
+    any:
+      - all:
+          - files: {path_segments: [Gemfile]}
+          - regex: '\bgem\s*\(?\s*[''"](?:padrino|padrino-core)[''"]'
+      - all:
+          - files: {extensions: [.gemspec]}
+          - regex: '\badd(?:_runtime)?_dependency\s*\(?\s*[''"](?:padrino|padrino-core)[''"]'
+      - all:
+          - files: {extensions: [.rb]}
+          - any:
+              - contains:
+                  - 'Padrino::Application'
+                  - 'Padrino.mount'
+              - regex:
+                  - 'require\s+[''"]padrino-core[''"]'
+                  - 'require\s+[''"]padrino[''"]'
+  examples:
+    match:
+      - {path: 'Gemfile', content: "gem 'padrino'"}
+      - {path: 'Gemfile', content: "gem \"padrino\""}
+      - {path: 'Gemfile', content: "gem 'padrino-core'"}
+      - {path: 'Gemfile', content: "gem('padrino', '~> 0.15')"}
+      - path: 'foo.gemspec'
+        content: |-
+          Gem::Specification.new do |s|
+            s.add_dependency 'padrino-core', '~> 0.15'
+          end
+      - path: 'foo.gemspec'
+        content: |-
+          Gem::Specification.new do |spec|
+            spec.add_runtime_dependency "padrino", ">= 0.15"
+          end
+      - path: 'app/app.rb'
+        content: |-
+          class Blog < Padrino::Application
+            get '/' do
+              'hi'
+            end
+          end
+      - {path: 'config/apps.rb', content: "Padrino.mount('blog').to('/blog')"}
+      - {path: 'app.rb', content: "require 'padrino-core'"}
+      - {path: 'app.rb', content: "require 'padrino'"}
+      - {path: 'Gemfile.d/my.gemspec', content: "s.add_dependency('padrino-core')"}
+    no_match:
+      - {path: 'Gemfile', content: "gem 'sinatra'"}
+      - path: 'foo.gemspec'
+        content: |-
+          Gem::Specification.new do |s|
+            s.add_dependency 'rails'
+          end
+      - path: 'app.rb'
+        content: |-
+          class Blog < Sinatra::Base
+            get '/' do
+              'hi'
+            end
+          end
+
+Rails:
+  key: ruby_rails
+  gate: {extensions: [.rb, .ru, .gemspec], basenames: [Gemfile, Gemfile.lock]}
+  match:
+    any:
+      - ruby_dependency: 'rails'
+      - ruby_dependency: 'railties'
+      - all:
+          - files: {extensions: [.rb, .ru]}
+          - not:
+              files: {path_segments: [Gemfile]}
+          - regex:
+              - '(^|\W)[A-Za-z_:][\w:]*\.routes\.draw\b'
+              - '(^|\W)Rails\.application\b'
+              - '(^|\W)Rails::Application\b'
+              - '(^|\s)require\s+["'']rails/all["'']'
+  examples:
+    match:
+      - {path: 'Gemfile', content: "gem 'rails'"}
+      - {path: 'Gemfile', content: "gem \"rails\""}
+      - {path: 'Gemfile', content: "gem 'railties', '~> 8.0.0'"}
+      - {path: 'Gemfile', content: "gem \"railties\", \"~> 8.0.0\""}
+      - path: 'spree/core/spree_core.gemspec'
+        content: |-
+          Gem::Specification.new do |s|
+            s.name = "spree_core"
+            s.add_dependency 'rails', '>= 7.2', '< 8.2'
+          end
+      - path: 'foo.gemspec'
+        content: |-
+          Gem::Specification.new do |spec|
+            spec.add_dependency "railties", "~> 8.0.0"
+          end
+      - path: 'legacy.gemspec'
+        content: |-
+          Gem::Specification.new do |s|
+            s.add_runtime_dependency 'rails', '~> 7.0'
+          end
+      - path: 'engine.gemspec'
+        content: |-
+          Gem::Specification.new do |s|
+            s.add_dependency('railties', "~> 8.0")
+          end
+      - path: 'config/routes.rb'
+        content: |-
+          Rails.application.routes.draw do
+            get '/api/posts', to: 'posts#index'
+            resources :comments, only: [:index, :show]
+          end
+      - path: 'config/routes.rb'
+        content: |-
+          Blog::Application.routes.draw do
+            root to: 'posts#index'
+          end
+      - path: 'config.ru'
+        content: |-
+          require_relative "config/environment"
+          run Rails.application
+          Rails.application.load_server
+      - path: 'config/application.rb'
+        content: |-
+          require_relative "boot"
+          require "rails/all"
+
+          module Blog
+            class Application < Rails::Application
+              config.load_defaults 8.0
+            end
+          end
+    no_match:
+      - path: 'Gemfile'
+        content: |-
+          gem 'sinatra'
+          gem 'rack'
+      - path: 'sinatra-thing.gemspec'
+        content: |-
+          Gem::Specification.new do |s|
+            s.add_dependency 'sinatra'
+            s.add_dependency 'rack'
+          end
+      - path: 'Gemfile'
+        content: |-
+          gem 'jquery-rails'
+          gem 'sinatra'
+      - path: 'app/controllers/posts_controller.rb'
+        content: |-
+          class PostsController < ApplicationController
+            def index
+              @posts = Post.all
+            end
+          end
+      - path: 'config/routes.rb'
+        content: |-
+          Hanami.application.routes do
+            get "/posts", to: "posts.index"
+          end
+      - path: 'lib/thing.rb'
+        content: |-
+          # This gem works with Rails, Sinatra and Hanami applications.
+          # See the rails/all guide for details.
+          module Thing
+          end
+      - {path: 'Gemfile.d/routes.rb', content: "Rails.application.routes.draw do"}
+
+Roda:
+  key: ruby_roda
+  gate: {extensions: [.rb, .ru, .gemspec], basenames: [Gemfile, Gemfile.lock]}
+  match:
+    any:
+      - all:
+          - files: {path_segments: [Gemfile]}
+          - regex: '\bgem\s*\(?\s*[''"](?:roda)[''"]'
+      - all:
+          - files: {extensions: [.gemspec]}
+          - regex: '\badd(?:_runtime)?_dependency\s*\(?\s*[''"](?:roda)[''"]'
+      - all:
+          - files: {extensions: [.rb]}
+          - any:
+              - regex:
+                  - '<\s*Roda\b'
+                  - 'require\s+[''"]roda[''"]'
+              - contains: 'Roda.route'
+  examples:
+    match:
+      - {path: 'Gemfile', content: "gem 'roda'"}
+      - {path: 'Gemfile', content: "gem \"roda\""}
+      - path: 'app.rb'
+        content: |-
+          class App < Roda
+          end
+      - {path: 'app.rb', content: "require \"roda\""}
+      - {path: 'app.rb', content: "Roda.route { |r| }"}
+      - {path: 'Gemfile.d/my.gemspec', content: "s.add_dependency('roda')"}
+    no_match:
+      - {path: 'Gemfile', content: "gem 'sinatra'"}
 
 Sinatra:
   key: ruby_sinatra

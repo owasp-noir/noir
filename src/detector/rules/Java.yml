@@ -11,6 +11,36 @@ Armeria:
     no_match:
       - {path: pom.xml, content: "# unrelated framework"}
 
+Cli:
+  key: java_cli
+  files: {extensions: [.java]}
+  match:
+    any:
+      - contains:
+          - 'picocli.'
+          - 'org.kohsuke.args4j'
+          - 'org.apache.commons.cli'
+          - 'com.github.rvesse.airline'
+          - 'io.airlift.airline'
+          - 'joptsimple.'
+      - regex:
+          - '\bimport\s+com\.beust\.jcommander\.(?:\*|JCommander|Parameters?)\s*;'
+          - '\bnew\s+Options\s*\(\s*\)|\bOption\.builder\s*\(|\bnew\s+JCommander\s*\(|\bJCommander\.newBuilder\s*\(|\bnew\s+CmdLineParser\s*\(|\bnew\s+CommandLine\s*\('
+  examples:
+    match:
+      - {path: 'Tool.java', content: "import com.beust.jcommander.Parameter;"}
+      - {path: 'Tool.java', content: "import com.beust.jcommander.JCommander;"}
+      - {path: 'Tool.java', content: "import com.beust.jcommander.Parameters;"}
+      - {path: 'Tool.java', content: "import com.beust.jcommander.*;"}
+      - {path: 'Tool.java', content: "import picocli.CommandLine;"}
+      - path: 'Tool.java'
+        content: |-
+          import com.beust.jcommander.internal.Maps;
+          new JCommander(x);
+    no_match:
+      - {path: 'Tool.java', content: "import com.beust.jcommander.internal.Maps;"}
+      - {path: 'Tool.java', content: "import com.beust.jcommander.ParameterException;"}
+
 Dropwizard:
   key: java_dropwizard
   files: {extensions: [.java]}
@@ -131,6 +161,71 @@ Micronaut:
       - {path: pom.xml, content: "<groupId>io.micronaut</groupId>"}
       - {path: Controller.java, content: "import jakarta.ws.rs.Path;"}
 
+Play:
+  key: java_play
+  gate: {extensions: [.java, routes, routes.conf]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.java]}
+          - contains:
+              - 'play.mvc.'
+              - 'play.libs.Json'
+              - 'play.routing'
+      - all:
+          - files: {extensions: [routes, routes.conf]}
+          - regex: '(?ms)^\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+'
+          - contains: 'Integer'
+  examples:
+    match:
+      - {path: 'routes', content: "GET /users controllers.Users.list(page: Integer)"}
+      - {path: 'routes.conf', content: "GET /users controllers.Users.list(page: Integer, active: Boolean)"}
+      - {path: 'test.java', content: "import play.mvc.Controller;"}
+      - {path: 'test.java', content: "import play.mvc.Result;"}
+      - path: 'HomeController.java'
+        content: |
+          package controllers;
+
+          import play.mvc.*;
+      - {path: 'test.java', content: "import play.libs.Json;"}
+      - {path: 'test.java', content: "import play.routing.*;"}
+    no_match:
+      - {path: 'routes.conf', content: "POST /users/:id controllers.Users.update(id: Long, active: Boolean)"}
+      - {path: 'test.java', content: "import java.util.*;"}
+      - {path: 'test.scala', content: "import play.mvc.Controller"}
+      - {path: 'routes', content: "# Just comments"}
+
+Quarkus:
+  key: java_quarkus
+  gate: {extensions: [.java, .kt], basenames: [pom.xml, build.gradle, build.gradle.kts]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [pom.xml, build.gradle, build.gradle.kts]}
+          - contains: 'io.quarkus'
+      - all:
+          - files: {extensions: [.java, .kt]}
+          - contains:
+              - 'io.quarkus'
+              - 'quarkus.io'
+  examples:
+    match:
+      - {path: 'Routes.java', content: "import io.quarkus.vertx.web.Route;"}
+      - path: 'pom.xml'
+        content: |-
+          <groupId>io.quarkus</groupId>
+          <artifactId>quarkus-rest</artifactId>
+      - path: 'build.gradle.kts'
+        content: |-
+          plugins {
+            java
+            id("io.quarkus")
+          }
+      - {path: 'build.gradle', content: "implementation 'io.quarkus:quarkus-rest'"}
+    no_match:
+      - {path: 'pom.xml', content: "<groupId>org.springframework.boot</groupId>"}
+      - {path: 'GreetingResource.java', content: "import jakarta.ws.rs.Path;"}
+
 Spark:
   key: java_spark
   files: {extensions: [.java]}
@@ -159,6 +254,105 @@ Spring:
     no_match:
       - {path: test.java, content: "# unrelated framework"}
 
+SpringDataRest:
+  key: java_spring_data_rest
+  gate: {extensions: [.java, .gradle, .gradle.kts, .xml]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.java]}
+          - contains: 'org.springframework.data.rest'
+      - all:
+          - not:
+              files: {extensions: [.java]}
+          - any:
+              - not:
+                  files: {extensions: [.xml]}
+              - files: {basenames: [pom.xml]}
+          - contains:
+              - 'spring-boot-starter-data-rest'
+              - 'spring-data-rest-webmvc'
+              - 'spring-data-rest-core'
+              - 'starter.data.rest'
+  examples:
+    match:
+      - {path: 'pom.xml', content: "<artifactId>spring-boot-starter-data-rest</artifactId>"}
+      - {path: 'build.gradle', content: "implementation 'org.springframework.data:spring-data-rest-webmvc'"}
+      - {path: 'PersonRepository.java', content: "import org.springframework.data.rest.core.annotation.RepositoryRestResource;"}
+    no_match:
+      - {path: 'pom.xml', content: "<artifactId>spring-boot-starter-data-jpa</artifactId>"}
+      - {path: 'PersonRepository.java', content: "import org.springframework.data.repository.CrudRepository;"}
+      - {path: 'notes.xml', content: "spring-boot-starter-data-rest"}
+
+Struts2:
+  key: java_struts2
+  gate: {extensions: [.java, .xml, .gradle, .gradle.kts, .properties]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.java]}
+          - any:
+              - contains:
+                  - 'org.apache.struts2'
+                  - 'com.opensymphony.xwork2'
+              - all:
+                  - contains: '@Action'
+                  - contains: '@Namespace'
+      - all:
+          - files: {extensions: [.xml]}
+          - contains: 'org.apache.struts2.dispatcher'
+      - all:
+          - files: {extensions: [.xml, .gradle, .gradle.kts, .properties]}
+          - contains:
+              - 'struts2-core'
+              - 'struts2-convention-plugin'
+              - 'struts2-rest-plugin'
+      - all:
+          - files: {extensions: [-struts.xml], basenames: [struts.xml, struts-plugin.xml, struts-deferred.xml]}
+          - contains: '<struts'
+          - contains: '<package'
+  examples:
+    match:
+      - {path: 'struts.xml', content: "<struts><package name=\"app\" namespace=\"/app\"/></struts>"}
+      - {path: 'web.xml', content: "org.apache.struts2.dispatcher.filter.StrutsPrepareAndExecuteFilter"}
+      - {path: 'pom.xml', content: "<artifactId>struts2-convention-plugin</artifactId>"}
+      - {path: 'UserAction.java', content: "import org.apache.struts2.convention.annotation.Action;"}
+    no_match:
+      - {path: 'UserController.java', content: "import java.util.List;"}
+
+Vaadin:
+  key: java_vaadin
+  gate: {extensions: [.java, .gradle, .gradle.kts, .xml]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.java]}
+          - contains:
+              - 'com.vaadin.hilla'
+              - 'dev.hilla'
+              - 'com.vaadin.flow.server.connect'
+              - 'com.vaadin.fusion'
+              - 'com.vaadin.flow.router'
+      - all:
+          - not:
+              files: {extensions: [.java]}
+          - any:
+              - not:
+                  files: {extensions: [.xml]}
+              - files: {basenames: [pom.xml]}
+          - regex: 'com\.vaadin(?![.\w])|dev\.hilla'
+  examples:
+    match:
+      - {path: 'pom.xml', content: "<groupId>com.vaadin</groupId><artifactId>vaadin-spring-boot-starter</artifactId>"}
+      - {path: 'build.gradle.kts', content: "implementation(\"com.vaadin:vaadin-core\")"}
+      - {path: 'AdminView.java', content: "import com.vaadin.flow.router.Route;"}
+      - {path: 'UserEndpoint.java', content: "import com.vaadin.hilla.BrowserCallable;"}
+      - {path: 'UserEndpoint.java', content: "import dev.hilla.Endpoint;"}
+    no_match:
+      - {path: 'pom.xml', content: "<exclusion><groupId>com.vaadin.external.google</groupId><artifactId>android-json</artifactId></exclusion>"}
+      - {path: 'build.gradle', content: "exclude group: 'com.vaadin.external.google'"}
+      - {path: 'Health.java', content: "import org.springframework.boot.actuate.endpoint.annotation.Endpoint;"}
+
 Vertx:
   key: java_vertx
   files: {extensions: [.java, pom.xml, build.gradle, build.gradle.kts, settings.gradle.kts]}
@@ -173,3 +367,30 @@ Vertx:
     no_match:
       - {path: random.txt, content: "io.vertx"}
       - {path: pom.xml, content: "some.other.dependency"}
+
+Wicket:
+  key: java_wicket
+  gate: {extensions: [.java, .gradle, .gradle.kts, .xml, .properties, .yml, .yaml]}
+  match:
+    any:
+      - all:
+          - files: {extensions: [.java]}
+          - contains:
+              - 'org.apache.wicket'
+              - 'extends WebApplication'
+              - '@MountPath'
+      - all:
+          - files: {extensions: [.gradle, .gradle.kts, .xml, .properties, .yml, .yaml]}
+          - contains:
+              - 'org.apache.wicket'
+              - 'wicket-core'
+              - 'wicket-auth-roles'
+              - 'wicketstuff'
+  examples:
+    match:
+      - {path: 'pom.xml', content: "org.apache.wicket:wicket-core"}
+      - {path: 'build.gradle', content: "implementation(\"org.apache.wicket:wicket-core:9.17.0\")"}
+      - {path: 'Application.java', content: "import org.apache.wicket.protocol.http.WebApplication;"}
+      - {path: 'ProductPage.java', content: "@MountPath(\"/products\")"}
+    no_match:
+      - {path: 'pom.xml', content: "<artifactId>spring-web</artifactId>"}

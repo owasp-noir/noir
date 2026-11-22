@@ -1,0 +1,220 @@
+Alfred:
+  key: dart_alfred
+  gate: {extensions: [.dart], basenames: [pubspec.yaml, pubspec.lock]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [pubspec.yaml]}
+          - regex: '(^|\n)\s*alfred\s*:'
+      - all:
+          - files: {extensions: [.dart]}
+          - contains: 'package:alfred/'
+  examples:
+    match:
+      - path: 'pubspec.yaml'
+        content: |-
+          name: example
+          dependencies:
+            alfred: ^1.1.0
+      - path: 'bin/server.dart'
+        content: |-
+          import 'package:alfred/alfred.dart';
+
+          void main() {
+            final app = Alfred();
+            app.get('/', (req, res) => 'hi');
+          }
+    no_match:
+      - path: 'pubspec.yaml'
+        content: |-
+          name: example
+          dependencies:
+            shelf: ^1.4.0
+      - {path: 'project/notes.txt', content: "package:alfred/alfred.dart"}
+      - {path: 'lib/util.dart', content: "void main() {}"}
+
+Angel3:
+  key: dart_angel3
+  gate: {extensions: [.dart], basenames: [pubspec.yaml, pubspec.lock]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [pubspec.yaml]}
+          - regex: '(^|\n)\s*angel3?_framework\s*:'
+      - all:
+          - files: {extensions: [.dart]}
+          - contains:
+              - 'package:angel3_framework/'
+              - 'package:angel_framework/'
+  examples:
+    match:
+      - path: 'pubspec.yaml'
+        content: |-
+          name: example
+          dependencies:
+            angel3_framework: ^8.0.0
+      - path: 'bin/server.dart'
+        content: |-
+          import 'package:angel3_framework/angel3_framework.dart';
+
+          void main() async {
+            var app = Angel();
+            app.get('/', (req, res) => 'hi');
+          }
+      - {path: 'bin/server.dart', content: "import 'package:angel_framework/angel_framework.dart';"}
+    no_match:
+      - path: 'pubspec.yaml'
+        content: |-
+          name: example
+          dependencies:
+            shelf: ^1.4.0
+      - {path: 'project/notes.txt', content: "package:angel3_framework/angel3_framework.dart"}
+      - {path: 'lib/util.dart', content: "void main() {}"}
+
+Cli:
+  key: dart_cli
+  files: {extensions: [.dart]}
+  match:
+    regex: 'package:args/|package:dcli/|\bArgParser\s*\(|\bCommandRunner\b|\bextends\s+Command\b|main\s*\(\s*List<String>'
+  examples:
+    match:
+      - {path: 'app.dart', content: "import 'package:args/args.dart';"}
+    no_match:
+      - {path: 'app.dart', content: "void main() { print('ready'); }"}
+
+GetServer:
+  key: dart_get_server
+  gate: {extensions: [.dart], basenames: [pubspec.yaml, pubspec.lock]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [pubspec.yaml]}
+          - regex: '(^|\n)\s*get_server\s*:'
+      - all:
+          - files: {extensions: [.dart]}
+          - contains: 'package:get_server/'
+  examples:
+    match:
+      - path: 'pubspec.yaml'
+        content: |-
+          name: example
+          dependencies:
+            get_server: ^0.4.0
+      - path: 'lib/main.dart'
+        content: |-
+          import 'package:get_server/get_server.dart';
+
+          void main() {
+            runApp(GetServer(getPages: []));
+          }
+    no_match:
+      - path: 'pubspec.yaml'
+        content: |-
+          name: example
+          dependencies:
+            shelf: ^1.4.0
+      - {path: 'project/notes.txt', content: "package:get_server/get_server.dart"}
+      - {path: 'lib/util.dart', content: "void main() {}"}
+
+Http:
+  key: dart_http
+  files: {extensions: [.dart]}
+  match:
+    all:
+      - regex: '(?ms)^\s*import\s+[''"]dart:io[''"]'
+      - contains:
+          - 'HttpServer'
+          - 'HttpRequest'
+  examples:
+    match:
+      - path: 'bin/server.dart'
+        content: |-
+          import 'dart:io';
+
+          Future<void> main() async {
+            final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 8080);
+            await for (final HttpRequest request in server) {
+              request.response.write('ok');
+            }
+          }
+      - path: 'bin/server.dart'
+        content: |-
+          import 'dart:io' as io;
+
+          Future<void> main() async {
+            final server = await io.HttpServer.bind(io.InternetAddress.loopbackIPv4, 8080);
+            server.listen((io.HttpRequest request) {});
+          }
+    no_match:
+      - path: 'bin/tool.dart'
+        content: |-
+          import 'dart:io';
+
+          void main() {
+            final file = File('README.md');
+            print(file.path);
+          }
+      - {path: 'bin/server.dart', content: "void main() { print('HttpServer'); }"}
+      - {path: 'notes.txt', content: "import 'dart:io'; HttpServer.bind();"}
+
+Serverpod:
+  key: dart_serverpod
+  gate: {extensions: [.dart], basenames: [pubspec.yaml, pubspec.lock]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [pubspec.yaml]}
+          - regex: '(^|\n)\s*serverpod(?:_[a-z0-9_]+)?\s*:'
+      - all:
+          - files: {extensions: [.dart]}
+          - any:
+              - contains: 'package:serverpod/serverpod.dart'
+              - regex: '\bextends\s+(StreamingEndpoint|Endpoint)\b'
+  examples:
+    match:
+      - path: 'pubspec.yaml'
+        content: |-
+          name: example
+          dependencies:
+            serverpod: ^2.0.0
+      - path: 'pubspec.yaml'
+        content: |-
+          name: example
+          dependencies:
+            serverpod_server: ^2.0.0
+      - path: 'project/lib/src/endpoints/example.dart'
+        content: |-
+          import 'package:serverpod/serverpod.dart';
+
+          class ExampleEndpoint extends Endpoint {}
+      - {path: 'project/lib/src/endpoints/example.dart', content: "class ExampleEndpoint extends Endpoint { }"}
+      - {path: 'project/lib/src/endpoints/chat.dart', content: "class ChatEndpoint extends StreamingEndpoint { }"}
+    no_match:
+      - path: 'pubspec.yaml'
+        content: |-
+          name: example
+          dependencies:
+            shelf: ^1.4.0
+      - {path: 'project/lib/src/endpoints/example.txt', content: "package:serverpod/serverpod.dart"}
+      - {path: 'project/lib/util.dart', content: "void main() {}"}
+
+Shelf:
+  key: dart_shelf
+  gate: {extensions: [.dart], basenames: [pubspec.yaml, pubspec.lock]}
+  match:
+    any:
+      - all:
+          - files: {basenames: [pubspec.yaml]}
+          - regex: '(^|\n)\s*(?:shelf_router|shelf)\s*:'
+      - all:
+          - files: {extensions: [.dart]}
+          - any:
+              - contains: 'package:shelf_router/'
+              - all:
+                  - contains: 'package:shelf/shelf.dart'
+                  - contains: 'Router('
+  examples:
+    match:
+      - {path: 'app.dart', content: "import 'package:shelf_router/shelf_router.dart';"}
+    no_match:
+      - {path: 'app.dart', content: "import 'package:shelf/shelf.dart';"}

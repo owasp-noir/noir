@@ -13,6 +13,26 @@ Amber:
           dependencies:
             other: {github: example/other}
 
+Cli:
+  key: crystal_cli
+  files: {extensions: [.cr]}
+  match:
+    regex: '\bOptionParser\.(?:parse|new)\b|\bARGV(?:\s*\[\s*\d+\s*\]|\.(?:first|shift)\b|\s*[!=]=\s*\[)|<\s*Clim\b|<\s*Admiral::Command\b|\bCommander::Command\b|\brequire\s+"(?:clim|admiral|commander)"'
+  examples:
+    match:
+      - {path: 'tool.cr', content: "command = ARGV.first?"}
+      - path: 'tool.cr'
+        content: |-
+          case ARGV.shift?
+          when "add"
+          end
+      - {path: 'tool.cr', content: "dry_run = ARGV == [\"--dry-run\"]"}
+    no_match:
+      - path: 'server.cr'
+        content: |-
+          def run(port, args = ARGV)
+          end
+
 Grip:
   key: crystal_grip
   gate: {extensions: [.cr], basenames: [shard.yml, shard.lock]}
