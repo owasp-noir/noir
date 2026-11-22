@@ -150,6 +150,75 @@ class FunctionalTester
       fail("MISSING CALLEE [#{name}] on [#{key}] in tester: #{@path}")
   end
 
+  # Params the scan emitted for `expected`'s address that no expected endpoint
+  # at that address declares, as sorted "name (param_type)" labels.
+  #
+  # The examples in "check - params" only walk the *expected* list, so they
+  # prove every declared param is present and say nothing about the rest: an
+  # analyzer could attach ten invented params to an endpoint the tester
+  # declared with none and stay green. This is the other direction.
+  #
+  # Both sides are unioned over every endpoint sharing the method and url. A
+  # scan may emit the address more than once and a tester may declare it more
+  # than once, and `actual_endpoint` only ever looks at the first match.
+  private def unasserted_params(expected : Endpoint) : Array(String)
+    declared = @expected_endpoints
+      .select { |e| e.method == expected.method && e.url == expected.url }
+      .flat_map(&.params)
+      .map { |param| {param.name, param.param_type} }
+      .to_set
+    endpoints
+      .select { |e| e.method == expected.method && e.url == expected.url }
+      .flat_map(&.params)
+      .map { |param| {param.name, param.param_type} }
+      .reject { |pair| declared.includes?(pair) }
+      .uniq!
+      .map { |name, type| "#{name} (#{type})" }
+      .sort!
+  end
+
+  # Addresses that predate the exactness check and still emit params their
+  # tester never declared, one `<fixture path>\t<METHOD>::<url>` per line.
+  # See the header of the file itself for how it shrinks.
+  UNASSERTED_PARAMS_BASELINE = "spec/functional_test/unasserted_params_baseline.txt"
+
+  # Set to a file path to append every address with unasserted params to it
+  # instead of failing. This is how the baseline was produced.
+  UNASSERTED_PARAMS_RECORD_ENV = "NOIR_RECORD_UNASSERTED_PARAMS"
+
+  @@unasserted_params_baseline : Set(String)? = nil
+
+  # How many testers scan each fixture path. Counted while examples are being
+  # registered, so it is complete before the first example body runs.
+  @@testers_per_path = Hash(String, Int32).new(0)
+
+  def self.unasserted_params_baseline : Set(String)
+    @@unasserted_params_baseline ||= File.read_lines(UNASSERTED_PARAMS_BASELINE)
+      .reject { |line| line.empty? || line.starts_with?('#') }
+      .to_set
+  end
+
+  private def check_unasserted_params(expected : Endpoint, key : String)
+    unasserted = unasserted_params(expected)
+    entry = "#{@path}\t#{key}"
+
+    if record = ENV[UNASSERTED_PARAMS_RECORD_ENV]?
+      File.open(record, "a", &.puts(entry)) unless unasserted.empty?
+    elsif FunctionalTester.unasserted_params_baseline.includes?(entry)
+      # Two testers can scan one fixture with different options and disagree
+      # about the same address, so an entry is only provably stale when this
+      # tester is the path's only one.
+      if unasserted.empty? && @@testers_per_path[@path] == 1
+        fail("STALE BASELINE ENTRY [#{key}] in tester: #{@path}\n" \
+             "Every emitted param is declared now. Delete the line from #{UNASSERTED_PARAMS_BASELINE}.")
+      end
+    elsif !unasserted.empty?
+      fail("UNASSERTED PARAMS [#{unasserted.join(", ")}] on [#{key}] in tester: #{@path}\n" \
+           "The scan emitted params the tester does not declare. Declare each one that the fixture " \
+           "really accepts; one it does not accept is an analyzer false positive.")
+    end
+  end
+
   def find_endpoint(key)
     @expected_endpoints.each do |endpoint|
       expected_key = endpoint.method.to_s + "::" + endpoint.url.to_s
@@ -177,6 +246,8 @@ class FunctionalTester
   end
 
   def test_analyze
+    @@testers_per_path[@path] += 1
+
     if @expected_count.has_key?(:endpoints)
       it "test analyze using count check [#{@path}]", tags: "functional" do
         endpoints.size.should eq @expected_count[:endpoints]
@@ -194,6 +265,11 @@ class FunctionalTester
         # this one does not.
         it "is detected [K: #{key}]" do
           actual_endpoint(expected)
+        end
+
+        it "check - no unasserted params [K: #{key}]" do
+          actual_endpoint(expected)
+          check_unasserted_params(expected, key)
         end
 
         if expected.protocol != "http"

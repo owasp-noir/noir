@@ -145,7 +145,7 @@ When adding a new framework in a language that already has an extractor, extend 
 ### Analyzers
 1. Create `src/analyzer/analyzers/{language}/{framework}.cr` — framework adapter only. Delegate parsing to the language's route extractor (see **Analyzer Layering** above).
 2. Declare the tech inside the class: `analyzer_for "{language}_{framework}"`. This is the whole registration (`src/models/analyzer.cr`); `initialize_analyzers` reads it off `Analyzer.all_subclasses`. Omitting it is a compile error.
-3. Add functional test: `spec/functional_test/testers/{language}/{framework}_spec.cr`
+3. Add functional test: `spec/functional_test/testers/{language}/{framework}_spec.cr`. Declare every param the fixture emits on each expected endpoint: `FunctionalTester` fails an endpoint whose scan carries a param the tester did not list (`UNASSERTED PARAMS`), so an invented param cannot pass. `spec/functional_test/unasserted_params_baseline.txt` exempts the addresses that predate the check; it is a ratchet, so entries may be removed but never added.
 4. Add fixtures: `spec/functional_test/fixtures/{language}/{framework}/`
 5. Add technology metadata: create `src/techs/catalog/{language}/{framework}.cr` (mirrors the analyzer's path)
 
