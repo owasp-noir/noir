@@ -78,23 +78,23 @@ A technology measured on one repository is a single data point.
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | cs_aspnet_core_minimal_api | Parameters | 28 | 16 | 0 | 63.6% | 100.0% |
 | cs_aspnet_core_minimal_api | Body fields | 38 | 1 | 0 | 97.4% | 100.0% |
-| go_chi | Parameters | 33 | 164 | 88 | 16.8% | 27.3% |
+| go_chi | Parameters | 31 | 27 | 88 | 53.4% | 26.1% |
 | go_chi | Body fields | 16 | 162 | 4 | 9.0% | 80.0% |
-| go_echo | Parameters | 128 | 201 | 0 | 38.9% | 100.0% |
+| go_echo | Parameters | 128 | 69 | 0 | 65.0% | 100.0% |
 | go_echo | Body fields | 0 | 364 | 0 | 0.0% | n/a |
-| go_gin | Parameters | 36 | 343 | 5 | 9.5% | 87.8% |
+| go_gin | Parameters | 35 | 106 | 5 | 24.8% | 87.5% |
 | go_gin | Body fields | 35 | 307 | 1 | 10.2% | 97.2% |
 | go_mux | Parameters | 7 | 0 | 0 | 100.0% | 100.0% |
 | go_mux | Body fields | 0 | 0 | 0 | n/a | n/a |
-| java_spring | Parameters | 544 | 203 | 109 | 72.8% | 83.3% |
+| java_spring | Parameters | 544 | 21 | 109 | 96.3% | 83.3% |
 | java_spring | Body fields | 378 | 67 | 90 | 84.9% | 80.8% |
-| js_express | Parameters | 281 | 28 | 65 | 90.9% | 81.2% |
+| js_express | Parameters | 272 | 18 | 65 | 93.8% | 80.7% |
 | js_express | Body fields | 96 | 78 | 19 | 55.2% | 83.5% |
 | python_django | Parameters | 331 | 297 | 73 | 52.7% | 81.9% |
 | python_django | Body fields | 311 | 142 | 10 | 68.7% | 96.9% |
-| python_fastapi | Parameters | 454 | 491 | 9 | 48.0% | 98.1% |
+| python_fastapi | Parameters | 454 | 20 | 9 | 95.8% | 98.1% |
 | python_fastapi | Body fields | 360 | 33 | 42 | 91.6% | 89.6% |
-| ts_nestjs | Parameters | 245 | 906 | 6 | 21.3% | 97.6% |
+| ts_nestjs | Parameters | 245 | 102 | 6 | 70.6% | 97.6% |
 | ts_nestjs | Body fields | 221 | 274 | 1 | 44.6% | 99.5% |
 
 | Technology | Both guarded | Both open | Document guarded, code open | Document open, code guarded |
@@ -152,7 +152,7 @@ The original endpoint series uses a combined scan with the pinned code analyzers
 
 **Detection.** An unrestricted scan of the same staged files and exclusions supplies the technology inventory, including detectors that emitted no endpoints. Each repository/technology row records whether Noir detected that pin and lists every detected technology outside the repository’s code pins, including OpenAPI. Forced-only and automatic-only count HTTP rows carrying the scored contributor in just one scan. The comparison uses the method, Noir’s normalized whole-segment placeholders and the contributor’s origin scope. Equal keys retain their multiplicity. The per-repository detection files in `tmp/scoreboard/` list the differing methods, URLs and locations. Technology totals sum the differences and list the union of other technologies. Additional detections can be legitimate.
 
-**Parameters.** For each HTTP row matched by the original combined scan, the runner looks up its independent rows in a code-only scan for that technology and an OAS-only scan. It uses the same method and Noir’s placeholder normalization, then the merged row’s source locations and exact URL to distinguish same-shaped candidates. A missing or ambiguous join stops publication. Each side contributes a set of (location, name) pairs per row. Header names are case-insensitive. Whole-segment path parameters compare by slot in their respective URLs. Other path names, query names and cookie names compare literally, including case. A separate set compares JSON, body and form fields by exact name across encodings. A JSON/body input named `body` supplies no identifiable field and is omitted on either side, including a literal JSON property of that name. Named fields on the other side still count. Noir can infer path parameters from URLs and credentials from security schemes, so these counts describe its imported reports. For each set, recall divides the shared count by the document count, and agreement divides it by the code count, after summing across rows.
+**Parameters.** Credentials a document declares through its security schemes (an `Authorization` header, an API-key header or cookie) are left out of this comparison on both sides; the guard counts below cover them. For each HTTP row matched by the original combined scan, the runner looks up its independent rows in a code-only scan for that technology and an OAS-only scan. It uses the same method and Noir’s placeholder normalization, then the merged row’s source locations and exact URL to distinguish same-shaped candidates. A missing or ambiguous join stops publication. Each side contributes a set of (location, name) pairs per row. Header names are case-insensitive. Whole-segment path parameters compare by slot in their respective URLs. Other path names, query names and cookie names compare literally, including case. A separate set compares JSON, body and form fields by exact name across encodings. A JSON/body input named `body` supplies no identifiable field and is omitted on either side, including a literal JSON property of that name. Named fields on the other side still count. Noir can infer path parameters from URLs and credentials from security schemes, so these counts describe its imported reports. For each set, recall divides the shared count by the document count, and agreement divides it by the code count, after summing across rows.
 
 **Guards.** The OAS-only scan retains the importer’s `auth` tag from `oas2_access` or `oas3_access`. Operation-level `security` overrides the root declaration. An explicit empty list, an anonymous `{}` alternative or no declaration counts as open. The importer filters unknown schemes when a scheme registry exists. The code-only scan enables `--use-all-taggers` and counts an endpoint as guarded when a framework tagger ending in `_auth` emits the endpoint tag `auth`. Authorization-only and credential parameter tags supply no authentication signal. Each matched row contributes to one of four counts according to those two signals. Open on the code side means Noir found no authentication guard. A stale document or a guard beyond the tagger’s coverage can produce a disagreement.
 

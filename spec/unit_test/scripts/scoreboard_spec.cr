@@ -203,4 +203,13 @@ describe Scoreboard do
     delta = Scoreboard.detection_rows(automatic, automatic, "go_gin")
     Scoreboard.detection(automatic, ["go_gin"], "go_gin", delta)["skipped"].as_i.should eq(1)
   end
+
+  it "reads the credentials a document declares through its security schemes" do
+    oas3 = JSON.parse(%({"components":{"securitySchemes":{"bearer":{"type":"http","scheme":"bearer"},"key":{"type":"apiKey","in":"header","name":"X-API-Key"},"session":{"type":"apiKey","in":"cookie","name":"Access_Token"}}}}))
+    oas2 = JSON.parse(%({"securityDefinitions":{"q":{"type":"apiKey","in":"query","name":"token"},"b":{"type":"basic"}}}))
+    Scoreboard.credential_params([oas3, oas2]).should eq(Set{
+      {"header", "authorization"}, {"header", "x-api-key"}, {"cookie", "Access_Token"}, {"query", "token"},
+    })
+    Scoreboard.credential_params([JSON.parse("{}")]).should be_empty
+  end
 end

@@ -144,7 +144,36 @@ module Scoreboard
     end
   end
 
-  def matched_measurements(forced, code_report, spec_report, technology)
+  # The inputs a document declares through its security schemes, as the
+  # `{location, name}` pairs `parameter_sets` produces. The OpenAPI analyzer
+  # turns a scheme into a param on every secured operation (an
+  # `Authorization` header, an API-key header or cookie). A code analyzer
+  # reports the same thing as a guard, not as a param, so counting these as
+  # document-only params would measure the guard twice and bury the real gap.
+  def credential_params(documents : Array(JSON::Any)) : Set({String, String})
+    credentials = Set({String, String}).new
+    documents.each do |document|
+      schemes = document.dig?("components", "securitySchemes").try(&.as_h?) ||
+                document["securityDefinitions"]?.try(&.as_h?)
+      next unless schemes
+      schemes.each_value do |scheme|
+        next unless scheme.as_h?
+        case scheme["type"]?.try(&.as_s?)
+        when "apiKey"
+          location = scheme["in"]?.try(&.as_s?)
+          name = scheme["name"]?.try(&.as_s?)
+          next unless location && name
+          credentials << {location, location == "header" ? name.downcase : name}
+        when "http", "basic", "oauth2", "openIdConnect"
+          credentials << {"header", "authorization"}
+        end
+      end
+    end
+    credentials
+  end
+
+  def matched_measurements(forced, code_report, spec_report, technology,
+                           credentials : Set({String, String}) = Set({String, String}).new)
     code_index = code_rows(code_report, technology).group_by { |row| address(row) }
     spec_index = http_rows(spec_report).select { |row| contributors(row).any? { |tech| OAS_TECHS.includes?(tech) } }.group_by { |row| address(row) }
     params = Overlap.new
@@ -156,7 +185,7 @@ module Scoreboard
       document = side_row(spec_index, merged, "OpenAPI")
       spec_params, spec_body = parameter_sets(document)
       code_params, code_body = parameter_sets(code)
-      params.add(spec_params, code_params)
+      params.add(spec_params - credentials, code_params - credentials)
       bodies.add(spec_body, code_body)
       guards[guard_bucket(document, code)] += 1
     end

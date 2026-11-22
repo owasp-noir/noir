@@ -86,11 +86,11 @@
         "spec_open_code_guarded": 133
       },
       "params": {
-        "both": 33,
-        "spec_only": 164,
+        "both": 31,
+        "spec_only": 27,
         "code_only": 88,
-        "recall": 0.16751269035532995,
-        "agreement": 0.2727272727272727
+        "recall": 0.5344827586206896,
+        "agreement": 0.2605042016806723
       },
       "body_fields": {
         "both": 16,
@@ -135,9 +135,9 @@
       },
       "params": {
         "both": 128,
-        "spec_only": 201,
+        "spec_only": 69,
         "code_only": 0,
-        "recall": 0.3890577507598784,
+        "recall": 0.649746192893401,
         "agreement": 1.0
       },
       "body_fields": {
@@ -186,11 +186,11 @@
         "spec_open_code_guarded": 10
       },
       "params": {
-        "both": 36,
-        "spec_only": 343,
+        "both": 35,
+        "spec_only": 106,
         "code_only": 5,
-        "recall": 0.09498680738786279,
-        "agreement": 0.8780487804878049
+        "recall": 0.24822695035460993,
+        "agreement": 0.875
       },
       "body_fields": {
         "both": 35,
@@ -271,9 +271,9 @@
       },
       "params": {
         "both": 544,
-        "spec_only": 203,
+        "spec_only": 21,
         "code_only": 109,
-        "recall": 0.7282463186077643,
+        "recall": 0.9628318584070796,
         "agreement": 0.8330781010719756
       },
       "body_fields": {
@@ -320,11 +320,11 @@
         "spec_open_code_guarded": 210
       },
       "params": {
-        "both": 281,
-        "spec_only": 28,
+        "both": 272,
+        "spec_only": 18,
         "code_only": 65,
-        "recall": 0.9093851132686084,
-        "agreement": 0.8121387283236994
+        "recall": 0.9379310344827586,
+        "agreement": 0.8071216617210683
       },
       "body_fields": {
         "both": 96,
@@ -410,9 +410,9 @@
       },
       "params": {
         "both": 454,
-        "spec_only": 491,
+        "spec_only": 20,
         "code_only": 9,
-        "recall": 0.4804232804232804,
+        "recall": 0.9578059071729957,
         "agreement": 0.980561555075594
       },
       "body_fields": {
@@ -452,9 +452,9 @@
       },
       "params": {
         "both": 245,
-        "spec_only": 906,
+        "spec_only": 102,
         "code_only": 6,
-        "recall": 0.21285838401390095,
+        "recall": 0.7060518731988472,
         "agreement": 0.9760956175298805
       },
       "body_fields": {
@@ -489,9 +489,9 @@
       ],
       "params": {
         "both": 350,
-        "spec_only": 276,
+        "spec_only": 18,
         "code_only": 8,
-        "recall": 0.5591054313099042,
+        "recall": 0.9510869565217391,
         "agreement": 0.9776536312849162
       },
       "body_fields": {
@@ -610,11 +610,11 @@
         "docs/swagger.json"
       ],
       "params": {
-        "both": 10,
-        "spec_only": 241,
+        "both": 9,
+        "spec_only": 104,
         "code_only": 5,
-        "recall": 0.0398406374501992,
-        "agreement": 0.6666666666666666
+        "recall": 0.07964601769911504,
+        "agreement": 0.6428571428571429
       },
       "body_fields": {
         "both": 1,
@@ -663,11 +663,11 @@
       ],
       "spec_prefix": "/auth/v1",
       "params": {
-        "both": 25,
-        "spec_only": 30,
+        "both": 23,
+        "spec_only": 1,
         "code_only": 88,
-        "recall": 0.45454545454545453,
-        "agreement": 0.22123893805309736
+        "recall": 0.9583333333333334,
+        "agreement": 0.2072072072072072
       },
       "body_fields": {
         "both": 16,
@@ -716,11 +716,11 @@
         "docs/openapi/openapi.json"
       ],
       "params": {
-        "both": 28,
-        "spec_only": 12,
+        "both": 19,
+        "spec_only": 2,
         "code_only": 6,
-        "recall": 0.7,
-        "agreement": 0.8235294117647058
+        "recall": 0.9047619047619048,
+        "agreement": 0.76
       },
       "body_fields": {
         "both": 30,
@@ -824,9 +824,9 @@
       "spec_prefix": "/flowable-rest/service",
       "params": {
         "both": 544,
-        "spec_only": 203,
+        "spec_only": 21,
         "code_only": 109,
-        "recall": 0.7282463186077643,
+        "recall": 0.9628318584070796,
         "agreement": 0.8330781010719756
       },
       "body_fields": {
@@ -882,9 +882,9 @@
       ],
       "params": {
         "both": 26,
-        "spec_only": 102,
+        "spec_only": 2,
         "code_only": 0,
-        "recall": 0.203125,
+        "recall": 0.9285714285714286,
         "agreement": 1.0
       },
       "body_fields": {
@@ -934,9 +934,9 @@
       ],
       "params": {
         "both": 245,
-        "spec_only": 906,
+        "spec_only": 102,
         "code_only": 6,
-        "recall": 0.21285838401390095,
+        "recall": 0.7060518731988472,
         "agreement": 0.9760956175298805
       },
       "body_fields": {
@@ -986,9 +986,9 @@
       ],
       "params": {
         "both": 104,
-        "spec_only": 215,
+        "spec_only": 2,
         "code_only": 1,
-        "recall": 0.32601880877742945,
+        "recall": 0.9811320754716981,
         "agreement": 0.9904761904761905
       },
       "body_fields": {
@@ -1048,9 +1048,9 @@
       ],
       "params": {
         "both": 8,
-        "spec_only": 134,
+        "spec_only": 26,
         "code_only": 0,
-        "recall": 0.056338028169014086,
+        "recall": 0.23529411764705882,
         "agreement": 1.0
       },
       "body_fields": {
@@ -1271,9 +1271,9 @@
       ],
       "params": {
         "both": 128,
-        "spec_only": 201,
+        "spec_only": 69,
         "code_only": 0,
-        "recall": 0.3890577507598784,
+        "recall": 0.649746192893401,
         "agreement": 1.0
       },
       "body_fields": {
