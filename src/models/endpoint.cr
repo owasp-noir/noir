@@ -437,6 +437,17 @@ struct PathInfo
   include YAML::Serializable
   property path, line
 
+  # Scan-time evidence for framework auth taggers: the middleware the
+  # analyzer read for the route registered at this location, as source text.
+  # An empty string means the registration was read and has none; nil means
+  # the analyzer did not record it and the tagger must read the source
+  # itself. Carrying it here lets a tagger use what extraction already
+  # resolved instead of re-deriving it from text. It lives on the location
+  # so it survives endpoint dedup.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  property route_middleware : String?
+
   def initialize(@path : String)
     @line = nil
   end

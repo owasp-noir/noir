@@ -10,6 +10,7 @@ export const pub = createRoute<"get">({
 export const priv = createRoute({
   method: "get",
   path: "/priv",
+  request: { query: z.object({ page: z.string() }) },
   middleware: [authMiddleware],
   responses: { 200: { description: "ok" } },
 });
@@ -17,3 +18,4 @@ const r2 = createRoute
 ({ method: "get", path: "/pub-newline", responses: {} });
 const r3 = createRoute({ method: "get", path: "/priv2", middleware: [authMiddleware], responses: {} });
 app.openapi(pub, (c) => c.json({}));
+app.openapi(r2, (c) => c.json({}));

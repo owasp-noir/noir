@@ -22,70 +22,58 @@ module Analyzer::Javascript
         next if base_relative_path(path).includes?("/app/routes/") && owned_by_js_package?(path, honox)
         result = [] of Endpoint
         static_dirs = [] of Hash(String, String)
-        # Blanked once here: the OpenAPI and static-dir passes read the
-        # text with their own regexes. Lines and columns are kept.
-        content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(path))
+        source = read_file_content(path)
+        content = Noir::JSRouteExtractor.strip_js_comments(source)
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :hono)
         include_callee = callees_needed?
         callees_by_route = include_callee ? Noir::JSCalleeExtractor.callees_for_routes(content, path) : {} of String => Array(Noir::JSCalleeExtractor::Entry)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
           include_callees: include_callee, route_callees: callees_by_route, on_routes: true)
-        # "METHOD url" this file already emitted, for the OpenAPI pass's
-        # de-duplication.
-        recorded = Set(String).new
         parser_endpoints.each do |endpoint|
           extract_path_params(endpoint)
           result << endpoint
-          recorded << "#{endpoint.method} #{endpoint.url}"
         end
 
-        # The OpenAPI pass repeats the shared extractor's gates:
-        # a `*.test.ts` or a minified bundle must not pay it or emit its
-        # routes.
-        if content.includes?("@hono/zod-openapi") &&
-           !Noir::JSRouteExtractor.test_stub_only?(path, content) &&
-           !Noir::JSRouteExtractor.minified_content?(content)
-          extract_openapi_routes(path, content, result, recorded)
-        end
-
+        contracts = if Noir::TSContractExtractor.hono_candidate?(content) &&
+                       !Noir::JSRouteExtractor.test_stub_only?(path, content) &&
+                       !Noir::JSRouteExtractor.minified_content?(content)
+                      Noir::TSContractExtractor.hono_file(source, path, descriptors: content.includes?("@hono/zod-openapi"))
+                    end
         collect_static_paths(path, content, static_dirs, :hono)
-        {result, static_dirs}
+        {result, static_dirs, contracts}
       rescue e
         logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
         partial = result || [] of Endpoint
         analyze_with_regex(path, partial)
-        {partial, static_dirs || [] of Hash(String, String)}
+        {partial, static_dirs || [] of Hash(String, String), nil}
       end
 
       result = per_file.flat_map(&.[0])
       static_dirs = per_file.flat_map(&.[1]).uniq! { |dir| {dir["static_path"], dir["file_path"]} }
 
+      result.concat(openapi_endpoints(per_file.compact_map(&.[2])))
       process_js_static_dirs(static_dirs, result)
 
       result
     end
 
-    # `@hono/zod-openapi`: `createRoute({ method, path, request })` declares a
-    # route (served once handed to `app.openapi(...)`), and `app.doc(path)`
-    # serves the generated spec. Routes are reported where they are declared,
-    # under that file's mount prefixes.
-    # ponytail: a `createRoute` in a `*.routes.ts` takes that file's prefixes,
-    # not those of the router that registers it; follow `.openapi(` imports
-    # if those prefixes turn out to differ in practice.
-    private def extract_openapi_routes(path : String, content : String, result : Array(Endpoint), recorded : Set(String))
-      routes = Noir::TSContractExtractor.hono_openapi(content, path)
-      return if routes.empty?
-
-      mounts = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(path)))
-      (mounts.empty? ? [""] : mounts).each do |mount|
-        routes.each do |route|
-          url = Noir::URLPath.join(mount, route.path)
-          next unless recorded.add?("#{route.method} #{url}")
-          endpoint = Endpoint.new(url, route.method, Details.new(PathInfo.new(path, route.line)))
-          url.scan(/\{(\w+)\}/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
-          route.params.each { |name, type| endpoint.push_param(Param.new(name, "", type)) }
-          result << endpoint
-        end
+    private def openapi_endpoints(files : Array(Noir::TSContractExtractor::HonoFile)) : Array(Endpoint)
+      files.each do |file|
+        file.file_prefixes = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(file.path)))
+      end
+      registrations = Noir::TSContractExtractor.hono_endpoints(files) do |path, specifier|
+        Noir::ImportGraph.resolve_relative_import(path, specifier, boundary: configured_base_for(path))
+      end
+      registrations.map do |registration|
+        route = registration.route
+        url = Noir::URLPath.join(registration.prefix, route.path)
+        location = PathInfo.new(registration.file, registration.line)
+        location.route_middleware = registration.middleware
+        endpoint = Endpoint.new(url, route.method, Details.new(location))
+        endpoint.resolution = {"registration" => Endpoint::RESOLUTION_UNRESOLVED} if registration.unresolved
+        url.scan(/\{(\w+)\}/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+        route.params.each { |name, type| endpoint.push_param(Param.new(name, "", type)) }
+        endpoint
       end
     end
 

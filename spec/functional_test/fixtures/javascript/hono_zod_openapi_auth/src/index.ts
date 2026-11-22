@@ -1,6 +1,8 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { bearerAuth } from "hono/bearer-auth";
 import { authMiddleware } from "./auth";
+import { priv as privateRoute } from "./generic.js";
+import { versioned } from "./masked";
 import { rateLimit } from "./limits";
 
 const app = new OpenAPIHono();
@@ -41,5 +43,13 @@ const purge = createRoute({
   responses: { 200: { description: "ok" } },
 });
 app.openapi(purge, (c) => c.json({}));
+
+app.openapi(privateRoute, (c) => c.json({}));
+app.route("/v1", versioned);
+app.route("/preview", versioned);
+
+const team = new OpenAPIHono();
+team.openapi(purge, (c) => c.json({}));
+app.route("/team", team);
 
 export default app;
