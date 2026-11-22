@@ -32,6 +32,7 @@ expected_endpoints = [
   Endpoint.new("/signout", "POST"),
   Endpoint.new("/oauth2/authorization/{registrationId}", "GET", [Param.new("registrationId", "", "path")]),
   Endpoint.new("/sso/callback/{registrationId}", "GET", [
+    Param.new("registrationId", "", "path"),
     Param.new("code", "", "query"),
     Param.new("state", "", "query"),
   ]),

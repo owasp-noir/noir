@@ -11,45 +11,15 @@
 #
 # To list the addresses that would fail without this file:
 #   NOIR_RECORD_UNASSERTED_PARAMS=/tmp/unasserted.txt ./bin/noir_spec --tag functional
-fixtures/cfml/wheels/	GET::/admin/users/:key/permissions
-fixtures/cfml/wheels/	POST::/admin/users/:key/permissions
 fixtures/cpp/drogon/	DELETE::/api/users/{id}
 fixtures/cpp/drogon/	GET::/api/users
 fixtures/cpp/drogon/	GET::/api/users/{id}
 fixtures/cpp/drogon/	GET::/api/users/{id}/profile
 fixtures/cpp/drogon/	POST::/api/users
 fixtures/cpp/drogon/	PUT::/api/users/{id}
-fixtures/crystal/lucky_callees/	DELETE::/lucky/users/:id
 fixtures/csharp/aspnet_core_mvc_discovery/	POST::/returns/record-parameter
 fixtures/etc/multi_techs/	GET::/
-fixtures/java/spring_data_rest/	PATCH::/api/items/{id}
-fixtures/java/spring_data_rest/	PATCH::/companies/{id}
-fixtures/java/spring_data_rest/	PATCH::/orders/{id}
-fixtures/java/spring_data_rest/	PATCH::/people/{id}
-fixtures/java/spring_data_rest/	POST::/api/items
-fixtures/java/spring_data_rest/	POST::/companies
-fixtures/java/spring_data_rest/	POST::/orders
-fixtures/java/spring_data_rest/	POST::/people
-fixtures/java/spring_data_rest/	PUT::/api/items/{id}
-fixtures/java/spring_data_rest/	PUT::/companies/{id}
-fixtures/java/spring_data_rest/	PUT::/orders/{id}
-fixtures/java/spring_data_rest/	PUT::/people/{id}
-fixtures/java/spring_data_rest_servlet_path/	PATCH::/shop/app/api/gadgets/{id}
-fixtures/java/spring_data_rest_servlet_path/	POST::/shop/app/api/gadgets
-fixtures/java/spring_data_rest_servlet_path/	PUT::/shop/app/api/gadgets/{id}
-fixtures/java/spring_provided_routes/	GET::/sso/callback/{registrationId}
-fixtures/kotlin/spring_message_mapping_stereotype/	SEND::/app/chat
-fixtures/kotlin/spring_message_mapping_stereotype/	SEND::/app/external
-fixtures/kotlin/spring_message_mapping_stereotype/	SEND::/app/lobby
-fixtures/kotlin/spring_message_mapping_stereotype/	SEND::/app/ping
-fixtures/kotlin/spring_message_mapping_stereotype/	SEND::/app/score
-fixtures/mobile/android/	GET::myapp://${missingHost}
-fixtures/mobile/android/	GET::myapp://users/:userId
 fixtures/python/fastapi_package_roots/	POST::/notes
-fixtures/ruby/rails/	GET::/api/users/auth/:provider
-fixtures/ruby/rails/	GET::/api/users/auth/:provider/callback
-fixtures/ruby/rails/	POST::/api/users/auth/:provider
-fixtures/ruby/rails/	POST::/api/users/auth/:provider/callback
 fixtures/ruby/rails_advanced/	GET::/{ENV.fetch}/:area
 fixtures/ruby/rails_route_loader/	GET::/{api_path}/stale_interp
 fixtures/specification/hasura/	POST::/v1/graphql#Mutation.delete_movies_by_pk
@@ -62,5 +32,3 @@ fixtures/specification/hasura/	POST::/v1/graphql#Mutation.update_movies
 fixtures/specification/hasura/	POST::/v1/graphql#Mutation.update_movies_by_pk
 fixtures/specification/hasura/	POST::/v1/graphql#Query.movies_by_pk
 fixtures/specification/payload_cms/	GET::/api/posts
-fixtures/swift/kitura/	PATCH::/articles/:articleID
-fixtures/swift/kitura/	POST::/users

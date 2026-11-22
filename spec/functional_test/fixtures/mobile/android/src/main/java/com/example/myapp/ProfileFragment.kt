@@ -10,7 +10,8 @@ class ProfileFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         val userId = arguments?.getString("userId")
         val ref = activity?.intent?.data?.getQueryParameter("ref")
-        loadProfile(userId, ref)
+        val fallback = arguments?.getString("ref") ?: activity?.intent?.getStringExtra("ref")
+        loadProfile(userId, ref ?: fallback)
     }
 
     private fun loadProfile(userId: String?, ref: String?) {

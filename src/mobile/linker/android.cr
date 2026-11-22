@@ -51,6 +51,10 @@ module NoirMobileLinker
         methods = is_provider ? PROVIDER_HANDLER_METHODS : HANDLER_METHODS
         cache_key = "#{resolved[:lang]}:#{resolved[:path]}:#{cls[:simple]}:#{is_provider}"
         info = handler_cache[cache_key] ||= android_handler_info(cls[:simple], resolved[:path], resolved[:lang], methods)
+        bound_arguments = endpoint.metadata.try(&.["navigation_arguments"]?).try(&.split(','))
+        info.fragment_arguments.each do |name|
+          endpoint.push_param(Param.new(name, "", "extra")) unless bound_arguments.try(&.includes?(name))
+        end
         endpoints[i] = apply_handler_info(endpoint, info)
       rescue e
         logger.debug "Mobile linker failed for #{endpoint.url} (#{resolved[:path]}): #{e.message}"
@@ -141,7 +145,7 @@ module NoirMobileLinker
     callees = prioritize_android_callees(callees)
     anchor_line = handler_anchor_line(content, simple, handler_methods)
     info.code_paths << PathInfo.new(path, anchor_line)
-    extract_input_params(callees, content).each { |param| info.params << param }
+    extract_input_params(callees, content, info)
     callees.first(Callee::MAX_PER_ENDPOINT).each do |callee|
       info.callees << callee
       if android_delegate_callee?(callee)
@@ -250,18 +254,31 @@ module NoirMobileLinker
   # only. `callees` come from `callees_in_method` over HANDLER_METHODS, so
   # scanning their source lines (rather than the whole file) keeps reads in
   # unrelated methods of the same component from becoming phantom params.
-  private def self.extract_input_params(callees : Array(Callee), content : String) : Array(Param)
+  private def self.extract_input_params(callees : Array(Callee), content : String, info : HandlerInfo)
     lines = content.lines
-    params = [] of Param
     callees.each do |callee|
       line = callee.line
       next unless line && line >= 1 && line <= lines.size
       src = lines[line - 1]
-      src.scan(QUERY_PARAM_RE) { |m| params << Param.new(param_name(m), "", "query") }
-      src.scan(EXTRA_PARAM_RE) { |m| params << Param.new(param_name(m), "", "extra") }
-      src.scan(BUNDLE_PARAM_RE) { |m| params << Param.new(param_name(m), "", "extra") }
+      src.scan(QUERY_PARAM_RE) { |m| info.params << Param.new(param_name(m), "", "query") }
+      src.scan(EXTRA_PARAM_RE) { |m| info.params << Param.new(param_name(m), "", "extra") }
+      src.scan(BUNDLE_PARAM_RE) do |m|
+        # Only literal reads on this fragment's argument bundle can be
+        # accounted for by a template. Explicit intent extras stay independent.
+        if name = fragment_argument(m)
+          info.fragment_arguments << name
+        else
+          info.params << Param.new(param_name(m), "", "extra")
+        end
+      end
     end
-    params
+  end
+
+  private def self.fragment_argument(match : Regex::MatchData) : String?
+    return unless match[0].matches?(/\A(?:arguments|getArguments|requireArguments)\b/)
+    return if match.pre_match.rstrip.ends_with?('.')
+    return unless match.post_match.matches?(/\A\s*[,)]/)
+    match[1]? || match[2]?
   end
 
   private def self.param_name(match : Regex::MatchData) : String

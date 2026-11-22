@@ -3,6 +3,7 @@ require "../../../utils/top_level_split"
 require "../../../utils/call_fold"
 require "../../../miniparsers/rails_callback_chain"
 require "../../../miniparsers/ruby_constant_list"
+require "../../../miniparsers/rails_devise_providers"
 require "../../../utils/ruby_inflector"
 
 module Analyzer::Ruby
@@ -920,7 +921,7 @@ module Analyzer::Ruby
       # routes only exist when the model turns `:omniauthable` on. A model
       # the scan cannot see keeps the default table rather than guessing.
       model = options["class_name"]?.try(&.underscore) || singularize(scope_name)
-      modules = devise_modules(scan.framework_root, model) || DEVISE_DEFAULT_MODULES
+      modules, providers = devise_configuration(scan.framework_root, model) || {DEVISE_DEFAULT_MODULES, nil}
       sign_out_verbs = devise_sign_out_verbs(scan.framework_root, options["sign_out_via"]?)
       # Unnamed controllers come from the enclosing `scope module:` /
       # `namespace` (`auth/sessions`), else from Devise itself.
@@ -931,6 +932,11 @@ module Analyzer::Ruby
 
       modules.each do |mod|
         next unless routes = DEVISE_MODULE_ROUTES[mod]?
+        if mod == "omniauthable" && providers
+          routes = routes.flat_map do |verb, template, group, action|
+            providers.map { |provider| {verb, template.sub(":provider", provider), group, action.sub(":provider", provider)} }
+          end
+        end
         routes.each do |default_verb, template, group, action|
           next unless devise_module_allowed?(mod, group, only_list, skip_list)
           next unless seen.add?({default_verb, template, group, action})
@@ -957,11 +963,12 @@ module Analyzer::Ruby
     # often defined by metaprogramming, so it names the app's controller
     # without a line. nil when the app names a controller the scan cannot see.
     private def devise_handler(ctrl_name : String, ctrl_path : String?, group : String, action : String) : Handler?
+      provider_callback = group == "omniauth_callbacks" && action != "passthru"
       if ctrl_path
         owner = action_owner(ctrl_path, action)
         return handler_for_action(owner, action, ctrl_path) if owner
-        return handler_for_action(ctrl_path, action) if action.starts_with?(':')
-      elsif ctrl_name != "devise/#{group}" || action.starts_with?(':')
+        return handler_for_action(ctrl_path, action) if provider_callback
+      elsif ctrl_name != "devise/#{group}" || provider_callback
         return
       end
       Handler.new("devise/#{group}##{action}")
@@ -1035,11 +1042,10 @@ module Analyzer::Ruby
       ["DELETE"]
     end
 
-    # The symbols of every `devise :a, :b, ...` declaration (each may wrap
-    # over lines) in the model and the app concerns it includes
-    # (`include User::Omniauthable`); nil when the model file is missing or
-    # declares none.
-    private def devise_modules(framework_root : String, model : String) : Array(String)?
+    # Modules from the model and its included concerns, plus the provider
+    # list when the model declares it literally. Missing modules and an
+    # unresolved provider list have separate fallbacks in handle_devise_for.
+    private def devise_configuration(framework_root : String, model : String)
       model_path = "#{framework_root}/app/models/#{model}.rb"
       unless known_file?(model_path)
         # A model grouped in a subfolder (`app/models/users/user.rb`) still
@@ -1061,7 +1067,7 @@ module Analyzer::Ruby
       end
       return if mods.empty?
       mods << "omniauthable" if source.matches?(/\bomniauth_providers\s*:/) && !mods.includes?("omniauthable")
-      mods
+      {mods, Noir::RailsDeviseProviders.resolve(source, model.camelcase)}
     end
 
     # A subfolder model counts only when it defines the top-level class

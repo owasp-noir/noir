@@ -10,7 +10,7 @@ Rails.application.routes.draw do
   scope :api do
     # `controllers:` swaps the sessions controller for the app's own and
     # `path_names:` renames sign_in; the model picks the Devise modules.
-    devise_for :users, controllers: { sessions: :sessions },
+    devise_for :users, controllers: { sessions: :sessions, omniauth_callbacks: :callbacks },
                        path_names: { sign_in: :login }
 
     # `param:` renames the member key; nested routes see `profile_username`.

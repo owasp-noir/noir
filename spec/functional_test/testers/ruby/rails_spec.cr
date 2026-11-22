@@ -135,10 +135,14 @@ expected_endpoints = [
     Param.new("password", "", "json"),
     Param.new("password_confirmation", "", "json"),
   ]),
-  Endpoint.new("/api/users/auth/:provider", "GET"),
-  Endpoint.new("/api/users/auth/:provider", "POST"),
-  Endpoint.new("/api/users/auth/:provider/callback", "GET"),
-  Endpoint.new("/api/users/auth/:provider/callback", "POST"),
+  Endpoint.new("/api/users/auth/gitlab", "GET"),
+  Endpoint.new("/api/users/auth/gitlab", "POST"),
+  Endpoint.new("/api/users/auth/gitlab/callback", "GET"),
+  Endpoint.new("/api/users/auth/gitlab/callback", "POST"),
+  Endpoint.new("/api/users/auth/github", "GET"),
+  Endpoint.new("/api/users/auth/github", "POST"),
+  Endpoint.new("/api/users/auth/github/callback", "GET", [Param.new("X-Callback-State", "", "header")]),
+  Endpoint.new("/api/users/auth/github/callback", "POST", [Param.new("X-Callback-State", "", "header")]),
 
   # `resources :profiles, param: :username`: the member key is a path
   # segment, and the nested singular resource sees it as `profile_username`.

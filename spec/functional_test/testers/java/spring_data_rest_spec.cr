@@ -1,10 +1,10 @@
 require "../../func_spec.cr"
 
 page_params = [Param.new("page", "", "query"), Param.new("size", "", "query"), Param.new("sort", "", "query")]
-person_body = [Param.new("firstName", "", "json"), Param.new("lastName", "", "json")]
-order_body = [Param.new("status", "", "json")]
-company_body = [Param.new("name", "", "json")]
-item_body = [Param.new("sku", "", "json")]
+person_body = [Param.new("id", "", "json"), Param.new("firstName", "", "json"), Param.new("lastName", "", "json")]
+order_body = [Param.new("id", "", "json"), Param.new("status", "", "json")]
+company_body = [Param.new("id", "", "json"), Param.new("name", "", "json")]
+item_body = [Param.new("id", "", "json"), Param.new("sku", "", "json")]
 
 expected_endpoints = [
   # @RepositoryRestResource(path = "people"), Paging + Crud.

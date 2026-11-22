@@ -580,6 +580,17 @@ describe "Ruby route gaps" do
     find_ep(endpoints, "POST", "/users/sign_in").params.map { |p| "#{p.name}:#{p.param_type}" }.should eq(%w[email:form password:form])
   end
 
+  it "keeps the provider capture when a Devise provider list is only partly literal" do
+    endpoints = scan_ruby_tree({
+      "Gemfile"            => RAILS_GEMFILE,
+      "app/models/user.rb" => "class User\n  devise :omniauthable, omniauth_providers: [:github, configured_provider]\nend\n",
+      "config/routes.rb"   => "Rails.application.routes.draw do\n  devise_for :users\nend\n",
+    })
+    endpoints.select(&.url.includes?("/auth/")).map(&.url).uniq!.sort!.should eq([
+      "/users/auth/:provider", "/users/auth/:provider/callback",
+    ])
+  end
+
   it "reads every Devise declaration and resolves controllers from the enclosing module scope" do
     endpoints = scan_ruby_tree({
       "Gemfile"            => RAILS_GEMFILE,

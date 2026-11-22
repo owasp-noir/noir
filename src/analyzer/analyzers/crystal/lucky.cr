@@ -24,6 +24,7 @@ module Analyzer::Crystal
 
       include_callee = callees_needed?
       last_endpoint = Endpoint.new("", "")
+      route_body_end = -1
 
       # Lucky's `param name : Type` macro declares a query parameter at the
       # class level, above the route block. Buffer declarations and flush
@@ -53,30 +54,28 @@ module Analyzer::Crystal
         # `action do … end` / `nested_route do … end` infer the verb and
         # path from the action class name (Lucky's RouteInferrer). This is
         # the resourceful style real apps use instead of explicit `get "/…"`.
-        if inferred = infer_lucky_action_route(stripped, current_class)
-          method, url = inferred
-          endpoint = Endpoint.new(url, method)
+        inferred = infer_lucky_action_route(stripped, current_class)
+        endpoint = inferred ? Endpoint.new(inferred[1], inferred[0]) : line_to_endpoint(line)
+        if !endpoint.method.empty? && valid_crystal_route_path?(endpoint.url)
           endpoint.details = Details.new(PathInfo.new(path, index + 1))
           pending_params.each { |p| endpoint.push_param(p) }
           pending_params.clear
-          attach_route_callees(endpoint, lines, index, path) if include_callee
+          route_body_end = -1
+          if (include_callee || endpoint.url.includes?("/:")) && (block = extract_crystal_do_block(lines, index))
+            body, first_line = block
+            # Reads in helpers after this block have no definite route binding.
+            route_body_end = first_line - 1 + body.count('\n')
+            if include_callee
+              callees = Noir::CrystalCalleeExtractor.callees_for_body(body, path, first_line)
+              attach_crystal_callees(endpoint, callees)
+            end
+          end
           endpoints << endpoint
           last_endpoint = endpoint
-          next
+          next if inferred
         end
 
-        endpoint = line_to_endpoint(line)
-        if !endpoint.method.empty? && valid_crystal_route_path?(endpoint.url)
-          details = Details.new(PathInfo.new(path, index + 1))
-          endpoint.details = details
-          pending_params.each { |p| endpoint.push_param(p) }
-          pending_params.clear
-          attach_route_callees(endpoint, lines, index, path) if include_callee
-          endpoints << endpoint
-          last_endpoint = endpoint
-        end
-
-        param = line_to_param(param_lines[index])
+        param = line_to_param(param_lines[index], index <= route_body_end ? last_endpoint.url : "")
         unless param.name.empty?
           unless last_endpoint.method.empty?
             last_endpoint.push_param(param)
@@ -160,21 +159,12 @@ module Analyzer::Crystal
       end
     end
 
-    private def attach_route_callees(endpoint : Endpoint, lines : Array(String), index : Int32, path : String)
-      route_body = extract_crystal_do_block(lines, index)
-      return unless route_body
-
-      body, body_start_line = route_body
-      callees = Noir::CrystalCalleeExtractor.callees_for_body(body, path, body_start_line)
-      attach_crystal_callees(endpoint, callees)
-    end
-
     # Lucky uniquely registers TRACE routes. Shared engine verbs cover the
     # rest; this is stitched in via `match_crystal_simple_route(..., extra:)`.
     TRACE_ROUTE_PATTERN = /(?:^|[^.\w])trace\s*(?:\(\s*)?['"](.+?)['"]/
     LUCKY_EXTRA_ROUTES  = [{"TRACE", TRACE_ROUTE_PATTERN}] of Tuple(String, Regex)
 
-    def line_to_param(content : String) : Param
+    def line_to_param(content : String, route_path : String = "") : Param
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
 
       # Most source lines never touch params; bail before the includes?/split
@@ -199,7 +189,12 @@ module Analyzer::Crystal
       end
 
       if content.includes? "params.get("
-        param = content.split("params.get(")[1].split(")")[0].gsub("\"", "").gsub("'", "")
+        receiver, _, args = content.partition("params.get(")
+        if !receiver.matches?(/[.\w]\z/) && (read = args.match(/\A\s*(?::(\w+)|"(\w+)")\s*\)/))
+          name = read[1]? || read[2]
+          return Param.new(name, "", "path") if route_path.split('/').includes?(":#{name}")
+        end
+        param = args.split(")")[0].gsub("\"", "").gsub("'", "")
         return Param.new(param.gsub(":", ""), "", "query")
       end
 

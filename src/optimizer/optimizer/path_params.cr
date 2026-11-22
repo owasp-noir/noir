@@ -82,6 +82,8 @@ class EndpointOptimizer
       # constraint's own quantifier (`{id:[0-9]{3}}`) stays inside the
       # placeholder instead of closing it early.
       each_brace_group(url) do |start, stop, raw|
+        # Android keeps unresolved Gradle substitutions verbatim in the URL.
+        next if endpoint.details.technology == "android" && start > 0 && url.byte_at(start - 1) == '$'.ord
         # Strip a leading `*` from catch-all path variables (Spring,
         # Armeria and ASP.NET all spell the rest-of-path capture as
         # `{*name}`, e.g. `/files/{*path}`) and any inline regex/type
