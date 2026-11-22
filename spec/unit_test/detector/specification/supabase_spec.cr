@@ -57,6 +57,17 @@ describe "Detect Supabase" do
     instance.detect("db/migrations/001_init.sql", content).should be_true
   end
 
+  it "ignores private migration DDL with platform names only in prose or generic RLS" do
+    content = <<-SQL
+      -- Links a provisioned account to its auth.users row.
+      create table {{ .Namespace }}.accounts (id uuid);
+      comment on table accounts is 'uses Supabase with auth.uid()';
+      alter table accounts enable row level security;
+      create policy readable on accounts for select using (true);
+      SQL
+    instance.detect("db/migrations/002_accounts.sql", content).should be_false
+  end
+
   it "ignores a seed file with no DDL" do
     content = "insert into public.authors (name) values ('noir');"
     instance.detect("supabase/seed.sql", content).should be_false

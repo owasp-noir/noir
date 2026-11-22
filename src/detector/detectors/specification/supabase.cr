@@ -1,5 +1,6 @@
 require "../../../models/detector"
 require "../../../models/code_locator"
+require "../../../miniparsers/postgres_ddl_parser"
 
 module Detector::Specification
   # Supabase exposes every table in an exposed schema over PostgREST at
@@ -12,7 +13,7 @@ module Detector::Specification
   # tiers:
   #
   #   * under `supabase/`  -> `create table` is enough
-  #   * under `migrations/` -> additionally requires an RLS/Supabase
+  #   * under `migrations/` -> additionally requires a Supabase/PostgREST
   #     fingerprint, because that directory name belongs to every
   #     migration tool there is
   #
@@ -31,8 +32,9 @@ module Detector::Specification
     # emitted params stuck at whatever the first migration declared.
     DDL_MARKER = /\bcreate\s+(?:global\s+|local\s+|temp(?:orary)?\s+|unlogged\s+)*table\b|\balter\s+table\b/i
 
-    # Constructs that only appear in a Supabase/PostgREST-managed schema.
-    SUPABASE_FINGERPRINT = /\bauth\.uid\s*\(|\benable\s+row\s+level\s+security\b|\bcreate\s+policy\b|\bstorage\.objects\b|\bauth\.users\b|\bpgrst\b|\bsupabase\b/i
+    # Generic PostgreSQL RLS and policy statements are also used by private
+    # schemas. Look for references to the platform in executable SQL.
+    SUPABASE_FINGERPRINT = /\bauth\.(?:uid\s*\(|users\b)|\bstorage\.objects\b|\bpgrst\b/i
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
@@ -45,9 +47,10 @@ module Detector::Specification
       end
 
       return false unless content_matches?(file_contents, DDL_MARKER)
-
       unless supabase_directory?(path)
         return false unless content_matches?(file_contents, SUPABASE_FINGERPRINT)
+        sql = Noir::PostgresDdlParser.mask(file_contents)
+        return false unless content_matches?(sql, DDL_MARKER) && content_matches?(sql, SUPABASE_FINGERPRINT)
       end
 
       CodeLocator.instance.push(Noir::LocatorKeys::SUPABASE_MIGRATION, filename)

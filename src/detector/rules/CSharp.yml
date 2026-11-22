@@ -90,18 +90,25 @@ AspNetCoreMvc:
     any:
       - all:
           - files: {extensions: [.csproj]}
-          - any:
-              - contains: &aspnet_mvc_packages ['AspNetCore.Mvc', 'Microsoft.AspNetCore.App']
-              - contains: ['Sdk="Microsoft.NET.Sdk.Web"', 'Sdk="Microsoft.NET.Sdk.Razor"']
+          - regex: '<PackageReference\b[^>]*\bInclude\s*=\s*[''"]Microsoft\.AspNetCore\.Mvc(?:\.[\w.]+)?[''"]'
       - all:
           - files: {extensions: [Program.cs, Startup.cs]}
-          - any:
-              - contains: *aspnet_mvc_packages
-              - contains: [AddControllers, 'AddMvc(', AddMvcCore, MapControllerRoute, MapDefaultControllerRoute, MapControllers]
+          - regex: '\.\s*(?:UseMvc(?:WithDefaultRoute)?|Map(?:AreaControllerRoute|ControllerRoute|DefaultControllerRoute|Controllers))\s*\('
       - all:
           - files: {extensions: [.cs]}
-          - files: {path_segments: [Controller]}
-          - contains: *aspnet_mvc_packages
+          - regex: '\.\s*(?:AddControllers(?:WithViews)?|AddMvc(?:Core)?)\s*\('
+      - all:
+          - files: {extensions: [.cs]}
+          - contains: AspNetCore.Mvc
+          - any:
+              - files: {path_segments: [Controller]}
+              - regex: '\[\s*(?:Microsoft\.AspNetCore\.Mvc\.)?(?:ApiController|Controller)(?:Attribute)?\b|\bclass\s+\w+Controller\b|:\s*(?:Microsoft\.AspNetCore\.Mvc\.)?Controller(?:Base)?\b'
+  fallback:
+    missing_siblings: [Program.cs, Startup.cs]
+    match:
+      all:
+        - files: {extensions: [.csproj]}
+        - contains: ['Sdk="Microsoft.NET.Sdk.Web"', 'Sdk="Microsoft.NET.Sdk.Razor"', 'Microsoft.AspNetCore.App']
   examples:
     match:
       - {path: MyApp.csproj, content: "<PackageReference Include=\"Microsoft.AspNetCore.Mvc\" />"}
@@ -111,6 +118,8 @@ AspNetCoreMvc:
       - {path: Program.cs, content: "builder.Services.AddMvc();"}
       - {path: myProgram.CS, content: "app.MapControllers();"}
     no_match:
+      - {path: CatalogApi.cs, content: 'using Microsoft.AspNetCore.Mvc; var api = app.MapGroup("api/catalog");'}
+      - {path: Program.cs, content: 'using Microsoft.AspNetCore.Mvc; app.MapCatalogApi();'}
       - {path: Routes.cs, content: "app.MapControllers();"}
 
 Carter:

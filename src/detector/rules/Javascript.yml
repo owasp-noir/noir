@@ -229,14 +229,26 @@ Egg:
   key: js_egg
   gate: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx], basenames: [package.json]}
   match:
-    regex: '"(?:egg|egg-core|egg-bin|@eggjs/bin)"\s*:|(?:\brequire\s*\(\s*|\bfrom\s+)[''"]egg[''"]'
+    any:
+      - all:
+          - files: {basenames: [package.json]}
+          - any:
+              - json_path: [[dependencies, devDependencies, peerDependencies, optionalDependencies], [egg, egg-core, egg-bin, '@eggjs/bin']]
+              - json_path: [egg, [typescript, declarations, framework]]
+      - all:
+          - files: {extensions: [.js, .mjs, .cjs, .jsx, .ts, .tsx]}
+          - javascript_import: egg
   examples:
     match:
       - {path: 'package.json', content: "{\"dependencies\": {\"egg\": \"^3.17.0\"}}"}
       - {path: 'package.json', content: "{\"devDependencies\": {\"@eggjs/bin\": \"^7.0.0\"}}"}
       - {path: 'package.json', content: "{\"egg\": {\"typescript\": true}}"}
       - {path: 'app/controller/home.ts', content: "import { Controller } from 'egg';"}
+      - {path: worker.js, content: "const { Controller } = require(/* framework */ 'egg');"}
     no_match:
+      - {path: docs.js, content: "const example = \"import { Controller } from 'egg'\"; // require('egg')"}
+      - {path: chunk.js, content: 'const emoji = {"egg":{"id":"egg","name":"Egg","keywords":["food","chicken"]}}'}
+      - {path: package.json, content: '{"scripts":{"egg":"build"},"metadata":{"dependencies":{"egg":"1"}}}'}
       - {path: 'package.json', content: "{\"dependencies\": {\"egg-mysql\": \"^4.0.0\"}}"}
       - {path: 'index.js', content: "const egg = require('eggplant');"}
 
