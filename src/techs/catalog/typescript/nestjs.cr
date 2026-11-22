@@ -21,6 +21,7 @@ module NoirTechs::Catalog::Typescript
         :websocket   => false,
       },
       :context => {:callee => true, :guards => true},
+      :tier    => "core",
     },
   }
 end

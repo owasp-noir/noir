@@ -75,6 +75,10 @@ module NoirTechs
     }
   {% end %}
 
+  # Resolve the default outside the raw entries. Some implementation entries
+  # have no String values, and inserting "extended" would widen typeof(TECHS).
+  TIERS = TECHS.to_h { |key, info| {key.to_s, info.fetch(:tier, "extended").as(String)} }
+
   # Derived from the per-tech :context flags in the catalog files, so a
   # capability can only be declared on an entry that exists — the drift
   # class the tech-registry integrity spec (#2384) exists to catch.

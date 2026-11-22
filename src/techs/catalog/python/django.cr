@@ -21,6 +21,7 @@ module NoirTechs::Catalog::Python
         :websocket   => true,
       },
       :context => {:callee => true, :guards => true},
+      :tier    => "core",
     },
   }
 end

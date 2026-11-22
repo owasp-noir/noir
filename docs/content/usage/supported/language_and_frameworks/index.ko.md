@@ -259,7 +259,7 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">ASP.NET Core Minimal API</h3>
+    <h3 class="tech-card-title">ASP.NET Core Minimal API <span class="tech-chip">core</span></h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -1767,7 +1767,7 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">Chi</h3>
+    <h3 class="tech-card-title">Chi <span class="tech-chip">core</span></h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -1821,7 +1821,7 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">Echo</h3>
+    <h3 class="tech-card-title">Echo <span class="tech-chip">core</span></h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -1902,7 +1902,7 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">Gin</h3>
+    <h3 class="tech-card-title">Gin <span class="tech-chip">core</span></h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -1956,7 +1956,7 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">Gorilla Mux</h3>
+    <h3 class="tech-card-title">Gorilla Mux <span class="tech-chip">core</span></h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -2916,7 +2916,7 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">Spring</h3>
+    <h3 class="tech-card-title">Spring <span class="tech-chip">core</span></h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -3326,7 +3326,7 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">Express</h3>
+    <h3 class="tech-card-title">Express <span class="tech-chip">core</span></h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -5106,7 +5106,7 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">Django</h3>
+    <h3 class="tech-card-title">Django <span class="tech-chip">core</span></h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -5187,7 +5187,7 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">FastAPI</h3>
+    <h3 class="tech-card-title">FastAPI <span class="tech-chip">core</span></h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">
@@ -6810,7 +6810,7 @@ sort_by = "weight"
     </div>
   </article>
   <article class="tech-card">
-    <h3 class="tech-card-title">NestJS</h3>
+    <h3 class="tech-card-title">NestJS <span class="tech-chip">core</span></h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">

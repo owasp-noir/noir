@@ -21,6 +21,7 @@ module NoirTechs::Catalog::Javascript
         :websocket   => false,
       },
       :context => {:callee => true, :guards => true},
+      :tier    => "core",
     },
   }
 end

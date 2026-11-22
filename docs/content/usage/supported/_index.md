@@ -14,3 +14,7 @@ What Noir can analyze:
 *   **[AI Context](ai_context_coverage/)**: Per-endpoint guards, sources, sinks, validators, and signals, aggregated into an AI-review-ready context object with `--ai-context`.
 *   **[Mobile Apps](mobile/)**: How Noir extracts Android and iOS deep-link entry points (custom schemes, intents, universal links) and links them to the handling code.
 *   **[CLI Apps](cli/)**: How Noir maps the command-line attack surface (subcommands, flags, positional arguments, consumed environment variables) across 21 languages.
+
+## Technology tiers
+
+Every scoreboard run measures `core` technologies against the API specifications in real repositories at pinned commits. Noir tests `extended` technologies with fixtures. See the [API agreement scoreboard](../accuracy/) for the repositories and results.

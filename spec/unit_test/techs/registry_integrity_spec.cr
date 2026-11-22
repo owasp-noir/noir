@@ -50,6 +50,25 @@ describe "tech registry integrity" do
   analyzers = initialize_analyzers(logger).keys.to_set - DYNAMIC_ANALYZER_TECHS
   detectors = build_detector_list(create_test_options).map(&.name).to_set
 
+  it "assigns every technology a core or extended tier" do
+    invalid = NoirTechs::TIERS.reject { |_, tier| {"core", "extended"}.includes?(tier) }
+    fail "invalid technology tier: #{sorted(invalid.keys)}" unless invalid.empty?
+  end
+
+  it "marks exactly the technologies scored on pinned repositories as core" do
+    core = NoirTechs::TIERS.select { |_, tier| tier == "core" }.keys.to_set
+    corpus = File.expand_path("../../../scripts/scoreboard/corpus.json", __DIR__)
+    scored = JSON.parse(File.read(corpus))["repos"].as_a.flat_map do |repo|
+      fail "scoreboard repository #{repo["name"]} needs a pinned commit" unless repo["commit"].as_s.matches?(/\A[0-9a-f]{40}\z/)
+      repo["technologies"].as_a.map(&.as_s)
+    end.to_set
+
+    missing = core - scored
+    fail "core technologies missing from the scoreboard corpus: #{sorted(missing)}" unless missing.empty?
+    extra = scored - core
+    fail "scoreboard technologies missing from the core tier: #{sorted(extra)}" unless extra.empty?
+  end
+
   it "gives every analyzer a catalog entry" do
     # Without one, `-t <tech>` / `--only-techs <tech>` / `--exclude-techs
     # <tech>` all reject the name and `noir list techs` omits it.

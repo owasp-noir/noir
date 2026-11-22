@@ -242,6 +242,7 @@ module Noir::CLI::ListCommand
     doc.as_h.each do |tech, info|
       # Only declarations carry `:view`; everything else is code.
       info.as_h["view"] = JSON::Any.new(NoirTechs.view(tech))
+      info.as_h["tier"] = JSON::Any.new(NoirTechs::TIERS[tech])
       next unless supported = info.as_h["supported"]?
       target = supported.as_h
       target["callee"] = JSON::Any.new(NoirTechs.context_supported?(tech, "callee"))
