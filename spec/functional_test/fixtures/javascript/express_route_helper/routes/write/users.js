@@ -14,7 +14,7 @@ module.exports = function () {
 	// A commented-out registration is not a route.
 	// setupApiRoute(router, 'post', '/:uid/ban', [], controllers.users.ban);
 
-	// Neither is one whose path the scanner cannot read.
+	// A real registration with a computed path retains an unresolved placeholder.
 	setupApiRoute(router, 'get', buildPath('exports'), [], controllers.users.export);
 
 	return router;

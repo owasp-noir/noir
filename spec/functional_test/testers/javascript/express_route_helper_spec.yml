@@ -25,12 +25,11 @@
 #
 # The fixture also pins what must NOT be emitted:
 #   * the commented-out `setupApiRoute` in routes/write/users.js,
-#   * the call whose path is built by a function (`buildPath('exports')`),
 #   * the call from test/api.js,
 #   * `/api${name}` from the helper's own body — that line is the
 #     definition of a rewrite, not a registration.
 fixture: fixtures/javascript/express_route_helper/
-counts: {techs: 1, endpoints: 8}
+counts: {techs: 1, endpoints: 17}
 endpoints:
   - url: "/login"
     method: "GET"
@@ -59,3 +58,41 @@ endpoints:
     params:
       - {name: "uid", type: "path"}
       - {name: "token", type: "path"}
+  - url: "/api/v3/users/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/sections/current/items/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "view", type: "query"}
+  - url: "/sections/archive/items/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "view", type: "query"}
+  - url: "/sections/{section}/items/:id"
+    method: "GET"
+    params:
+      - {name: "section", type: "path"}
+      - {name: "id", type: "path"}
+      - {name: "view", type: "query"}
+  - url: "/fixed/archive"
+    method: "POST"
+  - url: "/preview/gallery"
+    method: "GET"
+    params:
+      - {name: "size", type: "query"}
+  - url: "/browse/library/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/browse/library/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/preview/featured"
+    method: "GET"
+    params:
+      - {name: "size", type: "query"}

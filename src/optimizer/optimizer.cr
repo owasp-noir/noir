@@ -150,6 +150,7 @@ class EndpointOptimizer
     cross_tech_keys = cross_technology_duplicate_keys(endpoints, declaration_scopes)
     code_paths = code_route_paths(endpoints)
     held = [] of {RouteKey, Endpoint}
+    prefix_templates = Hash({Endpoint::PrefixTemplate, RouteKey}, Array({RouteKey, Endpoint})).new
 
     # `parallel_analyze` does not preserve input order: files go to N
     # workers through a bounded channel, so collection order depends on
@@ -240,18 +241,21 @@ class EndpointOptimizer
       verbatim = tiny_tmp.non_http? || tiny_tmp.kind == "regex"
       keep_constraints = regex_placeholders?(tiny_tmp)
       tiny_tmp.url = normalize_url_shape(tiny_tmp.url, keep_constraints: keep_constraints) unless verbatim
-      dedup_url = verbatim ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp), keep_constraints)
-      unified_url = verbatim ? dedup_url : unify_path_placeholders(dedup_url)
-      # Placeholder spellings are unified only where another technology
-      # reports the route too (code + spec/collection). Within one analyzer,
-      # `/users/{id}` and `/users/{user}` are kept as it reported them.
-      scope = route_scope(tiny_tmp, unified_url, declaration_scopes)
-      dedup_url = unified_url if cross_tech_keys.includes?({tiny_tmp.method, unified_url, scope})
-      # A lone SDL file falls back to `/graphql`; Django mounts the same
-      # schema at `graphql/`. One operation either way.
-      dedup_url = dedup_url.sub("/#", "#") if graphql_endpoint?(tiny_tmp)
-
-      key = {tiny_tmp.method, dedup_url, scope, route_condition_key(tiny_tmp), proxy_route_key(tiny_tmp)}
+      key, unified_url = dedup_key(tiny_tmp, verbatim, keep_constraints, declaration_scopes, cross_tech_keys)
+      if template = tiny_tmp.prefix_template
+        tiny_tmp.prefix_template = nil
+        fallback = tiny_tmp
+        fallback.mark_resolution("prefix")
+        fallback.url = normalize_url_shape(template.url)
+        # Merging the concrete route mutates its arrays. Keep this call's
+        # evidence independent until we know which handler and inputs survive.
+        fallback.details = tiny_tmp.details
+        fallback.params = tiny_tmp.params.dup
+        fallback.tags = tiny_tmp.tags.dup
+        fallback.callees = tiny_tmp.callees.dup
+        fallback_key, _ = dedup_key(fallback, false, false, declaration_scopes, cross_tech_keys)
+        (prefix_templates[{template, fallback_key}] ||= [] of {RouteKey, Endpoint}) << {key, fallback}
+      end
 
       # Folded into the code routes at its path once they are all merged.
       if proxy_route?(tiny_tmp) && code_paths.includes?(unified_url)
@@ -279,11 +283,46 @@ class EndpointOptimizer
         final_map[key] = tiny_tmp
       end
     end
+    restore_unrepresented_templates(final_map, prefix_templates)
     fold_proxy_routes(final_map, held)
 
     @logger.verbose_sub "➔ Total duplicated endpoints: #{duplicate_count}"
     merged = merge_concrete_example_endpoints(final_map.values)
     tag_spec_only_endpoints(prune_collection_graphql_transport_endpoints(merged))
+  end
+
+  private def dedup_key(endpoint, verbatim, keep_constraints, declaration_scopes, cross_tech_keys)
+    dedup_url = verbatim ? endpoint.url : normalize_url_shape(endpoint.url, collection_endpoint?(endpoint), keep_constraints)
+    unified_url = verbatim ? dedup_url : unify_path_placeholders(dedup_url)
+    # Placeholder spellings are unified only where another technology
+    # reports the route too (code + spec/collection). Within one analyzer,
+    # `/users/{id}` and `/users/{user}` are kept as it reported them.
+    scope = route_scope(endpoint, unified_url, declaration_scopes)
+    dedup_url = unified_url if cross_tech_keys.includes?({endpoint.method, unified_url, scope})
+    # A lone SDL file falls back to `/graphql`; Django mounts the same
+    # schema at `graphql/`. One operation either way.
+    dedup_url = dedup_url.sub("/#", "#") if graphql_endpoint?(endpoint)
+
+    { {endpoint.method, dedup_url, scope, route_condition_key(endpoint), proxy_route_key(endpoint)}, unified_url }
+  end
+
+  # A default can share an address with a separately registered handler.
+  # Drop a call's symbolic spelling only if a merged row for one of its
+  # concrete defaults still carries the evidence of that particular call.
+  private def restore_unrepresented_templates(final_map, prefix_templates) : Nil
+    prefix_templates.each do |(_, key), alternatives|
+      alternatives.each do |_, fallback|
+        covered = alternatives.any? do |concrete_key, _|
+          concrete = final_map[concrete_key]
+          concrete.handler == fallback.handler &&
+            fallback.details.code_paths.all? { |location| concrete.details.code_paths.includes?(location) } &&
+            fallback.params.all? { |param| concrete.params.includes?(param) }
+        end
+        next if covered
+        existing = final_map[key]?
+        final_map[key] = existing ? merge_duplicate(existing, fallback) : fallback
+      end
+    end
   end
 
   private def resolve_scan_bases : Array(String)

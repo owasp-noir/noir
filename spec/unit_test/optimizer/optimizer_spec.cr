@@ -1763,6 +1763,35 @@ describe "EndpointOptimizer" do
       optimizer.optimize_endpoints([plain, plain]).first.resolution.should be_nil
     end
 
+    it "keeps a registrar template only when none of that call's defaults preserve its handler" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      fixed = tech_endpoint("/post/:id", "GET", "js_express", "activity.js")
+      fixed.handler = Handler.new("activity")
+      registrar = tech_endpoint("/post/:id", "GET", "js_express", "routes.js", 7)
+      registrar.prefix_template = Endpoint::PrefixTemplate.new("/${name}/:id")
+      registrar.handler = Handler.new("redirect")
+      registrar.push_param(Param.new("view", "", "query"))
+      registrar.mark_resolution("prefix", Endpoint::RESOLUTION_HEURISTIC)
+
+      rows = optimizer.optimize_endpoints([fixed, registrar])
+      fallback = rows.find!(&.url.==("/{name}/:id"))
+      fallback.handler.should eq(registrar.handler)
+      fallback.params.should eq(registrar.params)
+      fallback.details.code_paths.should eq([PathInfo.new("routes.js", 7)])
+      fallback.resolution.should eq({"prefix" => "unresolved"})
+
+      alternate = registrar
+      alternate.url = "/article/:id"
+      rows = optimizer.optimize_endpoints([fixed, registrar, alternate])
+      rows.map(&.url).sort!.should eq(["/article/:id", "/post/:id"])
+      rows.find!(&.url.==("/article/:id")).resolution.should eq({"prefix" => "heuristic"})
+
+      # A different call on the same line cannot stand in for the registrar.
+      alternate.prefix_template = Endpoint::PrefixTemplate.new("/${name}/:id")
+      rows = optimizer.optimize_endpoints([fixed, registrar, alternate])
+      rows.find!(&.url.==("/{name}/:id")).handler.should eq(registrar.handler)
+    end
+
     it "unions different resolution claims when duplicates merge" do
       prefix = Endpoint.new("/status", "GET")
       prefix.resolution = {"prefix" => "unresolved"}

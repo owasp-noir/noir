@@ -1,3 +1,4 @@
+require "../go_binding"
 require "../../ext/tree_sitter/tree_sitter"
 require "../../utils/http_symbols"
 
@@ -640,7 +641,9 @@ module Noir
       getter start_row : Int32
       getter end_row : Int32
 
-      def initialize(@param, @start_row, @end_row)
+      getter receiver : String?
+
+      def initialize(@param, @start_row, @end_row, @receiver = nil)
       end
     end
 
@@ -685,7 +688,8 @@ module Noir
           param = router_group_param_name(params, source, type_name, qualifier)
           next unless param
           name = Noir::TreeSitter.node_text(name_node, source)
-          builders << {name, RouterBuilder.new(param, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node))}
+          receiver = Noir::TreeSitter.field(node, "receiver").try { |recv| receiver_type_name(recv, source) }
+          builders << {name, RouterBuilder.new(param, Noir::TreeSitter.node_start_row(node), Noir::TreeSitter.node_end_row(node), receiver)}
         end
       end
       builders
@@ -894,8 +898,9 @@ module Noir
     def collect_router_builder_callsites(source : String, builders : Set(String),
                                          groups : Hash(String, String) = Hash(String, String).new,
                                          slice_builders : Hash(String, Array(String)) = Hash(String, Array(String)).new,
-                                         scopes : Hash(String, RouterBuilder) = Hash(String, RouterBuilder).new) : Array(Tuple(String, String, String, Int32))
-      calls = [] of Tuple(String, String, String, Int32)
+                                         scopes : Hash(String, RouterBuilder) = Hash(String, RouterBuilder).new,
+                                         ambiguous_methods : Set(String) = Set(String).new) : Array(Tuple(String, String, String, Int32, String?))
+      calls = [] of Tuple(String, String, String, Int32, String?)
       return calls if builders.empty?
       Noir::TreeSitter.parse_go(source) do |root|
         scope_groups = builder_param_groups(root, source, scopes)
@@ -936,10 +941,12 @@ module Noir
           end
           next unless first_seen
           arg_text ||= first_text
-          # Non-identifier, non-inline-Group arg (e.g. expr, func result,
-          # root router, etc.) — record so caller can apply "all sites must
-          # resolve" guard and fall back to whole-file pass.
-          targets.each { |target| calls << {target, arg_text || "__unresolved__", qualifier, row} }
+          receiver_type = nil
+          if ambiguous_methods.includes?(name) && qualifier.matches?(Noir::GoBinding::IDENT)
+            local = Noir::GoBinding.local(qualifier, node, source)
+            receiver_type = local.try(&.type.presence) || local.try(&.expression(source).match(Noir::GoBinding::TYPE_LITERAL).try(&.[1]))
+          end
+          targets.each { |target| calls << {target, arg_text || "__unresolved__", qualifier, row, receiver_type} }
         end
       end
       calls
@@ -2081,6 +2088,7 @@ module Noir
           # latched onto a later string literal, surfacing phantom routes
           # like `PUT /key` (observed across beego cache examples).
           raw_path = route_path_text(arg, source, string_values)
+          raw_path ||= path_with_dynamic_segment(arg, source, string_values) if groups.has_key?(router_name)
           unread = !raw_path.nil? && unread_base?(arg, source, string_values)
         elsif Noir::TreeSitter.node_type(arg) != "interpreted_string_literal" &&
               Noir::TreeSitter.node_type(arg) != "raw_string_literal"
@@ -3011,6 +3019,29 @@ module Noir
         end
       end
       string_expr_text(arg, source, values, partial: partial)
+    end
+
+    # A group registration can sandwich a runtime name between two literal
+    # path segments: g.PUT("/" + importer.Name() + "/upload", handler).
+    # Keep both sides of that gap. The caller marks the incomplete read.
+    private def path_with_dynamic_segment(arg, source, values) : String?
+      return unless Noir::TreeSitter.node_type(arg) == "binary_expression"
+      head = Noir::TreeSitter.field(arg, "left") || return
+      tail = Noir::TreeSitter.field(arg, "right") || return
+      return unless Noir::TreeSitter.node_type(head) == "binary_expression"
+      prefix = Noir::TreeSitter.field(head, "left").try { |n| string_expr_text(n, source, values) }
+      return unless prefix && prefix.starts_with?('/') && prefix.ends_with?('/')
+      suffix = string_expr_text(tail, source, values)
+      return unless suffix && suffix.starts_with?('/')
+      gap = Noir::TreeSitter.field(head, "right") || return
+      name = case Noir::TreeSitter.node_type(gap)
+             when "identifier" then Noir::TreeSitter.node_text(gap, source)
+             when "call_expression"
+               if fn = Noir::TreeSitter.field(gap, "function")
+                 call_basename(fn, source)
+               end
+             end
+      "#{prefix}{#{name}}#{suffix}" if name && name.matches?(Noir::GoBinding::IDENT)
     end
 
     # Whether the path `route_path_text` read from `arg` is only its literal

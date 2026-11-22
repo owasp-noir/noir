@@ -5,6 +5,7 @@ require "../../../../utils/top_level_split"
 require "../../../../utils/url_path"
 require "../../../../utils/text_file"
 require "../../../../miniparsers/js_route_extractor"
+require "../../../../miniparsers/js_registrar_defaults"
 require "../express_constants"
 require "./js_module_resolver"
 
@@ -55,8 +56,7 @@ module Analyzer::Javascript
   #     separates a route helper from a generic client wrapper such as
   #     `function request(client, method, url) { client[method](url, o) }`,
   #     which satisfies every other condition.
-  #   * At the call site both the verb and the path must be literals. A
-  #     computed path yields nothing rather than a guess.
+  #   * A known verb is required. Dynamic path arguments retain a placeholder.
   #   * Definitions and call sites in test-stub / minified files are
   #     skipped, exactly as `JSRouteExtractor.extract_routes` skips them.
   class RouteHelperScanner
@@ -78,20 +78,47 @@ module Analyzer::Javascript
       verb : String?,
       verb_arg : Int32?,
       path_arg : Int32,
+      path_parameter : String,
       path_before : String,
       path_after : String,
       line : Int32,
       middleware : Array(ForwardArgument),
-      handler_arg : Int32? = nil
+      handler_arg : Int32? = nil do
+      def site(file : String) : Site
+        Site.new(file, line, verb.to_s.upcase, template)
+      end
+
+      def template : String
+        path_before + "${" + path_parameter + "}" + path_after
+      end
+    end
+
+    record Site, file : String, line : Int32, verb : String, template : String do
+      def matches?(endpoint : Endpoint) : Bool
+        line == endpoint.details.code_paths.first?.try(&.line) &&
+          (verb.empty? || verb == "ALL" || verb == endpoint.method) && endpoint.url.ends_with?(template)
+      end
+
+      def replaced_param?(param : Param, url : String) : Bool
+        param.param_type == "path" && template.includes?("${" + param.name + "}") &&
+          !url.matches?(/(?:[:*]|\{)#{Regex.escape(param.name)}(?!\w)/)
+      end
+    end
 
     # A helper definition: which argument carries the router, and what the
     # body forwards.
     record HelperSpec,
       name : String,
       file : String,
+      local_name : String,
+      params_open : Int32,
       variadic : Bool,
       router_arg : Int32,
-      forwards : Array(Forward)
+      forwards : Array(Forward) do
+      def template_only? : Bool
+        forwards.none? { |f| f.path_before.empty? && f.path_after.empty? }
+      end
+    end
 
     # One route recovered from a call site. `args` and `path_arg` let the
     # analyzer walk the handler arguments for callees.
@@ -104,6 +131,9 @@ module Analyzer::Javascript
       receiver : String,
       prefix : String,
       offset : Int32,
+      path_resolution : String?,
+      prefix_template : Endpoint::PrefixTemplate?,
+      site : Site?,
       steps : Array(RouteMiddleware),
       handler_arg : Int32? = nil
 
@@ -190,6 +220,11 @@ module Analyzer::Javascript
     # Defining file → helper name → spec.
     getter helpers : Hash(String, Hash(String, HelperSpec))
 
+    private record DefaultArgument, span : Range(Int32, Int32), parameter : String, value : String
+
+    @defaults = Hash(String, Array(DefaultArgument)).new
+    @site_defaults = Hash(Site, Array(String)).new
+
     def initialize(
       @all_files : Array(String),
       @base_paths : Array(String),
@@ -208,6 +243,7 @@ module Analyzer::Javascript
 
     # PASS 1: index every forwarding helper in the tree.
     def index : Nil
+      defaults = Hash(String, Array(Noir::JSRegistrarDefaults::Argument)).new
       @all_files.each do |file|
         next unless ExpressConstants::JS_EXTENSIONS.any? { |ext| file.ends_with?(ext) }
         next unless @base_paths.any? { |base| Noir::PathScope.under_root?(file, base) }
@@ -220,6 +256,10 @@ module Analyzer::Javascript
         end
 
         collect_module_arguments(file, content) if content.includes?("require")
+        if content.includes?("Object.keys") && content.includes?("forEach") && !test_tree?(file) && !Noir::JSRouteExtractor.minified_content?(content)
+          candidates = Noir::JSRegistrarDefaults.extract(content, file)
+          defaults[file] = candidates unless candidates.empty?
+        end
 
         next unless content.matches?(FORWARD_CALL_GATE, options: Noir::TextFile::MATCH_OPTIONS)
         next unless content.matches?(FORWARD_CALL_RE, options: Noir::TextFile::MATCH_OPTIONS)
@@ -233,6 +273,7 @@ module Analyzer::Javascript
         @helpers[Noir::PathScope.expand(file)] = found unless found.empty?
       end
       bind_module_parameters
+      bind_registrar_defaults(defaults)
     end
 
     # ------------------------------------------------------------------
@@ -373,6 +414,62 @@ module Analyzer::Javascript
       end
     end
 
+    private def bind_registrar_defaults(defaults) : Nil
+      targets = Hash(String, Array({String, Int32, String})).new
+      defaults.each do |file, candidates|
+        root = Noir::PathScope.longest_base(file, @base_paths) || @base_path
+        candidates.each do |candidate|
+          if specifier = candidate.import_path
+            target = JsModuleResolver.resolve(file, specifier, root) || next
+            name = "module.exports"
+          else
+            target = Noir::PathScope.expand(file)
+            name = candidate.function
+          end
+          (targets[target] ||= [] of {String, Int32, String}) << {name, candidate.position, candidate.value}
+        end
+      end
+      targets.each do |file, args|
+        content = CodeLocator.instance.read_source(file) || next
+        src = Noir::CharOffsets.new(Noir::JSRouteExtractor.strip_js_comments(content))
+        defs = function_defs(src)
+        args.each do |name, position, value|
+          matches = defs.select { |f| f.local_name == name }
+          next unless matches.size == 1
+          func = matches.first
+          parameter = parameter_positions(src, func).key_for?(position) || next
+          # A reassignment or shadowing declaration inside this registrar
+          # makes the file-wide substitution unsafe.
+          declaration = "function registrar" + src.slice(func.params_open, func.params_close + 1) + src.slice(func.body_start, func.body_end + 1)
+          next unless Noir::JSMountPrefix.unique_bindings(declaration, file, [parameter]).includes?(parameter)
+          binding = DefaultArgument.new(func.body_start..func.body_end, parameter, value)
+          (@defaults[file] ||= [] of DefaultArgument) << binding
+          if spec = @helpers[file]?.try(&.[func.name]?)
+            next unless spec.params_open == func.params_open
+            spec.forwards.each do |forward|
+              next unless forward.path_arg == position
+              site = forward.site(spec.file)
+              (@site_defaults[site] ||= [] of String) << forward.path_before + value + forward.path_after
+            end
+          end
+        end
+      end
+    end
+
+    # Direct verb registrations in a registry function whose only call is
+    # computed. Preserve the source spelling for a potential handler collision.
+    def default_bodies(site : Site, endpoint : Endpoint) : Array(Endpoint)
+      paths = @site_defaults[site]? || return [] of Endpoint
+      template = Endpoint::PrefixTemplate.new(endpoint.url.delete(Noir::JSMountPrefix::UNREAD))
+      paths.map do |path|
+        ep = endpoint
+        ep.prefix_template = template
+        ep.url = endpoint.url.rchop(site.template) + path
+        ep.params = endpoint.params.reject { |p| site.replaced_param?(p, ep.url) }
+        ep.mark_resolution("prefix", Endpoint::RESOLUTION_HEURISTIC)
+      end
+    end
+
     # Lines of the forwarded calls inside the helpers defined in `file`.
     # `Express` uses them to drop the phantom endpoint the generic parser
     # mints from a helper's own `router.get(`/api${name}`, …)`: that line
@@ -380,9 +477,20 @@ module Analyzer::Javascript
     def forward_lines(file : String) : Set(Int32)
       lines = Set(Int32).new
       if specs = @helpers[Noir::PathScope.expand(file)]?
-        specs.each_value { |spec| spec.forwards.each { |forward| lines << forward.line } }
+        specs.each_value { |spec| spec.forwards.each { |forward| lines << forward.line } unless spec.template_only? }
       end
       lines
+    end
+
+    # Keep the body as evidence until a caller supplies a path. A dynamically
+    # dispatched registrar may have no statically identifiable call sites.
+    def template_sites(file : String) : Array(Site)
+      sites = [] of Site
+      @helpers[Noir::PathScope.expand(file)]?.try &.each_value do |spec|
+        next unless spec.template_only?
+        spec.forwards.each { |f| sites << f.site(spec.file) }
+      end
+      sites
     end
 
     # PASS 2: routes registered by calling an indexed helper from `file`.
@@ -412,13 +520,15 @@ module Analyzer::Javascript
 
       prefixes = file_prefixes(file)
       lines = LineIndex.new(content)
-      seen = Set(Tuple(String, String)).new
+      constants = nil
+      defaults = @defaults[Noir::PathScope.expand(file)]?
 
       callables.each do |call_expr, spec|
         content.scan(call_regex(call_expr)) do |m|
           match_end = m.end(0)
           next unless match_end
           open_paren = match_end - 1
+          next if file == spec.file && open_paren == spec.params_open
           close_paren = Noir::JSRouteExtractor.find_matching_paren(content, open_paren)
           next unless close_paren
 
@@ -431,18 +541,44 @@ module Analyzer::Javascript
           spec.forwards.each do |forward|
             method = call_site_verb(forward, args)
             next unless method
-            raw_path = call_site_path(forward, args)
-            next unless raw_path
-
-            path = forward.path_before + raw_path + forward.path_after
+            raw = args[forward.path_arg]?.try(&.[0].strip) || next
+            next if raw.empty?
+            constants ||= path_constants(file, content) if !string_literal(raw) || raw.includes?("${")
+            path, unread = call_site_path(forward, raw, constants)
+            paths = [] of String
+            if unread && defaults
+              defaults.each do |binding|
+                next unless binding.span.includes?(open_paren)
+                values = (constants || {} of String => String).merge({binding.parameter => binding.value})
+                possible, partial = call_site_path(forward, raw, values)
+                paths << possible if !partial && possible.starts_with?('/')
+              end
+            end
+            resolution = if paths.empty?
+                           next unless path.starts_with?('/')
+                           paths << path
+                           Endpoint::RESOLUTION_UNRESOLVED if unread
+                         else
+                           Endpoint::RESOLUTION_HEURISTIC
+                         end
+            site = forward.site(spec.file) if spec.template_only?
             binding = args[spec.router_arg][0].strip
             local = CodeLocator.instance.all(ExpressConstants.binding_key(Noir::PathScope.expand(file), binding))
             mounted = local.empty? ? prefixes : prefixes.flat_map { |outer| local.map { |inner| Noir::JSMountPrefix.join(outer, inner) } }
+            paths.uniq!
+            verbs = method == "ALL" ? ANY_ROUTE_HTTP_METHODS : [method]
             mounted.each do |prefix|
-              url = prefix.empty? ? path : Noir::JSMountPrefix.join(prefix, path)
-              next unless seen.add?({method, url})
+              template = if resolution == Endpoint::RESOLUTION_HEURISTIC
+                           symbolic = prefix.empty? ? path : Noir::JSMountPrefix.join(prefix, path)
+                           Endpoint::PrefixTemplate.new(symbolic.delete(Noir::JSMountPrefix::UNREAD))
+                         end
               steps = helper_middleware(forward, spec, file, args, prefix)
-              routes << HelperRoute.new(method, url, line, args, forward.path_arg, binding, prefix, m.byte_begin(0), steps, call_site_handler(forward, args))
+              paths.each do |candidate|
+                url = prefix.empty? ? candidate : Noir::JSMountPrefix.join(prefix, candidate)
+                verbs.each do |verb|
+                  routes << HelperRoute.new(verb, url, line, args, forward.path_arg, binding, prefix, m.byte_begin(0), resolution, template, site, steps, call_site_handler(forward, args))
+                end
+              end
             end
           end
         end
@@ -465,6 +601,7 @@ module Analyzer::Javascript
 
     private record FunctionDef,
       name : String,
+      local_name : String,
       params_open : Int32,
       params_close : Int32,
       body_start : Int32,
@@ -526,19 +663,10 @@ module Analyzer::Javascript
           forwards << forward
         end
         next if forwards.empty?
-        # At least one forward must pass the path parameter *bare*. A
-        # function whose every registration wraps the parameter in literal
-        # text — `_mounts.post = (app, name, …) => app.get(`/${name}/:pid`,
-        # …)` — is not forwarding a caller's path, it is registering a
-        # fixed route that happens to interpolate a constant. The generic
-        # parser already emits those correctly (`/{name}/:pid`), and
-        # indexing them here would both duplicate and suppress them.
-        next unless forwards.any? { |forward| forward.path_before.empty? && forward.path_after.empty? }
-
         router_arg = param_index[forwards.first.receiver]?
         next unless router_arg && router_arg >= 0
 
-        specs[func.name] = HelperSpec.new(func.name, file, src.slice(func.params_open + 1, func.params_close).includes?("..."), router_arg, forwards)
+        specs[func.name] = HelperSpec.new(func.name, file, func.local_name, func.params_open, src.slice(func.params_open + 1, func.params_close).includes?("..."), router_arg, forwards)
         @logger.debug "Indexed Express route helper #{file}:#{func.name} (#{forwards.size} forward(s))"
       end
 
@@ -582,7 +710,8 @@ module Analyzer::Javascript
         return
       end
 
-      path_arg, before, after = parse_path_expression(match.path_expr, param_index)
+      path_parameter, before, after = parse_path_expression(match.path_expr) || return
+      path_arg = param_index[path_parameter]?
       return unless path_arg && path_arg >= 0
 
       arguments = if close = Noir::JSLiteralScanner.find_matching_paren(src, match.open_paren)
@@ -598,7 +727,7 @@ module Analyzer::Javascript
         inner = Noir::JSHandlerResolver.unwrap(text, src.content, file) || break
         text = inner[0]
       end
-      Forward.new(match.receiver, verb, verb_arg, path_arg, before, after, lines.line_at(match.pos), middleware, param_index[text]?)
+      Forward.new(match.receiver, verb, verb_arg, path_arg, path_parameter, before, after, lines.line_at(match.pos), middleware, param_index[text]?)
     end
 
     # Fixed signatures let us follow each argument of the actual registration
@@ -625,21 +754,10 @@ module Analyzer::Javascript
     # wrapped in literal text. A template carrying anything other than a
     # single `${param}` interpolation is refused: the rest of it would have
     # to be guessed at.
-    private def parse_path_expression(expr : String, param_index : Hash(String, Int32)) : Tuple(Int32?, String, String)
-      none = {nil.as(Int32?), "", ""}
-
-      if expr.starts_with?('`')
-        inner = expr[1...-1]
-        m = inner.match(/\A([^$`]*)\$\{\s*([A-Za-z_$][\w$]*)\s*\}([^$`]*)\z/)
-        return none unless m
-        idx = param_index[m[2]]?
-        return none unless idx
-        return {idx, m[1], m[3]}
-      end
-
-      idx = param_index[expr]?
-      return none unless idx
-      {idx, "", ""}
+    private def parse_path_expression(expr : String) : Tuple(String, String, String)?
+      return {expr, "", ""} unless expr.starts_with?('`')
+      m = expr[1...-1].match(/\A([^$`]*)\$\{\s*([A-Za-z_$][\w$]*)\s*\}([^$`]*)\z/)
+      {m[2], m[1], m[3]} if m
     end
 
     private def function_defs(src : Noir::CharOffsets) : Array(FunctionDef)
@@ -662,7 +780,9 @@ module Analyzer::Javascript
           body_end = Noir::JSLiteralScanner.find_matching_brace(src, body_start)
           next unless body_end
 
-          defs << FunctionDef.new(m[1], params_open, params_close, body_start, body_end)
+          member = m[0].match(/([\w$]+(?:\s*\.\s*[\w$]+)+)\s*=/)
+          local_name = member.try(&.[1].gsub(/\s+/, "")) || m[1]
+          defs << FunctionDef.new(m[1], local_name, params_open, params_close, body_start, body_end)
         end
       end
 
@@ -721,7 +841,7 @@ module Analyzer::Javascript
       callables = [] of Tuple(String, HelperSpec)
 
       if own = @helpers[Noir::PathScope.expand(file)]?
-        own.each { |name, spec| callables << {name, spec} }
+        own.each_value { |spec| callables << {spec.local_name, spec} }
       end
 
       root = Noir::PathScope.longest_base(file, @base_paths) || @base_path
@@ -747,7 +867,9 @@ module Analyzer::Javascript
           module_specs[m[1]] = specs
           #   const routeHelpers = require('../helpers')
           #   routeHelpers.setupApiRoute(…)
-          specs.each { |name, spec| callables << {"#{m[1]}.#{name}", spec} }
+          specs.each do |name, spec|
+            callables << {spec.local_name == "module.exports" ? m[1] : "#{m[1]}.#{name}", spec}
+          end
         end
       end
 
@@ -829,13 +951,24 @@ module Analyzer::Javascript
       idx if idx > forward.path_arg && idx < args.size
     end
 
-    private def call_site_path(forward : Forward, args : Array(Tuple(String, Int32))) : String?
-      raw = args[forward.path_arg]?.try(&.[0])
-      return unless raw
-      path = string_literal(raw)
-      return unless path
-      return unless path.starts_with?("/")
-      path
+    # The extractor's constants are file-wide. A parameter or reassignment
+    # of the same name prevents using that value as a definite call argument.
+    private def path_constants(file : String, content : String) : Hash(String, String)
+      constants = Noir::JSRouteExtractor.file_string_constants(file, content)
+      return constants if constants.empty?
+      names = constants.keys.map(&.split('.').first).uniq!
+      unique = Noir::JSMountPrefix.unique_bindings(content, file, names)
+      constants.select { |key, _| unique.includes?(key.split('.').first) }
+    end
+
+    private def call_site_path(forward : Forward, raw : String, constants : Hash(String, String)?) : Tuple(String, Bool)
+      value = string_literal(raw) || constants.try(&.[raw]?)
+      value = Noir::JSRouteExtractor.resolve_template(value, constants) if value && constants && raw.starts_with?('`')
+      unread = value.nil? || value.includes?("${")
+      value ||= "${" + forward.path_parameter + "}"
+      path = forward.path_before + value + forward.path_after
+      path = "/" + path if unread && forward.path_before.empty? && !path.starts_with?('/')
+      {path, unread}
     end
 
     # A quoted or backticked literal, with the quotes removed. Backticks
@@ -848,8 +981,7 @@ module Analyzer::Javascript
       return unless first == '\'' || first == '"' || first == '`'
       return unless text[-1] == first
       body = text[1...-1]
-      return if body.empty?
-      return if (first == '\'' || first == '"') && body.includes?(first)
+      return if body.includes?(first)
       body
     end
 
