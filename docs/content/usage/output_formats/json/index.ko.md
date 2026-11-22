@@ -173,7 +173,7 @@ YAML, JSONL, TOML 출력에도 같은 필드가 들어가고, 일반 리포트�
   ],
   "passive_results": [],
   "errors": [],
-  "scan_technologies": ["go_beego"]
+  "scan_technologies": ["crystal_kemal"]
 }
 ```
 

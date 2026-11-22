@@ -173,7 +173,7 @@ A full report looks like this. It was produced with taggers enabled (`-T`), whic
   ],
   "passive_results": [],
   "errors": [],
-  "scan_technologies": ["go_beego"]
+  "scan_technologies": ["crystal_kemal"]
 }
 ```
 
