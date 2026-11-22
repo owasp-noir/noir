@@ -70,15 +70,14 @@ module Analyzer::Go
         # Inline-closure handlers walk in place; bare
         # identifier handlers fall through to sibling-file
         # function bodies via the per-directory map.
-        route_rows = Set(Int32).new
-        routes_by_line.each_key { |row| route_rows << row }
+        route_offsets = ts_routes.map(&.offset).to_set
         external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
         external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(
           callees_needed?,
           content,
           path,
-          route_rows,
+          route_offsets,
           external_fns,
           external_methods,
           imported_functions: import_path_function_bodies,
@@ -98,13 +97,13 @@ module Analyzer::Go
         # The lines credited to `last_endpoints` since their route, read as
         # one body when the next route starts (or the file ends).
         segment = [] of String
-        lines.each_with_index do |line, index|
+        each_route_line(lines, routes_by_line) do |line, index, ts_hits|
           # Expanded router-builder bodies are emitted below with their
           # call-site prefix.
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
-          if ts_hits = routes_by_line[index]?
+          if ts_hits
             add_echo_body_params(segment, path, last_endpoints, resolver)
             segment = [] of String
             last_endpoints = [] of Endpoint
@@ -115,7 +114,7 @@ module Analyzer::Go
               # verb per endpoint instead of "ANY".
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                 new_endpoint = Endpoint.new(route.path, verb, details)
-                if entries = callees_by_route[route.line]?
+                if entries = callees_by_route[route.offset]?
                   entries.each do |entry|
                     name, callee_path, callee_line = entry
                     new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
@@ -135,7 +134,7 @@ module Analyzer::Go
         add_echo_body_params(segment, path, last_endpoints, resolver)
 
         builder_bodies = Hash(UInt64, Tuple(Endpoint, Array(String))).new
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add", string_seed: string_seed, literal_join: true) do |line, ep|
+        expand_router_builders(content, path, expand_builders, callees_by_route, named, "Add", string_seed: string_seed, literal_join: true) do |line, ep|
           (builder_bodies[ep.params.object_id] ||= {ep, [] of String})[1] << line
         end
         builder_bodies.each_value { |(ep, body_lines)| add_echo_body_params(body_lines, path, [ep], resolver) }

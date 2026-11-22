@@ -79,7 +79,7 @@ module Noir
 
       if mapping && !mapping.empty?
         parse_beego_mapping(mapping).map do |verb, fn|
-          Route.new("web", verb, route_path, route_path, fn, line, prefix_unresolved: unread)
+          Route.new("web", verb, route_path, route_path, fn, line, offset: LibTreeSitter.ts_node_end_byte(call).to_i, prefix_unresolved: unread)
         end
       else
         methods = ctrl_type.try { |t| controller_methods[t]? }
@@ -89,14 +89,14 @@ module Noir
           # name would otherwise raise on the direct lookup.
           methods.compact_map do |m|
             if verb = BEEGO_CONTROLLER_HTTP_METHODS[m]?
-              Route.new("web", verb, route_path, route_path, m, line, prefix_unresolved: unread)
+              Route.new("web", verb, route_path, route_path, m, line, offset: LibTreeSitter.ts_node_end_byte(call).to_i, prefix_unresolved: unread)
             end
           end
         else
           # Unresolved controller type: surface the endpoint under GET so
           # it isn't dropped entirely. Beego controllers almost always
           # implement `Get()`, so GET is the safest single-method guess.
-          [Route.new("web", "GET", route_path, route_path, ctrl_type || "", line, prefix_unresolved: unread)]
+          [Route.new("web", "GET", route_path, route_path, ctrl_type || "", line, offset: LibTreeSitter.ts_node_end_byte(call).to_i, prefix_unresolved: unread)]
         end
       end
     end

@@ -127,6 +127,119 @@ module Noir::GoBinding
     end
   end
 
+  # Method values reaching a local call after a conditional reassignment.
+  # A straight-line assignment kills earlier candidates. A nested short
+  # declaration shadows the outer variable, including in a switch case.
+  def assigned_methods(name, call, source) : Array(LibTreeSitter::TSNode)
+    result = [] of LibTreeSitter::TSNode
+    local = local(name, call, source) || return result
+    block = TS.parent(local.declaration) || return result
+    return result unless {"statement_list", "block"}.includes?(TS.node_type(block))
+    TS.each_named_arg(block) do |statement|
+      break if LibTreeSitter.ts_node_start_byte(statement) >= LibTreeSitter.ts_node_start_byte(call)
+      collect_assignments(statement, name, source, result, false, LibTreeSitter.ts_node_start_byte(call))
+    end
+    result
+  end
+
+  private def collect_assignments(node, name, source, result, conditional, before) : Nil
+    return if LibTreeSitter.ts_node_start_byte(node) >= before
+    case TS.node_type(node)
+    when "assignment_statement", "short_var_declaration"
+      if node_field(node, "left", source) == name
+        result.clear unless conditional
+        value = TS.field(node, "right").try { |list| TS.first_named_arg(list) }
+        result << value if value && TS.node_type(value) == "selector_expression"
+      end
+    when "func_literal", "function_declaration"
+      return
+    else
+      TS.each_named_arg(node) do |child|
+        break if TS.node_type(child) == "short_var_declaration" && node_field(child, "left", source) == name
+        collect_assignments(child, name, source, result, true, before)
+      end
+    end
+  end
+
+  # Concrete arguments on an unconditional router delegation, e.g. a method
+  # returning pkg.Router(s). Keep the declaring file across package boundaries.
+  def returned_types(body, source, file, bound) : Hash(Int32, Destination)
+    result = Hash(Int32, Destination).new
+    statement = TS.first_named_arg(body)
+    if statement && TS.node_type(statement) == "statement_list"
+      return result unless TS.named_arg_count(statement) == 1
+      statement = TS.first_named_arg(statement)
+    end
+    return result unless statement && TS.node_type(statement) == "return_statement"
+    list = TS.first_named_arg(statement) || return result
+    call = TS.first_named_arg(list) || return result
+    call_arguments(call, source, file, bound)
+  end
+
+  private def call_arguments(call, source, file, bound)
+    result = Hash(Int32, Destination).new
+    args = TS.field(call, "arguments") || return result
+    index = 0
+    TS.each_named_arg(args) do |arg|
+      if dest = destination(TS.node_text(arg, source), call, source, file, bound)
+        result[index] = dest
+      end
+      index += 1
+    end
+    result
+  end
+
+  # Arguments to a builder passed to a mount. Keep separate bindings for
+  # repeated mounts of the same builder with different implementations.
+  def builder_arguments(node, source, file, method, bound = Arguments.new)
+    sites = Hash(Int32, Hash(Int32, Destination)).new
+    TS.walk(node) do |call|
+      next unless TS.node_type(call) == "call_expression"
+      next unless fn = TS.field(call, "function")
+      next unless node_field(fn, "field", source) == method
+      args = TS.field(call, "arguments") || next
+      builder = nil
+      TS.each_named_arg(args) { |arg| builder = arg }
+      next unless builder && TS.node_type(builder) == "call_expression"
+      types = call_arguments(builder, source, file, bound)
+      sites[LibTreeSitter.ts_node_end_byte(call).to_i] = types unless types.empty?
+    end
+    sites
+  end
+
+  def parameter_types(decl, source, types) : Arguments
+    result = Arguments.new
+    return result if types.empty?
+    params = TS.field(decl, "parameters") || return result
+    index = 0
+    TS.each_named_arg(params) do |param|
+      TS.each_named_arg(param) do |name|
+        next unless TS.node_type(name) == "identifier" && name.id != TS.field(param, "type").try(&.id)
+        result[TS.node_text(name, source)] = types[index] if types.has_key?(index)
+        index += 1
+      end
+    end
+    result
+  end
+
+  # Transfer only fields actually initialized with the delegated argument in
+  # the receiver's reaching composite literal. Other instances stay separate.
+  def receiver_fields(receiver, at, source, bound, target) : Arguments
+    fields = Arguments.new
+    return fields if bound.empty? || !receiver.matches?(IDENT)
+    value = local(receiver, at, source).try(&.value) || return fields
+    value = TS.field(value, "operand") if TS.node_type(value) == "unary_expression"
+    return fields unless value && TS.node_type(value) == "composite_literal"
+    body = TS.field(value, "body") || return fields
+    TS.each_named_arg(body) do |entry|
+      next unless TS.node_type(entry) == "keyed_element"
+      if dest = bound[node_field(entry, "value", source)]?
+        fields["#{target}.#{node_field(entry, "key", source)}"] = dest
+      end
+    end
+    fields
+  end
+
   private def literal_type(value, source) : String?
     value = TS.field(value, "operand") if value && TS.node_type(value) == "unary_expression"
     node_field(value, "type", source) if value && TS.node_type(value) == "composite_literal"
@@ -161,7 +274,7 @@ module Noir::GoBinding
             end
           end
           unless factories.empty?
-            sites[{TS.node_start_row(call), TS.node_text(arg, source)}] = factories
+            sites[{LibTreeSitter.ts_node_end_byte(call).to_i, TS.node_text(arg, source)}] = factories
           end
         end
       end

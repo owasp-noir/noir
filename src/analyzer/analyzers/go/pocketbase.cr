@@ -40,10 +40,9 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        route_rows = Set(Int32).new
-        routes_by_line.each_key { |row| route_rows << row }
+        route_offsets = ts_routes.map(&.offset).to_set
         external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
-        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_offsets, external_fns)
 
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
         # `sub.GET("/{key}", backupDownload)`: the handler's name, and the
@@ -57,19 +56,19 @@ module Analyzer::Go
         # with string and rune literals blanked (`fmt.Sprintf("{%s", x)`).
         closures = [] of {Array(Endpoint), Int32}
         depth = 0
-        lines.each_with_index do |line, index|
+        each_route_line(lines, routes_by_line) do |line, index, ts_hits|
           # Expanded router-builder bodies are emitted below with their call-site prefix.
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
           code = line.gsub(LITERAL, %(""))
           delta = code.count('{') - code.count('}')
           route_eps = [] of Endpoint
-          if ts_hits = routes_by_line[index]?
+          if ts_hits
             ts_hits.each do |route|
               details = go_route_details(route, path, content)
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                 endpoint = Endpoint.new(route.path, verb, details)
-                if entries = callees_by_route[route.line]?
+                if entries = callees_by_route[route.offset]?
                   entries.each do |entry|
                     name, callee_path, callee_line = entry
                     endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
@@ -97,7 +96,7 @@ module Analyzer::Go
           end
         end
 
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named) { |line, ep| add_request_reads(line, ep) }
+        expand_router_builders(content, path, expand_builders, callees_by_route, named) { |line, ep| add_request_reads(line, ep) }
         named.each_attribution { |line, ep| add_request_reads(line, ep) }
       end
 

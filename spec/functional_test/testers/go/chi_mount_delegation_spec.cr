@@ -15,7 +15,7 @@ expected_endpoints = [
   Endpoint.new("/api/items", "GET"),
   Endpoint.new("/api/items", "POST"),
   Endpoint.new("/v2/emoji", "GET"),
-  Endpoint.new("/v2/chat", "GET"),
+  Endpoint.new("/v2/chat", "GET", [Param.new("cursor", "", "json")]),
   Endpoint.new("/health", "GET"),
   Endpoint.new("/tenant/nested/status", "GET"),
   Endpoint.new("/tenant/nested/items", "GET"),

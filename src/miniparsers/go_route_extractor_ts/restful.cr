@@ -14,10 +14,11 @@ module Noir
       getter verb : String
       getter path : String
       getter handler : String
+      getter offset : Int32
       getter line : Int32
       getter params : Array(Tuple(String, String)) # (name, in: path/query/header/json/form)
 
-      def initialize(@verb, @path, @handler, @line, @params)
+      def initialize(@verb, @path, @handler, @line, @params, @offset)
       end
     end
 
@@ -88,6 +89,7 @@ module Noir
       params = [] of Tuple(String, String)
 
       cur = builder
+      offset = LibTreeSitter.ts_node_end_byte(builder).to_i
       while Noir::TreeSitter.node_type(cur) == "call_expression"
         call_fn = Noir::TreeSitter.field(cur, "function")
         break if call_fn.nil? || Noir::TreeSitter.node_type(call_fn) != "selector_expression"
@@ -102,6 +104,7 @@ module Noir
           ws_var = Noir::TreeSitter.node_text(operand, source) if operand && Noir::TreeSitter.node_type(operand) == "identifier"
           break
         elsif method_name == "To"
+          offset = LibTreeSitter.ts_node_end_byte(cur).to_i
           handler = restful_first_arg_text(cur, source) if handler.empty?
         elsif method_name == "Param"
           if p = decode_restful_param(cur, source)
@@ -134,7 +137,7 @@ module Noir
                group_join(prefix, sub_path)
              end
       full = "/#{full}" unless full.starts_with?("/")
-      RestfulRoute.new(v, full, handler, line, params)
+      RestfulRoute.new(v, full, handler, line, params, offset)
     end
 
     # `ws.Param(ws.PathParameter("user-id", "desc")…)` — the arg is itself a

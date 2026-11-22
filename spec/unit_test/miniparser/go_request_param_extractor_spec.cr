@@ -16,22 +16,49 @@ describe Noir::GoRequestParamExtractor do
         }
         GO
 
-      # Row index for http.HandleFunc
-      rows = Set{4}
-      methods = {4 => "GET"}
-
+      routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
       params_map = Noir::GoRequestParamExtractor.params_for_routes(
         source,
-        rows,
-        methods,
+        routes,
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new,
         Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new
       )
 
-      params_map.has_key?(4).should be_true
-      params = params_map[4]
+      params_map.has_key?({routes.first.offset, "GET", routes.first.path}).should be_true
+      params = params_map[{routes.first.offset, "GET", routes.first.path}]
       params.any? { |p| p.name == "search" && p.param_type == "query" }.should be_true
       params.any? { |p| p.name == "X-API-Key" && p.param_type == "header" }.should be_true
+    end
+
+    it "keeps recursive helper reads when reusing named handler results" do
+      source = <<-GO
+        package app
+        func routes(r chi.Router) {
+          r.Get("/first", first)
+          r.Get("/second", second)
+        }
+        func first(w http.ResponseWriter, r *http.Request) { loop(r) }
+        func second(w http.ResponseWriter, r *http.Request) { other(r) }
+        func loop(r *http.Request) { r.Header.Get("X-Loop"); shared(r) }
+        func other(r *http.Request) { shared(r) }
+        func shared(r *http.Request) { loop(r) }
+        GO
+      files = {"/app/routes.go" => source}
+      bodies = Noir::GoCalleeExtractor::LazyPackageBodies.new(files)
+      resolver = Noir::GoRequestParamExtractor::Resolver.new(bodies, files, {} of String => String)
+      functions = bodies.functions_for("/app")
+      routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
+      completed = Noir::GoRequestParamExtractor::BodyParams.new
+      Noir::GoRequestParamExtractor.params_for_routes(source, routes, functions, bodies.methods_for("/app"),
+        resolver: resolver, path: "/app/routes.go", body_params: completed)
+
+      # In first -> loop -> shared, the recursion guard stops shared -> loop.
+      # In second -> other -> shared, loop is reachable and reads X-Loop.
+      completed.has_key?({functions["first"], "GET", nil}).should be_true
+      {"first", "second"}.each do |name|
+        params = Noir::GoRequestParamExtractor.params_for_body(functions[name], "GET", resolver, body_params: completed)
+        params.map { |param| {param.name, param.param_type} }.should eq([{"X-Loop", "header"}])
+      end
     end
   end
 

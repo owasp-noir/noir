@@ -1726,24 +1726,17 @@ describe Noir::TreeSitterGoRouteExtractor do
       GO
 
     routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(route_source)
-    route_rows = Set(Int32).new
-    route_methods = Hash(Int32, String).new
-    routes.each do |route|
-      route_rows << route.line
-      route_methods[route.line] = route.verb
-    end
     external_methods = Noir::GoCalleeExtractor.collect_method_bodies(handler_source, "handler.go")
     external_functions = Noir::GoCalleeExtractor.collect_function_bodies(handler_source, "handler.go")
 
     params = Noir::GoRequestParamExtractor.params_for_routes(
       route_source,
-      route_rows,
-      route_methods,
+      routes,
       external_functions,
       external_methods
     )
 
-    params[routes.first.line].map { |p| {p.name, p.param_type} }.sort!.should eq([
+    params[{routes.first.offset, "GET", routes.first.path}].map { |p| {p.name, p.param_type} }.sort!.should eq([
       {"X-Auth-Token", "header"},
       {"before", "query"},
       {"entryID", "path"},

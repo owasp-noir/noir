@@ -468,6 +468,11 @@ struct PathInfo
   include YAML::Serializable
   property path, line
 
+  # File-local byte offset used when resolving inputs before optimization.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  property registration_offset : Int32?
+
   # Ordered, scan-only evidence attached to this registration. An empty
   # array means the analyzer read the declaration; nil leaves it to the tagger.
   @[JSON::Field(ignore: true)]

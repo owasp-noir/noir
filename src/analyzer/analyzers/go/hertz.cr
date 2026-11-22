@@ -66,14 +66,13 @@ module Analyzer::Go
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         # Resolve 1-hop callees for every route (see Gin).
-        route_rows = Set(Int32).new
-        routes_by_line.each_key { |row| route_rows << row }
+        route_offsets = ts_routes.map(&.offset).to_set
         external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(
           callees_needed?,
           content,
           path,
-          route_rows,
+          route_offsets,
           external_fns,
           imported_functions: import_path_function_bodies
         )
@@ -83,16 +82,16 @@ module Analyzer::Go
           file_public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
         end
 
-        lines.each_with_index do |line, index|
+        each_route_line(lines, routes_by_line) do |line, index, ts_hits|
           # Expanded router-builder bodies are emitted below with their
           # call-site prefix.
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
-          if ts_hits = routes_by_line[index]?
+          if ts_hits
             ts_hits.each do |route|
               details = go_route_details(route, path, content)
-              callee_entries = callees_by_route[route.line]?
+              callee_entries = callees_by_route[route.offset]?
               if route.verb == "ANY"
                 HTTP_METHODS_EXPANDED.each do |m|
                   new_endpoint = Endpoint.new(route.path, m, details)
@@ -124,7 +123,7 @@ module Analyzer::Go
           add_hertz_param_patterns(line, last_endpoint)
         end
 
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle", file_endpoints) do |line, ep|
+        expand_router_builders(content, path, expand_builders, callees_by_route, named, "Handle", file_endpoints) do |line, ep|
           add_hertz_param_patterns(line, ep)
         end
 

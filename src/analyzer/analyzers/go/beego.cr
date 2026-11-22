@@ -97,16 +97,15 @@ module Analyzer::Go
         end
 
         # Resolve 1-hop callees for every route (see Gin).
-        route_rows = Set(Int32).new
-        routes_by_line.each_key { |row| route_rows << row }
+        route_offsets = ts_routes.map(&.offset).to_set
         external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
-        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_offsets, external_fns)
         named = go_named_handler(content, path, verb_routes, named_scope)
 
-        lines.each_with_index do |line, index|
+        each_route_line(lines, routes_by_line) do |line, index, ts_hits|
           next if named.claim?(index, line)
 
-          if ts_hits = routes_by_line[index]?
+          if ts_hits
             ts_hits.each do |route|
               details = go_route_details(route, path, content)
               controller_body = beego_router_lines.includes?(route.line) ? controller_method(import_aliases, path, content, raw_lines, route, named_scope) : nil
@@ -114,7 +113,7 @@ module Analyzer::Go
               verbs = Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb)
               optional_variants(route.path).flat_map { |variant| verbs.map { |verb| {variant, verb} } }.each do |(route_path, verb)|
                 new_endpoint = Endpoint.new(route_path, verb, details)
-                if entries = callees_by_route[route.line]?
+                if entries = callees_by_route[route.offset]?
                   entries.each do |entry|
                     name, callee_path, callee_line = entry
                     new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))

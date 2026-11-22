@@ -71,21 +71,20 @@ module Analyzer::Go
         # for httprouter's both shapes: `r.GET("/x", h)` (path
         # then handler) and `r.Handle("METHOD", "/x", h)` (two
         # leading strings then handler).
-        route_rows = Set(Int32).new
-        routes_by_line.each_key { |row| route_rows << row }
+        route_offsets = ts_routes.map(&.offset).to_set
         external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
-        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_offsets, external_fns)
         named = go_named_handler(content, path, ts_routes, named_scope)
 
-        lines.each_with_index do |line, index|
+        each_route_line(lines, routes_by_line) do |line, index, ts_hits|
           next if named.claim?(index, line)
 
-          if ts_hits = routes_by_line[index]?
+          if ts_hits
             ts_hits.each do |route|
               details = go_route_details(route, path, content)
               last_endpoint = add_endpoint(route.path, route.verb, details, named.handler_for(route), named.resolution_for(route))
               named.bind(route, last_endpoint)
-              if entries = callees_by_route[route.line]?
+              if entries = callees_by_route[route.offset]?
                 entries.each do |entry|
                   name, callee_path, callee_line = entry
                   last_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))

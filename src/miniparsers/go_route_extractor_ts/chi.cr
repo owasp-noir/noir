@@ -750,6 +750,7 @@ module Noir
         raw_path,
         handler_text,
         Noir::TreeSitter.node_start_row(call),
+        offset: LibTreeSitter.ts_node_end_byte(call).to_i,
         prefix_unresolved: unread,
       )
     end
@@ -789,7 +790,7 @@ module Noir
                                        prefix_stack : Array(String),
                                        local_groups : Hash(String, String),
                                        string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)?
-      verbs = [] of Tuple(String, String, Int32, Array(String))
+      verbs = [] of Tuple(String, String, Int32, Int32, Array(String))
       cursor = call
       loop do
         function = Noir::TreeSitter.field(cursor, "function")
@@ -808,8 +809,8 @@ module Noir
           return if verbs.empty?
           base_prefix = local_groups[router_name]? || prefix_stack.join
           resolved = base_prefix.empty? ? raw_path : "#{base_prefix}#{raw_path}"
-          return verbs.reverse.map do |verb, handler_text, row, handler_args|
-            Route.new(router_name, verb, resolved, raw_path, handler_text, row, handler_args: handler_args)
+          return verbs.reverse.map do |verb, handler_text, row, offset, handler_args|
+            Route.new(router_name, verb, resolved, raw_path, handler_text, row, offset: offset, handler_args: handler_args)
           end
         end
 
@@ -818,7 +819,7 @@ module Noir
         if args = Noir::TreeSitter.field(cursor, "arguments")
           Noir::TreeSitter.each_named_arg(args) { |arg| collect_handler_arg_texts(arg, source, handler_args) }
         end
-        verbs << {name.upcase, chi_last_arg_text(cursor, source), Noir::TreeSitter.node_start_row(field), handler_args}
+        verbs << {name.upcase, chi_last_arg_text(cursor, source), Noir::TreeSitter.node_start_row(field), LibTreeSitter.ts_node_end_byte(cursor).to_i, handler_args}
         return unless Noir::TreeSitter.node_type(operand) == "call_expression"
         cursor = operand
       end
@@ -886,7 +887,7 @@ module Noir
 
       base_prefix = local_groups[router_name]? || prefix_stack.join
       resolved = base_prefix.empty? ? path : group_join(base_prefix, path)
-      Route.new(router_name, m.upcase, resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), handler_args: handler_args, prefix_unresolved: unread)
+      Route.new(router_name, m.upcase, resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), offset: LibTreeSitter.ts_node_end_byte(call).to_i, handler_args: handler_args, prefix_unresolved: unread)
     end
 
     # Decode `r.HandleFunc("/path", h)` / `r.Handle("/path", h)` — chi
@@ -927,7 +928,7 @@ module Noir
 
       base_prefix = local_groups[router_name]? || prefix_stack.join
       resolved = base_prefix.empty? ? path : group_join(base_prefix, path)
-      Route.new(router_name, "ANY", resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), handler_args: handler_args, prefix_unresolved: unread)
+      Route.new(router_name, "ANY", resolved, path, handler_text, Noir::TreeSitter.node_start_row(call), offset: LibTreeSitter.ts_node_end_byte(call).to_i, handler_args: handler_args, prefix_unresolved: unread)
     end
 
     # `group.Bind(ctrl, ...)` as a `BIND` pseudo-route: the path is the
@@ -944,7 +945,7 @@ module Noir
       Noir::TreeSitter.each_named_arg(args) { |arg| bound << Noir::TreeSitter.node_text(arg, source) }
       return if bound.empty?
       prefix = local_groups[router_name]? || prefix_stack.join
-      Route.new(router_name, "BIND", prefix, "", bound.first, Noir::TreeSitter.node_start_row(call), handler_args: bound)
+      Route.new(router_name, "BIND", prefix, "", bound.first, Noir::TreeSitter.node_start_row(call), offset: LibTreeSitter.ts_node_end_byte(call).to_i, handler_args: bound)
     end
 
     # Extract `{prefix, body_block, closure_node}` from a Route/Group call.
@@ -1166,6 +1167,7 @@ module Noir
         raw_path,
         handler_text,
         Noir::TreeSitter.node_start_row(call),
+        offset: LibTreeSitter.ts_node_end_byte(call).to_i,
         handler_args: handler_args,
         prefix_unresolved: unread,
       )

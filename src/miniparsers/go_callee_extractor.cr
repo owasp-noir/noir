@@ -252,17 +252,16 @@ module Noir::GoCalleeExtractor
   def callees_for_routes_if(enabled : Bool,
                             source : String,
                             file_path : String,
-                            route_rows : Set(Int32),
+                            route_offsets : Set(Int32),
                             external_functions : Hash(String, FunctionBody),
                             external_methods : Hash(String, Array(FunctionBody)) = Hash(String, Array(FunctionBody)).new,
                             imported_functions : Hash(String, Hash(String, FunctionBody)) = Hash(String, Hash(String, FunctionBody)).new,
                             imported_methods : Hash(String, Hash(String, Array(FunctionBody))) = Hash(String, Hash(String, Array(FunctionBody))).new)
     return Hash(Int32, Array(Tuple(String, String, Int32))).new unless enabled
-    callees_for_routes(source, file_path, route_rows, external_functions, external_methods, imported_functions, imported_methods)
+    callees_for_routes(source, file_path, route_offsets, external_functions, external_methods, imported_functions, imported_methods)
   end
 
-  # For each call_expression at a row in `route_rows`, find the handler
-  # argument, walk its body, and return the 1-hop callees keyed by row.
+  # Resolve callees at the end byte of the handler-bearing call or struct field.
   # Each entry is a tuple `{name, callee_file_path, file_line_1_based}`.
   #
   # `external_methods` maps a (package-unqualified) method name to the
@@ -271,13 +270,13 @@ module Noir::GoCalleeExtractor
   # apps) resolves to its method body when the name is unambiguous.
   def callees_for_routes(source : String,
                          file_path : String,
-                         route_rows : Set(Int32),
+                         route_offsets : Set(Int32),
                          external_functions : Hash(String, FunctionBody),
                          external_methods : Hash(String, Array(FunctionBody)) = Hash(String, Array(FunctionBody)).new,
                          imported_functions : Hash(String, Hash(String, FunctionBody)) = Hash(String, Hash(String, FunctionBody)).new,
                          imported_methods : Hash(String, Hash(String, Array(FunctionBody))) = Hash(String, Hash(String, Array(FunctionBody))).new)
     by_route = Hash(Int32, Array(Tuple(String, String, Int32))).new
-    return by_route if route_rows.empty?
+    return by_route if route_offsets.empty?
     import_aliases = imported_functions.empty? && imported_methods.empty? ? Hash(String, String).new : extract_import_aliases(source)
     imported_receiver_vars = imported_methods.empty? ? Hash(String, String).new : extract_imported_receiver_vars(source, import_aliases)
 
@@ -296,13 +295,8 @@ module Noir::GoCalleeExtractor
                        when "keyed_element"   then struct_handler_value(node, source) || next
                        else                        next
                        end
-        row = Noir::TreeSitter.node_start_row(node)
-        # A multi-line struct route (goctl's `{\n Method: ...,\n Handler: h,\n}`)
-        # is keyed to the row of its opening `{`, not the `Handler:` line.
-        if handler_args && !route_rows.includes?(row)
-          row = Noir::TreeSitter.parent(node).try { |literal| Noir::TreeSitter.node_start_row(literal) } || row
-        end
-        next unless route_rows.includes?(row)
+        offset = LibTreeSitter.ts_node_end_byte(node).to_i
+        next unless route_offsets.includes?(offset)
         handler_args ||= find_handler_args(node, source)
 
         callees = [] of Tuple(String, String, Int32)
@@ -322,7 +316,7 @@ module Noir::GoCalleeExtractor
           )
         end
 
-        by_route[row] = callees unless callees.empty?
+        by_route[offset] = callees unless callees.empty?
       end
     end
 
@@ -551,7 +545,7 @@ module Noir::GoCalleeExtractor
     [parts[1]]
   end
 
-  private def find_handler_args(call_node : LibTreeSitter::TSNode, source : String) : Array(LibTreeSitter::TSNode)
+  def find_handler_args(call_node : LibTreeSitter::TSNode, source : String) : Array(LibTreeSitter::TSNode)
     found = [] of LibTreeSitter::TSNode
     args = Noir::TreeSitter.field(call_node, "arguments")
     return found unless args
@@ -596,7 +590,7 @@ module Noir::GoCalleeExtractor
     return false unless field
 
     case Noir::TreeSitter.node_text(field, source)
-    when "Handler", "HandlerFunc"
+    when "Handler", "HandlerFunc", "To"
       true
     else
       false

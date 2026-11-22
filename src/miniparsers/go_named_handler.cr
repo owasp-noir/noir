@@ -179,7 +179,7 @@ class Noir::GoNamedHandler
     wrapped = Set(String).new
     routes.each do |r|
       if (name = primary_arg(r)) && name.matches?(/\A[A-Za-z_]\w*\z/) && (expr = local_binding_expr(name, r.line))
-        @bound[{r.line, name}] = expr
+        @bound[{r.offset, name}] = expr
       end
       handler_args(r).each do |h|
         if read = LIBRARY_READS.find { |re, _| h.strip.matches?(re) }
@@ -326,13 +326,13 @@ class Noir::GoNamedHandler
     # (`http.StripPrefix("/v1", api.NewHandler())`), is a call to a function
     # that builds a router and returns it.
     routes.each do |r|
-      text = primary_arg(r).try { |arg| @bound[{r.line, arg}]? || arg } || next
+      text = primary_arg(r).try { |arg| @bound[{r.offset, arg}]? || arg } || next
       text = text.gsub(STRING_LITERAL, %(""))
       4.times do
         call = factory_call(text) || break
         qualifier, _, name = call.rpartition('.')
         if (body = resolve.call(qualifier, name)) && builds_router?(body)
-          @mounts << r.line
+          @mounts << r.offset
           break
         end
         open = text.index('(') || break
@@ -728,13 +728,13 @@ class Noir::GoNamedHandler
   # reading its request params; nil for an inline closure.
   def handler_body(route : Noir::TreeSitterGoRouteExtractor::Route) : Noir::GoCalleeExtractor::FunctionBody?
     name = primary_arg(route) || return
-    @handler_bodies[@bound[{route.line, name}]? || name]?
+    @handler_bodies[@bound[{route.offset, name}]? || name]?
   end
 
   def handler_for(route : Noir::TreeSitterGoRouteExtractor::Route) : Handler?
     name = primary_arg(route) || return
-    route_key = {route.line, name}
-    if bound = @bound[{route.line, name}]?
+    route_key = {route.offset, name}
+    if bound = @bound[{route.offset, name}]?
       name = bound
     end
     if name.matches?(CLOSURE_HANDLER)
@@ -764,7 +764,7 @@ class Noir::GoNamedHandler
   # after deciding whether the extra rows help readers (#3567).
   def resolution_for(route : Noir::TreeSitterGoRouteExtractor::Route) : Hash(String, String)?
     marks = route.resolution
-    if @heuristic_routes.includes?({route.line, primary_arg(route) || ""})
+    if @heuristic_routes.includes?({route.offset, primary_arg(route) || ""})
       (marks ||= Hash(String, String).new)["handler"] = Endpoint::RESOLUTION_HEURISTIC
     end
     marks
@@ -823,7 +823,7 @@ class Noir::GoNamedHandler
   # (`mux.Handle("/v1/", api.NewHandler(store))`): that router's own routes
   # are reported, so the mount is not a route.
   def mount?(route : Noir::TreeSitterGoRouteExtractor::Route) : Bool
-    @mounts.includes?(route.line)
+    @mounts.includes?(route.offset)
   end
 
   @direct_refs = Hash(String, Array(Key)).new
@@ -841,7 +841,7 @@ class Noir::GoNamedHandler
 
   # The route's handler args behind the middleware it runs after.
   private def handler_args(route : Noir::TreeSitterGoRouteExtractor::Route) : Array(String)
-    args = route.handler_args.map { |arg| @bound[{route.line, arg.strip}]? || arg }
+    args = route.handler_args.map { |arg| @bound[{route.offset, arg.strip}]? || arg }
     mw = @middleware[{route.line, route.router_name}]?
     mw ? mw + args : args
   end

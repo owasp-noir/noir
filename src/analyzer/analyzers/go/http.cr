@@ -209,25 +209,20 @@ module Analyzer::Go
         end
 
         # Resolve 1-hop callees for every route (see Gin/Mux).
-        route_rows = Set(Int32).new
-        route_methods_by_row = Hash(Int32, String).new
-        routes_by_line.each do |row, routes|
-          route_rows << row
-          route_methods_by_row[row] = routes.first.verb
-        end
-        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+        route_offsets = ts_routes.map(&.offset).to_set
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_offsets, external_fns, external_methods)
         request_fns = Noir::GoRequestParamExtractor.function_bodies_for_directory(request_bodies, dir)
         request_methods = Noir::GoRequestParamExtractor.method_bodies_for_directory(request_bodies, dir)
-        params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows, route_methods_by_row, request_fns, request_methods,
+        params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, ts_routes, request_fns, request_methods,
           resolver: resolver, path: path)
         # A same-file named handler's accessors already arrive through
         # `params_by_route`; keep its body out of the last-route heuristic.
         named = go_named_handler(content, path, ts_routes, named_scope)
 
-        lines.each_with_index do |line, index|
+        each_route_line(lines, routes_by_line) do |line, index, ts_hits|
           next if named.claim?(index, line)
 
-          if ts_hits = routes_by_line[index]?
+          if ts_hits
             ts_hits.each do |route|
               details = go_route_details(route, path, content)
               # `http.Handle("/", r)` hands the tree to a router whose own
@@ -250,13 +245,13 @@ module Analyzer::Go
                 route_path = prefix.empty? ? route.path : "#{prefix}#{route.path}"
                 new_endpoint = Endpoint.new(route_path, verb, details)
                 new_endpoint.add_tag(Tag.new("go-http-path-type", "subtree", "go_http_analyzer")) if subtree
-                if entries = callees_by_route[route.line]?
+                if entries = callees_by_route[route.offset]?
                   entries.each do |entry|
                     name, callee_path, callee_line = entry
                     new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                   end
                 end
-                if params = params_by_route[route.line]?
+                if params = params_by_route[{route.offset, verb, route.path}]?
                   params.each { |param| add_route_param(param, new_endpoint) }
                 end
                 new_endpoint.handler = named.handler_for(route)
