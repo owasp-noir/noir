@@ -41,12 +41,14 @@ jobs:
     # pipeline itself has to re-prove the whole pipeline.
     name: Detect changed paths
     runs-on: ubuntu-latest
+    # dorny/paths-filter reads a pull request's file list through the API.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      crystal: ${{ steps.gate.outputs.crystal }}
       spec: ${{ steps.gate.outputs.spec }}
       lint: ${{ steps.gate.outputs.lint }}
-      docker: ${{ steps.gate.outputs.docker }}
-      action: ${{ steps.gate.outputs.action }}
+      image: ${{ steps.gate.outputs.image }}
       generated_docs: ${{ steps.gate.outputs.generated_docs }}
       nix: ${{ steps.gate.outputs.nix }}
       tag_rules: ${{ steps.gate.outputs.tag_rules }}
@@ -63,6 +65,8 @@ jobs:
           # option is per-step, not per-filter.
           list-files: json
           filters: |
+            # `crystal` and `docker` are not gates of their own any more; they
+            # stay as the shared path lists the gates below are built from.
             crystal: &crystal
               - .github/workflows/ci.yml
               - shard.yml
@@ -81,10 +85,12 @@ jobs:
               - shard.lock
               - src/**
               - github-action/entrypoint.sh
-            action:
+            image:
               - *docker
               - action.yml
-              - github-action/**
+              # The scripts only: the README next to them is not in the image
+              # and neither test reads it.
+              - github-action/*.sh
             generated_docs:
               # Mirrors what scripts/generate_supported_docs.cr writes — see the
               # TARGETS table and `docs_dir` in that script. Kept slightly wide
@@ -131,8 +137,8 @@ jobs:
         # Those files are data: `scripts/check_tag_rules.cr` (the tag-rules job)
         # proves each rule against its own examples in seconds, and the spec
         # suite still runs once as the full check. What a rule file cannot
-        # affect is skipped: a second Crystal version, the plain build, lint,
-        # both Docker images and the action e2e. windows.yml carries
+        # affect is skipped: a second Crystal version, lint and both Docker
+        # images with their action e2e. windows.yml carries
         # the matching `!src/tagger/rules/**`. The first contribution most
         # people make is a word added to one of these files, and without this a
         # room of them queues eleven jobs each for a one-line YAML edit.
@@ -147,7 +153,7 @@ jobs:
           fi
           echo "rules_only=$rules_only"
 
-          for gate in crystal spec lint docker action generated_docs nix tag_rules; do
+          for gate in spec lint image generated_docs nix tag_rules; do
             if [ "$FORCE_ALL" = "true" ]; then
               value=true
             else
@@ -155,7 +161,7 @@ jobs:
             fi
             if [ "$rules_only" = "true" ]; then
               case "$gate" in
-                crystal | lint | docker | action) value=false ;;
+                lint | image) value=false ;;
               esac
             fi
             echo "$gate=$value" >> "$GITHUB_OUTPUT"
@@ -190,67 +196,19 @@ jobs:
       - name: Check every rule against its examples
         run: crystal run scripts/check_tag_rules.cr
 
-  build-crystal:
-    needs: changes
-    if: needs.changes.outputs.crystal == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        crystal-version: [1.21.0, 1.22.0]
-    steps:
-      - uses: actions/checkout@v7
-      - name: Refresh apt package indexes
-        run: sudo apt-get update
-      - uses: crystal-lang/install-crystal@v1
-        with:
-          crystal: ${{ matrix.crystal-version }}
-      - name: Cache shards
-        uses: actions/cache@v6
-        with:
-          path: |
-            lib
-            .shards.info
-          key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
-      - name: Cache tree-sitter objects
-        id: ts-cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            src/ext/tree_sitter/runtime/lib.o
-            src/ext/tree_sitter/grammars/*/*.o
-          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/*/*.c', 'src/ext/tree_sitter/grammars/*/tree_sitter/*.h') }}
-      - name: Refresh restored object mtimes
-        if: steps.ts-cache.outputs.cache-hit == 'true'
-        # `build.sh` decides staleness by mtime (`[ "$SRC" -nt "$OBJ" ]`), and
-        # `actions/checkout` stamps every source with the checkout time while
-        # the cache restores objects with their original, older mtime. Without
-        # this the objects always look stale and the cache buys nothing.
-        # Touching them is correct by construction: the cache key hashes every
-        # tree-sitter source plus build.sh, so a hit means the sources are
-        # byte-identical to when these objects were compiled.
-        run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
-      - name: Cache Crystal compiler cache
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/crystal
-          # Crystal fingerprints its own cache entries by content, so a
-          # partially-stale restore is safe — it only ever means some entries
-          # get recompiled. Hence the loose restore-keys ladder.
-          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-build-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
-          restore-keys: |
-            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-build-
-            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
-      - name: Install dependencies
-        run: shards install
-      - name: Build
-        run: shards build
   build-docker:
     # Pull requests and manual runs, not pushes. Every source change reaches
     # main through a pull request that built both images, and publish-ghcr.yml
     # builds the release image from main every night, so an image build per
     # push bought nothing.
+    #
+    # Each leg also runs the image: the composite action `docker pull`s a
+    # published image, so entrypoint.sh would otherwise ship untested. This
+    # used to be a job of its own that built the amd64 image a second time
+    # from the same Dockerfile; here it drives the image that was just built,
+    # and the arm64 image gets run for the first time too.
     needs: changes
-    if: github.event_name != 'push' && needs.changes.outputs.docker == 'true'
+    if: github.event_name != 'push' && needs.changes.outputs.image == 'true'
     # linux/arm64 used to cross-build under QEMU on an x86 runner, which took
     # 58 minutes on a cold cache and dominated the whole pipeline. Building on
     # a native arm runner — the arrangement publish-ghcr.yml already uses — is
@@ -268,6 +226,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+      - name: Unit-test image tag resolver
+        run: bash github-action/test-resolve-image-tag.sh
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@v4
       - name: Extract Docker metadata
@@ -282,7 +242,12 @@ jobs:
           context: .
           file: packaging/docker/Dockerfile
           push: false
-          tags: ${{ steps.meta.outputs.tags }}
+          # Into the local daemon, for the entrypoint run below. One platform
+          # per leg, built on its own architecture, so `load` works for both.
+          load: true
+          tags: |
+            ${{ steps.meta.outputs.tags }}
+            noir-action:ci
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ matrix.arch }}
           # A plain build, not `--release`: the release compile was ~13 of
@@ -302,39 +267,9 @@ jobs:
             type=gha,scope=ci-${{ matrix.slug }}
             type=gha,scope=ghcr-${{ matrix.slug }}
           cache-to: type=gha,mode=max,scope=ci-${{ matrix.slug }}
-  test-action:
-    # End-to-end coverage for the GitHub Action runtime. The composite
-    # action `docker pull`s a pre-built published image and build-docker
-    # above never runs the container, so entrypoint.sh would otherwise ship
-    # untested. Build the image from the current tree and drive the
-    # entrypoint exactly as action.yml does, asserting the output contract.
-    name: GitHub Action entrypoint (e2e)
-    needs: changes
-    if: needs.changes.outputs.action == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-      - name: Unit-test image tag resolver
-        run: bash github-action/test-resolve-image-tag.sh
-      - name: Setup Docker buildx
-        uses: docker/setup-buildx-action@v4
-      - name: Build action image from current tree
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: packaging/docker/Dockerfile
-          load: true
-          platforms: linux/amd64
-          tags: noir-action:ci
-          # Same plain build as build-docker: the e2e drives entrypoint.sh,
-          # which does not care how hard the compiler optimized noir.
-          build-args: NOIR_BUILD_FLAGS=
-          cache-from: |
-            type=gha,scope=action-ci
-            type=gha,scope=ghcr-linux-amd64
-          cache-to: type=gha,mode=max,scope=action-ci
       - name: Run entrypoint end-to-end
+        # Drive the entrypoint exactly as action.yml does and assert the
+        # output contract.
         run: bash github-action/test-entrypoint.sh noir-action:ci
   docs-generated:
     # The supported-technology tables and the headline framework/language
@@ -455,11 +390,18 @@ jobs:
           path: |
             src/ext/tree_sitter/runtime/lib.o
             src/ext/tree_sitter/grammars/*/*.o
-          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/*/*.c', 'src/ext/tree_sitter/grammars/*/tree_sitter/*.h') }}
+          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/**/*.c', 'src/ext/tree_sitter/grammars/**/*.h') }}
       - name: Refresh restored object mtimes
         if: steps.ts-cache.outputs.cache-hit == 'true'
-        # See the identical step in build-crystal for why this is needed and
-        # why it is safe.
+        # `build.sh` decides staleness by mtime (`[ "$SRC" -nt "$OBJ" ]`), and
+        # `actions/checkout` stamps every source with the checkout time while
+        # the cache restores objects with their original, older mtime. Without
+        # this the objects always look stale and the cache buys nothing.
+        # Touching them is correct by construction: the cache key hashes
+        # build.sh and every C source and header under runtime/ and grammars/
+        # (grammars/ts_common/scanner.h included, which an earlier key
+        # missed), so a hit means the inputs are byte-identical to when these
+        # objects were compiled.
         run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
       - name: Cache Crystal compiler cache
         uses: actions/cache@v6
@@ -539,6 +481,11 @@ jobs:
       # reason: bin/noir has crossed the `.dynsym` size where the loader
       # misreads `.gnu.version` and every exec dies with
       # `undefined symbol: xmlFree, version src/analyzer/analyzer.cr:32`.
+      #
+      # This is also the workflow's only build of the application on the
+      # runner itself (the Docker legs build it inside Alpine). A separate
+      # build-crystal job used to compile the same program once more per
+      # Crystal version and never run it.
       - name: Build noir for the CLI specs
         run: shards build --no-debug --link-flags="-Wl,--no-export-dynamic"
       # Spec files load in directory order, which differs between macOS and
