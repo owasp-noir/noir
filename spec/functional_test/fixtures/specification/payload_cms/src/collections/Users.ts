@@ -6,6 +6,7 @@ export const Users: CollectionConfig = {
   fields: [
     {
       name: 'name',
+      localized: true,
       type: 'text',
     },
   ],

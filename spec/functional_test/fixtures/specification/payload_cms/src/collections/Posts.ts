@@ -8,6 +8,7 @@ export const Posts: CollectionConfig = {
   fields: [
     {
       name: 'title',
+      localized: true,
       type: 'text',
       required: true,
     },

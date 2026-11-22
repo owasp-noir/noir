@@ -5,8 +5,7 @@ require "./schema_api_common"
 module Analyzer::Specification
   # Directus serves every user collection in the snapshot at
   # `/items/<collection>`, with the item-level verbs on
-  # `/items/<collection>/<id>` and singletons on
-  # `/items/<collection>/singleton`.
+  # `/items/<collection>/<id>` and singletons directly on the collection URL.
   class Directus < SpecificationEngine
     analyzer_for "directus"
 
@@ -102,32 +101,35 @@ module Analyzer::Specification
                                 singleton : Bool, details : Details)
       body_params = field_body_params(fields)
 
+      collection_url = "/items/#{name}"
       if singleton
         # A singleton has one implicit row, so there is no collection
         # listing and no id segment.
-        url = "/items/#{name}/singleton"
-        emit(@result, url, "GET", global_query_params, details, "directus", "singleton-read:#{name}", TAG_SOURCE)
-        emit(@result, url, "PATCH", body_params.dup, details, "directus", "singleton-update:#{name}", TAG_SOURCE)
+        emit(@result, collection_url, "GET", collection_query_params, details, "directus", "singleton-read:#{name}", TAG_SOURCE)
+        emit(@result, collection_url, "PATCH", body_params.dup, details, "directus", "singleton-update:#{name}", TAG_SOURCE)
         return
       end
 
-      collection_url = "/items/#{name}"
       item_url = "#{collection_url}/{id}"
-      list_params = global_query_params + filter_params(fields)
+      list_params = collection_query_params + filter_params(fields)
 
       emit(@result, collection_url, "GET", list_params, details, "directus", "collection-list:#{name}", TAG_SOURCE)
       emit(@result, collection_url, "POST", body_params.dup, details, "directus", "collection-create:#{name}", TAG_SOURCE)
       # Batch write verbs take the key set in the body rather than in the path.
       emit(@result, collection_url, "PATCH", batch_params(body_params), details, "directus", "collection-update-batch:#{name}", TAG_SOURCE)
       emit(@result, collection_url, "DELETE", [Param.new("keys", "array", "json")], details, "directus", "collection-delete-batch:#{name}", TAG_SOURCE)
-      emit(@result, item_url, "GET", global_query_params, details, "directus", "item-read:#{name}", TAG_SOURCE)
+      emit(@result, item_url, "GET", item_query_params, details, "directus", "item-read:#{name}", TAG_SOURCE)
       emit(@result, item_url, "PATCH", body_params.dup, details, "directus", "item-update:#{name}", TAG_SOURCE)
       emit(@result, item_url, "DELETE", [] of Param, details, "directus", "item-delete:#{name}", TAG_SOURCE)
     end
 
-    # Directus' global query parameters, valid on every read endpoint.
-    private def global_query_params : Array(Param)
-      ["fields", "filter", "search", "sort", "limit", "offset", "page", "deep", "meta", "aggregate"].map do |name|
+    # The collection controller also reads meta on the base URL.
+    private def collection_query_params : Array(Param)
+      item_query_params << Param.new("meta", "", "query")
+    end
+
+    private def item_query_params : Array(Param)
+      ["fields", "filter", "search", "sort", "limit", "offset", "page", "deep", "aggregate"].map do |name|
         Param.new(name, "", "query")
       end
     end

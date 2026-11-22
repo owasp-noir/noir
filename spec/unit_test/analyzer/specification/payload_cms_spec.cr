@@ -178,6 +178,7 @@ describe "Payload CMS Analyzer" do
       export const Posts: CollectionConfig = {
         slug: 'posts',
         versions: { drafts: true },
+        ...overrides,
         fields: [{ name: 'title', type: 'text' }],
       }
       TS
@@ -185,6 +186,24 @@ describe "Payload CMS Analyzer" do
     urls = endpoints.map(&.url)
     urls.should contain("/api/posts/versions")
     urls.should contain("/api/posts/versions/{id}")
+  end
+
+  it "keeps draft for possible draft configs and omits it for versions alone" do
+    endpoints = analyze_payload(global: <<-TS)
+      const globals = [
+        { slug: 'versioned', versions: true, fields: [] },
+        { slug: 'disabled', versions: { ...options, drafts: false }, fields: [] },
+        { slug: 'drafts', versions: { drafts: { autosave: true } }, fields: [] },
+        { slug: 'dynamic', versions: runtimeOptions, fields: [] },
+        { slug: 'spread', ...defaults, fields: [] },
+        { slug: 'nested', versions: { drafts: false, ...options }, fields: [] },
+      ]
+      TS
+
+    reads = endpoints.select { |endpoint| endpoint.method == "GET" }
+    reads.size.should eq(6)
+    reads.select { |endpoint| endpoint.params.any? { |p| p.name == "draft" && p.param_type == "query" } }
+      .map(&.url).sort!.should eq(%w[/api/globals/drafts /api/globals/dynamic /api/globals/nested /api/globals/spread])
   end
 
   it "mounts custom endpoints under the collection and normalizes colon params" do
@@ -248,6 +267,7 @@ describe "Payload CMS Analyzer" do
       import type { CollectionConfig } from 'payload'
       export const Posts: CollectionConfig = {
         slug: 'posts',
+        versions: { drafts: true },
         fields: [{ name: 'title', type: 'text' }],
       }
       TS

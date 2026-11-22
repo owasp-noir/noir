@@ -75,46 +75,49 @@ module Analyzer::Specification
       attributes = root["attributes"]?.try(&.as_h?)
       details = Details.new(PathInfo.new(source))
 
+      localized = root["pluginOptions"]?.try(&.dig?("i18n", "localized")).try(&.as_bool?) == true
+      read_params = read_query_params(localized)
+      body_params = attribute_body_params(attributes)
+
       case kind
       when "collectionType"
         name = info["pluralName"]?.try(&.as_s?) ||
                root["collectionName"]?.try(&.as_s?) ||
                api_directory_name(source)
         return unless name
-        emit_collection_type(name, attributes, details)
+        emit_collection_type(name, filter_params(attributes), body_params, read_params, details)
       when "singleType"
         name = info["singularName"]?.try(&.as_s?) || api_directory_name(source)
         return unless name
-        emit_single_type(name, attributes, details)
+        emit_single_type(name, body_params, read_params, details)
       end
     end
 
-    private def emit_collection_type(name : String, attributes : Hash(String, JSON::Any)?, details : Details)
+    private def emit_collection_type(name : String, filters : Array(Param), body_params : Array(Param),
+                                     read_params : Array(Param), details : Details)
       collection_url = "#{API_PREFIX}/#{name}"
       # Strapi 5 addresses documents by documentId. Strapi 4 used a
       # numeric id at the same position; the schema files are identical
       # between the two, so we emit the current form and note the other.
       item_url = "#{collection_url}/{documentId}"
 
-      body_params = attribute_body_params(attributes)
-      list_params = global_query_params + filter_params(attributes)
+      list_params = read_params + [Param.new("pagination[page]", "", "query"), Param.new("pagination[pageSize]", "", "query")] + filters
 
       list = emit(@result, collection_url, "GET", list_params, details, "strapi", "collection-list:#{name}", TAG_SOURCE)
       note_v4_addressing(list)
       emit(@result, collection_url, "POST", body_params.dup, details, "strapi", "collection-create:#{name}", TAG_SOURCE)
 
-      read = emit(@result, item_url, "GET", global_query_params, details, "strapi", "collection-read:#{name}", TAG_SOURCE)
+      read = emit(@result, item_url, "GET", read_params, details, "strapi", "collection-read:#{name}", TAG_SOURCE)
       note_v4_addressing(read)
       emit(@result, item_url, "PUT", body_params.dup, details, "strapi", "collection-update:#{name}", TAG_SOURCE)
       emit(@result, item_url, "DELETE", [] of Param, details, "strapi", "collection-delete:#{name}", TAG_SOURCE)
     end
 
-    private def emit_single_type(name : String, attributes : Hash(String, JSON::Any)?, details : Details)
+    private def emit_single_type(name : String, body_params : Array(Param), read_params : Array(Param), details : Details)
       url = "#{API_PREFIX}/#{name}"
-      body_params = attribute_body_params(attributes)
 
-      emit(@result, url, "GET", global_query_params, details, "strapi", "single-read:#{name}", TAG_SOURCE)
-      emit(@result, url, "PUT", body_params.dup, details, "strapi", "single-update:#{name}", TAG_SOURCE)
+      emit(@result, url, "GET", read_params, details, "strapi", "single-read:#{name}", TAG_SOURCE)
+      emit(@result, url, "PUT", body_params, details, "strapi", "single-update:#{name}", TAG_SOURCE)
       emit(@result, url, "DELETE", [] of Param, details, "strapi", "single-delete:#{name}", TAG_SOURCE)
     end
 
@@ -124,8 +127,10 @@ module Analyzer::Specification
 
     # Strapi's REST query vocabulary. A bare attribute name is not a
     # valid query key - filtering goes through `?filters[<f>][$eq]=`.
-    private def global_query_params : Array(Param)
-      ["populate", "fields", "sort", "locale", "status", "pagination[page]", "pagination[pageSize]"].map do |name|
+    private def read_query_params(localized : Bool) : Array(Param)
+      names = ["populate", "fields", "sort", "status"]
+      names << "locale" if localized
+      names.map do |name|
         Param.new(name, "", "query")
       end
     end

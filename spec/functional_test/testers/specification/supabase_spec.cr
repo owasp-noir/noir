@@ -12,6 +12,7 @@ expected_endpoints = [
     Param.new("offset", "", "query"),
   ]),
   Endpoint.new("/rest/v1/authors", "POST", [
+    Param.new("on_conflict", "", "query"),
     Param.new("id", "string", "json"),
     Param.new("name", "string", "json"),
     Param.new("email", "string", "json"),
@@ -52,6 +53,7 @@ expected_endpoints = [
     Param.new("select", "", "query"),
   ]),
   Endpoint.new("/rest/v1/posts", "POST", [
+    Param.new("on_conflict", "", "query"),
     Param.new("title", "string", "json"),
     # `rating` was renamed to `score` and `body` dropped by the second
     # migration; `slug` was added by it. The generated `search_vector`

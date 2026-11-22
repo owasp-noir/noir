@@ -103,7 +103,8 @@ module Analyzer::Specification
     private def emit_collection(base : String, slug : String, body_params : Array(Param),
                                 config : Noir::JSObjectConfigExtractor::ConfigObject, details : Details)
       item_url = "#{base}/{id}"
-      list_params = global_query_params + filter_params(config.array("fields"))
+      read_params = read_query_params(drafts: config.possibly_enabled?("versions", "drafts"))
+      list_params = read_params + list_query_params + filter_params(config.array("fields"))
 
       emit(@result, base, "GET", list_params, details, "payload", "collection-list:#{slug}", TAG_SOURCE)
       emit(@result, base, "POST", body_params.dup, details, "payload", "collection-create:#{slug}", TAG_SOURCE)
@@ -111,7 +112,7 @@ module Analyzer::Specification
       emit(@result, base, "PATCH", body_params + [Param.new("where", "", "query")], details, "payload", "collection-update-bulk:#{slug}", TAG_SOURCE)
       emit(@result, base, "DELETE", [Param.new("where", "", "query")], details, "payload", "collection-delete-bulk:#{slug}", TAG_SOURCE)
       emit(@result, "#{base}/count", "GET", [Param.new("where", "", "query")], details, "payload", "collection-count:#{slug}", TAG_SOURCE)
-      emit(@result, item_url, "GET", global_query_params, details, "payload", "collection-read:#{slug}", TAG_SOURCE)
+      emit(@result, item_url, "GET", read_params, details, "payload", "collection-read:#{slug}", TAG_SOURCE)
       emit(@result, item_url, "PATCH", body_params.dup, details, "payload", "collection-update:#{slug}", TAG_SOURCE)
       emit(@result, item_url, "DELETE", [] of Param, details, "payload", "collection-delete:#{slug}", TAG_SOURCE)
     end
@@ -137,7 +138,7 @@ module Analyzer::Specification
     end
 
     private def emit_version_routes(base : String, slug : String, details : Details)
-      emit(@result, "#{base}/versions", "GET", global_query_params, details, "payload", "versions-list:#{slug}", TAG_SOURCE)
+      emit(@result, "#{base}/versions", "GET", read_query_params + list_query_params, details, "payload", "versions-list:#{slug}", TAG_SOURCE)
       emit(@result, "#{base}/versions/{id}", "GET", [] of Param, details, "payload", "versions-read:#{slug}", TAG_SOURCE)
       emit(@result, "#{base}/versions/{id}", "POST", [] of Param, details, "payload", "versions-restore:#{slug}", TAG_SOURCE)
     end
@@ -167,15 +168,21 @@ module Analyzer::Specification
         body_params = field_params(config.array("fields"))
         url = api_mount_join(api_mount_join(api_prefix, "globals"), slug)
 
-        emit(@result, url, "GET", global_query_params, details, "payload", "global-read:#{slug}", TAG_SOURCE)
+        emit(@result, url, "GET", read_query_params(drafts: config.possibly_enabled?("versions", "drafts")), details, "payload", "global-read:#{slug}", TAG_SOURCE)
         # Globals are updated with POST, not PATCH.
         emit(@result, url, "POST", body_params, details, "payload", "global-update:#{slug}", TAG_SOURCE)
         emit_custom_endpoints(url, slug, config, details)
       end
     end
 
-    private def global_query_params : Array(Param)
-      ["depth", "limit", "page", "sort", "where", "locale", "draft", "select", "populate"].map do |name|
+    private def read_query_params(*, drafts : Bool = false) : Array(Param)
+      names = %w[depth locale select populate]
+      names << "draft" if drafts
+      names.map { |name| Param.new(name, "", "query") }
+    end
+
+    private def list_query_params : Array(Param)
+      %w[limit page sort where].map do |name|
         Param.new(name, "", "query")
       end
     end
