@@ -37,6 +37,35 @@ describe Noir::TSContractExtractor do
     Noir::TSContractExtractor.hono_openapi(source, "app.ts").map(&.path).should eq(["/items", "/doc"])
   end
 
+  it "keeps an unread registration visible without borrowing a shadowed app" do
+    source = <<-TS
+      const app = new OpenAPIHono()
+      const served = createRoute({ method: 'get', path: '/served' })
+      const other = createRoute({ method: 'get', path: '/maybe' })
+      app.openapi(served, handler)
+      function attach(app) { app.openapi(other, handler) }
+      TS
+
+    file = Noir::TSContractExtractor.hono_file(source, "app.ts")
+    routes = Noir::TSContractExtractor.hono_endpoints([file]) { nil }
+    routes.map { |r| {r.route.path, r.line, r.unresolved} }.should eq([
+      {"/served", 4, false}, {"/maybe", 3, true},
+    ])
+  end
+
+  it "retains every candidate for a dynamic descriptor selection" do
+    source = <<-TS
+      const app = new OpenAPIHono()
+      const first = createRoute({ method: 'get', path: '/a' })
+      const second = createRoute({ method: 'post', path: '/b' })
+      app.openapi(flag ? first : second, handler)
+      TS
+
+    file = Noir::TSContractExtractor.hono_file(source, "app.ts")
+    routes = Noir::TSContractExtractor.hono_endpoints([file]) { nil }
+    routes.map { |r| {r.route.path, r.unresolved} }.should eq([{"/a", true}, {"/b", true}])
+  end
+
   it "looks through as / satisfies in a ts-rest contract" do
     source = <<-TS
       const BASE: string = '/v1'

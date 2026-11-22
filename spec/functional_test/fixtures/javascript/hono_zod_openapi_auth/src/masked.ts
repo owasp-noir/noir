@@ -1,4 +1,5 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { priv } from "./generic";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { zValidator } from "@hono/zod-validator";
@@ -83,7 +84,7 @@ app.openapi(h, (c) => c.json({}));
 // I: template string single line with middleware: and braces -> OPEN
 app.openapi(createRoute({ method: "get", path: "/i-tpl", summary: `x ${"{"} middleware: [authMiddleware]`, responses: {} }), (c) => c.json({}));
 
-// J: regex with brace in request, real auth middleware after -> GUARDED (main FN is fine)
+// J: regex with brace in request, real auth middleware after -> GUARDED
 app.openapi(
   createRoute({
     method: "get",
@@ -119,5 +120,8 @@ app.openapi(
   }),
   (c) => c.json({}),
 );
+
+export const versioned = new OpenAPIHono();
+versioned.openapi(priv, (c) => c.json({}));
 
 export default app;
