@@ -43,6 +43,8 @@ require "./axum_chain"
 # rest of Noir's tagging.
 @[Noir::TaggerFor(key: "rust_security", name: "Rust Security Tagger", desc: "Identifies Rust framework security protections (CORS, rate limiting, security headers, body-size limits)", order: 80)]
 class RustSecurityTagger < FrameworkTagger
+  EXAMPLES = Noir::FileRole::Convention.new(:example, path: %r{/examples/})
+
   include RustAxumChain
 
   # A `.route(..)` call: its file and the rows from its name to its `)`.
@@ -174,7 +176,7 @@ class RustSecurityTagger < FrameworkTagger
     @protections.clear
 
     collect_files_by_extension(".rs").each do |file|
-      next if test_path?(file)
+      next unless file_role(file, Noir::FileRole::CARGO_HARNESSES, EXAMPLES).production?
       content = read_file(file)
       next if content.nil?
       scan_rust_source(file, content)
@@ -189,19 +191,6 @@ class RustSecurityTagger < FrameworkTagger
     end
 
     @protections.uniq!
-  end
-
-  # Integration tests / benches / examples define throwaway apps whose
-  # middleware must not leak onto real endpoints.
-  #
-  # Scan-base-relative, never absolute: a `tests/` directory above the
-  # scan base belongs to whatever the checkout sits in, and matching it
-  # skipped the whole middleware pre-scan.
-  private def test_path?(path : String) : Bool
-    relative = base_relative_path(path)
-    relative.includes?("/tests/") ||
-      relative.includes?("/benches/") ||
-      relative.includes?("/examples/")
   end
 
   private def scan_rust_source(file : String, content : String)

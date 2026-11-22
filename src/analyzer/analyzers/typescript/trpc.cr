@@ -107,7 +107,7 @@ module Analyzer::Typescript
       # the same router or procedure leave the later file's in place, so the
       # order decides which wins (see `Analyzer#ordered_scan_files`).
       per_file = ordered_scan_files(get_files_by_extensions([".js", ".ts", ".jsx", ".tsx", ".cts", ".mts", ".cjs", ".mjs"])) do |path|
-        next if trpc_test_fixture_path?(path)
+        next if file_role(path, Noir::FileRole::TYPESCRIPT_ROUTER_TEST).test?
 
         raw = read_file_content(path)
         base_path = configured_base_for(path)
@@ -289,22 +289,6 @@ module Analyzer::Typescript
 
     private def trpc_router_import?(content : String) : Bool
       content.matches?(/import\b[^;]*\brouter\b[^;]*from\s*['"][^'"]*trpc[^'"]*['"]/)
-    end
-
-    TEST_FIXTURE_PATH_MARKERS = [
-      "/test/",
-      "/tests/",
-      "/__tests__/",
-      "/e2e/",
-      "/snapshots/",
-      "/test-files/",
-    ]
-
-    private def trpc_test_fixture_path?(path : String) : Bool
-      relative = base_relative_path(path)
-      TEST_FIXTURE_PATH_MARKERS.any? { |marker| relative.includes?(marker) } ||
-        relative.includes?(".test.") ||
-        relative.includes?(".spec.")
     end
 
     private def router_key(router : Router) : RouterKey

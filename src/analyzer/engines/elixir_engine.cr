@@ -145,8 +145,10 @@ module Analyzer::Elixir
     # there, so the check is safe for every Elixir analyzer
     # (Phoenix/Plug/Bandit/Absinthe/Channel). Takes the scan-base-relative
     # path so a checkout under a `test/` ancestor is not wiped.
+    EXUNIT = Noir::FileRole::Convention.new(:test, path: %r{/test/}, name: /_test\.exs\z/)
+
     def self.test_path?(relative_path : String) : Bool
-      relative_path.includes?("/test/") || File.basename(relative_path).ends_with?("_test.exs")
+      Noir::FileRole.classify(relative_path, EXUNIT).test?
     end
 
     protected def elixir_test_path?(path : String) : Bool

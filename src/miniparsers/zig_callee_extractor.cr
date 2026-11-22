@@ -1,3 +1,4 @@
+require "../models/file_role"
 require "../models/endpoint"
 require "./callee_extractor_base"
 
@@ -52,13 +53,13 @@ module Noir::ZigCalleeExtractor
   # app endpoints. The standard fetched-dependency cache (`.zig-cache`) is
   # already pruned upstream; this matches the manual-vendoring layouts —
   # a vendor directory immediately followed by a framework package directory.
-  VENDORED_FRAMEWORK_RE = %r{/(?:deps|dep|lib|libs|vendor|vendored|pkg|pkgs|zig-pkg|packages|third_party|third-party|modules|subprojects|external|\.deps)/(?:zap|httpz|http\.zig|tokamak|jetzig|zmpl|zmd)/}
+  VENDORED_FRAMEWORK = Noir::FileRole::Convention.new(:vendored, path: %r{/(?:deps|dep|lib|libs|vendor|vendored|pkg|pkgs|zig-pkg|packages|third_party|third-party|modules|subprojects|external|\.deps)/(?:zap|httpz|http\.zig|tokamak|jetzig|zmpl|zmd)/})
 
   # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
   # never the absolute one — the vendoring layout is a property of the
   # project, not of the directory the checkout happens to sit in.
   def vendored_framework_path?(relative_path : String) : Bool
-    relative_path.gsub('\\', '/').matches?(VENDORED_FRAMEWORK_RE)
+    Noir::FileRole.classify(relative_path.gsub('\\', '/'), VENDORED_FRAMEWORK).vendored?
   end
 
   # `test { … }` / `test "name" { … }` block opener. Route registrations inside

@@ -35,18 +35,13 @@ module Analyzer::Perl
     MARKERS = /\buse\s+Getopt::(?:Long|Std)\b|\bGetOptions\s*\(|\bgetopts?\s*\(|\buse\s+App::Cmd\b|\bMooseX::Getopt\b|\$ARGV\s*\[\s*\d+\s*\]|\buse\s+Getopt::Long::Descriptive\b|\bdescribe_options\s*\(|\buse\s+MooX::Options\b/
     WEB_RE  = /\buse\s+(?:Mojolicious|Mojo::|Dancer2?|Catalyst|Plack|Dancer)\b/
 
-    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces three separate
-    # `String#includes?` scans of the same buffer -- Crystal's `includes?` is
-    # not Boyer-Moore accelerated, so a single regex pass over `lower` is
-    # cheaper than three. Equivalent to the OR-of-substrings it replaces
-    # (union escapes each literal).
-    CLI_TEST_PATH_RE = Regex.union("/t/", "/test/", "_test.")
+    CLI_TEST_SOURCES = Noir::FileRole::Convention.new(:test, path: Regex.union("/t/", "/test/", "_test."), lowercase_path: true)
 
     def analyze
       endpoints = {} of String => Endpoint
       [".pl", ".pm"].each do |ext|
         get_files_by_extension(ext).each do |path|
-          next if cli_test_path?(path)
+          next if file_role(path, CLI_TEST_SOURCES).test?
           next unless File.exists?(path)
           begin
             content = read_file_content(path)
@@ -124,12 +119,6 @@ module Analyzer::Perl
         end
       end
       stem
-    end
-
-    private def cli_test_path?(path : String) : Bool
-      # Scan-base-relative, never absolute: a `t/` or `test/` directory
-      # ABOVE the scan base is not this project's test tree.
-      base_relative_path(path).downcase.matches?(CLI_TEST_PATH_RE)
     end
   end
 end

@@ -77,6 +77,8 @@ module Analyzer::Fsharp
       'u' => "uint64",
     }
 
+    TEST_SOURCES = Noir::FileRole::Convention.new(:test, path: Regex.union("/tests/", "/test/"), name: /Tests?\.fs\z/)
+
     def analyze
       include_callee = callees_needed?
       all_files.each do |path|
@@ -86,25 +88,13 @@ module Analyzer::Fsharp
         # `tests/Giraffe.Tests/*.fs` accounts for ~218 phantom
         # endpoints — full `webApp` HttpHandler trees built only
         # to exercise the routing combinators.
-        next if fsharp_test_path?(path)
+        next if file_role(path, TEST_SOURCES).test?
 
         content = read_file_content(path)
         process_file(path, content, include_callee)
       end
 
       @result
-    end
-
-    # Scan-base-relative, never absolute: a `tests/` directory ABOVE the
-    # scan base is not this project's test tree — the fixture tree
-    # dropped all 61 of its endpoints when scanned from one.
-    private def fsharp_test_path?(path : String) : Bool
-      relative = base_relative_path(path)
-      return true if relative.includes?("/tests/")
-      return true if relative.includes?("/test/")
-      base = File.basename(path)
-      return true if base.ends_with?("Tests.fs")
-      base.ends_with?("Test.fs")
     end
 
     alias SubRouteScope = NamedTuple(prefix: String, end_pos: Int32, params: Array(Param), methods: Array(String)?)

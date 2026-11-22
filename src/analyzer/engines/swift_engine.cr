@@ -22,18 +22,10 @@ module Analyzer::Swift
     # never the absolute one — SwiftPM's layout is relative to the package,
     # and matching the absolute path made the scan's answer depend on where
     # the package happened to be checked out.
-    def self.swift_test_path?(relative_path : String) : Bool
-      return true if relative_path.includes?("/Tests/")
-      # package-benchmark mandates a `Benchmarks/` directory at the package
-      # root; its routes are throwaway workloads, like Cargo's `benches/`.
-      # Anchored: `Sources/App/Controllers/Benchmarks/` is application code.
-      return true if relative_path.starts_with?("/Benchmarks/")
-      File.basename(relative_path).ends_with?("Tests.swift")
-    end
+    SWIFTPM_TEST = Noir::FileRole::Convention.new(:test, path: %r{/Tests/|\A/Benchmarks/}, name: /Tests\.swift\z/)
 
-    private def swift_test_path?(path : String) : Bool
-      relative = base_relative_path(path)
-      SwiftEngine.swift_test_path?(relative) || package_benchmark_path?(path, relative)
+    def self.swift_test_path?(relative_path : String) : Bool
+      Noir::FileRole.classify(relative_path, SWIFTPM_TEST).test?
     end
 
     # A `Benchmarks/` directory directly beside a `Package.swift` below the
@@ -50,12 +42,10 @@ module Analyzer::Swift
     # SwiftPM parks resolved dependency sources under `.build/` (and Xcode
     # under `.swiftpm/`). Scanning them pulls every transitive package's
     # routes into the report — pure noise against the project under test.
-    def self.swift_vendor_path?(relative_path : String) : Bool
-      relative_path.includes?("/.build/") || relative_path.includes?("/.swiftpm/")
-    end
+    SWIFTPM_DEPENDENCIES = Noir::FileRole::Convention.new(:vendored, path: Regex.union("/.build/", "/.swiftpm/"))
 
-    private def swift_vendor_path?(path : String) : Bool
-      SwiftEngine.swift_vendor_path?(base_relative_path(path))
+    def self.swift_vendor_path?(relative_path : String) : Bool
+      Noir::FileRole.classify(relative_path, SWIFTPM_DEPENDENCIES).vendored?
     end
 
     # `.swift` sources from the extension index. Subclasses that need a
@@ -98,8 +88,8 @@ module Analyzer::Swift
       # files that register routes against an inline test app.
       # XCTest-style `*Tests.swift` filenames carry the same
       # signal — pick them both up.
-      return false if swift_test_path?(path)
-      !swift_vendor_path?(path)
+      relative = base_relative_path(path)
+      Noir::FileRole.classify(relative, SWIFTPM_TEST, SWIFTPM_DEPENDENCIES).production? && !package_benchmark_path?(path, relative)
     end
 
     # Extract path parameters from the route pattern (e.g., :id, :userID)

@@ -11,14 +11,9 @@ require "../../models/endpoint"
 # onto `Analyzer` itself would hand a `cli://`-specific constructor to all ~200
 # analyzers, so the mixin is included by exactly the 21 that want it.
 #
-# The other helpers those files carry — `cli_test_path?`, `<lang>_binary_name`,
-# `cli_evidence?` — each read a per-class constant whose *value* differs by
-# language (Perl's test tree is `/t/`, Scala's is `/it/`, Groovy's is
-# `spec.groovy`; the binary-name stem lists disagree too). Several are
-# therefore textually identical while resolving to different regexes, so
-# folding them on name would be a silent behaviour change. They stay where
-# they are — but the *fallback* half of `<lang>_binary_name`, which is genuine
-# duplication, lives here as `cli_directory_binary_name`.
+# File-role conventions live in Noir::FileRole or next to the caller.
+# Binary-name stem lists remain language-specific. Their shared fallback
+# lives here as `cli_directory_binary_name`.
 module CliEndpointSupport
   # Separator inside the endpoint-map key. A NUL can appear in neither a path
   # nor a URL, so the three parts of the key (configured base, project

@@ -15,7 +15,7 @@ abstract class CEngine < FileScanEngine
   # A whole `test`/`tests`/`unittest(s)` directory segment: the mock servers a
   # unit test starts on localhost (`svr.Get("/accept_ok", ...)`, a `CROW_ROUTE`
   # on a throwaway `SimpleApp`), never routes the application serves.
-  TEST_DIR = %r{/(?:tests?|unit_?tests?)/}i
+  TEST_DIR = Noir::FileRole::Convention.new(:test, path: %r{/(?:tests?|unit_?tests?)/}i)
 
   # Takes the scan-base-relative path (`Analyzer#base_relative_path`, rooted
   # with a leading `/`), never the absolute one: a `tests/` directory above
@@ -23,7 +23,7 @@ abstract class CEngine < FileScanEngine
   # still reports its routes. Shared with the cpp_* route analyzers, which
   # are plain `Analyzer`s and don't go through `scan_accepts?`.
   def self.test_path?(relative_path : String) : Bool
-    relative_path.matches?(TEST_DIR)
+    Noir::FileRole.classify(relative_path, TEST_DIR).test?
   end
 
   protected def scan_target_files : Array(String)

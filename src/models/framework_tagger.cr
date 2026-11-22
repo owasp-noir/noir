@@ -1,3 +1,4 @@
+require "./file_role"
 require "./tagger"
 require "./endpoint"
 require "./code_locator"
@@ -26,6 +27,7 @@ struct SourceContext
 end
 
 class FrameworkTagger < Tagger
+  include Noir::FileRole::Scoped
   include FileHelper
 
   @base_path : String

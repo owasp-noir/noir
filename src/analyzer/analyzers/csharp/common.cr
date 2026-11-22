@@ -1,3 +1,4 @@
+require "../../../models/file_role"
 require "../../../miniparsers/csharp_callee_extractor"
 require "../../../minilexers/csharp_lexer"
 require "../../../utils/top_level_split"
@@ -24,11 +25,10 @@ module Analyzer::CSharp::Common
   # never the absolute one. The conventions describe a location inside
   # the solution, so on an absolute path a `test/` directory above the
   # scan base suppressed the whole project.
+  TEST_SOURCES = Noir::FileRole::Convention.new(:test, path: Regex.union("/test/", "/tests/", "/testassets/"), name: /Tests?\.(?:cs|vb)\z/)
+
   def self.csharp_test_path?(relative_path : String) : Bool
-    return true if relative_path.includes?("/test/")
-    return true if relative_path.includes?("/tests/")
-    return true if relative_path.includes?("/testassets/")
-    File.basename(relative_path).matches?(/Tests?\.(?:cs|vb)\z/)
+    Noir::FileRole.classify(relative_path, TEST_SOURCES).test?
   end
 
   # ASP.NET Core and classic ASP.NET MVC 5 spell a controller almost

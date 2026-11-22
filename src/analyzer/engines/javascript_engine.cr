@@ -247,7 +247,7 @@ module Analyzer::Javascript
       scoped[(idx + "/src/routes/".size)..]
     end
 
-    TEST_PROJECT_PATH_RE = /\/(?:tests?|__tests__|e2e|e2e-tests|fixtures?)(?:\/|\z)/
+    TEST_PROJECT = Noir::FileRole::Convention.new(:test, path: /\/(?:tests?|__tests__|e2e|e2e-tests|fixtures?)(?:\/|\z)/)
 
     # Whether a project location (the scan-base-relative path ABOVE a
     # framework's route root) sits in a test, e2e or fixture tree. A
@@ -255,7 +255,7 @@ module Analyzer::Javascript
     # its own manifest, none of which serves traffic. Never test the route
     # part itself: `src/routes/test/` and `api/e2e/` are real URLs.
     protected def in_test_tree?(prefix : String) : Bool
-      prefix.matches?(TEST_PROJECT_PATH_RE)
+      Noir::FileRole.classify(prefix, TEST_PROJECT).test?
     end
 
     protected def file_route_url(segments : Array(String)) : String
@@ -527,10 +527,10 @@ module Analyzer::Javascript
     # `ab_test.service.js`. They share the content-free half; the hyphen
     # names stay unconditional here, and the underscore forms are not
     # judged at all without content.
+    HYPHENATED_TEST = Noir::FileRole::Convention.new(:test, name: Noir::JSRouteExtractor::HYPHEN_TEST_FILENAME_MARKER)
+
     protected def js_test_file?(path : String) : Bool
-      basename = File.basename(path)
-      Noir::JSRouteExtractor.test_named_or_in_test_tree?(basename, base_relative_path(path)) ||
-        basename.matches?(Noir::JSRouteExtractor::HYPHEN_TEST_FILENAME_MARKER)
+      file_role(path, Noir::JSRouteExtractor::NAMED_TEST, HYPHENATED_TEST).test?
     end
 
     protected def owned_by_js_package?(path : String, owners : Hash(String, Bool)) : Bool

@@ -1,0 +1,44 @@
+src/analyzer/analyzers/csharp/common.cr: def self.csharp_test_path?(relative_path : String) : Bool
+src/analyzer/analyzers/dart/dart_helper.cr: def test_path?(path : String, base_path : String? = nil) : Bool
+src/analyzer/analyzers/dart/dart_helper.cr: def test_path?(path : String, base_paths : Array(String)) : Bool
+src/analyzer/analyzers/erlang/erlang_helper.cr: def test_path?(relative_path : String) : Bool
+src/analyzer/analyzers/haskell/scotty.cr: private def scotty_test_source?(path : String, content : String) : Bool
+src/analyzer/analyzers/javascript/express/route_helper_scanner.cr: private def test_tree?(file : String) : Bool
+src/analyzer/analyzers/lua/lapis.cr: private def lapis_test_path?(path : String) : Bool
+src/analyzer/analyzers/lua/lor.cr: private def lor_test_path?(path : String) : Bool
+src/analyzer/analyzers/scala/play.cr: private def play_test_source?(path : String) : Bool
+src/analyzer/analyzers/typescript/tanstack_router.cr: private def storybook_story?(path : String, raw : String) : Bool
+src/analyzer/engines/c_engine.cr: def self.test_path?(relative_path : String) : Bool
+src/analyzer/engines/elixir_engine.cr: def self.test_path?(relative_path : String) : Bool
+src/analyzer/engines/elixir_engine.cr: protected def elixir_test_path?(path : String) : Bool
+src/analyzer/engines/go_engine.cr: def go_test_path?(path : String) : Bool
+src/analyzer/engines/go_engine.cr: def self.go_test_dir?(relative_path : String) : Bool
+src/analyzer/engines/go_engine.cr: def self.go_test_file?(relative_path : String) : Bool
+src/analyzer/engines/java_engine.cr: def self.test_path?(relative_path : String) : Bool
+src/analyzer/engines/javascript_engine.cr: protected def in_test_tree?(prefix : String) : Bool
+src/analyzer/engines/javascript_engine.cr: protected def js_test_file?(path : String) : Bool
+src/analyzer/engines/kotlin_engine.cr: def self.test_path?(relative_path : String) : Bool
+src/analyzer/engines/perl_engine.cr: protected def perl_test_path?(path : String, ext : String) : Bool
+src/analyzer/engines/php_engine.cr: def self.test_path?(relative_path : String, root_docs : Bool = true) : Bool
+src/analyzer/engines/python_engine.cr: def self.python_test_path?(path : String, base_path : String? = nil) : Bool
+src/analyzer/engines/python_engine.cr: protected def python_test_path?(path : String) : Bool
+src/analyzer/engines/ruby_engine.cr: def self.ruby_test_path?(path : String) : Bool
+src/analyzer/engines/ruby_engine.cr: protected def ruby_non_production_path?(path : String) : Bool
+src/analyzer/engines/rust_engine.cr: def self.test_path?(relative_path : String) : Bool
+src/analyzer/engines/specification_engine.cr: private def test_tree?(key : Noir::LocatorKey(Array(String)), path : String) : Bool
+src/analyzer/engines/specification_engine.cr: def self.test_tree?(key : Noir::LocatorKey(Array(String)), relative : String) : Bool
+src/analyzer/engines/specification_engine.cr: private def generated_client_spec?(key : Noir::LocatorKey(Array(String)), path : String) : Bool
+src/analyzer/engines/swift_engine.cr: def self.swift_test_path?(relative_path : String) : Bool
+src/analyzer/engines/swift_engine.cr: private def package_benchmark_path?(path : String, relative : String) : Bool
+src/analyzer/engines/swift_engine.cr: def self.swift_vendor_path?(relative_path : String) : Bool
+src/detector/detector.cr: def dependency_vendor_dir?(path : String) : Bool
+src/miniparsers/clojure_scanner.cr: def test_path?(relative_path : String) : Bool
+src/miniparsers/js_route_extractor.cr: def self.test_stub_only?(file_path : String, content : String,
+src/miniparsers/js_route_extractor.cr: def self.test_file?(file_path : String, content : String) : Bool
+src/miniparsers/js_route_extractor.cr: def self.test_named_or_in_test_tree?(basename : String, relative_path : String) : Bool
+src/miniparsers/zig_callee_extractor.cr: def vendored_framework_path?(relative_path : String) : Bool
+src/optimizer/optimizer.cr: private def concrete_example_source?(endpoint : Endpoint) : Bool
+src/optimizer/optimizer.cr: private def example_path_value?(segment : String) : Bool
+src/tagger/framework_taggers/java/spring_auth.cr: private def path_test_matches?(url : String, test : PathTest) : Bool
+src/tagger/framework_taggers/java/spring_module_scope.cr: private def test_source?(file : String) : Bool
+src/tagger/framework_taggers/javascript/js_misc_auth.cr: private def koa_test_file?(file : String) : Bool

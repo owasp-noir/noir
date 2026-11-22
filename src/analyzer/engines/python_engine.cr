@@ -57,22 +57,13 @@ module Analyzer::Python
     #   * `test_*.py`        — unittest / pytest default discovery
     #   * `*_test.py`        — pytest-go style suffix (rare in Python,
     #                          but cheap to include)
+    PYTHON_TEST = Noir::FileRole::Convention.new(:test,
+      path: %r{(?:\A|/)(?:tests?|test_utils|benchmarks?)/},
+      name: /(?:\Atests|\Atest_[\s\S]*|_test)\.py\z/)
+
     def self.python_test_path?(path : String, base_path : String? = nil) : Bool
-      relative_path = path_for_test_convention_match(path, base_path)
-      return true if relative_path.includes?("/tests/")
-      return true if relative_path.starts_with?("tests/")
-      return true if relative_path.includes?("/test/")
-      return true if relative_path.starts_with?("test/")
-      return true if relative_path.includes?("/test_utils/")
-      return true if relative_path.starts_with?("test_utils/")
-      return true if relative_path.includes?("/benchmarks/")
-      return true if relative_path.starts_with?("benchmarks/")
-      return true if relative_path.includes?("/benchmark/")
-      return true if relative_path.starts_with?("benchmark/")
-      base = File.basename(path)
-      return true if base == "tests.py"
-      return true if base.starts_with?("test_") && base.ends_with?(".py")
-      base.ends_with?("_test.py")
+      relative = Noir::PathScope.relative_under(path, base_path)
+      Noir::FileRole.classify(relative, PYTHON_TEST, filename: path).test?
     end
 
     protected def python_base_path_for(path : String) : String
@@ -93,10 +84,6 @@ module Analyzer::Python
         .map { |f| Noir::PathScope.normalize_root(File.dirname(f)) }.uniq!
       expanded = Noir::PathScope.expand(path)
       dirs.select { |dir| Noir::PathScope.under_normalized_root?(expanded, dir) }.max_by?(&.size) || configured_base_for(path)
-    end
-
-    private def self.path_for_test_convention_match(path : String, base_path : String?) : String
-      Noir::PathScope.relative_under(path, base_path)
     end
 
     # Production `.py` sources from the extension index: drops

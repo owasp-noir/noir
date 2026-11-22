@@ -61,11 +61,10 @@ module Analyzer::Java
     # `Latest.java` is not a hit, and it needs a name before the suffix: a
     # class literally called `Test` or `Tests` is a tutorial's servlet, not
     # a test.
-    TEST_CLASS_FILE_RE = /.(?:Test|Tests)\.(?:java|kt)\z/
+    TEST_SOURCES = Noir::FileRole::Convention.new(:test, path: TEST_SOURCE_SET_RE, name: /.(?:Test|Tests)\.(?:java|kt)\z/)
 
     def self.test_path?(relative_path : String) : Bool
-      return true if relative_path.matches?(TEST_SOURCE_SET_RE)
-      File.basename(relative_path).matches?(TEST_CLASS_FILE_RE)
+      Noir::FileRole.classify(relative_path, TEST_SOURCES).test?
     end
 
     # Index of the delimiter closing the `open_char` at `open_idx`, or nil when

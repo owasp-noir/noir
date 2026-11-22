@@ -1,3 +1,5 @@
+require "../../../models/file_role"
+
 module Analyzer::Erlang
   # Shared helpers for the Erlang framework analyzers (Cowboy, Elli).
   module Helper
@@ -8,10 +10,10 @@ module Analyzer::Erlang
     # for `rebar3 ct`/`eunit`, never served. Takes the scan-base-relative
     # path so a checkout under a `test/` ancestor is not wiped; the suffix
     # rules still catch a scan whose base is the test directory itself.
+    REBAR_TEST = Noir::FileRole::Convention.new(:test, path: %r{/test/}, name: /_(?:SUITE|tests)\.erl\z/)
+
     def test_path?(relative_path : String) : Bool
-      return true if relative_path.includes?("/test/")
-      base = File.basename(relative_path)
-      base.ends_with?("_SUITE.erl") || base.ends_with?("_tests.erl")
+      Noir::FileRole.classify(relative_path, REBAR_TEST).test?
     end
 
     # A preprocessor directive that opens a form: at the start of a line or

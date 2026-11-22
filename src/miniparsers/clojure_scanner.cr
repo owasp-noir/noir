@@ -1,3 +1,5 @@
+require "../models/file_role"
+
 module Noir
   # Low-level Clojure reader primitives, shared by the callee extractor in this
   # directory and by the Clojure framework analyzers, so the two never drift again.
@@ -192,13 +194,13 @@ module Noir
     # Leiningen/tools.deps test trees (`test/`, `perf-test/` router
     # micro-benchmarks) and `foo_test.clj` files: routes there are test
     # handlers and benchmark fixtures nothing serves.
-    TEST_PATH_RE = /\/(?:perf-)?test\/|_test\./i
+    TEST_SOURCES = FileRole::Convention.new(:test, path: /\/(?:perf-)?test\/|_test\./i)
 
     # Pass a scan-base-relative path (`Analyzer#base_relative_path`), never
     # an absolute one: a `test/` directory ABOVE the scan base is not this
     # project's test tree.
     def test_path?(relative_path : String) : Bool
-      relative_path.matches?(TEST_PATH_RE)
+      FileRole.classify(relative_path, TEST_SOURCES).test?
     end
 
     # Read a bare symbol/keyword starting at `index`. Commas are whitespace in

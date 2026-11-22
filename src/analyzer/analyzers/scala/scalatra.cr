@@ -45,7 +45,7 @@ module Analyzer::Scala
       map = {} of String => String
       all_files.each do |path|
         next unless File.exists?(path) && File.extname(path) == ".scala"
-        next if sbt_test_path?(path)
+        next if file_role(path, SBT_TEST).test?
         begin
           content = read_file_content(path)
         rescue

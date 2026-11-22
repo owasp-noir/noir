@@ -83,14 +83,13 @@ module Analyzer::Go
     # is a production package, and skipping it would hide real routes.
     # `tests` precedes `test` so dropping the trailing slash later
     # cannot let `test` swallow `tests`.
-    GO_TEST_DIR_RE = %r{/(?:tests|test|e2e)/}
+    GO_TEST_TREE = Noir::FileRole::Convention.new(:test, path: %r{(?:\A|/)(?:tests|test|e2e)/})
 
     # Scan-base-relative, rooted or not. A project whose own base
     # directory is named `test` does not match: that name is not part
     # of the relative path.
     def self.go_test_dir?(relative_path : String) : Bool
-      rooted = relative_path.starts_with?('/') ? relative_path : "/#{relative_path}"
-      rooted.matches?(GO_TEST_DIR_RE)
+      Noir::FileRole.classify(relative_path, GO_TEST_TREE).test?
     end
 
     # `*_test.go` is Go's hard-wired build-tag for test-only source.
@@ -119,15 +118,11 @@ module Analyzer::Go
     # anywhere above the scan base — `~/_work/repo` on a self-hosted CI
     # runner — excluded every `.go` file in the project.
     #
-    # `relative_path` from `base_relative_path` is `/`-rooted, so `"/_"`
-    # is exactly "a path segment starts with `_`" without the per-call
-    # `split` allocation. The leading-`_` and `testdata/` checks cover a
-    # caller that passes an unrooted relative path.
+    # Both the scan-base and module-relative forms can be rooted or unrooted.
+    GO_TOOLCHAIN_TEST = Noir::FileRole::Convention.new(:test, path: %r{_test\.go\z|(?:\A|/)(?:testdata/|_)})
+
     def self.go_test_file?(relative_path : String) : Bool
-      return true if relative_path.ends_with?("_test.go")
-      return true if relative_path.starts_with?("testdata/") || relative_path.includes?("/testdata/")
-      return true if relative_path.starts_with?('_') || relative_path.includes?("/_")
-      go_test_dir?(relative_path)
+      Noir::FileRole.classify(relative_path, GO_TOOLCHAIN_TEST, GO_TEST_TREE).test?
     end
 
     include GoTestPath

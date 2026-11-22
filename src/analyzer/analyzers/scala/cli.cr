@@ -61,17 +61,12 @@ module Analyzer::Scala
     MARKERS = /\bscopt\b|\bOParser\b|\bcom\.monovore\.decline\b|\bOpts\.(?:option|flag|argument|arguments)\b|\bmainargs\b|\borg\.rogach\.scallop\b|\bScallopConf\b|\bcom\.twitter\.app\b/
     WEB_RE  = /\bimport\s+(?:akka\.http|org\.apache\.pekko\.http|play\.api|org\.http4s|cask|com\.twitter\.finatra|com\.linecorp\.armeria|zhttp|zio\.http)\b/
 
-    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces four separate
-    # `String#includes?` scans of the same buffer -- Crystal's `includes?` is
-    # not Boyer-Moore accelerated, so a single regex pass over `lower` is
-    # cheaper than four. Equivalent to the OR-of-substrings it replaces
-    # (union escapes each literal).
-    CLI_TEST_PATH_RE = Regex.union("/test/", "/it/", "spec.scala", "test.scala")
+    CLI_TEST_SOURCES = Noir::FileRole::Convention.new(:test, path: Regex.union("/test/", "/it/", "spec.scala", "test.scala"), lowercase_path: true)
 
     def analyze
       endpoints = {} of String => Endpoint
       get_files_by_extension(".scala").each do |path|
-        next if cli_test_path?(path)
+        next if file_role(path, CLI_TEST_SOURCES).test?
         next unless File.exists?(path)
         begin
           content = read_file_content(path)
@@ -191,12 +186,6 @@ module Analyzer::Scala
         end
       end
       stem
-    end
-
-    private def cli_test_path?(path : String) : Bool
-      # Scan-base-relative, never absolute: a `test/` or `it/` directory
-      # ABOVE the scan base is not this project's test tree.
-      base_relative_path(path).downcase.matches?(CLI_TEST_PATH_RE)
     end
   end
 end

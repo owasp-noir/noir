@@ -1,3 +1,4 @@
+require "../../../models/file_role"
 require "../../../models/detector"
 require "../../../utils/yaml"
 require "../../../models/code_locator"
@@ -28,34 +29,10 @@ module Detector::Specification
 
     # Test directories, mocks, and fixtures that contain temporary/generated schema snapshots
     # for test suites rather than the project's production schema.
-    TEST_DIR_MARKERS = [
-      "/tests/",
-      "/test/",
-      "/__tests__/",
-      "/e2e/",
-      "/e2e-tests/",
-      "/cypress/",
-      "/playwright/",
-      "/__mocks__/",
-      "/__fixtures__/",
-      "/fixtures/",
-      "/fixture/",
-      "/spec/",
-      "/specs/",
-    ]
-
-    TEST_DIR_MARKER = Regex.union(TEST_DIR_MARKERS)
-
-    TEST_FILENAME_MARKERS = [
-      ".test.",
-      ".spec.",
-      "-test.",
-      "-spec.",
-      "_test.",
-      "_spec.",
-    ]
-
-    TEST_FILENAME_MARKER = Regex.union(TEST_FILENAME_MARKERS)
+    SNAPSHOT_TEST = Noir::FileRole::Convention.new(:test,
+      path: Regex.union("/tests/", "/test/", "/__tests__/", "/e2e/", "/e2e-tests/",
+        "/cypress/", "/playwright/", "/__mocks__/", "/__fixtures__/", "/fixtures/", "/fixture/", "/spec/", "/specs/"),
+      name: Regex.union(".test.", ".spec.", "-test.", "-spec.", "_test.", "_spec."))
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
@@ -78,23 +55,16 @@ module Detector::Specification
       return false unless SNAPSHOT_EXTENSIONS.includes?(File.extname(filename).downcase)
 
       path = filename.gsub('\\', '/')
-      return false if test_path?(path)
 
       relative = base_relative_path(path)
       relative_path = relative.starts_with?('/') ? relative : "/#{relative}"
 
-      File.basename(path).downcase.starts_with?("snapshot") ||
+      name = File.basename(path).downcase
+      return false if Noir::FileRole.classify(relative_path, SNAPSHOT_TEST, filename: name).test?
+
+      name.starts_with?("snapshot") ||
         relative_path.includes?("/directus/") ||
         relative_path.includes?("/snapshots/")
-    end
-
-    private def test_path?(path : String) : Bool
-      relative = base_relative_path(path)
-      relative_path = relative.starts_with?('/') ? relative : "/#{relative}"
-      return true if relative_path.matches?(TEST_DIR_MARKER)
-      return true if File.basename(path).downcase.matches?(TEST_FILENAME_MARKER)
-
-      false
     end
 
     private def collections_present?(root : Hash(YAML::Any, YAML::Any)) : Bool
