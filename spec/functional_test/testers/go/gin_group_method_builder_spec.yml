@@ -1,0 +1,8 @@
+# A gin router builder declared as a method, called as `h.Register(v1)`.
+fixture: fixtures/go/gin_group_method_builder/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/users/login"
+    method: "POST"
+  - url: "/api/tags"
+    method: "GET"

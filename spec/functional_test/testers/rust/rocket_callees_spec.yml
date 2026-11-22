@@ -1,0 +1,50 @@
+fixture: fixtures/rust/rocket_callees/
+counts: {techs: 1, endpoints: 7}
+options:
+  include_callee: true
+  only_techs: "rust_rocket"
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "HealthCheck::ready", line: 17}
+      - {name: "render_home", line: 18}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "verbose", type: "query"}
+      - {name: "x-trace-id", type: "header"}
+    callees:
+      - {name: "request.headers", line: 23}
+      - {name: "UserService::load", line: 24}
+      - {name: "AuditLog::read_user", line: 25}
+      - {name: "UserPresenter::render", line: 26}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+    callees:
+      - {name: "UserService::create", line: 31}
+      - {name: "user.into_inner", line: 31}
+      - {name: "AuditLog::write", line: 32}
+      - {name: "UserPresenter::render", line: 33}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+    callees:
+      - {name: "cookies.get", line: 40}
+      - {name: "AuthService::session", line: 41}
+  - url: "/multi-a"
+    method: "GET"
+    callees:
+      - {name: "MultiService::serve", line: 48}
+  - url: "/multi-b"
+    method: "POST"
+    callees:
+      - {name: "MultiService::serve", line: 48}
+  - url: "/multi-c"
+    method: "PUT"
+    callees:
+      - {name: "MultiService::serve", line: 48}

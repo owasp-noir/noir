@@ -1,0 +1,62 @@
+# FW/1 declares routes in Application.cfc as an array of single-key
+# structs, keyed by an optional `$METHOD` followed by the pattern.
+fixture: fixtures/cfml/fw1/
+counts: {techs: 2, endpoints: 19}
+endpoints:
+  # A verb prefix narrows the route to that method.
+  - url: "/todo/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/todo/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/todo"
+    method: "POST"
+  # No `$` prefix: the route answers every method.
+  - url: "/legacy/ping"
+    method: "GET"
+  - url: "/legacy/ping"
+    method: "POST"
+  - url: "/legacy/ping"
+    method: "PUT"
+  - url: "/legacy/ping"
+    method: "PATCH"
+  - url: "/legacy/ping"
+    method: "DELETE"
+  - url: "/legacy/ping"
+    method: "HEAD"
+  - url: "/legacy/ping"
+    method: "OPTIONS"
+  # `hint` labels the entry rather than declaring a route, but the
+  # route beside it still counts.
+  - url: "/old/path"
+    method: "GET"
+  - url: "/escaped/comma"
+    method: "GET"
+  # `$RESOURCES` expands per framework/one.cfc's resourceRouteTemplates.
+  # There is no `edit` route — FW/1 differs from Rails here.
+  - url: "/dogs"
+    method: "GET"
+  - url: "/dogs/new"
+    method: "GET"
+  - url: "/dogs"
+    method: "POST"
+  - url: "/dogs/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/dogs/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/dogs/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/dogs/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+# Detection still sees cfml_fw1 and cfml_pure

@@ -1,0 +1,25 @@
+# `router.get<Params, Res, Body, Query>(…)` (@types/express generics).
+fixture: fixtures/javascript/express_type_args/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/api/x00-control/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "verbose", type: "query"}
+  - url: "/api/x01-generic/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "verbose", type: "query"}
+  - url: "/api/x02-generic/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "name", type: "json"}
+      - {name: "x-tenant", type: "header"}
+  - url: "/x03-inline/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "sid", type: "cookie"}

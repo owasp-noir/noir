@@ -1,0 +1,48 @@
+# ASP.NET Core trims an action's `Async` suffix
+# (`SuppressAsyncSuffixInActionNames`), unless `[ActionName]` renames it,
+# and reads `[Controller]`/`[Action]`/`[Area]` tokens and
+# `{Controller=Home}`/`{Action=Index}` placeholders in any case.
+fixture: fixtures/csharp/aspnet_core_mvc_route_name_case/
+counts: {endpoints: 14}
+endpoints:
+  # async_suffix
+  - url: "/api/Users/GetUsers"
+    method: "GET"
+  - url: "/api/Users/CreateUser"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/api/Users/Lookup"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/Orders/List"
+    method: "GET"
+  - url: "/Orders/Details/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/Orders/Index"
+    method: "GET"
+  # token_case
+  - url: "/api/Customers"
+    method: "GET"
+  - url: "/api/Customers/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/Customers/Import"
+    method: "POST"
+  - url: "/Admin/Audit/Index"
+    method: "GET"
+  - url: "/api/Orders/Recent"
+    method: "GET"
+  # placeholder_case
+  - url: "/Home/Index"
+    method: "GET"
+  - url: "/Home/Privacy"
+    method: "GET"
+  - url: "/Home/Details/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

@@ -1,0 +1,42 @@
+fixture: fixtures/crystal/grip_callees/
+counts: {techs: 1, endpoints: 6}
+options:
+  include_callee: true
+  only_techs: "crystal_grip"
+endpoints:
+  - url: "/api/"
+    method: "GET"
+    callees:
+      - {name: "HomeService.build", line: 7}
+      - {name: "context.json", line: 8}
+  - url: "/api/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "context.fetch_path_params", line: 12}
+      - {name: "UserLookup.find", line: 13}
+      - {name: "UserPresenter.render", line: 14}
+      - {name: "context.json", line: 14}
+  - url: "/api/items"
+    method: "POST"
+    callees:
+      - {name: "PayloadBuilder.from", line: 18}
+      - {name: "context.fetch_json_params", line: 18}
+      - {name: "ItemService.create", line: 19}
+      - {name: "context.put_status", line: 20}
+  - url: "/api/status"
+    method: "GET"
+    callees:
+      - {name: "ApiStatus.check", line: 38}
+      - {name: "context.json", line: 39}
+  - url: "/health"
+    method: "GET"
+    callees:
+      - {name: "HomeService.build", line: 7}
+      - {name: "context.json", line: 8}
+  - url: "/chat"
+    method: "GET"
+    callees:
+      - {name: "SocketTracker.connected", line: 28}
+      - {name: "context.send", line: 29}

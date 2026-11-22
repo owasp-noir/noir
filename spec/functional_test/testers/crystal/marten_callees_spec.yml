@@ -1,0 +1,44 @@
+fixture: fixtures/crystal/marten_callees/
+counts: {techs: 1, endpoints: 6}
+options:
+  include_callee: true
+  only_techs: "crystal_marten"
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "HomeService.build", line: 7}
+      - {name: "HomePresenter.render", line: 8}
+      - {name: "respond", line: 9}
+  - url: "/api/users"
+    method: "GET"
+    callees:
+      - {name: "UserSearch.list", line: 3}
+      - {name: "UserPresenter.render", line: 4}
+      - {name: "respond", line: 5}
+  - url: "/api/users/<int:id>"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "UserLookup.find", line: 4}
+      - {name: "UserPresenter.render", line: 5}
+      - {name: "respond", line: 5}
+  - url: "/admin/reports"
+    method: "GET"
+    callees:
+      - {name: "ReportService.latest", line: 4}
+      - {name: "ReportSerializer.render", line: 5}
+      - {name: "respond", line: 5}
+  - url: "/absolute/reports"
+    method: "GET"
+    callees:
+      - {name: "ReportService.latest", line: 4}
+      - {name: "ReportSerializer.render", line: 5}
+      - {name: "respond", line: 5}
+  - url: "/macro"
+    method: "GET"
+    callees:
+      - {name: "MacroService.call", line: 4}
+      - {name: "MacroPresenter.render", line: 5}
+      - {name: "respond", line: 5}

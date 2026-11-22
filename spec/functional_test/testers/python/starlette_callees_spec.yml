@@ -1,0 +1,54 @@
+# Regression test for --include-callee on Starlette. The analyzer uses
+# a Route()/Mount() scan, then resolves the referenced handler function
+# to attach 1-hop callees to every emitted endpoint/method.
+#
+# Imported helper callees (save_user) resolve to their definition in
+# helpers.py; unresolved bare names stay at the call site.
+fixture: fixtures/python/starlette_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/{user_id}"
+    method: "POST"
+    params:
+      - {name: "user_id", type: "path"}
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "request.json", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 8}
+      - {name: "save_user", path: "./spec/functional_test/fixtures/python/starlette_callees/helpers.py", line: 1}
+      - {name: "audit_log", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 11}
+      - {name: "JSONResponse", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 12}
+  - url: "/health"
+    method: "GET"
+    callees:
+      - {name: "Response", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 16}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "X-Token", type: "header"}
+    callees:
+      - {name: "request.query_params.get", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 20}
+      - {name: "request.headers.get", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 21}
+      - {name: "run_search", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 22}
+      - {name: "JSONResponse", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 23}
+  - url: "/search"
+    method: "POST"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "X-Token", type: "header"}
+    callees:
+      - {name: "request.query_params.get", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 20}
+      - {name: "request.headers.get", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 21}
+      - {name: "run_search", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 22}
+      - {name: "JSONResponse", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 23}
+  - url: "/api/items"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+    callees:
+      - {name: "request.cookies.get", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 27}
+      - {name: "fetch_items", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 28}
+      - {name: "audit_log", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 29}
+      - {name: "JSONResponse", path: "./spec/functional_test/fixtures/python/starlette_callees/app.py", line: 30}

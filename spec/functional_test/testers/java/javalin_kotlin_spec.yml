@@ -1,0 +1,79 @@
+# Javalin written in Kotlin (#2856): trailing-lambda handlers, method
+# references, the `apiBuilder { path { } }` nesting, `crud(...)`, a
+# trailing-lambda `staticFiles.add { }` and a per-file `contextPath`.
+# `ctx.header(name, value)` / `ctx.cookie(name, value)` are response
+# setters, and `defaults.put("X-Cache", "none")` / an `apply { put(...) }`
+# are map calls, so none of them may surface. The context app chains
+# `.get { }.post { }` fluently and comments its `contextPath` line.
+fixture: fixtures/java/javalin_kotlin/
+counts: {techs: 1, endpoints: 17}
+options:
+  include_callee: true
+endpoints:
+  - url: "/ctx/status"
+    method: "GET"
+  - url: "/ctx/reload"
+    method: "POST"
+  - url: "/assets/**"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "expand", type: "query"}
+    callees:
+      - {name: "UserRepository.find", line: 64}
+  - url: "/api/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/items"
+    method: "GET"
+  - url: "/api/items"
+    method: "POST"
+  - url: "/api/items/{item-id}"
+    method: "GET"
+    params:
+      - {name: "item-id", type: "path"}
+  - url: "/api/items/{item-id}"
+    method: "PATCH"
+    params:
+      - {name: "item-id", type: "path"}
+  - url: "/api/items/{item-id}"
+    method: "DELETE"
+    params:
+      - {name: "item-id", type: "path"}
+  - url: "/hello"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "X-Trace", type: "header"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "User"}
+    callees:
+      - {name: "UserRepository.save", line: 69}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json", value: "User"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+    callees:
+      - {name: "AuthService.login", line: 47}
+  - url: "/sessions"
+    method: "DELETE"
+    params:
+      - {name: "session", type: "cookie"}
+  - url: "/chat/{room}"
+    method: "GET"
+    protocol: "ws"
+    params:
+      - {name: "room", type: "path"}

@@ -1,0 +1,12 @@
+# `stage: ${opt:stage, 'dev'}` deploys to `dev`; `${sls:stage}` has no
+# literal fallback, so no stage segment. `functions` as a list with a
+# `${file()}` item, and as a whole-value `${file():key}`.
+fixture: fixtures/specification/serverless_framework_variables/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/dev/orders"
+    method: "GET"
+  - url: "/dev/health"
+    method: "GET"
+  - url: "/users"
+    method: "GET"

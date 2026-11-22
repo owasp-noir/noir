@@ -1,0 +1,24 @@
+fixture: fixtures/specification/typespec/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/v1/pets"
+    method: "GET"
+    params:
+      - {name: "filter", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/v1/pets"
+    method: "POST"
+    params:
+      - {name: "pet", type: "json"}
+  - url: "/v1/pets/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Trace-Id", type: "header"}
+  - url: "/v1/pets/{id}/avatar"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "file", type: "json"}
+  - url: "/v1/health"
+    method: "GET"

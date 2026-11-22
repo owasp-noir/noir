@@ -1,0 +1,29 @@
+# Route and `MapGroup` templates held in a `const`, a local, an
+# interpolation, a `Type.Member` constant or a `+` concatenation of those.
+fixture: fixtures/csharp/aspnet_core_minimal_api_const_routes/
+counts: {techs: 2, endpoints: 10}
+endpoints:
+  - url: "/api/v1/c01"
+    method: "GET"
+  - url: "/api/v2/c02"
+    method: "GET"
+  - url: "/api/v1/c03/x"
+    method: "GET"
+  - url: "/admin/stats"
+    method: "GET"
+  - url: "/api/v1/c05/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/c06/items"
+    method: "GET"
+  - url: "/c07/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/c09/literal"
+    method: "GET"
+  - url: "/api/v1/c04"
+    method: "GET"
+  - url: "/c08/joined"
+    method: "GET"

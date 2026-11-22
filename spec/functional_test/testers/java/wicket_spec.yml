@@ -1,0 +1,82 @@
+# wicketstuff-rest @MethodMapping handlers invoke a service; assert the
+# 1-hop callees surface so the Wicket callee/ai-context path stays
+# covered. The resource is mounted at both /scanned (@ResourcePath) and
+# /api (mountResource), so callees ride along on both.
+fixture: fixtures/java/wicket/
+counts: {techs: 1, endpoints: 20}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/**"
+    method: "GET"
+  - url: "/assets/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/reports/{reportId}"
+    method: "GET"
+    params:
+      - {name: "reportId", type: "path"}
+  - url: "/legacy/**"
+    method: "GET"
+  - url: "/downloads/{file}"
+    method: "GET"
+    params:
+      - {name: "file", type: "path"}
+  - url: "/products"
+    method: "GET"
+  - url: "/orders/{orderId}"
+    method: "GET"
+    params:
+      - {name: "orderId", type: "path"}
+  - url: "/purchases/{orderId}"
+    method: "GET"
+    params:
+      - {name: "orderId", type: "path"}
+  - url: "/DefaultMountPage"
+    method: "GET"
+  - url: "/scanned/persons"
+    method: "GET"
+    callees:
+      - {name: "personService.findAll"}
+  # POST handler exercises wicketstuff-rest request-parameter annotations:
+  # @RequestBody → json body param, @RequestParam → query param. Asserted
+  # on both mount points (/scanned via @ResourcePath, /api via mountResource).
+  - url: "/scanned/persons"
+    method: "POST"
+    params:
+      - {name: "person", type: "json"}
+      - {name: "notify", type: "query"}
+    callees:
+      - {name: "personService.save"}
+  - url: "/scanned/persons/{personId}"
+    method: "DELETE"
+    params:
+      - {name: "personId", type: "path"}
+    callees:
+      - {name: "personService.deleteById"}
+  - url: "/dashboards"
+    method: "GET"
+  - url: "/api/persons"
+    method: "GET"
+  - url: "/api/persons"
+    method: "POST"
+    params:
+      - {name: "person", type: "json"}
+      - {name: "notify", type: "query"}
+  - url: "/api/persons/{personId}"
+    method: "DELETE"
+    params:
+      - {name: "personId", type: "path"}
+  - url: "/lambda/status"
+    method: "GET"
+  - url: "/lambda/items/{itemId}"
+    method: "POST"
+    params:
+      - {name: "itemId", type: "path"}

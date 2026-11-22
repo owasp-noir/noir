@@ -1,0 +1,11 @@
+# A `#` on a line inside a multi-line triple-quoted string is not a
+# comment. Treating it as one left the decorator's `(` unbalanced, so the
+# decorator joined past its own close and the route was dropped. And a
+# worked `@app.get("/teapot/")` example inside a docstring is not a route.
+fixture: fixtures/python/fastapi_docstring_comment/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/one"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}

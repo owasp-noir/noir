@@ -1,0 +1,38 @@
+# Gin's documented context readers beyond `Query` / `PostForm`: the
+# `Array` / `Map` / `Get` forms, `FormFile`, every read on a line, and the
+# stdlib request behind the context.
+fixture: fixtures/go/gin_param_accessors/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/a00-control"
+    method: "GET"
+    params:
+      - {name: "ok_query", type: "query"}
+      - {name: "ok_default", type: "query"}
+      - {name: "X-Ok", type: "header"}
+  - url: "/a01-query-collections"
+    method: "GET"
+    params:
+      - {name: "ids", type: "query"}
+      - {name: "filter", type: "query"}
+      - {name: "tags", type: "query"}
+  - url: "/a02-form-collections"
+    method: "POST"
+    params:
+      - {name: "colors", type: "form"}
+      - {name: "names", type: "form"}
+  - url: "/a03-upload"
+    method: "POST"
+    params:
+      - {name: "avatar", type: "form"}
+  - url: "/a04-two-on-a-line"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "size", type: "query"}
+  - url: "/a05-stdlib-request"
+    method: "GET"
+    params:
+      - {name: "raw_q", type: "query"}
+      - {name: "raw_form", type: "query"}
+      - {name: "raw_post", type: "form"}

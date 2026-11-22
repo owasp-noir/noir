@@ -1,0 +1,29 @@
+# `resources :photos, :books, :videos` draws every resource it names; a
+# hash-rocket option (`:only => [...]`) is not one of them.
+fixture: fixtures/ruby/rails_multi_resources/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/photos"
+    method: "GET"
+  - url: "/photos/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/books"
+    method: "GET"
+  - url: "/books/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/videos"
+    method: "GET"
+  - url: "/videos/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/profile"
+    method: "GET"
+  - url: "/settings"
+    method: "GET"
+  - url: "/users"
+    method: "GET"

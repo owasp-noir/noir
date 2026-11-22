@@ -1,0 +1,75 @@
+fixture: fixtures/javascript/feathers/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  # /messages — full CRUD, service class resolved across a file
+  # boundary (`require('./messages.class')`), the generator's
+  # convention.
+  - url: "/messages"
+    method: "GET"
+    params:
+      - {name: "author", type: "query"}
+  - url: "/messages/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/messages"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/messages/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/messages/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/messages/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # /reviews — same-file class implementing only find/get; update/
+  # create/patch/remove must NOT be fabricated.
+  - url: "/reviews"
+    method: "GET"
+    params:
+      - {name: "rating", type: "query"}
+  - url: "/reviews/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "x-trace-id", type: "header"}
+  # /health — inline object literal implementing find + create, but
+  # registered with an explicit `{ methods: ['find'] }` option that
+  # restricts external exposure to `find` only.
+  - url: "/health"
+    method: "GET"
+  # /logs — `new LogService()` from an unresolvable external package
+  # (`feathers-memory`); the documented full-CRUD fallback applies
+  # since `new X(...)` alone is treated as sufficient evidence.
+  - url: "/logs"
+    method: "GET"
+  - url: "/logs/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/logs"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/logs/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/logs/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/logs/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

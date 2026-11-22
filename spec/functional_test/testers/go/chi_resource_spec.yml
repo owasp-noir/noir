@@ -1,0 +1,53 @@
+# Covers chi's net/http registrations and the idiomatic REST "resource"
+# pattern:
+#   * r.MethodFunc("GET", "/health", h)  — method as the first string arg
+#   * r.HandleFunc("/everything", h)     — matches every HTTP method (ANY)
+#   * r.Mount("/todos", todosResource{}.Routes()) — struct value-method
+#     router mounted under a prefix, with the body living in a sibling
+#     file. The receiver type disambiguates two resources that both
+#     expose a `Routes()` method (todos vs users).
+fixture: fixtures/go/chi_resource/
+counts: {techs: 1, endpoints: 16}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/health"
+    method: "GET"
+  - url: "/submit"
+    method: "POST"
+  # HandleFunc fans out across the full HTTP method set.
+  - url: "/everything"
+    method: "GET"
+  - url: "/everything"
+    method: "POST"
+  - url: "/everything"
+    method: "PUT"
+  - url: "/everything"
+    method: "PATCH"
+  - url: "/everything"
+    method: "DELETE"
+  - url: "/everything"
+    method: "HEAD"
+  - url: "/everything"
+    method: "OPTIONS"
+  # todosResource.Routes() mounted at /todos.
+  - url: "/todos/"
+    method: "GET"
+  - url: "/todos/"
+    method: "POST"
+  - url: "/todos/{id}/"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/todos/{id}/"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # usersResource.Routes() mounted at /users — resolved to its own body
+  # by receiver type, not the first `Routes()` method found.
+  - url: "/users/"
+    method: "GET"
+  - url: "/users/{id}/"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}

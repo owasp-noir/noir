@@ -1,0 +1,37 @@
+# File-routed Pages Functions: `[id]` and `[[path]]` become `{id}` / `{path}`,
+# `index` maps to its directory, `_middleware` and helpers are not routes, and
+# a `functions/` dir outside the project root is ignored.
+fixture: fixtures/javascript/cloudflare_pages/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/"
+    method: "ANY"
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "Authorization", type: "header"}
+  - url: "/api/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "reason", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  # `onRequest` next to a verb export serves the remaining methods.
+  - url: "/api/users"
+    method: "ANY"
+  # A catch-all `onRequest` narrowed by its `request.method` checks.
+  - url: "/api/files/{path}"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}
+      - {name: "cookie", type: "header"}
+  - url: "/api/files/{path}"
+    method: "PUT"
+    params:
+      - {name: "path", type: "path"}
+      - {name: "cookie", type: "header"}

@@ -1,0 +1,31 @@
+fixture: fixtures/java/dropwizard/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/service/api/hello"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/service/api/hello/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Trace", type: "header"}
+  - url: "/service/api/hello"
+    method: "POST"
+    params:
+      - {name: "subject", type: "form"}
+      - {name: "body", type: "form"}
+  - url: "/service/api/hello/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "message", type: "json"}
+      - {name: "locale", type: "json"}
+  - url: "/service/api/hello/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/service/assets/*"
+    method: "GET"
+  - url: "/service/admin/*"
+    method: "GET"

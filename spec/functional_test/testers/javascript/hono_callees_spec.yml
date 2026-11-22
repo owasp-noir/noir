@@ -1,0 +1,31 @@
+# Regression test for --include-callee on Hono. The shared JS callee
+# extractor is enabled through JSRouteExtractor and the Hono adapter
+# consumes those parser endpoints directly.
+fixture: fixtures/javascript/hono_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "c.req.param", line: 8}
+      - {name: "parseUser", line: 29}
+      - {name: "serviceFactory().save", line: 10}
+      - {name: "AuditLog.write", line: 11}
+      - {name: "c.json", line: 13}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "sessionId", type: "cookie"}
+    callees:
+      - {name: "getCookie", line: 17}
+      - {name: "buildProfile", line: 37}
+      - {name: "c.json", line: 20}
+  - url: "/health"
+    method: "GET"
+    callees:
+      - {name: "healthService.check", line: 24}
+      - {name: "c.json", line: 26}

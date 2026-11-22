@@ -1,0 +1,59 @@
+fixture: fixtures/rust/tide/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/hello"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/products/:category/:id"
+    method: "GET"
+    params:
+      - {name: "category", type: "path"}
+      - {name: "id", type: "path"}
+  - url: "/health"
+    method: "GET"
+  - url: "/api/v1/status"
+    method: "GET"
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "SearchQuery", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "UserData", type: "json"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "LoginForm", type: "form"}
+  - url: "/auth"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "X-API-Key", type: "header"}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+  - url: "/complex/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "SearchQuery", type: "query"}
+      - {name: "UserData", type: "json"}
+      - {name: "Authorization", type: "header"}
+      - {name: "session_id", type: "cookie"}

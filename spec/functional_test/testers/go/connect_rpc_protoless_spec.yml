@@ -1,0 +1,17 @@
+# Connect-RPC repo that ships ONLY generated code (no committed
+# `.proto`). The `*Procedure` constants in `*.connect.go` are the only
+# route source; the analyzer's connect.go fallback surfaces them (it
+# previously returned zero endpoints when no proto was present).
+# Streaming shape is recovered from the `connect.NewXxxHandler(...)`
+# constructors. No params — there's no proto message to read fields from.
+fixture: fixtures/go/connect_rpc_protoless/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/connectrpc.eliza.v1.ElizaService/Say"
+    method: "POST"
+  - url: "/connectrpc.eliza.v1.ElizaService/Converse"
+    method: "POST"
+  - url: "/connectrpc.eliza.v1.ElizaService/Introduce"
+    method: "POST"
+# Only `go_connect_rpc` is detected — without a `.proto` the gRPC spec
+# detector doesn't fire.

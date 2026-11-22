@@ -1,0 +1,64 @@
+fixture: fixtures/ruby/hanami/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/books"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "X-API-KEY", type: "header"}
+  - url: "/books/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "Authorization", type: "header"}
+      - {name: "session_id", type: "cookie"}
+  - url: "/books/new"
+    method: "GET"
+  - url: "/books"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "author", type: "json"}
+      - {name: "isbn", type: "json"}
+      - {name: "Content-Type", type: "header"}
+      - {name: "user_token", type: "cookie"}
+  - url: "/books/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "title", type: "json"}
+      - {name: "author", type: "json"}
+      - {name: "If-Match", type: "header"}
+  - url: "/books/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "csrf_token", type: "cookie"}
+  - url: "/users/search"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "order", type: "query"}
+      - {name: "User-Agent", type: "header"}
+      - {name: "X-Custom", type: "header"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "name", type: "json"}
+      - {name: "age", type: "json"}
+      - {name: "Content-Type", type: "header"}
+      - {name: "Authorization", type: "header"}
+  - url: "/users/:id/profile"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session_token", type: "cookie"}
+      - {name: "If-None-Match", type: "header"}

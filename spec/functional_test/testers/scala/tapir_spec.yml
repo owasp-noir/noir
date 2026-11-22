@@ -1,0 +1,38 @@
+fixture: fixtures/scala/tapir/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "include", type: "query"}
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "User"}
+  - url: "/api/v1/items/{itemId}"
+    method: "PUT"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "Authorization", type: "header"}
+      - {name: "body", type: "json", value: "Item"}
+  - url: "/api/v1/items/{itemId}"
+    method: "DELETE"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "X-API-Key", type: "header"}
+  - url: "/api/v1/items"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "sessionId", type: "cookie"}
+  - url: "/ping"
+    method: "GET"

@@ -1,0 +1,15 @@
+fixture: fixtures/swift/cli_argumentparser/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "cli://tool"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "verbose", type: "flag"}
+  - url: "cli://tool/serve"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "port", type: "flag"}
+      - {name: "config", type: "argument"}
+# swift-argument-parser (ParsableCommand root + subcommand, @Flag/@Option/@Argument)

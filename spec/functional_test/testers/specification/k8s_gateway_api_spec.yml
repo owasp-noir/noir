@@ -1,0 +1,19 @@
+fixture: fixtures/specification/k8s_gateway_api/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  # `headers` / `queryParams` matchers are conditions the route will not fire
+  # without, so they are request params.
+  - url: "/v1/users"
+    method: "GET"
+  - url: "/v1/users"
+    method: "POST"
+  - url: "/v2/.*"
+    method: "ANY"
+  - url: "/v1/legacy"
+    method: "ANY"
+  - url: "/v1/search"
+    method: "GET"
+    params:
+      - {name: "X-Api-Version", type: "header", value: "2"}
+      - {name: "q", type: "query", value: "term"}
+# Second document declares `kind: "HTTPRoute"` (quoted).

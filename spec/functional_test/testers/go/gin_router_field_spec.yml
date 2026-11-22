@@ -1,0 +1,34 @@
+# Routes registered on a struct field the package declares with a gin router
+# type, whatever the field is called (#3591): `s.router`, `s.engine`, a
+# `s.api` group assigned in one method and used in another (and in another
+# file), an `IRouter` field, a `.Group(...)` chain off a field. The import is
+# aliased (`g`). Lookups on non-router fields (`c.Request.Get`, `s.client`,
+# `s.cache`, `s.db`) and a `router` field of another type in another package
+# stay out.
+fixture: fixtures/go/gin_router_field/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/lower"
+    method: "GET"
+  - url: "/upper"
+    method: "GET"
+  - url: "/engine"
+    method: "POST"
+  - url: "/api/x"
+    method: "GET"
+  - url: "/chain/z"
+    method: "GET"
+  - url: "/v1/y"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/v1/w"
+    method: "PUT"
+  - url: "/admin/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/direct"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}

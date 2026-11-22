@@ -1,0 +1,20 @@
+# poem-openapi `#[oai]` methods: each `param::{Query, Header, Cookie}`
+# argument is one named parameter — the binding, or its
+# `#[oai(name = "...")]` rename — not a generic `query` placeholder.
+fixture: fixtures/rust/poem_openapi_params/
+counts: {techs: 1, endpoints: 2}
+options:
+  only_techs: "rust_poem"
+endpoints:
+  - url: "/api/pets"
+    method: "GET"
+    params:
+      - {name: "status", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/api/pets/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-API-Key", type: "header"}
+      - {name: "body", type: "json"}
+      - {name: "session", type: "cookie"}

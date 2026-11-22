@@ -1,0 +1,56 @@
+fixture: fixtures/python/pyramid/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "lang", type: "query"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Token", type: "header"}
+      - {name: "session_id", type: "cookie"}
+  - url: "/api/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "price", type: "form"}
+  - url: "/api/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "password", type: "json"}
+  - url: "/about"
+    method: "GET"
+    params:
+      - {name: "source", type: "query"}
+  - url: "/external/reports/{report_id}"
+    method: "GET"
+    params:
+      - {name: "report_id", type: "path"}
+      - {name: "include", type: "query"}
+  - url: "/ping"
+    method: "GET"
+    params:
+      - {name: "format", type: "query"}
+  - url: "/orders"
+    method: "GET"
+    params:
+      - {name: "status", type: "query"}
+  - url: "/orders"
+    method: "POST"
+    params:
+      - {name: "order_id", type: "json"}
+  # Multi-line @view_defaults(route_name="reports") — methods inherit the
+  # class route_name even though the decorator's closing `)` is the line
+  # directly above the class.
+  - url: "/reports"
+    method: "GET"
+    params:
+      - {name: "scope", type: "query"}
+  - url: "/reports"
+    method: "DELETE"
+  - url: "/assets/*"
+    method: "GET"

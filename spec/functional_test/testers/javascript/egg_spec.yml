@@ -1,0 +1,73 @@
+# The `test/fixtures/apps/demo` router belongs to a package.json that does not
+# name egg, so it contributes nothing.
+fixture: fixtures/javascript/egg/
+counts: {techs: 1, endpoints: 26}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "fields", type: "query"}
+  - url: "/api/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "password", type: "json"}
+      - {name: "csrfToken", type: "cookie"}
+  - url: "/api/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "x-admin-token", type: "header"}
+  # `resources` registers only the actions posts.ts defines; its commented-out
+  # `destroy` is not one.
+  - url: "/api/posts"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+  - url: "/api/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  # A resource whose actions are all inherited registers every action.
+  - url: "/api/tags"
+    method: "GET"
+  - url: "/api/tags/new"
+    method: "GET"
+  - url: "/api/tags/:id/edit"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/tags/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # koa-router registers `redirect` through `all`.
+  - url: "/home"
+    method: "GET"
+  - url: "/home"
+    method: "POST"
+  - url: "/home"
+    method: "OPTIONS"
+  - url: "/health"
+    method: "GET"
+    params:
+      - {name: "verbose", type: "query"}
+  - url: "/admin/reports"
+    method: "POST"
+    params:
+      - {name: "period", type: "json"}

@@ -1,0 +1,15 @@
+# package-benchmark keeps its targets in a `Benchmarks/` directory beside a
+# Package.swift (the scan base's or a nested package's), and those workloads
+# are not served. A `Benchmarks/` folder inside application sources, such as
+# `Sources/App/Controllers/Benchmarks/`, is ordinary code with real routes.
+fixture: fixtures/swift/vapor_benchmarks_names/
+counts: {techs: 1, endpoints: 3}
+options:
+  only_techs: "swift_vapor"
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/benchmarks"
+    method: "GET"
+  - url: "/inner"
+    method: "GET"

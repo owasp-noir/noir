@@ -1,0 +1,9 @@
+fixture: fixtures/specification/k8s_ingress/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/v1/users"
+    method: "ANY"
+  - url: "/admin"
+    method: "ANY"
+  - url: "/metrics"
+    method: "ANY"

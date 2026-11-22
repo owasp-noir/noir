@@ -1,0 +1,44 @@
+# An argument with no binding annotation that is not a URI variable binds
+# the query string, or a body property on a verb that carries a body
+# (Java and Kotlin controllers).
+fixture: fixtures/java/micronaut_implicit_binding/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/books/search"
+    method: "GET"
+    params:
+      - {name: "title", type: "query"}
+      - {name: "author", type: "query"}
+      - {name: "max", type: "query"}
+  - url: "/books/search-explicit"
+    method: "GET"
+    params:
+      - {name: "title", type: "query"}
+      - {name: "author", type: "query"}
+      - {name: "max", type: "query"}
+  - url: "/books/{id}/pages"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "from", type: "query"}
+  - url: "/books/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "password", type: "json"}
+  - url: "/kt-books/search"
+    method: "GET"
+    params:
+      - {name: "title", type: "query"}
+      - {name: "author", type: "query"}
+      - {name: "max", type: "query"}
+  - url: "/kt-books/search-explicit"
+    method: "GET"
+    params:
+      - {name: "title", type: "query"}
+      - {name: "author", type: "query"}
+  - url: "/kt-books/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "password", type: "json"}

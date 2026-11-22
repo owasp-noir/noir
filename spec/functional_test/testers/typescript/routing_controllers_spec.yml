@@ -1,0 +1,26 @@
+# `routePrefix: '/api'` from `createExpressServer` prefixes every controller.
+fixture: fixtures/typescript/routing_controllers/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+      - {name: "authorization", type: "header"}
+  - url: "/api/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}
+  # Plain `@Controller()` with no prefix.
+  - url: "/api/health"
+    method: "GET"
+# `:techs => 1`: the `@Controller` file must not also detect as ts_nestjs.

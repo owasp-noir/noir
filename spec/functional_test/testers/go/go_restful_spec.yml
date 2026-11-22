@@ -1,0 +1,37 @@
+# go-restful (`github.com/emicklei/go-restful`) registers routes as a nested
+# builder chain hung off a WebService whose `Path()` supplies the prefix:
+#   ws.Path("/users")
+#   ws.Route(ws.GET("/{user-id}").To(h).Param(ws.PathParameter("user-id", ...)))
+# The full path is the WebService prefix joined with the verb's sub-path, and
+# params are self-declared on the chain (PathParameter/QueryParameter/Reads).
+fixture: fixtures/go/go_restful/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  # GET("/") under Path("/users") keeps the explicit trailing slash.
+  - url: "/users/"
+    method: "GET"
+  - url: "/users/{user-id}"
+    method: "GET"
+    params:
+      - {name: "user-id", type: "path"}
+      - {name: "verbose", type: "query"}
+  # POST("") registers at the WebService root — no trailing slash — with a
+  # JSON body from Reads(User{}).
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/users/{user-id}"
+    method: "PUT"
+    params:
+      - {name: "user-id", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/users/{user-id}"
+    method: "DELETE"
+    params:
+      - {name: "user-id", type: "path"}
+  # A second WebService in another file resolves its own Path() prefix.
+  - url: "/api/v1/health/ping"
+    method: "GET"
+  - url: "/api/v1/health/ready"
+    method: "HEAD"

@@ -1,0 +1,16 @@
+# Airflow's `init_views(app: FastAPI)`: the app is built in `main.py` and
+# handed to a function that includes the routers and declares routes on
+# it. The annotated parameter is a mount root like `app = FastAPI()`, but
+# not a project root: a top-level `lifespan(app: FastAPI)` must not move
+# where `from app.users import (router as users_router)` resolves.
+fixture: fixtures/python/fastapi_app_param/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/users/me"
+    method: "GET"
+  - url: "/api/v2/items/{item_id}"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+  - url: "/health"
+    method: "GET"

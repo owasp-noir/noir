@@ -1,0 +1,42 @@
+fixture: fixtures/swift/kitura_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "UserService.build", line: 8}
+      - {name: "AuditLog.write", line: 9}
+      - {name: "response.send", line: 10}
+      - {name: "ResponseBuilder.created", line: 10}
+      - {name: "next", line: 11}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+    callees:
+      - {name: "SearchMetrics.record", line: 20}
+      - {name: "response.send", line: 21}
+      - {name: "SearchService.render", line: 21}
+      - {name: "next", line: 22}
+  - url: "/health"
+    method: "GET"
+    callees:
+      - {name: "HealthService.check", line: 25}
+  - url: "/delayed"
+    method: "GET"
+    callees:
+      - {name: "DelayService.wait", line: 29}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+    callees:
+      - {name: "ProfileService.load", line: 41}
+      - {name: "response.send", line: 42}
+      - {name: "ProfilePresenter.render", line: 42}
+      - {name: "next", line: 43}

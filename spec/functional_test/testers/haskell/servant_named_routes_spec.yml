@@ -1,0 +1,20 @@
+# Record-based `NamedRoutes` API: routes declared as record fields
+# (`field :: mode :- <route>`), reached through `type API = NamedRoutes Routes`,
+# including a nested record (`NamedRoutes ItemRoutes`) under a captured segment.
+fixture: fixtures/haskell/servant_named_routes/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/version"
+    method: "GET"
+  - url: "/items"
+    method: "GET"
+    params:
+      - {name: "page", type: "query", value: "Int"}
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "body", type: "body", value: "Item"}
+  - url: "/items/:itemId/detail"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path", value: "Int"}

@@ -1,0 +1,26 @@
+# `app.get<{ Querystring: Q }>(…)`: a type-argument list between the verb
+# and `(` must not hide the handler's reads.
+fixture: fixtures/javascript/fastify_type_args/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/g00-control"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/g01-generic"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/g02-inline-generic"
+    method: "GET"
+    params:
+      - {name: "a", type: "query"}
+  - url: "/g03-body"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "done", type: "json"}
+  - url: "/g04-multiline-generic"
+    method: "GET"
+    params:
+      - {name: "x-trace", type: "header"}

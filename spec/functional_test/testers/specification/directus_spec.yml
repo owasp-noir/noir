@@ -1,0 +1,81 @@
+fixture: fixtures/specification/directus/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  # Bare field names are not Directus query keys - filtering goes
+  # through the operator form.
+  - url: "/items/posts"
+    method: "GET"
+    params:
+      - {name: "fields", type: "query"}
+      - {name: "filter", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "filter[title][_eq]", type: "query"}
+      - {name: "aggregate", type: "query"}
+      - {name: "deep", type: "query"}
+      - {name: "filter[id][_eq]", type: "query"}
+      - {name: "filter[published][_eq]", type: "query"}
+      - {name: "filter[views][_eq]", type: "query"}
+      - {name: "meta", type: "query"}
+      - {name: "offset", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "search", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/items/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "json", value: "string"}
+      - {name: "views", type: "json", value: "int"}
+      - {name: "published", type: "json", value: "boolean"}
+  - url: "/items/posts"
+    method: "PATCH"
+    params:
+      - {name: "keys", type: "json", value: "array"}
+      - {name: "data.title", type: "json", value: "string"}
+      - {name: "data.published", type: "json"}
+      - {name: "data.views", type: "json"}
+  - url: "/items/posts"
+    method: "DELETE"
+    params:
+      - {name: "keys", type: "json", value: "array"}
+  - url: "/items/posts/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "aggregate", type: "query"}
+      - {name: "deep", type: "query"}
+      - {name: "fields", type: "query"}
+      - {name: "filter", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "offset", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "search", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/items/posts/{id}"
+    method: "PATCH"
+    params:
+      - {name: "title", type: "json", value: "string"}
+      - {name: "id", type: "path"}
+      - {name: "published", type: "json"}
+      - {name: "views", type: "json"}
+  - url: "/items/posts/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # A singleton has one implicit row: no listing, no id segment.
+  - url: "/items/site_settings"
+    method: "GET"
+    params:
+      - {name: "fields", type: "query"}
+      - {name: "filter", type: "query"}
+      - {name: "search", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "offset", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "deep", type: "query"}
+      - {name: "aggregate", type: "query"}
+      - {name: "meta", type: "query"}
+  - url: "/items/site_settings"
+    method: "PATCH"
+    params:
+      - {name: "site_name", type: "json", value: "string"}

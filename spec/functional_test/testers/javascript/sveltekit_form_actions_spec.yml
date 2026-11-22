@@ -1,0 +1,17 @@
+# `+page.server.ts` form actions register an inbound POST at the page URL
+# (distinct from the `+page.svelte` GET). And an optional-with-matcher
+# segment `[[assetId=id]]` normalizes to `{assetId}`, not a literal, and
+# also serves the URL without it.
+fixture: fixtures/javascript/sveltekit_form_actions/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/login"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+  - url: "/photos"
+    method: "GET"
+  - url: "/photos/{assetId}"
+    method: "GET"
+    params:
+      - {name: "assetId", type: "path"}

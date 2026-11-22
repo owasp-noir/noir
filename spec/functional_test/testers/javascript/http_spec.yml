@@ -1,0 +1,34 @@
+fixture: fixtures/javascript/http/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "x-api-key", type: "header"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/api/users/search"
+    method: "QUERY"
+    params:
+      - {name: "query", type: "json"}
+      - {name: "filter", type: "json"}
+  - url: "/health"
+    method: "GET"
+  - url: "/api/users/settings"
+    method: "PUT"
+    params:
+      - {name: "x-trace-id", type: "header"}
+  - url: "/api/users/archive"
+    method: "DELETE"
+  - url: "/api/users/lookup"
+    method: "QUERY"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "filter", type: "json"}
+  - url: "/api/reports"
+    method: "GET"
+    params:
+      - {name: "period", type: "query"}

@@ -1,0 +1,32 @@
+# `use_doorkeeper do ... end` generates Doorkeeper's OAuth2 routes.
+# This fixture exercises `skip_controllers` (drops the applications and
+# authorized_applications resources) and the `controllers` remap (token
+# endpoints resolve to the app's own `oauth/tokens` controller, so
+# params and callees attach).
+fixture: fixtures/ruby/rails_doorkeeper/
+counts: {techs: 1, endpoints: 7}
+options:
+  include_callee: true
+endpoints:
+  - url: "/oauth/authorize"
+    method: "GET"
+  - url: "/oauth/authorize"
+    method: "POST"
+  - url: "/oauth/authorize"
+    method: "DELETE"
+  - url: "/oauth/token"
+    method: "POST"
+    params:
+      - {name: "grant_type", type: "form"}
+    callees:
+      - {name: "AuditLog.write"}
+  - url: "/oauth/revoke"
+    method: "POST"
+    params:
+      - {name: "token", type: "form"}
+    callees:
+      - {name: "TokenRevoker.revoke"}
+  - url: "/oauth/introspect"
+    method: "POST"
+  - url: "/oauth/token/info"
+    method: "GET"

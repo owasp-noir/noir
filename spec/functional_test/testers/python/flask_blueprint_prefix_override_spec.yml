@@ -1,0 +1,25 @@
+# A url_prefix passed to register_blueprint() replaces the blueprint's own
+# url_prefix; the own prefix is used only when url_prefix is omitted.
+# A blueprint registered twice is served under both registrations, and so
+# is a child registered on it in another file.
+fixture: fixtures/python/flask_blueprint_prefix_override/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/mounted/o"
+    method: "GET"
+  - url: "/api/child/c"
+    method: "GET"
+  - url: "/outer/mounted-inner/i"
+    method: "GET"
+  - url: "/e"
+    method: "GET"
+  - url: "/kept/k"
+    method: "GET"
+  - url: "/v1/t"
+    method: "GET"
+  - url: "/v2/t"
+    method: "GET"
+  - url: "/s1/c/cr"
+    method: "GET"
+  - url: "/s2/c/cr"
+    method: "GET"

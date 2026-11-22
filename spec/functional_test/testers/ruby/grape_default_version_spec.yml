@@ -1,0 +1,14 @@
+# `version 'v1'` without `using:` is path versioning (Grape's default);
+# `using: :header` and `:using => :param` add no segment, and a
+# `version = ...` local is not a declaration.
+fixture: fixtures/ruby/grape_default_version/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/v1/statuses/public_timeline"
+    method: "GET"
+  - url: "/header_versioned"
+    method: "GET"
+  - url: "/param_versioned"
+    method: "GET"
+    params:
+      - {name: "version", type: "query"}

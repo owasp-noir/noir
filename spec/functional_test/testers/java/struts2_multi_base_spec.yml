@@ -1,0 +1,22 @@
+fixture: fixtures/java/struts2_multi_base/
+counts: {techs: 1, endpoints: 6}
+options:
+  base: ["./spec/functional_test/fixtures/java/struts2_multi_base/service_a", "./spec/functional_test/fixtures/java/struts2_multi_base/service_b"]
+  include_callee: true
+endpoints:
+  - url: "/a-package/package-annotated"
+    method: "ANY"
+  - url: "/b-package/package-annotated"
+    method: "ANY"
+  - url: "/a-extra/included"
+    method: "ANY"
+  - url: "/b-extra/included"
+    method: "ANY"
+  - url: "/a/root"
+    method: "ANY"
+    callees:
+      - {name: "aService.load"}
+  - url: "/b/root"
+    method: "ANY"
+    callees:
+      - {name: "bService.load"}

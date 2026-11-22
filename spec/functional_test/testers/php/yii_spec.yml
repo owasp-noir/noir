@@ -1,0 +1,113 @@
+fixture: fixtures/php/yii/
+counts: {techs: 2, endpoints: 32}
+endpoints:
+  # From config/web.php urlManager rules
+  - url: "/posts"
+    method: "GET"
+  - url: "/posts"
+    method: "POST"
+  - url: "/posts/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/{slug}"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+  - url: "/health"
+    method: "GET"
+  # A comma-separated verb list declares one route per verb.
+  - url: "/tags"
+    method: "GET"
+  - url: "/tags"
+    method: "HEAD"
+  # yii\rest\UrlRule expands to the pluralized controller's REST routes;
+  # its own `'class' => …` options are not routes.
+  - url: "/comments"
+    method: "GET"
+  - url: "/comments"
+    method: "HEAD"
+  - url: "/comments"
+    method: "POST"
+  - url: "/comments"
+    method: "OPTIONS"
+  - url: "/comments/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/comments/{id}"
+    method: "HEAD"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/comments/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/comments/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/comments/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/comments/{id}"
+    method: "OPTIONS"
+    params:
+      - {name: "id", type: "path"}
+  # From PostController (the protected actionHidden() is not an action) action methods
+  - url: "/post/index"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/post/view"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/post/create"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+      - {name: "body", type: "form"}
+      - {name: "X-CSRF-Token", type: "header"}
+  - url: "/post/create"
+    method: "GET"
+    params:
+      - {name: "title", type: "form"}
+      - {name: "body", type: "form"}
+      - {name: "X-CSRF-Token", type: "header"}
+  # From UserController (ActiveController) REST + action methods
+  - url: "/user/index"
+    method: "GET"
+  - url: "/user/view"
+    method: "GET"
+  - url: "/user/create"
+    method: "POST"
+  - url: "/user/update"
+    method: "PUT"
+  - url: "/user/update"
+    method: "PATCH"
+  - url: "/user/delete"
+    method: "DELETE"
+  - url: "/user/options"
+    method: "OPTIONS"
+  - url: "/user/profile"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+      - {name: "session_id", type: "cookie"}
+      - {name: "Authorization", type: "header"}
+  - url: "/user/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "tag", type: "query"}

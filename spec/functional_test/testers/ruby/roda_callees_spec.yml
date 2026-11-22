@@ -1,0 +1,59 @@
+fixture: fixtures/ruby/roda_callees/
+counts: {techs: 1, endpoints: 7}
+options:
+  include_callee: true
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "HomeService.index", line: 6}
+      - {name: "json", line: 7}
+      - {name: "serialize_home", line: 7}
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "r.params", line: 12}
+      - {name: "UserService.list", line: 13}
+      - {name: "response.write", line: 14}
+      - {name: "serialize_users", line: 14}
+  - url: "/users"
+    method: "POST"
+    callees:
+      - {name: "UserService.create", line: 17}
+      - {name: "JSON.parse", line: 17}
+      - {name: "r.body.read", line: 17}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "Feature.enabled?", line: 21}
+      - {name: "UserService.find", line: 22}
+      - {name: "UserFallback.find", line: 24}
+      - {name: "response.write", line: 26}
+      - {name: "serialize_user", line: 26}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "UserService.delete", line: 30}
+      - {name: "response.status", line: 31}
+  - url: "/users/{id}/toggle"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "Feature.enabled?", line: 35}
+      - {name: "UserService.enable", line: 35}
+      - {name: "UserService.disable", line: 35}
+      - {name: "response.write", line: 36}
+      - {name: "serialize_state", line: 36}
+  - url: "/users/{id}"
+    method: "OPTIONS"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "OptionsService.allow", line: 39}

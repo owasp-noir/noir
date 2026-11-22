@@ -1,0 +1,17 @@
+# Regression: `com.beust.jcommander.internal.Maps` ships inside the
+# JCommander jar, and `@Parameter` is also swagger's. A JAX-RS resource that
+# imports the helper, or only JCommander's `JCommander` class next to
+# swagger's `Parameter`, must not surface as `cli://WidgetResource` and
+# friends. JCommander is in use only when the file imports its API
+# (`Parameter`, `Parameters`, `JCommander` or `*`), and `@Parameter` is read
+# as a JCommander option only when it resolves to JCommander's.
+fixture: fixtures/java/cli_jcommander_gate_fp/
+counts: {techs: 1, endpoints: 1}
+options:
+  only_techs: "java_cli"
+endpoints:
+  - url: "cli://Tool"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "verbose", type: "flag"}

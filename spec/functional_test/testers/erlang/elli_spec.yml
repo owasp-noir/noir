@@ -1,0 +1,28 @@
+fixture: fixtures/erlang/elli/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/hello/world"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "body"}
+      - {name: "X-Auth-Token", type: "header"}
+  # A bound variable in the segment list is a path param.
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # `[<<"static">> | _]` — the tail matches every remaining segment.
+  - url: "/static/*"
+    method: "GET"

@@ -1,0 +1,44 @@
+fixture: fixtures/typescript/orpc/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/planets"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+      - {name: "cursor", type: "query"}
+  - url: "/planets/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # No `method`: POST. `.input()` before `.route()`, `PlanetSchema.omit({ id })`.
+  - url: "/planets"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "description", type: "json"}
+  # Mounted through `os.prefix('/admin/planets').router({...})`.
+  - url: "/admin/planets/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # oRPC's `{+path}` catch-all is a path param.
+  - url: "/files/{path}"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}
+  # moons.ts builds on a base from ./base and never imports oRPC itself;
+  # `.router(moonRouter)` and `{ ...moonRouter }` both take the prefix.
+  - url: "/v1/moons"
+    method: "GET"
+    params:
+      - {name: "planetId", type: "query"}
+  - url: "/v2/moons"
+    method: "GET"
+    params:
+      - {name: "planetId", type: "query"}
+  - url: "/v2/moons/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+# The RPC-only `ping` procedure has no `.route()` and is not reported, nor
+# are the Hapi-shaped `server.route({...})` configs in moons.ts.

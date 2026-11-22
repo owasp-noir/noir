@@ -1,0 +1,33 @@
+# A handler passed as a `Handler` field (`UserController.fetchById`) or a
+# factory call (`users.create()`) after a `/` path, in Java and Kotlin,
+# Kotlin's path-less `get(KtUsers.list)` inside `path()`, and relative paths
+# (`get("search", ...)`) inside `path()` in both. A receiver call with a
+# relative path outside `path()` (`app.get("relative", ...)`) and map calls
+# with a value expression (`settings.put("key", x)`) stay out.
+fixture: fixtures/java/javalin_handler_fields/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+  - url: "/control-lambda"
+    method: "GET"
+  - url: "/control-ref/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/java-api/feed"
+    method: "GET"
+  - url: "/kt-api/users"
+    method: "GET"
+  - url: "/kt-api/users/search"
+    method: "GET"
+  - url: "/kt-api/users/library/series"
+    method: "GET"
+  - url: "/kt-field"
+    method: "GET"

@@ -1,0 +1,42 @@
+# Every `[Route]` on an action is a selector of its own, and so is a verb
+# attribute with a template; a template-less verb joins each `[Route]`.
+# `[Route("")]` on a controller without a route is the site root.
+fixture: fixtures/csharp/aspnet_core_mvc_multiple_routes/
+counts: {endpoints: 12}
+endpoints:
+  - url: "/"
+    method: "ANY"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/Home"
+    method: "ANY"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/Home/Index"
+    method: "ANY"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/Home/Index/{id}"
+    method: "ANY"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/Home/About"
+    method: "ANY"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/Home/About/{id}"
+    method: "ANY"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/reports/latest"
+    method: "GET"
+  - url: "/api/reports/current"
+    method: "GET"
+  - url: "/api/reports/archive"
+    method: "ANY"
+  - url: "/api/reports/history"
+    method: "GET"
+  - url: "/api/reports/run"
+    method: "POST"
+  - url: "/api/reports/execute"
+    method: "POST"

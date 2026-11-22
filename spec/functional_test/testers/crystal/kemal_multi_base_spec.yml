@@ -1,0 +1,15 @@
+fixture: fixtures/crystal/kemal_multi_base/
+counts: {techs: 1, endpoints: 5}
+options:
+  base: ["./spec/functional_test/fixtures/crystal/kemal_multi_base/service_a", "./spec/functional_test/fixtures/crystal/kemal_multi_base/service_b"]
+endpoints:
+  - url: "/a-only"
+    method: "GET"
+  - url: "/b-only"
+    method: "GET"
+  - url: "/a.txt"
+    method: "GET"
+  - url: "/b.txt"
+    method: "GET"
+  - url: "/a_asset.txt"
+    method: "GET"

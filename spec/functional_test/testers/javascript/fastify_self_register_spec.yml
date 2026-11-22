@@ -1,0 +1,8 @@
+# A plugin that registers itself used to grow its own prefix list while
+# iterating it, so the scan never finished (multi-GB RSS). The
+# self-registration is also not a top-level prefix (`/child/node`).
+fixture: fixtures/javascript/fastify_self_register/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/api/node"
+    method: "GET"

@@ -1,0 +1,42 @@
+fixture: fixtures/scala/scalatra_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "UserService.find", line: 15}
+      - {name: "params", line: 15}
+      - {name: "AuditLog.write", line: 16}
+      - {name: "json", line: 17}
+      - {name: "serializeUser", line: 17}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "UserPayload.from", line: 24}
+      - {name: "UserService.create", line: 25}
+      - {name: "json", line: 26}
+      - {name: "serializeUser", line: 26}
+  - url: "/braces"
+    method: "GET"
+    callees:
+      - {name: "BraceService.render", line: 33}
+      - {name: "json", line: 34}
+  - url: "/compact"
+    method: "GET"
+    callees:
+      - {name: "json", line: 37}
+      - {name: "HealthService.check", line: 37}
+  - url: "/interpolation"
+    method: "GET"
+    callees:
+      - {name: "avatar", line: 40}
+      - {name: "StringUtil.escapeHtml", line: 40}
+      - {name: "StringUtil.cutTail", line: 41}
+      - {name: "svc.lookup", line: 42}
+      - {name: "json", line: 43}

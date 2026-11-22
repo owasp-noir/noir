@@ -1,0 +1,21 @@
+# koa-router mounts sub-routers through a `.routes()` middleware chain:
+#   api.use(usersRouter)              // usersRouter = require('./users-router')
+#   router.use('/api', api.routes())  // api aggregated under /api
+# Every sub-router's route must inherit the `/api` prefix even though the
+# sub-routers live in separate files and `api`/`router` are local
+# aggregators with no backing file.
+fixture: fixtures/javascript/koa_nested_mount/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/users"
+    method: "POST"
+  - url: "/api/users/login"
+    method: "POST"
+  - url: "/api/user"
+    method: "GET"
+  - url: "/api/articles"
+    method: "GET"
+  - url: "/api/articles/:slug"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}

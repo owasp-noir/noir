@@ -1,0 +1,30 @@
+# Builder-style actix-web routing with a glob import (`use
+# actix_web::web::*`). Exercises: bare verb identifiers (`get()`,
+# `post()`), bare `scope(...)` / `resource(...)`, nested scope prefix
+# composition through `.service(scope(...))`, the empty-path
+# `.route("", ...)` scope-root form, the generic multi-method
+# `#[route("/p", method = "GET", method = "POST")]` macro, regex path
+# param normalisation (`{id:\d+}` -> `{id}`), and `#[cfg(test)]` gating.
+fixture: fixtures/rust/actix_builder/
+counts: {techs: 1, endpoints: 8}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/api/v4/site"
+    method: "GET"
+  - url: "/api/v4/site"
+    method: "POST"
+  - url: "/api/v4/search"
+    method: "GET"
+  - url: "/api/v4/community"
+    method: "GET"
+  - url: "/api/v4/community/pending/approve"
+    method: "POST"
+  - url: "/multi"
+    method: "GET"
+  - url: "/multi"
+    method: "POST"
+  - url: "/page-{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

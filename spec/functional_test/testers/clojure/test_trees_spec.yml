@@ -1,0 +1,15 @@
+# `test/` and `perf-test/` trees and `foo_test.clj` files hold test handlers
+# and router micro-benchmarks nothing serves; `contest/` is not a test tree.
+fixture: fixtures/clojure/test_trees/
+counts: {techs: 4, endpoints: 5}
+endpoints:
+  - url: "/compojure-live"
+    method: "GET"
+  - url: "/reitit-live"
+    method: "GET"
+  - url: "/ring-live"
+    method: "GET"
+  - url: "/ring-contest-live"
+    method: "GET"
+  - url: "/pedestal-live"
+    method: "GET"

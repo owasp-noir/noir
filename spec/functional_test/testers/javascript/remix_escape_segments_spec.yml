@@ -1,0 +1,28 @@
+# Remix flat-file escapes: `jokes[.]rss` -> `/jokes.rss` (the bracketed `.`
+# is a literal, not a separator) and `$contactId_` -> `{contactId}` (the
+# trailing `_` is the layout opt-out marker, stripped from the URL/param).
+fixture: fixtures/javascript/remix_escape_segments/
+counts: {techs: 1}
+endpoints:
+  - url: "/jokes.rss"
+    method: "GET"
+  - url: "/contacts/{contactId}/edit"
+    method: "GET"
+    params:
+      - {name: "contactId", type: "path"}
+  - url: "/contacts/{contactId}/edit"
+    method: "POST"
+    params:
+      - {name: "contactId", type: "path"}
+  - url: "/contacts/{contactId}/edit"
+    method: "PUT"
+    params:
+      - {name: "contactId", type: "path"}
+  - url: "/contacts/{contactId}/edit"
+    method: "PATCH"
+    params:
+      - {name: "contactId", type: "path"}
+  - url: "/contacts/{contactId}/edit"
+    method: "DELETE"
+    params:
+      - {name: "contactId", type: "path"}

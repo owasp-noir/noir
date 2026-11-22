@@ -1,0 +1,19 @@
+# `request.headers` and `request.FILES` are request inputs, and a
+# `request.META` key is reported as the header the client sends
+# (`HTTP_X_FORWARDED_FOR` -> `x-forwarded-for`); REMOTE_ADDR is server
+# state, not a header.
+fixture: fixtures/python/django_request_accessors/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/headers/"
+    method: "GET"
+    params:
+      - {name: "X-Api-Token", type: "header"}
+      - {name: "x-forwarded-for", type: "header"}
+      - {name: "content-type", type: "header"}
+  - url: "/upload/"
+    method: "GET"
+  - url: "/upload/"
+    method: "POST"
+    params:
+      - {name: "document", type: "form"}

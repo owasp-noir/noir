@@ -1,0 +1,74 @@
+fixture: fixtures/specification/strapi/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  # collectionType -> five verbs on the plural name.
+  # Bare attribute names are not Strapi query keys.
+  - url: "/api/articles"
+    method: "GET"
+    params:
+      - {name: "populate", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "pagination[page]", type: "query"}
+      - {name: "filters[title][$eq]", type: "query"}
+      - {name: "fields", type: "query"}
+      - {name: "filters[body][$eq]", type: "query"}
+      - {name: "filters[featured][$eq]", type: "query"}
+      - {name: "filters[publishedAt][$eq]", type: "query"}
+      - {name: "filters[slug][$eq]", type: "query"}
+      - {name: "filters[views][$eq]", type: "query"}
+      - {name: "pagination[pageSize]", type: "query"}
+      - {name: "status", type: "query"}
+  # Strapi wraps the payload in a data envelope.
+  - url: "/api/articles"
+    method: "POST"
+    params:
+      - {name: "data.title", type: "json", value: "string"}
+      - {name: "data.slug", type: "json", value: "string"}
+      - {name: "data.body", type: "json", value: "string"}
+      - {name: "data.views", type: "json", value: "int"}
+      - {name: "data.featured", type: "json", value: "boolean"}
+      - {name: "data.publishedAt", type: "json", value: "datetime"}
+  - url: "/api/articles/{documentId}"
+    method: "GET"
+    params:
+      - {name: "documentId", type: "path"}
+      - {name: "fields", type: "query"}
+      - {name: "populate", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "status", type: "query"}
+  - url: "/api/articles/{documentId}"
+    method: "PUT"
+    params:
+      - {name: "data.title", type: "json", value: "string"}
+      - {name: "data.body", type: "json"}
+      - {name: "data.featured", type: "json"}
+      - {name: "data.slug", type: "json"}
+      - {name: "data.views", type: "json"}
+      - {name: "data.publishedAt", type: "json"}
+      - {name: "documentId", type: "path"}
+  - url: "/api/articles/{documentId}"
+    method: "DELETE"
+    params:
+      - {name: "documentId", type: "path"}
+  # singleType -> read/update/delete on the singular name, no listing.
+  - url: "/api/homepage"
+    method: "GET"
+    params:
+      - {name: "fields", type: "query"}
+      - {name: "populate", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "status", type: "query"}
+  - url: "/api/homepage"
+    method: "PUT"
+    params:
+      - {name: "data.heading", type: "json", value: "string"}
+      - {name: "data.subheading", type: "json", value: "string"}
+  - url: "/api/homepage"
+    method: "DELETE"
+  # Custom routes from src/api/article/routes/, mounted under /api.
+  - url: "/api/articles/featured"
+    method: "GET"
+  - url: "/api/articles/{id}/like"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}

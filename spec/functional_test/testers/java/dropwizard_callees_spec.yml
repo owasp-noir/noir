@@ -1,0 +1,24 @@
+# Regression test for --include-callee on Dropwizard resource classes.
+# Dropwizard rides on the shared JAX-RS extractor, so its analyzer only
+# needs to push the extractor-provided callees onto emitted endpoints.
+fixture: fixtures/java/dropwizard_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/hello/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "dry_run", type: "query"}
+    callees:
+      - {name: "validate", line: 19}
+      - {name: "service.save", line: 20}
+      - {name: "AuditLog.write", line: 21}
+      - {name: "Response.ok", line: 22}
+  - url: "/hello/profile"
+    method: "GET"
+    callees:
+      - {name: "this.buildProfile", line: 28}
+      - {name: "AuditLog.write", line: 29}
+      - {name: "Response.ok", line: 30}

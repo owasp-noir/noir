@@ -1,0 +1,115 @@
+fixture: fixtures/java/play/
+counts: {techs: 1, endpoints: 27}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "filter", type: "query"}
+  - url: "/users/:userId/posts/:postId"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "postId", type: "path"}
+  - url: "/items"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/clients"
+    method: "GET"
+    params:
+      - {name: "page", type: "query", value: "1"}
+      - {name: "label", type: "query", value: "new,hot"}
+  # `?= null` is "no default", not the string "null".
+  - url: "/api/list-all"
+    method: "GET"
+    params:
+      - {name: "version", type: "query"}
+  - url: "/fixed-home"
+    method: "GET"
+  - url: "/files/$path<.+>"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}
+  - url: "/upload"
+    method: "POST"
+  - url: "/api/protected"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "session_id", type: "cookie"}
+  - url: "/api/data"
+    method: "POST"
+    params:
+      - {name: "Content-Type", type: "header"}
+      - {name: "body", type: "json"}
+  - url: "/api/modern"
+    method: "POST"
+    params:
+      - {name: "X-Trace", type: "header"}
+      - {name: "session_id", type: "cookie"}
+      - {name: "body", type: "json"}
+  - url: "/async"
+    method: "GET"
+    params:
+      - {name: "X-Async", type: "header"}
+  - url: "/legacy-async"
+    method: "GET"
+    params:
+      - {name: "X-Legacy-Async", type: "header"}
+  - url: "/assets/*file"
+    method: "GET"
+    params:
+      - {name: "file", type: "path"}
+  - url: "/multipart"
+    method: "POST"
+    params:
+      - {name: "body", type: "form"}
+  - url: "/bytes"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+  - url: "/whitespace"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/api/static"
+    method: "POST"
+    params:
+      - {name: "X-Static", type: "header"}
+      - {name: "body", type: "body"}
+  - url: "/api/reports/:reportId"
+    method: "GET"
+    params:
+      - {name: "reportId", type: "path"}
+  - url: "/api/reports"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  # Controller in a non-`controllers` package (`app/v1/PostsApi.java`):
+  # header + body enrichment must still resolve via the `play.mvc`
+  # marker gate, not the package-path convention.
+  - url: "/v1/posts"
+    method: "POST"
+    params:
+      - {name: "X-Posts-Trace", type: "header"}
+      - {name: "body", type: "json"}

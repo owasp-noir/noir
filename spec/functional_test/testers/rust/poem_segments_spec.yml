@@ -1,0 +1,15 @@
+# A regex-constrained `:id<\d+>` segment is the `{id}` param, and a
+# module-qualified `payload::Json<T>` extractor is still a JSON body.
+fixture: fixtures/rust/poem_segments/
+counts: {techs: 1, endpoints: 2}
+options:
+  only_techs: "rust_poem"
+endpoints:
+  - url: "/items/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/pets"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}

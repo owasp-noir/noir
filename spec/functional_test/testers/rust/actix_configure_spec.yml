@@ -1,0 +1,32 @@
+# Cross-file `.configure()` prefix composition. main.rs mounts each module's
+# `configure` fn under a scope (`web::scope("/auth").configure(...)`,
+# `web::scope("/api").configure(api::configure)`); the analyzer prepends that
+# scope prefix to the builder routes the fn registers in another file, on top
+# of any internal scope (`/api` + `/v2` + `/graphql`).
+fixture: fixtures/rust/actix_configure/
+counts: {techs: 1, endpoints: 9}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/auth/login"
+    method: "POST"
+  - url: "/auth/logout"
+    method: "GET"
+  - url: "/api/graphql"
+    method: "POST"
+  - url: "/api/v2/graphql"
+    method: "GET"
+  - url: "/other"
+    method: "GET"
+  - url: "/v1/todos"
+    method: "GET"
+  - url: "/v1/todos"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/v1/user/login"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/v1/user/info"
+    method: "GET"

@@ -1,0 +1,54 @@
+# Regression test for --include-callee on Gorilla Mux (#1366). Mux uses
+# the `r.HandleFunc("/x", h).Methods("GET")` chain — verb comes from
+# the outer `.Methods(...)` call. The route extractor records
+# `route.line` on the inner HandleFunc call_expression, so the
+# row-keyed callee lookup matches it. Both inline-closure and named
+# handler resolutions go through the same path.
+#
+# Coverage:
+#   - POST /users   — `r.HandleFunc("/users", createUser).Methods("POST")`
+#                     with named handler in sibling `handlers.go`.
+#   - GET /healthz  — same chain shape with an inline closure handler
+#                     in main.go.
+#   - GET /profile  — second named handler in handlers.go.
+#   - POST /builder-users
+#                   — builder chain with named handler in handlers.go.
+#   - GET /builder-healthz
+#                   — builder chain with http.HandlerFunc inline handler.
+fixture: fixtures/go/mux_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "r.FormValue", line: 8}
+      - {name: "saveUser", path: "./spec/functional_test/fixtures/go/mux_callees/helpers.go", line: 3}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/mux_callees/helpers.go", line: 7}
+      - {name: "w.Write", line: 11}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "w.Write", line: 13}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/mux_callees/helpers.go", line: 10}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/mux_callees/helpers.go", line: 7}
+      - {name: "w.Write", line: 17}
+  - url: "/builder-users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "r.FormValue"}
+      - {name: "saveUser"}
+      - {name: "auditLog"}
+      - {name: "w.Write"}
+  - url: "/builder-healthz"
+    method: "GET"
+    callees:
+      - {name: "w.Write"}

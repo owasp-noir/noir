@@ -1,0 +1,26 @@
+# Fastify plugins registered from another file:
+#
+#   fastify.register(apiRoutes, { prefix: '/api' })          // const apiRoutes = require('./routes/api')
+#   fastify.register(adminRoutes, { prefix: 'admin' })       // const { adminRoutes } = require(...); Fastify adds the '/'
+#   fastify.register(require('./users'), { prefix: '/users' }) // inside routes/api.js
+#   fastify.register(require('./auth'))                        // no prefix: inherits '/api'
+#
+# Only same-file plugins had their prefix applied; every route in a plugin
+# file was reported at its bare path (`/:id` instead of `/api/users/:id`).
+fixture: fixtures/javascript/fastify_register_crossfile/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/"
+    method: "POST"
+  - url: "/admin/stats"
+    method: "GET"
+  - url: "/health"
+    method: "GET"
+  - url: "/api/auth/config"
+    method: "GET"

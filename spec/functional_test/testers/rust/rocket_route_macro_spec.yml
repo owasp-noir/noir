@@ -1,0 +1,19 @@
+# Rocket's generic `#[route(...)]` attribute: the legacy verb-first form
+# `#[route(GET, uri = "/p")]`, the modern `#[route("/p", method = POST)]`
+# form (with `data = "<body>"`), and `#[get(...)]`. Custom non-HTTP
+# methods (PROPFIND) are not emitted.
+fixture: fixtures/rust/rocket_route_macro/
+counts: {techs: 1, endpoints: 4}
+options:
+  only_techs: "rust_rocket"
+endpoints:
+  - url: "/legacy"
+    method: "GET"
+  - url: "/modern"
+    method: "POST"
+  - url: "/with-data"
+    method: "PUT"
+    params:
+      - {name: "body", type: "body"}
+  - url: "/plain"
+    method: "GET"

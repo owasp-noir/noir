@@ -1,0 +1,31 @@
+# #3278: a method-level `@Path("/")` (or any trailing `/`) adds no segment.
+# #3298: `{client-uuid}` / `{role.name}` are real path params.
+# `{path: .+}` takes the rest of the path; any other regex stays one segment.
+fixture: fixtures/java/jaxrs_path_template/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/items"
+    method: "GET"
+  - url: "/items"
+    method: "POST"
+  - url: "/items/archived"
+    method: "GET"
+  - url: "/"
+    method: "GET"
+  - url: "/clients/{client-uuid}/roles/{role.name}"
+    method: "GET"
+    params:
+      - {name: "client-uuid", type: "path"}
+      - {name: "role.name", type: "path"}
+  - url: "/clients/{clientId}/scopes"
+    method: "GET"
+    params:
+      - {name: "clientId", type: "path"}
+  - url: "/files/{*path}"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}
+  - url: "/files/by-id/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

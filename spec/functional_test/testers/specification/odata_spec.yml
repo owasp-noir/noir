@@ -1,0 +1,51 @@
+fixture: fixtures/specification/odata/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/Products"
+    method: "GET"
+    params:
+      - {name: "$filter", type: "query"}
+      - {name: "$select", type: "query"}
+      - {name: "$expand", type: "query"}
+      - {name: "$top", type: "query"}
+      - {name: "$skip", type: "query"}
+      - {name: "$orderby", type: "query"}
+      - {name: "$count", type: "query"}
+      - {name: "$search", type: "query"}
+  - url: "/Products"
+    method: "POST"
+    params:
+      - {name: "ID", type: "json", value: "int"}
+      - {name: "Name", type: "json", value: "string"}
+      - {name: "Price", type: "json", value: "number"}
+  - url: "/Products({key})"
+    method: "GET"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/Products({key})"
+    method: "PATCH"
+    params:
+      - {name: "key", type: "path"}
+      - {name: "ID", type: "json", value: "int"}
+      - {name: "Name", type: "json", value: "string"}
+      - {name: "Price", type: "json", value: "number"}
+  - url: "/Products({key})"
+    method: "DELETE"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/Me"
+    method: "GET"
+  - url: "/Me"
+    method: "PATCH"
+    params:
+      - {name: "ID", type: "json", value: "int"}
+      - {name: "Email", type: "json", value: "string"}
+  - url: "/GetTopProducts(count={count})"
+    method: "GET"
+    params:
+      - {name: "count", type: "path"}
+  - url: "/RateProduct"
+    method: "POST"
+    params:
+      - {name: "ProductID", type: "json"}
+      - {name: "Rating", type: "json"}

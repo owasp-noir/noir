@@ -1,0 +1,11 @@
+fixture: fixtures/javascript/hapi/
+counts: {techs: 1, endpoints: 12}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "h.response().code"}

@@ -1,0 +1,89 @@
+fixture: fixtures/ruby/hanami_advanced/
+counts: {techs: 1, endpoints: 15}
+options:
+  include_callee: true
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "response.render"}
+      - {name: "HomePage.render"}
+  - url: "/{API_PREFIX}/items"
+    method: "GET"
+    params:
+      - {name: "API_PREFIX", type: "path"}
+    callees:
+      - {name: "response.render"}
+      - {name: "HealthCheck.ready"}
+  - url: "/secure"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+    callees:
+      - {name: "response.render"}
+      - {name: "SecureRenderer.render"}
+      - {name: "TokenVerifier.verify"}
+  - url: "/api/health"
+    method: "GET"
+    callees:
+      - {name: "response.render"}
+      - {name: "HealthCheck.ready"}
+  - url: "/block/inline"
+    method: "GET"
+  - url: "/block/after"
+    method: "GET"
+    callees:
+      - {name: "response.render"}
+      - {name: "HealthCheck.ready"}
+  - url: "/cafes/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "CafeRepo.find"}
+  - url: "/cafes/:cafe_id/reviews/new"
+    method: "GET"
+    params:
+      - {name: "cafe_id", type: "path"}
+    callees:
+      - {name: "ReviewForm.build"}
+  - url: "/cafes/:cafe_id/reviews"
+    method: "POST"
+    params:
+      - {name: "cafe_id", type: "path"}
+      - {name: "content", type: "json"}
+      - {name: "rating", type: "json"}
+    callees:
+      - {name: "CreateReview.call"}
+  - url: "/account"
+    method: "GET"
+    callees:
+      - {name: "response.render"}
+      - {name: "actor"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "user", type: "json"}
+      - {name: "username", type: "json"}
+    callees:
+      - {name: "UserRepository.create"}
+  - url: "/users/login"
+    method: "POST"
+    callees:
+      - {name: "Authenticator.login"}
+  - url: "/articles/:slug"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+    callees:
+      - {name: "ArticleRepository.find_by_slug"}
+  - url: "/widgets/:id/build"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "quantity", type: "json"}
+    callees:
+      - {name: "response.render"}
+      - {name: "request.params"}
+  - url: "/sidekiq"
+    method: "GET"

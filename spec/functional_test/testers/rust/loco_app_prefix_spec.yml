@@ -1,0 +1,19 @@
+# `AppRoutes::..().prefix("/l-api")` prefixes the controllers added after
+# it; one added before keeps its own path.
+fixture: fixtures/rust/loco_app_prefix/
+counts: {techs: 1, endpoints: 4}
+options:
+  only_techs: "rust_loco"
+endpoints:
+  - url: "/l-api/auth/register"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/l-api/auth/verify/{token}"
+    method: "GET"
+    params:
+      - {name: "token", type: "path"}
+  - url: "/l-api/auth/current"
+    method: "GET"
+  - url: "/status/ping"
+    method: "GET"

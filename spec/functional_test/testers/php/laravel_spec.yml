@@ -1,0 +1,158 @@
+# Laravel functional test - focusing on core functionality
+# The test verifies Laravel detection and basic endpoint analysis
+fixture: fixtures/php/laravel/
+counts: {techs: 2, endpoints: 89}
+endpoints:
+  # Core Laravel routes that are definitely working
+  - url: "/"
+    method: "GET"
+  - url: "/dashboard"
+    method: "GET"
+  - url: "/terms"
+    method: "GET"
+  - url: "/legacy-dashboard"
+    method: "GET"
+  # Controller-action request reads: accessors, `validate([...])` keys
+  # (not the custom-messages array) and a FormRequest's `rules()` keys.
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "search", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "Accept-Language", type: "header"}
+      - {name: "theme", type: "cookie"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "email", type: "form"}
+      - {name: "address", type: "form"}
+      - {name: "avatar", type: "form"}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "nickname", type: "form"}
+      - {name: "bio", type: "form"}
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/categories"
+    method: "GET"
+  - url: "/api/categories"
+    method: "POST"
+  - url: "/api/categories/{slug}"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+  - url: "/api/albums/{album}/songs"
+    method: "GET"
+    params:
+      - {name: "album", type: "path"}
+  - url: "/api/albums/{album}/songs/{song}"
+    method: "GET"
+    params:
+      - {name: "album", type: "path"}
+      - {name: "song", type: "path"}
+  - url: "/api/v1.0/albums/{record}/songs/{track}"
+    method: "GET"
+    params:
+      - {name: "record", type: "path"}
+      - {name: "track", type: "path"}
+  - url: "/contact"
+    method: "GET"
+    params:
+      - {name: "topic", type: "query"}
+  - url: "/contact"
+    method: "POST"
+    params:
+      - {name: "topic", type: "form"}
+  - url: "/filter"
+    method: "GET"
+  - url: "/filter"
+    method: "QUERY"
+  - url: "/search"
+    method: "QUERY"
+  - url: "/advanced-search"
+    method: "QUERY"
+  - url: "/search-chained"
+    method: "QUERY"
+  - url: "/secure-search"
+    method: "QUERY"
+  - url: "/webhook"
+    method: "GET"
+  - url: "/webhook"
+    method: "POST"
+  - url: "/products"
+    method: "GET"
+  # Resource action: `$this->validate($request, [...])` keys.
+  - url: "/products"
+    method: "POST"
+    params:
+      - {name: "sku", type: "form"}
+      - {name: "price", type: "form"}
+  - url: "/photos"
+    method: "GET"
+  - url: "/photos/{photo}"
+    method: "GET"
+    params:
+      - {name: "photo", type: "path"}
+  # ->shallow() nested resource
+  - url: "/posts/{post}/notes"
+    method: "GET"
+    params:
+      - {name: "post", type: "path"}
+  - url: "/notes/{note}"
+    method: "GET"
+    params:
+      - {name: "note", type: "path"}
+  - url: "/admin/widgets"
+    method: "GET"
+  - url: "/admin/widgets/{widget}"
+    method: "GET"
+    params:
+      - {name: "widget", type: "path"}
+  - url: "/admin/widgets/{widget}"
+    method: "PATCH"
+    params:
+      - {name: "widget", type: "path"}
+  - url: "/api/user"
+    method: "GET"
+  - url: "/admin/settings"
+    method: "GET"
+  - url: "/admin/settings"
+    method: "POST"
+  - url: "/admin/logs"
+    method: "QUERY"
+  - url: "/me"
+    method: "GET"
+  - url: "/api/v1/profile"
+    method: "GET"
+  - url: "/api/v1/profile"
+    method: "POST"
+  - url: "/api/v1/query-items"
+    method: "QUERY"
+  - url: "/api/v1/tokens"
+    method: "GET"
+  - url: "/api/v1/tokens/{token}"
+    method: "DELETE"
+    params:
+      - {name: "token", type: "path"}
+  - url: "/api/v1/reports/daily"
+    method: "GET"
+  - url: "/tenant/{tenant}/dashboard"
+    method: "GET"
+    params:
+      - {name: "tenant", type: "path"}
+  # routes/internal.php (not web.php/api.php) with a `static function (): void`
+  # group closure — both the file and the group prefix must be recognized.
+  - url: "/internal/status"
+    method: "GET"
+  - url: "/internal/sync"
+    method: "POST"
+  # bootstrap/app.php `withRouting(health: '/up')`
+  - url: "/up"
+    method: "GET"
+# Detection still sees both php_laravel and php_pure
+# Analysis suppresses redundant php_pure and unprefixed group endpoints;
+# `Route::redirect` answers every verb (+6 over GET).

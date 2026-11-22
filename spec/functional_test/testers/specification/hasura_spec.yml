@@ -1,0 +1,107 @@
+# Every root field rides on POST /v1/graphql, disambiguated by a URL
+# fragment the same way graphql_sdl and OpenRPC do — the optimizer
+# dedupes on (method, url), so without the fragment they would all
+# collapse into one endpoint.
+fixture: fixtures/specification/hasura/
+counts: {techs: 1, endpoints: 16}
+endpoints:
+  # The permission columns reach the params through the synthesized
+  # `movies_bool_exp` input type, which the SDL parser expands into
+  # dotted fields rather than a bare `where`.
+  - url: "/v1/graphql#Query.movies"
+    method: "POST"
+    params:
+      - {name: "where.id", type: "json"}
+      - {name: "where.title", type: "json"}
+      - {name: "where.release_year", type: "json"}
+      - {name: "limit", type: "json"}
+      - {name: "graphql_query_movies", type: "json"}
+      - {name: "distinct_on", type: "json"}
+      - {name: "offset", type: "json"}
+      - {name: "order_by", type: "json"}
+  # movies names an `id` column, so the by-pk fields exist.
+  - url: "/v1/graphql#Query.movies_by_pk"
+    method: "POST"
+    params:
+      - {name: "graphql_query_movies_by_pk", type: "json"}
+  - url: "/v1/graphql#Query.movies_aggregate"
+    method: "POST"
+    params:
+      - {name: "where.id", type: "json"}
+      - {name: "where.release_year", type: "json"}
+      - {name: "where.title", type: "json"}
+      - {name: "graphql_query_movies_aggregate", type: "json"}
+  - url: "/v1/graphql#Mutation.insert_movies"
+    method: "POST"
+    params:
+      - {name: "objects.release_year", type: "json"}
+      - {name: "objects.title", type: "json"}
+      - {name: "graphql_mutation_insert_movies", type: "json"}
+  - url: "/v1/graphql#Mutation.insert_movies_one"
+    method: "POST"
+    params:
+      - {name: "object.release_year", type: "json"}
+      - {name: "object.title", type: "json"}
+      - {name: "graphql_mutation_insert_movies_one", type: "json"}
+  - url: "/v1/graphql#Mutation.update_movies"
+    method: "POST"
+    params:
+      - {name: "_set.release_year", type: "json"}
+      - {name: "_set.title", type: "json"}
+      - {name: "where.id", type: "json"}
+      - {name: "where.release_year", type: "json"}
+      - {name: "where.title", type: "json"}
+      - {name: "graphql_mutation_update_movies", type: "json"}
+  - url: "/v1/graphql#Mutation.update_movies_by_pk"
+    method: "POST"
+    params:
+      - {name: "graphql_mutation_update_movies_by_pk", type: "json"}
+  - url: "/v1/graphql#Mutation.delete_movies"
+    method: "POST"
+    params:
+      - {name: "where.id", type: "json"}
+      - {name: "where.release_year", type: "json"}
+      - {name: "where.title", type: "json"}
+      - {name: "graphql_mutation_delete_movies", type: "json"}
+  - url: "/v1/graphql#Mutation.delete_movies_by_pk"
+    method: "POST"
+    params:
+      - {name: "graphql_mutation_delete_movies_by_pk", type: "json"}
+  # directors names only `name`, so no primary key is invented for it.
+  - url: "/v1/graphql#Query.directors"
+    method: "POST"
+    params:
+      - {name: "distinct_on", type: "json"}
+      - {name: "limit", type: "json"}
+      - {name: "offset", type: "json"}
+      - {name: "order_by", type: "json"}
+      - {name: "where.name", type: "json"}
+      - {name: "graphql_query_directors", type: "json"}
+  - url: "/v1/graphql#Query.directors_aggregate"
+    method: "POST"
+    params:
+      - {name: "where.name", type: "json"}
+      - {name: "graphql_query_directors_aggregate", type: "json"}
+  - url: "/v1/graphql#Mutation.insert_directors"
+    method: "POST"
+    params:
+      - {name: "graphql_mutation_insert_directors", type: "json"}
+  - url: "/v1/graphql#Mutation.insert_directors_one"
+    method: "POST"
+    params:
+      - {name: "graphql_mutation_insert_directors_one", type: "json"}
+  - url: "/v1/graphql#Mutation.update_directors"
+    method: "POST"
+    params:
+      - {name: "where.name", type: "json"}
+      - {name: "graphql_mutation_update_directors", type: "json"}
+  - url: "/v1/graphql#Mutation.delete_directors"
+    method: "POST"
+    params:
+      - {name: "where.name", type: "json"}
+      - {name: "graphql_mutation_delete_directors", type: "json"}
+  # The only real REST surface is what rest_endpoints.yaml declares.
+  - url: "/api/rest/movie/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

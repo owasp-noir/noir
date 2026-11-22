@@ -1,0 +1,64 @@
+fixture: fixtures/rust/ntex/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/echo"
+    method: "POST"
+  - url: "/hey"
+    method: "GET"
+  # Bare `Query<T>` / `Form<T>` imported from `ntex::web::types`.
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/files/{all}"
+    method: "GET"
+    params:
+      - {name: "all", type: "path"}
+  # Handlers mounted through a tuple `.service((...))` under a scope.
+  - url: "/api/v1/items/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "name", type: "json"}
+  - url: "/api/v1/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+  - url: "/api/v1/sessions/{sid}"
+    method: "DELETE"
+    params:
+      - {name: "sid", type: "path"}
+      - {name: "X-Session-Token", type: "header"}
+  - url: "/api/v1/health"
+    method: "GET"
+  - url: "/api/v1/stats"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  # Nested tuple scopes in a `.configure`d fn (src/appconfig.rs).
+  - url: "/products"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/products"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/products/{product_id}"
+    method: "GET"
+    params:
+      - {name: "product_id", type: "path"}
+  - url: "/products/{product_id}"
+    method: "DELETE"
+    params:
+      - {name: "product_id", type: "path"}
+  - url: "/products/{product_id}/parts/{part_id}"
+    method: "GET"
+    params:
+      - {name: "product_id", type: "path"}
+      - {name: "part_id", type: "path"}

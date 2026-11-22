@@ -206,21 +206,22 @@ test-unit:
 test-func:
     scripts/compile_gate.sh crystal spec spec/functional_test
 
-# The fastest feedback loop while working on a single analyzer: ~8.5s, against
-# ~21s for a full `just test` (a ~12s build plus a ~10s parallel run). Almost
-# all of the 8.5s is compiling src/, not running the test (the run itself is
-# ~0.06s), so narrowing further buys nothing. Once bin/noir_spec is built,
-# though, `./bin/noir_spec -e hono` is cheaper still: it skips the compiler.
-#
 # Run one functional tester, e.g. `just test-func-one javascript/hono`.
 [group('development')]
 test-func-one TESTER:
-    scripts/compile_gate.sh crystal spec spec/functional_test/testers/{{TESTER}}_spec.cr
+    #!/usr/bin/env bash
+    set -eu
+    tester=spec/functional_test/testers/{{quote(TESTER)}}_spec
+    if [[ -f "$tester.yml" ]]; then
+      NOIR_SPEC_DATA_PATH="$tester.yml" scripts/compile_gate.sh crystal spec {{linux_link_flags}} spec/functional_test/data_testers_spec.cr
+    else
+      scripts/compile_gate.sh crystal spec {{linux_link_flags}} "$tester.cr"
+    fi
 
 # Run every functional tester for one language: `just test-func-lang python`.
 [group('development')]
 test-func-lang LANG:
-    scripts/compile_gate.sh crystal spec spec/functional_test/testers/{{LANG}}
+    NOIR_SPEC_DATA_PATH=spec/functional_test/testers/{{quote(LANG)}} scripts/compile_gate.sh crystal spec {{linux_link_flags}} spec/functional_test/data_testers_spec.cr spec/functional_test/testers/{{quote(LANG)}}
 
 # Check version consistency across all files.
 [group('development')]

@@ -1,0 +1,19 @@
+fixture: fixtures/javascript/fastify_plugin_receiver/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/g"
+    method: "GET"
+  - url: "/r1"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/r4"
+    method: "GET"
+  - url: "/q1"
+    method: "QUERY"
+    params:
+      - {name: "term", type: "query"}
+  - url: "/r5"
+    method: "DELETE"
+  - url: "/ws"
+    method: "GET"

@@ -1,0 +1,21 @@
+# Cross-file handler enrichment: the route in main.rs references
+# `handler::create_user`, whose `#[handler]` body lives in handler.rs. A
+# project-wide handler index supplies the params (req.parse_json -> json
+# body, req.header::<&str> -> header) and callees from that other file, so
+# the endpoint is no longer left with zero params/callees.
+fixture: fixtures/rust/salvo_xfile_callee/
+counts: {techs: 1, endpoints: 1}
+options:
+  include_callee: true
+  only_techs: "rust_salvo"
+endpoints:
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "Authorization", type: "header"}
+    callees:
+      - {name: "req.parse_json", line: 5}
+      - {name: "req.header", line: 6}
+      - {name: "UserService::insert", line: 7}
+      - {name: "res.render", line: 8}

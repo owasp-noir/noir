@@ -1,0 +1,25 @@
+# Regression test for --include-callee on JavaScript NestJS. This
+# analyzer uses local decorator scanning rather than JSRouteExtractor,
+# so callees are extracted from each decorated method body.
+fixture: fixtures/javascript/nestjs_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+    callees:
+      - {name: "this.authService.actor", line: 7}
+      - {name: "this.usersService.create", line: 8}
+      - {name: "AuditLog.write", line: 9}
+      - {name: "this.presenter.user", line: 11}
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "include", type: "query"}
+    callees:
+      - {name: "this.usersService.findOne", line: 16}
+      - {name: "buildProfile", line: 18}

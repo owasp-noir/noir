@@ -1,0 +1,16 @@
+# `req.headers().get(header::AUTHORIZATION)`: an `http::header` constant
+# names the standard header it stands for.
+fixture: fixtures/rust/actix_header_consts/
+counts: {techs: 1, endpoints: 2}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/literal"
+    method: "GET"
+    params:
+      - {name: "x-api-key", type: "header"}
+  - url: "/consts"
+    method: "GET"
+    params:
+      - {name: "authorization", type: "header"}
+      - {name: "user-agent", type: "header"}

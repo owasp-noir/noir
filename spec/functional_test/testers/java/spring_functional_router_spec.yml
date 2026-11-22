@@ -1,0 +1,72 @@
+# #3297.
+# - A block-bodied lambda (and the springdoc `ops -> { ... }` third
+#   argument) inside a `route()` chain no longer ends the router block.
+# - `RouterFunctions.nest(path(...), route()...)` keeps its prefix, and
+#   `.GET(path(...)[.and(...)], h)` reads the pattern off the predicate.
+# - Java handlers report what they read off `ServerRequest`.
+# - A `@RequestMapping` meta-annotation declared in another Maven module
+#   (`common`) resolves for a controller in `app`.
+fixture: fixtures/java/spring_functional_router/
+counts: {techs: 1, endpoints: 19}
+endpoints:
+  - url: "/users/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/users/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "keyword", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "X-Token", type: "header"}
+      - {name: "username", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/users/{name}"
+    method: "DELETE"
+    params:
+      - {name: "name", type: "path"}
+  # `route(GET(...), handler)`: the handler is the outer call's argument.
+  - url: "/legacy/users"
+    method: "GET"
+    params:
+      - {name: "keyword", type: "query"}
+  - url: "/complete-profile"
+    method: "GET"
+  - url: "/complete-profile/send-email-code"
+    method: "POST"
+  - url: "/system/setup"
+    method: "GET"
+  - url: "/system/status"
+    method: "GET"
+  - url: "/system/setup"
+    method: "POST"
+  # `Builder b = route(); b.GET(...);` statements fill a builder variable.
+  - url: "/builder/a"
+    method: "GET"
+  - url: "/builder/b"
+    method: "POST"
+  - url: "/auth/login"
+    method: "POST"
+  - url: "/auth/info"
+    method: "GET"
+  # `CustomEndpoint` beans mount under /apis/<group>/<version> (default or groupVersion()).
+  - url: "/apis/uc.api.demo.run/v1alpha1/widgets/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/apis/uc.api.demo.run/v1alpha1/widgets/{name}/enable"
+    method: "PUT"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/apis/console.api.demo.run/v2/gadgets/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/plain"
+    method: "GET"

@@ -1,0 +1,19 @@
+# `Router("/users" -> UserEndpoints.endpoints(svc), "/pets" -> petRoutes.routes)`
+# mounts routes declared in another file under their prefixes.
+fixture: fixtures/scala/http4s_mounts/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/internal/ping"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/pets"
+    method: "POST"
+  - url: "/pets/{name}"
+    method: "DELETE"
+    params:
+      - {name: "name", type: "path"}

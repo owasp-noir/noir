@@ -1,0 +1,23 @@
+# Kratos `Router.Group` joins its prefix onto the parent router's
+# (`srv.Route("/api")` -> `r.Group("/v2")` -> `r2.Group("/admin")`).
+fixture: fixtures/go/kratos_router_group/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/hello/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/api/v2/say/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/api/v2/admin/reset"
+    method: "POST"
+  - url: "/api/v2/admin/settings"
+    method: "PUT"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/api/v2/admin/settings"
+    method: "PATCH"
+    params:
+      - {name: "body", type: "json"}

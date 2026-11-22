@@ -1,0 +1,13 @@
+# The mount has no `endpoint` option, so the default /api/trpc applies. Stories
+# and non-tRPC modules in the same package carry `endpoint:` values (an S3 URL,
+# a "GET /path" label, a SCIM path) that used to be adopted as the mount path
+# of every router.
+fixture: fixtures/typescript/trpc_prefix_decoy/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/trpc/health"
+    method: "GET"
+  - url: "/api/trpc/echo"
+    method: "POST"
+    params:
+      - {name: "message", type: "body"}

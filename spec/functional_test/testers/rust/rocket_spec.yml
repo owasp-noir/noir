@@ -1,0 +1,57 @@
+fixture: fixtures/rust/rocket/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/customer"
+    method: "POST"
+    params:
+      - {name: "input", type: "body"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/{category}/{id}"
+    method: "GET"
+    params:
+      - {name: "category", type: "path"}
+      - {name: "id", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/filter"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "age", type: "query"}
+      - {name: "active", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "user", type: "body"}
+  - url: "/products/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "product", type: "body"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "credentials", type: "body"}
+  - url: "/items/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "version", type: "query"}
+      - {name: "item", type: "body"}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+      - {name: "user_token", type: "cookie"}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "auth_token", type: "cookie"}

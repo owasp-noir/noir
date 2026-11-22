@@ -1,0 +1,14 @@
+fixture: fixtures/javascript/express_parse_server_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/push_audiences"
+    method: "GET"
+    callees:
+      - {name: "listAudiences", line: 6}
+  - url: "/push_audiences"
+    method: "POST"
+    callees:
+      - {name: "parseAudience", line: 8}
+      - {name: "AudienceService.create", line: 9}

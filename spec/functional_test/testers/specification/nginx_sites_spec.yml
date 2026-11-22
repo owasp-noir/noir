@@ -1,0 +1,9 @@
+# Debian's extension-less `sites-available/<name>` vhost and an Ansible
+# `.conf.j2` template.
+fixture: fixtures/specification/nginx_sites/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/"
+    method: "ANY"
+  - url: "/j2-api/"
+    method: "ANY"

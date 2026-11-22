@@ -1,0 +1,19 @@
+# Rocket's `<name..>` matches zero or more segments, so it is reported as the
+# rest placeholder `{*name}` (which `trace` reads as a catch-all), not as a
+# one-segment `{name}`. The param keeps its bare name.
+fixture: fixtures/rust/rocket_segments/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/{*p}"
+    method: "GET"
+    params:
+      - {name: "p", type: "path"}
+  - url: "/static/{*file}"
+    method: "GET"
+    params:
+      - {name: "file", type: "path"}
+  - url: "/users/{id}/files/{*rest}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "rest", type: "path"}

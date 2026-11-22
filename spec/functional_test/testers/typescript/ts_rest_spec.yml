@@ -1,0 +1,44 @@
+fixture: fixtures/typescript/ts_rest/
+counts: {techs: 2, endpoints: 8}
+endpoints:
+  # Resolved by name from the outer router, so both prefixes apply.
+  - url: "/api/v1/posts/:postId/comments"
+    method: "GET"
+    params:
+      - {name: "postId", type: "path"}
+      - {name: "cursor", type: "query"}
+  - url: "/api/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+  # Schema constant behind `.strict()`, plus a quoted header key.
+  - url: "/api/posts/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "title", type: "json"}
+      - {name: "content", type: "json"}
+      - {name: "x-api-key", type: "header"}
+  - url: "/api/posts/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "take", type: "query"}
+  - url: "/api/posts/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Inline nested router with its own pathPrefix.
+  - url: "/api/admin/stats"
+    method: "GET"
+  # `${BASE}` resolved from a typed string constant; `.merge(TagMeta)` fields.
+  - url: "/v2/tags"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "color", type: "json"}
+# Express (the server binding) and ts-rest.

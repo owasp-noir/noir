@@ -1,0 +1,35 @@
+# Regression test for #1357: Rails app nested under App/ should still
+# yield routes when -b points at the repo root. Before the fix the
+# analyzer dereferenced @base_path/config/routes.rb directly and got
+# zero route-derived endpoints.
+fixture: fixtures/ruby/rails_monorepo/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/secret.html"
+    method: "GET"
+  - url: "/posts"
+    method: "GET"
+  - url: "/posts/:id"
+    method: "GET"
+    params:
+      - {name: "X-API-KEY", type: "header"}
+      - {name: "id", type: "path"}
+  - url: "/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "context", type: "json"}
+  - url: "/posts/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/up"
+    method: "GET"

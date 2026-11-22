@@ -1,0 +1,15 @@
+# Regression test for --include-callee on Pyramid. The fixture exercises
+# the @view_config + config.add_route pattern; the spec confirms that
+# callees with reachable same-file or imported Python definitions resolve
+# to the definition location instead of the call site inside the view.
+fixture: fixtures/python/pyramid_callees/
+counts: {techs: 1, endpoints: 1}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/{uid}"
+    method: "GET"
+    params:
+      - {name: "uid", type: "path"}
+    callees:
+      - {name: "fetch_user", path: "./spec/functional_test/fixtures/python/pyramid_callees/db.py", line: 1}

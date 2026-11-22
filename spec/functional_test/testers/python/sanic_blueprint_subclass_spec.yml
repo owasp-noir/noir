@@ -1,0 +1,12 @@
+# A Blueprint subclass (`class ApiBlueprint(Blueprint)`) is built with Sanic's
+# constructor, so its url_prefix and version= shape the served URL just as they
+# do for a plain Blueprint. The shared extractor already applied the prefix;
+# the version has to follow, or the URL is half-composed (`/items/list`
+# instead of `/v2/items/list`).
+fixture: fixtures/python/sanic_blueprint_subclass/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/v2/items/list"
+    method: "GET"
+  - url: "/v3/ping"
+    method: "GET"

@@ -1,0 +1,40 @@
+fixture: fixtures/specification/hoppscotch/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  # my-api.json — the issue #2912 example.
+  - url: "/users/1"
+    method: "GET"
+    params:
+      - {name: "q", type: "query", value: "x"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json", value: "a"}
+  # shop-collection.json — nested folders, inherited auth/headers and
+  # `<<shopUrl>>` resolved from environment.json. not-hoppscotch.json lacks
+  # `v`/`folders` and must contribute nothing.
+  - url: "/v2/orders/:orderId"
+    method: "GET"
+    params:
+      - {name: "expand", type: "query", value: "items"}
+      - {name: "orderId", type: "path"}
+      - {name: "X-Tenant", type: "header", value: "acme"}
+      - {name: "Authorization", type: "header"}
+  - url: "/v2/orders/search"
+    method: "POST"
+    params:
+      - {name: "X-Api-Key", type: "header"}
+      - {name: "status", type: "form", value: "open"}
+      - {name: "sort", type: "form", value: "date"}
+      - {name: "X-Tenant", type: "header"}
+  # A child folder's header overrides the parent's (`acme` would fail the
+  # value check). Its inactive auth block suppresses the inherited bearer.
+  - url: "/v2/catalog"
+    method: "GET"
+    params:
+      - {name: "X-Tenant", type: "header", value: "public"}
+  - url: "/v2/orders/receipt"
+    method: "PUT"
+    params:
+      - {name: "file", type: "form"}
+      - {name: "X-Tenant", type: "header"}

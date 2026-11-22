@@ -1,0 +1,19 @@
+# Play SIRD / SimpleRouter: routes delegate to a programmatic router class
+# (`-> /v1/posts v1.post.PostRouter`) whose routing is a PartialFunction.
+fixture: fixtures/scala/play_sird/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/v1/posts/"
+    method: "GET"
+  - url: "/v1/posts/"
+    method: "POST"
+  - url: "/v1/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v1/posts/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}

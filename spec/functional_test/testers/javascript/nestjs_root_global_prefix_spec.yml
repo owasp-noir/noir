@@ -1,0 +1,8 @@
+# #3291: a root `@Get()` under `setGlobalPrefix('api')` is `/api`, not `/api/`.
+fixture: fixtures/javascript/nestjs_root_global_prefix/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api"
+    method: "GET"
+  - url: "/api/health"
+    method: "GET"

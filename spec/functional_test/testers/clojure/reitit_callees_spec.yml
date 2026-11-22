@@ -1,0 +1,33 @@
+fixture: fixtures/clojure/reitit_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+    callees:
+      - {name: "user.service/list"}
+      - {name: "audit.log/write!"}
+      - {name: "response/ok"}
+      - {name: "present-users"}
+  - url: "/api/users"
+    method: "POST"
+    callees:
+      - {name: "payload/from-request"}
+      - {name: "response/created"}
+      - {name: "user.service/create!"}
+  - url: "/api/inline"
+    method: "GET"
+    callees:
+      - {name: "response/ok"}
+      - {name: "inline.service/run"}
+  - url: "/api/items/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "get-item"}
+  - url: "/api/health"
+    method: "GET"
+    callees:
+      - {name: "health-check"}

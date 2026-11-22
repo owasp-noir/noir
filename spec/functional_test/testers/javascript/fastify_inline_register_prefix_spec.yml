@@ -1,0 +1,7 @@
+fixture: fixtures/javascript/fastify_inline_register_prefix/
+counts: {techs: 1}
+endpoints:
+  - url: "/english/hello"
+    method: "GET"
+  - url: "/italian/hello"
+    method: "GET"

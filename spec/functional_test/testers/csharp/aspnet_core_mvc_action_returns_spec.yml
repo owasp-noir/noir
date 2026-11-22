@@ -1,0 +1,43 @@
+# Every public instance method of a controller is an action, whatever it
+# returns; `[NonAction]`, private, static and framework-hook overrides are not.
+fixture: fixtures/csharp/aspnet_core_mvc_action_returns/
+counts: {endpoints: 13}
+endpoints:
+  - url: "/Documents/Index"
+    method: "GET"
+  - url: "/Documents/Download/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/Documents/Stream"
+    method: "GET"
+    params:
+      - {name: "path", type: "query"}
+  - url: "/Documents/Export"
+    method: "GET"
+    params:
+      - {name: "format", type: "query"}
+  - url: "/Documents/Raw"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/Documents/Robots"
+    method: "GET"
+  - url: "/Documents/Go"
+    method: "GET"
+    params:
+      - {name: "url", type: "query"}
+  - url: "/Documents/Back"
+    method: "GET"
+    params:
+      - {name: "returnUrl", type: "query"}
+  - url: "/Documents/Health"
+    method: "GET"
+  - url: "/Documents/Version"
+    method: "GET"
+  - url: "/Documents/Motd"
+    method: "GET"
+  - url: "/Documents/Logout"
+    method: "GET"
+  - url: "/Documents/Tags"
+    method: "GET"

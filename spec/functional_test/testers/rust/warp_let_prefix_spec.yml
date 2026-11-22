@@ -1,0 +1,33 @@
+# Warp: a let-bound prefix filter (`let api = warp::path("api").and(
+# warp::path("v1"))`) mounting route lets via `api.and(list.or(create)…)`
+# prefixes those routes and is not itself a `GET /api/v1` route. Untyped
+# `warp::body::json()` / `warp::body::form()` (type inferred from the
+# closure) still yield a body param.
+fixture: fixtures/rust/warp_let_prefix/
+counts: {techs: 1, endpoints: 5}
+options:
+  only_techs: "rust_warp"
+endpoints:
+  - url: "/api/v1/todos"
+    method: "GET"
+    params:
+      - {name: "ListOptions", type: "query"}
+  - url: "/api/v1/todos"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "authorization", type: "header"}
+  - url: "/api/v1/todos/:param"
+    method: "PUT"
+    params:
+      - {name: "param", type: "path"}
+      - {name: "body", type: "form"}
+  - url: "/api/v1/todos/:param"
+    method: "DELETE"
+    params:
+      - {name: "param", type: "path"}
+      - {name: "session", type: "cookie"}
+  - url: "/hello/:param"
+    method: "GET"
+    params:
+      - {name: "param", type: "path"}

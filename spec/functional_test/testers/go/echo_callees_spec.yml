@@ -1,0 +1,35 @@
+# Regression test for --include-callee on Echo (#1366). Same shape as
+# the Gin coverage:
+#
+#   - POST /users   — named handler `createUser` in sibling
+#                     `handlers.go`; exercises the cross-file lookup.
+#   - GET /healthz  — inline closure handler in main.go.
+#   - GET /profile  — second named handler in handlers.go to confirm
+#                     per-handler scoping.
+#
+# The sibling handler's `c.FormValue("name")` reaches POST /users through
+# the cross-file named-handler lookup.
+fixture: fixtures/go/echo_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "c.FormValue", line: 8}
+      - {name: "saveUser", path: "./spec/functional_test/fixtures/go/echo_callees/helpers.go", line: 3}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/echo_callees/helpers.go", line: 7}
+      - {name: "c.JSON", line: 11}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "c.JSON", line: 11}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/echo_callees/helpers.go", line: 10}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/echo_callees/helpers.go", line: 7}
+      - {name: "c.JSON", line: 17}

@@ -1,0 +1,27 @@
+# `routes.forEach((route) => fastify.route(route))` over an imported table
+# and `for (const r of localRoutes) fastify.route(r)` over a same-file one.
+# A table nothing registers is not served.
+fixture: fixtures/javascript/fastify_route_table/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/control"
+    method: "GET"
+  - url: "/api/cars"
+    method: "GET"
+    params:
+      - {name: "make", type: "query"}
+  - url: "/api/cars"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "brand", type: "json"}
+  - url: "/api/cars/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/local/a"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/local/b"
+    method: "PUT"

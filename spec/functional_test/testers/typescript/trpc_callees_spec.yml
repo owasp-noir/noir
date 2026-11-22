@@ -1,0 +1,21 @@
+fixture: fixtures/typescript/trpc/
+counts: {techs: 1, endpoints: 10}
+options:
+  include_callee: true
+endpoints:
+  - url: "/custom-trpc/user.list"
+    method: "GET"
+    callees:
+      - {name: "UserService.list", line: 5}
+  - url: "/custom-trpc/user.create"
+    method: "POST"
+    params:
+      - {name: "email", type: "body"}
+      - {name: "name", type: "body"}
+    callees:
+      - {name: "AuditLog.write", line: 12}
+      - {name: "UserService.create", line: 13}
+  - url: "/custom-trpc/post.liveFeed"
+    method: "SUBSCRIBE"
+    callees:
+      - {name: "FeedService.live", line: 10}

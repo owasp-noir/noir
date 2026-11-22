@@ -1,0 +1,51 @@
+# C# structural-lexer regression test.
+#
+# The shared line-based scanners in `csharp/common.cr` used to count `{`/`}`
+# and `(`/`)` over raw lines with no string masking, so:
+#   * a `}` inside a string literal truncated the method block, dropping every
+#     callee below it (here SecretHelperCall / AuditLog.Write / Ok /
+#     SerializeOrder were lost, only LoadTemplate survived), and
+#   * a `(` inside a string default value made the signature run away, dropping
+#     both parameters and the body's callees.
+# Routed through `Noir::CSharpLexer#masked_lines`, the counters now run over
+# code only and recover all of them.
+fixture: fixtures/csharp/lexer_repro/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/Repro/dirty/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "LoadTemplate", line: 14}
+      - {name: "SecretHelperCall", line: 15}
+      - {name: "AuditLog.Write", line: 16}
+      - {name: "Ok", line: 17}
+      - {name: "SerializeOrder", line: 17}
+  - url: "/api/Repro/calc"
+    method: "GET"
+    params:
+      - {name: "expr", type: "query"}
+      - {name: "limit", type: "query"}
+    callees:
+      - {name: "Ok", line: 27}
+      - {name: "Compute", line: 27}
+  - url: "/api/Repro/interp/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "SecretHelperCall", line: 35}
+      - {name: "AuditLog.Write", line: 36}
+      - {name: "Ok", line: 37}
+      - {name: "SerializeOrder", line: 37}
+  - url: "/api/Repro/interp"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+    callees:
+      - {name: "orderService.Create", line: 43}
+      - {name: "Created", line: 44}
+      - {name: "SerializeOrder", line: 44}

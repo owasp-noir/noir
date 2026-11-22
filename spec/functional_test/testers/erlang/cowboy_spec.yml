@@ -1,0 +1,56 @@
+fixture: fixtures/erlang/cowboy/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  # No allowed_methods/2 and no cowboy_req:method/1 match, so the verb
+  # stays unresolved.
+  - url: "/"
+    method: "ANY"
+  - url: "/health"
+    method: "ANY"
+  # Verbs resolved from the handler's cowboy_req:method/1 branches.
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "per_page", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "per_page", type: "query"}
+      - {name: "body", type: "body", value: "Form"}
+  # Verbs resolved from the REST handler's allowed_methods/2.
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "fields", type: "query"}
+      - {name: "x-api-token", type: "header"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "fields", type: "query"}
+      - {name: "x-api-token", type: "header"}
+      - {name: "body", type: "body"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "fields", type: "query"}
+      - {name: "x-api-token", type: "header"}
+  # The 4-tuple {PathMatch, Constraints, Handler, State} form.
+  - url: "/users/:id/avatar"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id/avatar"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  # A binary path match rather than a string.
+  - url: "/search"
+    method: "GET"
+  # cowboy_static with the [...] wildcard segment.
+  - url: "/static/*"
+    method: "GET"

@@ -1,0 +1,14 @@
+# A `(` in a trailing comment on a route decorator used to hold the
+# decorator open, so the handler `def` was never found and the route
+# was dropped.
+fixture: fixtures/python/flask_decorator_comment/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/a"
+    method: "GET"
+    params:
+      - {name: "qa", type: "query"}
+  - url: "/b"
+    method: "POST"
+    params:
+      - {name: "qb", type: "form"}

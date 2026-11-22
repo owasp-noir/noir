@@ -1,0 +1,27 @@
+# Regression: a reusable Django app (or any project scanned at the app
+# level) ships `urls.py` / a `urls/` package with `urlpatterns` but no
+# project `settings.py` declaring `ROOT_URLCONF`. The ROOT_URLCONF-
+# anchored pass finds no root, so before the orphan-urlconf fallback
+# the whole app mapped to zero endpoints. Paths are app-relative
+# because there is no host project to supply a mount prefix.
+#
+# `blog/urls/__init__.py` also `include()`s a sibling module, locking
+# in the fallback's prefix nesting and visited-dedup: the sibling's
+# `dashboard/` surfaces once as `/admin/dashboard/` (mounted under the
+# include prefix), never as a bare `/dashboard/` from processing
+# `admin.py` as its own root — the `:endpoints => 5` count enforces it.
+fixture: fixtures/python/django_app_urls/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/ping/"
+    method: "GET"
+  - url: "/api/items/"
+    method: "GET"
+  - url: "/api/items/<int:item_id>/"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+  - url: "/posts/"
+    method: "GET"
+  - url: "/admin/dashboard/"
+    method: "GET"

@@ -1,0 +1,15 @@
+fixture: fixtures/javascript/express_query/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/items"
+    method: "QUERY"
+    params:
+      - {name: "filter", type: "query"}
+  - url: "/filter"
+    method: "QUERY"
+    params:
+      - {name: "category", type: "query"}

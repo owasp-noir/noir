@@ -1,0 +1,51 @@
+fixture: fixtures/clojure/reitit/
+counts: {techs: 1, endpoints: 14}
+endpoints:
+  - url: "/api/ping"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/dashboard"
+    method: "GET"
+  - url: "/api/orders"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+      - {name: "offset", type: "query"}
+  - url: "/api/items"
+    method: "GET"
+    params:
+      - {name: "tag", type: "query"}
+      - {name: "cursor", type: "query"}
+  - url: "/api/guarded/info"
+    method: "GET"
+  - url: "/api/admin/reports/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "status", type: "json"}
+      - {name: "x-request-id", type: "header"}
+  - url: "/health"
+    method: "GET"
+  - url: "/version"
+    method: "GET"

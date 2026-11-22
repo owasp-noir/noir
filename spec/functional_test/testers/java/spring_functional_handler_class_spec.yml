@@ -1,0 +1,24 @@
+# `route().GET("/person", handler::listPeople)` with the handler in its own
+# `PersonHandler` class reports what that method reads off `ServerRequest`.
+fixture: fixtures/java/spring_functional_handler_class/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/person/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/person"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "X-Tenant", type: "header"}
+  - url: "/person"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "age", type: "json"}
+  - url: "/local"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "X-Tenant", type: "header"}

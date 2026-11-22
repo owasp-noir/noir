@@ -1,0 +1,48 @@
+fixture: fixtures/ruby/sinatra/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "cookie1", type: "cookie"}
+      - {name: "cookie2", type: "cookie"}
+  - url: "/update"
+    method: "POST"
+  - url: "/api/widgets"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/widgets"
+    method: "POST"
+    params:
+      - {name: "X-Trace-Id", type: "header"}
+  - url: "/api/route_widgets"
+    method: "GET"
+    params:
+      - {name: "token", type: "query"}
+  - url: "/api/route_widgets"
+    method: "POST"
+    params:
+      - {name: "token", type: "query"}
+  - url: "/api/verb_named/:post"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+      - {name: "post", type: "path"}
+  - url: "/v2/widgets"
+    method: "GET"
+    params:
+      - {name: "cursor", type: "query"}
+  - url: "/admin/dashboard"
+    method: "GET"
+    params:
+      - {name: "full", type: "query"}
+  - url: "/admin/audit"
+    method: "GET"
+    params:
+      - {name: "since", type: "query"}
+  - url: "/files/*"
+    method: "GET"
+    params:
+      - {name: "real", type: "query"}

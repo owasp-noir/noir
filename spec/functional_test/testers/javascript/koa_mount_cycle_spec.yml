@@ -1,0 +1,15 @@
+# Mount-prefix propagation appended to the list it was iterating, so a
+# self-mount never finished and an a -> b -> a cycle doubled its prefixes
+# every pass (the scan hung). Each router is now expanded at most once per
+# mount path.
+fixture: fixtures/javascript/koa_mount_cycle/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/r/a"
+    method: "GET"
+  - url: "/r/x/b"
+    method: "GET"
+  - url: "/r/z/b"
+    method: "GET"
+  - url: "/v1/health"
+    method: "GET"

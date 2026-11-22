@@ -1,0 +1,22 @@
+# A path or mount prefix given as a member of an object constant or a
+# string enum (`app.get(ROUTES.users, …)`, `app.use(API.v1, router)`):
+# the route was dropped, and `${ROUTES.users}` from a constants module
+# with no template literal became a `{users}` path param.
+fixture: fixtures/javascript/express_member_path/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "name", type: "json"}
+  - url: "/users/export"
+    method: "GET"
+  - url: "/invoices"
+    method: "GET"
+  - url: "/api/v1/leaf"
+    method: "GET"

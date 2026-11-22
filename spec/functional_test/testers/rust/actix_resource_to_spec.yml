@@ -1,0 +1,16 @@
+# `web::resource("/p").to(handler)` — the verb-less actix resource form
+# (handler answers any method). Emitted as a single GET, with the enclosing
+# `web::scope("/api")` prefix composed in and a closure handler supported.
+fixture: fixtures/rust/actix_resource_to/
+counts: {techs: 1, endpoints: 4}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/health"
+    method: "GET"
+  - url: "/api/ping"
+    method: "GET"
+  - url: "/inline"
+    method: "GET"

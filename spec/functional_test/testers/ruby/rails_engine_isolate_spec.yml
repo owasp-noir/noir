@@ -1,0 +1,17 @@
+# #3318: `isolate_namespace Shop` puts the engine's controllers under
+# `app/controllers/shop/`, so `resources` rows and `to:` handlers resolve there.
+fixture: fixtures/ruby/rails_engine_isolate/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/v3/products"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/v3/products/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v3/auth/login"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}

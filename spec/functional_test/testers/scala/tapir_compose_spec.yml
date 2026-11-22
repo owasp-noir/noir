@@ -1,0 +1,27 @@
+# Prefix composition: base endpoints, val path/param constants, multi-line
+# .in() args, modifier-call literals that must not leak, and Endpoint-typed
+# generics that must not merge List entries.
+fixture: fixtures/scala/tapir_compose/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  # Tapir declares the input's Scala type; a type is not a value, so
+  # only a `body` param records one (its DTO name).
+  - url: "/books/add"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "Book"}
+      - {name: "X-Auth-Token", type: "header"}
+  - url: "/books/list/all"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/user/register"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "Register_IN"}
+  - url: "/user"
+    method: "GET"
+  - url: "/p1"
+    method: "GET"
+  - url: "/p1/p2"
+    method: "GET"

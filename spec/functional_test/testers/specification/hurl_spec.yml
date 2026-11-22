@@ -1,0 +1,37 @@
+fixture: fixtures/specification/hurl/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  # api.hurl — the issue #2912 example.
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/login"
+    method: "POST"
+    params:
+      - {name: "user", type: "json", value: "bob"}
+      - {name: "password", type: "json", value: "x"}
+  - url: "/api/users/42"
+    method: "PUT"
+    params:
+      - {name: "force", type: "query", value: "true"}
+      - {name: "Authorization", type: "header", value: "Bearer {{token}}"}
+  # sections.hurl — request sections, a templated host, response captures.
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query", value: "noir"}
+      - {name: "page", type: "query", value: "1"}
+      - {name: "session", type: "cookie", value: "abc"}
+  - url: "/upload"
+    method: "POST"
+    params:
+      - {name: "title", type: "form", value: "report"}
+      - {name: "Authorization", type: "header"}
+  - url: "/api/items/:item_id"
+    method: "PATCH"
+    params:
+      - {name: "X-Api-Key", type: "header", value: "k1"}
+      - {name: "item_id", type: "path"}
+      - {name: "name", type: "json", value: "widget"}
+      - {name: "count", type: "json"}
+  - url: "/api/notes"
+    method: "POST"

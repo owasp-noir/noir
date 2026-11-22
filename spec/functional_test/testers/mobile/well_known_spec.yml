@@ -1,0 +1,31 @@
+# Server-side universal-link declarations: /.well-known/assetlinks.json
+# (Android App Links) and apple-app-site-association (iOS Universal Links).
+# These keep method = "GET"; the semantics live in protocol = "universal-link".
+# Endpoint is a struct, so build via a Proc that mutates a local and returns
+# it (a `.tap` block would mutate a copy and not persist).
+fixture: fixtures/mobile/well_known/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/*"
+    method: "GET"
+    protocol: "universal-link"
+  - url: "/buy/*"
+    method: "GET"
+    protocol: "universal-link"
+  - url: "/private/*"
+    method: "GET"
+    protocol: "universal-link"
+  - url: "/help/website/*"
+    method: "GET"
+    protocol: "universal-link"
+  - url: "/articles/*"
+    method: "GET"
+    protocol: "universal-link"
+    params:
+      - {name: "articleNumber", type: "query"}
+  - url: "/secret/*"
+    method: "GET"
+    protocol: "universal-link"
+# assetlinks.json — handle_all_urls grants the whole hosting domain.
+# apple-app-site-association legacy `paths` (incl. a NOT exclusion).
+# iOS 13+ `components` form: path + a `?` query matcher, plus an exclusion.

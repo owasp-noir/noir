@@ -1,0 +1,72 @@
+# WebForms is file-path routed. A page answers POST when something proves
+# it can — a server-side form (its own or its master's), a read from the
+# form collection, or explicit postback handling — and GET only otherwise.
+# `.ascx` and `.master` are param sources but never routes, so their reads
+# are attributed to the pages that compose them.
+fixture: fixtures/aspnet/webforms/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  # Code-behind resolved through `CodeFile="default.aspx.vb"` even though
+  # the file on disk is `Default.aspx.vb`; `q`/`pageNo` come from the
+  # registered user control and `menuwidth` from the master page.
+  # `legacy` is commented out, `prefix-` is a runtime-built key and
+  # `__EVENTTARGET` is postback plumbing, so none may appear.
+  - url: "/Default.aspx"
+    method: "GET"
+    params:
+      - {name: "CategoryID", type: "query"}
+      - {name: "mode", type: "query"}
+      - {name: "q", type: "query"}
+      - {name: "menuwidth", type: "cookie"}
+  - url: "/Default.aspx"
+    method: "POST"
+    params:
+      - {name: "mode", type: "form"}
+      - {name: "pageNo", type: "form"}
+      - {name: "menuwidth", type: "cookie"}
+  # `Default.aspx` is the IIS default document, so it also answers the
+  # bare directory URL.
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "CategoryID", type: "query"}
+      - {name: "q", type: "query"}
+      - {name: "menuwidth", type: "cookie"}
+      - {name: "mode", type: "query"}
+  - url: "/"
+    method: "POST"
+    params:
+      - {name: "pageNo", type: "form"}
+      - {name: "menuwidth", type: "cookie"}
+      - {name: "mode", type: "form"}
+  # Its own `<form runat="server">` makes the page a POST target even
+  # though nothing reads the form collection.
+  - url: "/Contact.aspx"
+    method: "GET"
+    params:
+      - {name: "topic", type: "query"}
+  - url: "/Contact.aspx"
+    method: "POST"
+  # Generic handler, read through an aliased receiver
+  # (`Dim req As HttpRequest = context.Request`). It reads only the query
+  # string and has no form, so it is not claimed as a POST target.
+  - url: "/Image.ashx"
+    method: "GET"
+    params:
+      - {name: "strFullPath", type: "query"}
+      - {name: "intSize", type: "query"}
+  # `<WebMethod()>` maps to POST /Service.asmx/Method. The directive
+  # carries only `Class=`, so the implementation is found in App_Code
+  # under an unrelated filename.
+  - url: "/QuoteService.asmx/GetQuote"
+    method: "POST"
+    params:
+      - {name: "symbol", type: "form"}
+      - {name: "count", type: "form"}
+  - url: "/QuoteService.asmx/Ping"
+    method: "POST"
+  # No form, no master and no postback handling: GET only.
+  - url: "/BugTest.aspx"
+    method: "GET"
+    params:
+      - {name: "RealParam", type: "query"}

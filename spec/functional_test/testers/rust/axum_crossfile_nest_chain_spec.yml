@@ -1,0 +1,42 @@
+# Two-level cross-file nest: `main` nests `routes::api_router()` under
+# `/api/v1`, which in turn nests `users::router()` under `/users`. The
+# inner `.nest("/users", …)` is not a root mount, so the users routes
+# appear only under `/api/v1/users` — no prefix-less `/users/...` copies.
+fixture: fixtures/rust/axum_crossfile_nest_chain/
+counts: {techs: 1, endpoints: 8}
+options:
+  only_techs: "rust_axum"
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/healthz"
+    method: "GET"
+  - url: "/api/v1/users/"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "per_page", type: "query"}
+  - url: "/api/v1/users/"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "name", type: "json"}
+  - url: "/api/v1/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "x-request-id", type: "header"}
+  - url: "/api/v1/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "email", type: "form"}
+      - {name: "name", type: "form"}
+  - url: "/api/v1/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/users/:id/avatar"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}

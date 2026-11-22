@@ -1,0 +1,19 @@
+# Prefix chains that run through package `__init__.py` routers:
+#
+#   * `from app.routes import router` — the router lives in
+#     routes/__init__.py, and `from . import auth` then
+#     `include_router(auth.router)` names the auth/ package's router.
+#     Both used to resolve to no file, so `/api` and `/auth` were lost.
+#   * `UserAPIRouter(prefix="")` — a project subclass of APIRouter is a
+#     router like APIRouter itself.
+fixture: fixtures/python/fastapi_package_routers/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/api/ping"
+    method: "GET"
+  - url: "/api/auth/token"
+    method: "POST"
+  - url: "/api/auth/refresh"
+    method: "POST"
+  - url: "/api/media/validate.txt"
+    method: "GET"

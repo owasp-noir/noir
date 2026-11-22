@@ -1,0 +1,59 @@
+# Code-first HTTP triggers ship without `function.json`. Each app takes its
+# route prefix from the nearest `host.json`: `csharp` keeps the `api` default,
+# `python` disables it, `node` sets `v1`.
+fixture: fixtures/specification/azure_functions_code_first/
+counts: {techs: 1, endpoints: 19}
+endpoints:
+  # C# isolated worker + in-process
+  - url: "/api/products/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/products"
+    method: "POST"
+  - url: "/api/products"
+    method: "PUT"
+  - url: "/api/Health"
+    method: "ANY"
+  - url: "/api/ListOrders"
+    method: "GET"
+  - url: "/api/orders/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  # Python v2
+  - url: "/hello"
+    method: "GET"
+  - url: "/orders"
+    method: "POST"
+  - url: "/orders"
+    method: "PUT"
+  - url: "/Status"
+    method: "ANY"
+  - url: "/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Node v4
+  - url: "/v1/products/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v1/hello"
+    method: "GET"
+  - url: "/v1/hello"
+    method: "POST"
+  - url: "/v1/health"
+    method: "GET"
+  - url: "/v1/orders"
+    method: "POST"
+  - url: "/v1/orders"
+    method: "PUT"
+  - url: "/v1/orders/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

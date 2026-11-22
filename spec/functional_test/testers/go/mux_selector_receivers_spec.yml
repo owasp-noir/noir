@@ -1,0 +1,29 @@
+# gorilla/mux routers held in struct fields (`api.BaseRoutes.Users`, set in
+# main.go and registered on in user.go, as mattermost does), a one-field
+# router (`s.R`), a subrouter passed to a helper
+# (`InitParam(r.PathPrefix(...).Subrouter())`) and an interpreted-string
+# regex whose escapes Go keeps (`"[\\_\\-\\.]"` is `[\_\-\.]`).
+fixture: fixtures/go/mux_selector_receivers/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/api/v4/users/ids"
+    method: "POST"
+  - url: "/api/v4/users/stats"
+    method: "GET"
+  - url: "/local/ping"
+    method: "GET"
+  - url: "/field"
+    method: "GET"
+  - url: "/api/param/x"
+    method: "GET"
+  - url: "/plugins/{plugin_id:[A-Za-z0-9\\_\\-\\.]+}"
+    method: "GET"
+    params:
+      - {name: "plugin_id", type: "path"}
+  - url: "/raw/{id:[a-z\\-\\.]+}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # `\xNN` escapes are bytes: "/\xc3\xa9t\xc3\xa9" is the UTF-8 for /été.
+  - url: "/été"
+    method: "GET"

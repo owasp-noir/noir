@@ -1,0 +1,34 @@
+# Regression guard for Express mounts whose parent router arrives as a
+# function parameter. NodeBB is the shape this came from:
+#
+#   src/routes/index.js        await writeRoutes.reload({ router: router })
+#   src/routes/write/index.js  Write.reload = async (params) => {
+#                                const { router } = params;
+#                                router.use('/api/v3/users', require('./users')())
+#                              }
+#   src/routes/write/users.js  router.get('/:uid', …)
+#
+# `router` is destructured from a parameter, so the mount scanner has
+# nothing in the file to resolve its own prefix against. It used to defer
+# the mount forever and then drop it, and `users.js` emitted `/:uid`
+# instead of `/api/v3/users/:uid`.
+#
+# `groups` pins the other half of the rule: it is *also* reachable through
+# a mount the scanner can resolve (`app.use('/legacy', groupsRoutes())`),
+# so the unplaced `/api/v3/groups` mount is discarded rather than adding a
+# second copy of the router at a second prefix.
+fixture: fixtures/javascript/express_injected_router_mount/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/v3/users/:uid"
+    method: "GET"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/api/v3/users/:uid"
+    method: "DELETE"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/legacy/:gid"
+    method: "GET"
+    params:
+      - {name: "gid", type: "path"}

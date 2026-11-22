@@ -1,0 +1,41 @@
+# Quarkus written in Kotlin (#2856). `GreetingResource.kt` opens with a
+# bare `@ApplicationScoped` straight after the imports, which is the
+# shape tree-sitter-kotlin splits off the class into a sibling node, so
+# the `/hello` prefix only survives if the stray annotations are read.
+# Reactive routes (`@Route`) parse Kotlin's `name: Type` parameters.
+fixture: fixtures/java/quarkus_kotlin/
+counts: {techs: 1, endpoints: 7}
+options:
+  include_callee: true
+endpoints:
+  - url: "/svc/hello"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "X-Lang", type: "header"}
+    callees:
+      - {name: "service.greet", line: 18}
+  - url: "/svc/hello/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/svc/hello"
+    method: "POST"
+    params:
+      - {name: "message", type: "json"}
+      - {name: "lang", type: "json", value: "en"}
+  - url: "/svc/ping"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/svc/create-item"
+    method: "POST"
+    params:
+      - {name: "item", type: "json"}
+    callees:
+      - {name: "audit.record", line: 16}
+  # HostileRoutes.kt: a trailing comment and a `"${"/*"}"` template.
+  - url: "/svc/hk/k1"
+    method: "GET"
+  - url: "/svc/hk/k2"
+    method: "GET"

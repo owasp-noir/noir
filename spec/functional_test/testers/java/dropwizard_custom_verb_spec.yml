@@ -1,0 +1,15 @@
+# Regression test for #2556: a project-defined `@HttpMethod("QUERY")`
+# annotation (declared in its own file, JAX-RS's general custom-verb
+# mechanism) must resolve to verb QUERY on Dropwizard too — it shares
+# `TreeSitterJaxRsExtractor` with `java_jaxrs` / `java_quarkus` — while
+# built-in `@GET` handling stays unaffected.
+fixture: fixtures/java/dropwizard_custom_verb/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "query", type: "json"}
+      - {name: "limit", type: "json"}
+  - url: "/search/status"
+    method: "GET"

@@ -1,0 +1,49 @@
+fixture: fixtures/crystal/kemal/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "x-api-key", type: "header"}
+  - url: "/paren"
+    method: "GET"
+    params:
+      - {name: "kind", type: "query"}
+  - url: "/socket"
+    method: "GET"
+  # HTTP QUERY (RFC 10008, kemalcr/kemal#769) block form. `before_query` /
+  # `after_query` filters below (same base path) must NOT appear as
+  # endpoints — mirrors how `before_get`/`after_get` are already excluded.
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "q", type: "json"}
+      - {name: "mode", type: "query"}
+  - url: "/query"
+    method: "POST"
+    params:
+      - {name: "query", type: "form"}
+      - {name: "my_auth", type: "cookie"}
+  - url: "/token"
+    method: "GET"
+    params:
+      - {name: "grant_type", type: "form"}
+      - {name: "redirect_url", type: "form"}
+      - {name: "client_id", type: "form"}
+  - url: "/api/v1/users/"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/v1/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # Real route declared after a `<<-MD … MD` doc heredoc — proves the
+  # terminator stops the masking instead of blanking the rest of the file.
+  # The example `get`/`post` calls inside the heredoc must NOT appear.
+  - url: "/after-heredoc"
+    method: "GET"
+  - url: "/1.html"
+    method: "GET"
+  - url: "/2.html"
+    method: "GET"

@@ -1,0 +1,16 @@
+# `@Controller(RouteKey.User)` where `RouteKey` is an enum defined in a
+# different file (`./enum`) and imported. The controller prefix must
+# resolve cross-file (`users`/`assets`), not collapse to "" — which would
+# leave bare `/me`, `/:id`, `/statistics` and even merge `/:id` from two
+# controllers into one.
+fixture: fixtures/typescript/nestjs_cross_file_enum/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/users/me"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/assets/statistics"
+    method: "GET"

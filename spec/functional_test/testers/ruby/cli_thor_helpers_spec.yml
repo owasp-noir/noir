@@ -1,0 +1,27 @@
+# Thor never registers `class << self` bodies, protected methods or
+# Thor::Group / Thor::Actions subclasses as commands; only `serve` and
+# `build` are real in thor_helpers.rb.
+fixture: fixtures/ruby/cli_thor_helpers/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "cli://thor_helpers/serve"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "port", type: "flag"}
+  - url: "cli://thor_helpers/build"
+    method: "CLI"
+    protocol: "cli"
+  - url: "cli://thor_nested/plan"
+    method: "CLI"
+    protocol: "cli"
+  - url: "cli://thor_nested/apply"
+    method: "CLI"
+    protocol: "cli"
+  - url: "cli://thor_nested/verify"
+    method: "CLI"
+    protocol: "cli"
+  - url: "cli://thor_nested/finish"
+    method: "CLI"
+    protocol: "cli"
+# thor_nested.rb: a nested Thor::Error or Thor::Group scopes to its own body.

@@ -1,0 +1,19 @@
+# routes.go never imports chi: it registers through the package's own
+# `*router` wrapper (supabase/auth's shape, #3577). The look-alike calls in
+# store.go and the `flags.Get` lookup in routes.go are not on the wrapper
+# and must stay out; routes_test.go is a test file.
+fixture: fixtures/go/chi_package_wrapper/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+  - url: "/admin/users"
+    method: "GET"
+  - url: "/admin/users"
+    method: "POST"
+  - url: "/admin/audit/events"
+    method: "GET"
+  - url: "/user/profile"
+    method: "GET"

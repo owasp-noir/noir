@@ -1,0 +1,30 @@
+# actix-web method-less route constructors: `web::route()` narrowed by a
+# `guard::<Verb>()`, `web::method(Method::PATCH)`, and a bare
+# `web::route()` that answers every method.
+fixture: fixtures/rust/actix_route_guard/
+counts: {techs: 1, endpoints: 11}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/path"
+    method: "GET"
+  - url: "/a"
+    method: "POST"
+  - url: "/b"
+    method: "PATCH"
+  - url: "/c"
+    method: "GET"
+  - url: "/c"
+    method: "POST"
+  - url: "/c"
+    method: "PUT"
+  - url: "/c"
+    method: "PATCH"
+  - url: "/c"
+    method: "DELETE"
+  - url: "/c"
+    method: "OPTIONS"
+  - url: "/c"
+    method: "HEAD"
+  - url: "/d"
+    method: "GET"

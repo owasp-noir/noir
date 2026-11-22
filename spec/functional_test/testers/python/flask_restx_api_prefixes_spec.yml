@@ -1,0 +1,29 @@
+# flask-restx / flask-restful `Api` prefixes in the libraries' documented
+# layouts: namespaces that share a variable name across modules (and with
+# the Api), `Api(blueprint)` under `register_blueprint(url_prefix=)`, and
+# `Api(prefix=)` built without an app and bound later with `init_app`.
+fixture: fixtures/python/flask_restx_api_prefixes/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/api/v1/users/list"
+    method: "GET"
+  - url: "/api/v1/orders/list"
+    method: "GET"
+  - url: "/api/1/cats/"
+    method: "GET"
+  - url: "/api/1/prefix/of/ns2/"
+    method: "GET"
+  - url: "/v2/birds/"
+    method: "GET"
+  - url: "/v2/swimmers/"
+    method: "GET"
+  - url: "/legacy/ping"
+    method: "GET"
+  - url: "/api/todos/<int:id>"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/plain"
+    method: "GET"
+  - url: "/x/things/list"
+    method: "GET"

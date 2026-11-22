@@ -1,0 +1,14 @@
+# A plugin entered by a direct call that hands its instance to a same-file
+# helper (`registerAll(api)` -> `registerLocal(server)`): the helper's
+# routes and registrations take the prefix too. An expression-bodied arrow
+# (`getUserId = (server) => server.user`) is no plugin, and the next
+# function's body is not taken for its own.
+fixture: fixtures/javascript/fastify_direct_call_helpers/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/local"
+    method: "GET"
+  - url: "/api/lc/kid"
+    method: "GET"
+  - url: "/profile/me"
+    method: "GET"

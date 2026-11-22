@@ -1,0 +1,33 @@
+# Regression test for --include-callee on Restify. Restify consumes
+# JSRouteExtractor, so direct parser-covered routes reuse the shared
+# JS callee extractor. Prefix semantics in applyRoutes(base) stay out
+# of scope for this fixture.
+fixture: fixtures/javascript/restify_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Actor", type: "header"}
+    callees:
+      - {name: "req.header", line: 9}
+      - {name: "parseUser", line: 34}
+      - {name: "serviceFactory().save", line: 11}
+      - {name: "AuditLog.write", line: 12}
+      - {name: "res.send", line: 14}
+      - {name: "serializeUser", line: 42}
+  - url: "/health"
+    method: "GET"
+    callees:
+      - {name: "loadHealth", line: 46}
+      - {name: "res.send", line: 21}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "userId", type: "query"}
+    callees:
+      - {name: "loadProfile", line: 50}
+      - {name: "res.send", line: 30}

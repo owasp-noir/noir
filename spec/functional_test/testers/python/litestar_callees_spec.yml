@@ -1,0 +1,20 @@
+# Regression test for --include-callee on Litestar. Like FastAPI,
+# Litestar's decorator-based handlers needed an explicit
+# `parse_code_block` step at the emit site since the route extractor
+# stops at the decorator. Verifies bare-identifier calls surface with
+# correct line numbers and the per-handler `build_callees_from` hoist
+# stays scoped to each emitted endpoint.
+fixture: fixtures/python/litestar_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "query"}
+    callees:
+      - {name: "save_user", path: "./spec/functional_test/fixtures/python/litestar_callees/db.py", line: 1}
+      - {name: "audit_log", path: "./spec/functional_test/fixtures/python/litestar_callees/db.py", line: 5}
+  - url: "/healthz"
+    method: "GET"

@@ -1,0 +1,52 @@
+# Kotlin side of the Spring framework-provided routes (#3092, #3093):
+# Actuator from a `build.gradle.kts` dependency (springdoc is commented out,
+# so it is not), `exposure.include: ["*"]` minus `exclude` and a disabled
+# endpoint under a custom base path; the Kotlin Security DSL; and a dotfile
+# under the default `static/` location.
+fixture: fixtures/kotlin/spring_provided_routes/
+counts: {techs: 1, endpoints: 17}
+endpoints:
+  - url: "/ping"
+    method: "GET"
+  - url: "/.env"
+    method: "GET"
+  - url: "/mgmt"
+    method: "GET"
+  - url: "/mgmt/beans"
+    method: "GET"
+  - url: "/mgmt/caches"
+    method: "GET"
+  - url: "/mgmt/conditions"
+    method: "GET"
+  - url: "/mgmt/configprops"
+    method: "GET"
+  - url: "/mgmt/health"
+    method: "GET"
+  - url: "/mgmt/loggers"
+    method: "GET"
+  - url: "/mgmt/mappings"
+    method: "GET"
+  - url: "/mgmt/metrics"
+    method: "GET"
+  - url: "/mgmt/scheduledtasks"
+    method: "GET"
+  - url: "/mgmt/threaddump"
+    method: "GET"
+  # No `loginProcessingUrl`: the filter listens on the login page URL.
+  - url: "/auth/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+  - url: "/bye"
+    method: "POST"
+  - url: "/oauth/start/{registrationId}"
+    method: "GET"
+    params:
+      - {name: "registrationId", type: "path"}
+  - url: "/login/oauth2/code/{registrationId}"
+    method: "GET"
+    params:
+      - {name: "code", type: "query"}
+      - {name: "state", type: "query"}
+      - {name: "registrationId", type: "path"}

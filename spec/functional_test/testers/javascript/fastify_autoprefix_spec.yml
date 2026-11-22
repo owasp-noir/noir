@@ -1,0 +1,12 @@
+# `@fastify/autoload` with `dirNameRoutePrefix: false`: directory names do
+# NOT become prefixes, and a file's `export const autoPrefix = '/_app'`
+# supplies the prefix instead. So `routes/status.js` -> `/_app/status`,
+# while `routes/redirect/index.js` (no autoPrefix) -> `/go`, NOT
+# `/redirect/go`.
+fixture: fixtures/javascript/fastify_autoprefix/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/_app/status"
+    method: "GET"
+  - url: "/go"
+    method: "GET"

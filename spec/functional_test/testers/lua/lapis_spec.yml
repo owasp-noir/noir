@@ -1,0 +1,121 @@
+fixture: fixtures/lua/lapis/
+counts: {techs: 1, endpoints: 42}
+endpoints:
+  # app:get / app:post / app:put / app:delete / app:patch — explicit verbs.
+  - url: "/"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+  - url: "/profile"
+    method: "PUT"
+  - url: "/items/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/notes/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/files/*splat"
+    method: "GET"
+    params:
+      - {name: "splat", type: "path"}
+  # app:match — falls back to all verbs.
+  - url: "/about"
+    method: "GET"
+  - url: "/about"
+    method: "POST"
+  - url: "/about"
+    method: "PUT"
+  - url: "/about"
+    method: "DELETE"
+  - url: "/about"
+    method: "PATCH"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  # Named-route verb form — `app:get(name, "/path", handler)`.
+  - url: "/named"
+    method: "GET"
+  - url: "/named/users"
+    method: "POST"
+  # Custom Application variable name — `local users_app = lapis.Application()`.
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # Application table style — `["/admin/..."] = ...` falls back to all verbs.
+  - url: "/admin/dashboard"
+    method: "GET"
+  - url: "/admin/dashboard"
+    method: "POST"
+  - url: "/admin/dashboard"
+    method: "PUT"
+  - url: "/admin/dashboard"
+    method: "DELETE"
+  - url: "/admin/dashboard"
+    method: "PATCH"
+  - url: "/admin/users"
+    method: "GET"
+  - url: "/admin/users"
+    method: "POST"
+  - url: "/admin/users"
+    method: "PUT"
+  - url: "/admin/users"
+    method: "DELETE"
+  - url: "/admin/users"
+    method: "PATCH"
+  # MoonScript actions.
+  - url: "/moon"
+    method: "GET"
+  - url: "/moon"
+    method: "POST"
+  - url: "/moon"
+    method: "PUT"
+  - url: "/moon"
+    method: "DELETE"
+  - url: "/moon"
+    method: "PATCH"
+  - url: "/moon/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/moon/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/moon/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/moon/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/moon/users/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}

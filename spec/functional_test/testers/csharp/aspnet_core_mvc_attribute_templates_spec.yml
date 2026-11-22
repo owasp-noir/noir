@@ -1,0 +1,34 @@
+# A route template comes from the verb attribute's own parens (or a `Route` on
+# the same line), never from a sibling attribute's string literal; `ActionName`
+# renames the conventional action; a constant route argument is skipped.
+fixture: fixtures/csharp/aspnet_core_mvc_attribute_templates/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  # LogController — conventional routes (`{controller}/{action}`).
+  - url: "/Log/List"
+    method: "GET"
+  - url: "/Log/List"
+    method: "POST"
+    params:
+      - {name: "q", type: "form"}
+  - url: "/Log/Edit"
+    method: "POST"
+  - url: "/Log/Secure"
+    method: "GET"
+  - url: "/Log/Feed"
+    method: "GET"
+  - url: "/Log/Stacked"
+    method: "GET"
+  # ItemsController — `[Route("api/items")]`.
+  - url: "/api/items/rm"
+    method: "DELETE"
+  - url: "/api/items"
+    method: "GET"
+  - url: "/api/items"
+    method: "POST"
+  - url: "/api/items"
+    method: "PUT"
+  - url: "/api/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

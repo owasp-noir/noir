@@ -1,0 +1,24 @@
+fixture: fixtures/cpp/crow/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/update"
+    method: "POST"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "X-Token", type: "header"}
+      - {name: "body", type: "json"}
+  - url: "/user/{param1}/{param2}"
+    method: "GET"
+    params:
+      - {name: "param1", type: "path"}
+      - {name: "param2", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/enum"
+    method: "POST"
+    params:
+      - {name: "v", type: "query"}

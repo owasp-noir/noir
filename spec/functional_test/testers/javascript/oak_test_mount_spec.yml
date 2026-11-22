@@ -1,0 +1,7 @@
+# `router.use("/oak-test-prefix", users.routes())` inside a `Deno.test` in
+# test/mount.ts is an in-process test app, not a production mount.
+fixture: fixtures/javascript/oak_test_mount/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/users/list"
+    method: "GET"

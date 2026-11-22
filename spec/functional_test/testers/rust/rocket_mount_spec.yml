@@ -1,0 +1,25 @@
+# Cross-file `.mount()` prefix composition. main.rs mounts handlers that
+# live in sibling modules; the analyzer must prefix each `#[get]` route
+# with the base it is mounted under. Covers the three real-world shapes:
+#   * direct `routes![users::list, users::get_one]`           -> /users/*
+#   * array-concat prefix `[base, "/admin"].concat()`         -> /admin/*
+#   * `mount("/api", api::all_routes())` where the collector
+#     aggregates `routes![ping]` + an aliased recursive append
+#     `r.append(&mut v1_routes())` (v1_routes => v1::routes)   -> /api/*
+fixture: fixtures/rust/rocket_mount/
+counts: {techs: 1, endpoints: 5}
+options:
+  only_techs: "rust_rocket"
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/dashboard"
+    method: "GET"
+  - url: "/api/ping"
+    method: "GET"
+  - url: "/api/status"
+    method: "GET"

@@ -1,0 +1,41 @@
+# GoFrame standard routing: a `g.Meta` route is mounted under the group
+# that `Bind`s its controller (`group.Bind(controller.NewCtrl())` inside
+# `s.Group("/api", ...)`); a request type no bound controller takes keeps
+# its tag path. `BindHandler` and `group.ALL` answer every method.
+fixture: fixtures/go/gf_bind_group_prefix/
+counts: {techs: 1, endpoints: 16}
+endpoints:
+  - url: "/api/profile"
+    method: "GET"
+  - url: "/unbound"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/hook"
+    method: "GET"
+  - url: "/hook"
+    method: "POST"
+  - url: "/hook"
+    method: "PUT"
+  - url: "/hook"
+    method: "PATCH"
+  - url: "/hook"
+    method: "DELETE"
+  - url: "/hook"
+    method: "HEAD"
+  - url: "/hook"
+    method: "OPTIONS"
+  - url: "/api/any"
+    method: "GET"
+  - url: "/api/any"
+    method: "POST"
+  - url: "/api/any"
+    method: "PUT"
+  - url: "/api/any"
+    method: "PATCH"
+  - url: "/api/any"
+    method: "DELETE"
+  - url: "/api/any"
+    method: "HEAD"
+  - url: "/api/any"
+    method: "OPTIONS"

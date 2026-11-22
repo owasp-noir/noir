@@ -1,0 +1,76 @@
+# Stdlib programs that read ARGV without OptionParser or indexing:
+# `ARGV.first?`, `ARGV == [...]`, and `case ARGV.shift?` / `case ARGV[0]?`
+# subcommand dispatch, including arms that name no subcommand.
+fixture: fixtures/crystal/cli_argv/
+counts: {techs: 1, endpoints: 13}
+endpoints:
+  - url: "cli://demo-dbtool"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "arg0", type: "argument"}
+      - {name: "DEMO_DB_URL", type: "env"}
+  - url: "cli://worker"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "dry-run", type: "flag"}
+      - {name: "DEMO_INTERVAL", type: "env"}
+  - url: "cli://ops"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "DEMO_DB_URL", type: "env"}
+      - {name: "help", type: "flag"}
+      - {name: "h", type: "flag"}
+  - url: "cli://ops/item-add"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "arg0", type: "argument"}
+      - {name: "arg1", type: "argument"}
+  - url: "cli://ops/item-remove"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "arg0", type: "argument"}
+  - url: "cli://ops/item-list"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "limit", type: "flag"}
+  - url: "cli://tasks"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "DEMO_TOKEN", type: "env"}
+  - url: "cli://tasks/sync"
+    method: "CLI"
+    protocol: "cli"
+  - url: "cli://tasks/purge"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "force", type: "flag"}
+  - url: "cli://tasks/report"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "arg0", type: "argument"}
+  - url: "cli://pager"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "v", type: "flag"}
+      - {name: "version", type: "flag"}
+      - {name: "arg0", type: "argument"}
+  - url: "cli://counter"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "arg0", type: "argument"}
+  - url: "cli://notes/add"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "arg0", type: "argument"}

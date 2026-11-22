@@ -1,0 +1,32 @@
+# Iris route-registration shapes beyond the plain verb form, all
+# previously missed (FN) or mis-prefixed:
+#   - `app.Handle("METHOD", "/path", h)` method-first registration
+#   - `app.HandleMany("GET POST", "/path", h)` fans out to one endpoint
+#     per listed verb
+#   - `app.PartyFunc("/x", func(p){...})` / `app.Party("/x", func(p){...})`
+#     closure-scoped groups — the inner routes are called on the closure
+#     param, so the prefix is applied via byte-range scoping (which also
+#     stacks nested groups: `/pf` + `/admin` + `/stats`).
+fixture: fixtures/go/iris_grouping/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/handle-get"
+    method: "GET"
+  - url: "/handle-del"
+    method: "DELETE"
+  - url: "/many"
+    method: "GET"
+  - url: "/many"
+    method: "POST"
+  - url: "/pf/inside"
+    method: "GET"
+  - url: "/pf/create"
+    method: "POST"
+  - url: "/pf/admin/stats"
+    method: "GET"
+  - url: "/pc/x"
+    method: "GET"
+  # Subdomain `admin.` is peeled to a clean path (not `/admin./settings`)
+  # and carried on a `subdomain` tag.
+  - url: "/settings"
+    method: "GET"

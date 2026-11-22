@@ -1,0 +1,45 @@
+# A project-local `#[routes::routes(routes("p" => verb(handler), "p" => sub(Api)))]`
+# table (Meilisearch): prefixes compose through `sub(...)` across files, two
+# files declaring an `ItemsApi` are told apart by the `items::` / `other::`
+# module in the ref, comments inside the table are ignored, and
+# `AwebQueryParameter` reads its struct (deserr camelCase), and a `$( $route => ..)`
+# repetition is filled from the `make_setting_routes!({route: ..})` records.
+fixture: fixtures/rust/actix_routes_macro/
+counts: {techs: 1, endpoints: 12}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/items"
+    method: "GET"
+    params:
+      - {name: "pageSize", type: "query"}
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/items/{item_id}"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+  - url: "/items/{item_id}"
+    method: "DELETE"
+    params:
+      - {name: "item_id", type: "path"}
+  - url: "/items/{item_id}/tags"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+  - url: "/other/ping"
+    method: "GET"
+  - url: "/settings"
+    method: "GET"
+  - url: "/settings/dictionary"
+    method: "GET"
+  - url: "/settings/dictionary"
+    method: "PUT"
+  - url: "/settings/pagination"
+    method: "GET"
+  - url: "/settings/pagination"
+    method: "PATCH"

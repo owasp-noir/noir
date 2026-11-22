@@ -1,0 +1,18 @@
+# Gradle's extra test source sets (`src/jmh`, `src/testFixtures`) and JUnit
+# classes named `*Test.java` / `*Tests.java` that sit in `src/main/java` of a
+# published test kit (the Micronaut TCK shape) declare controllers that no
+# application serves. `src/test/webapp` JSPs and `web.xml` are test-only too.
+# `Latest.java` ends in "est.java" but is a real controller.
+fixture: fixtures/java/test_source_sets/
+counts: {techs: 2, endpoints: 3}
+endpoints:
+  - url: "/books/list"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/latest/news"
+    method: "GET"
+  - url: "/index.jsp"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}

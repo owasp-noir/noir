@@ -1,0 +1,20 @@
+# Endpoints land with a leading `/` and Noir's optimizer strips
+# regex anchors (`^...$`), so the rewritten/regex forms appear with
+# the anchor symbols removed.
+fixture: fixtures/specification/apache_httpd/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/v1/users"
+    method: "ANY"
+  - url: "/admin/.*"
+    method: "ANY"
+  - url: "/static"
+    method: "ANY"
+  - url: "/cgi-bin/"
+    method: "ANY"
+  - url: "/backend"
+    method: "ANY"
+  - url: "/legacy/(.*)"
+    method: "ANY"
+  - url: "/api/(.*)"
+    method: "ANY"

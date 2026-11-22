@@ -1,0 +1,22 @@
+# A view without its own `request_method` takes the verbs of the
+# `add_route(..., request_method=...)` it binds to; a view that declares
+# one keeps it.
+fixture: fixtures/python/pyramid_route_predicate/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/things"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/things/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/things/{id}/patch"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/show"
+    method: "GET"
+  - url: "/show"
+    method: "HEAD"

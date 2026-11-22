@@ -1,0 +1,34 @@
+fixture: fixtures/apex/salesforce/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/services/apexrest/Account/*"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+      - {name: "fields", type: "query"}
+      - {name: "X-Trace-Id", type: "header"}
+  - url: "/services/apexrest/Account/*"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "phone", type: "json"}
+  - url: "/services/apexrest/Account/*"
+    method: "DELETE"
+  # Static @AuraEnabled methods of the top-level class only: instance
+  # methods, inner-class members and @isTest classes are not actions.
+  - url: "/aura#apex://CaseController/ACTION$getCases"
+    method: "POST"
+    params:
+      - {name: "status", type: "json"}
+  - url: "/aura#apex://CaseController/ACTION$updateCase"
+    method: "POST"
+    params:
+      - {name: "caseId", type: "json"}
+      - {name: "fields", type: "json"}
+  - url: "/services/Soap/class/LeadService#createLead"
+    method: "POST"
+    params:
+      - {name: "SOAPAction", type: "header"}
+      - {name: "Content-Type", type: "header", value: "text/xml; charset=utf-8"}
+      - {name: "lastName", type: "json"}
+      - {name: "company", type: "json"}

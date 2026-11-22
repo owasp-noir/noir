@@ -1,0 +1,30 @@
+# register_rest_route() namespaces and routes held in a local variable,
+# a class constant, a `define()`/`const` constant, or a double-quoted
+# string that interpolates them.
+fixture: fixtures/php/wordpress_route_constants/
+counts: {techs: 2, endpoints: 10}
+endpoints:
+  - url: "/wp-json/control/v1/ping"
+    method: "GET"
+  - url: "/wp-json/myplugin/v3/status"
+    method: "GET"
+  - url: "/wp-json/myplugin/legacy/status"
+    method: "GET"
+  - url: "/wp-json/vendor/v1/route"
+    method: "GET"
+  - url: "/wp-json/vendor/v1/route"
+    method: "POST"
+  - url: "/wp-json/vendor/v1/route/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/wp-json/myplugin/v2/settings"
+    method: "POST"
+  - url: "/wp-json/myplugin/v2/flags"
+    method: "GET"
+  - url: "/wp-json/myplugin/v4/books/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/wp-json/myplugin/v1/route/latest"
+    method: "GET"

@@ -1,0 +1,18 @@
+# Astro serves every script file under `src/pages/` as an endpoint, not
+# only those under `api/`, and a param keeps its file-name suffix.
+fixture: fixtures/javascript/astro_endpoints/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/rss.xml"
+    method: "GET"
+  - url: "/auth/signin"
+    method: "POST"
+  - url: "/api/posts/{id}.json"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # The commented-out `DELETE` export beside it is not a route.
+  - url: "/api/session"
+    method: "GET"

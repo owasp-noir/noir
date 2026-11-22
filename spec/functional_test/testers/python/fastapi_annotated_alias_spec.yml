@@ -1,0 +1,29 @@
+# Regression (#3294): a handler param typed with a module-level
+# `Annotated[...]` alias reads as the expression it names: an imported
+# `Depends()` alias (one line and multi-line, its dependency resolved in
+# the file that assigns it), a same-file one, a `Query()` alias, and a
+# `typing_extensions.Annotated` one reached through a star import.
+fixture: fixtures/python/fastapi_annotated_alias/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/aliased"
+    method: "GET"
+    params:
+      - {name: "page", type: "query", value: "1"}
+      - {name: "itemsPerPage", type: "query", value: "5"}
+      - {name: "q", type: "query"}
+  - url: "/multiline"
+    method: "GET"
+    params:
+      - {name: "page", type: "query", value: "1"}
+      - {name: "itemsPerPage", type: "query", value: "5"}
+      - {name: "q", type: "query"}
+  - url: "/local"
+    method: "GET"
+    params:
+      - {name: "token", type: "query"}
+      - {name: "maxItems", type: "query"}
+  - url: "/tenant"
+    method: "GET"
+    params:
+      - {name: "x-tenant-id", type: "header"}

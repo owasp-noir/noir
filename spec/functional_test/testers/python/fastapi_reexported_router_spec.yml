@@ -1,0 +1,17 @@
+# Re-exported routers must resolve to their declaring module so every
+# include_router prefix survives, including the /api -> /v1 -> users chain.
+fixture: fixtures/python/fastapi_reexported_router/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/api/relative/whoami"
+    method: "GET"
+  - url: "/api/alias/whoami"
+    method: "GET"
+  - url: "/api/absolute/whoami"
+    method: "GET"
+  - url: "/api/two-hop/whoami"
+    method: "GET"
+  - url: "/api/direct/whoami"
+    method: "GET"
+  - url: "/api/v1/users/whoami"
+    method: "GET"

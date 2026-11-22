@@ -1,0 +1,27 @@
+# A sub-application mounted with `app.mount(prefix, sub)` serves its routes
+# (and its included routers' routes) under the mount path only. A
+# route-less wrapper in another file (`devwrap.py`) that mounts the real
+# app adds the prefixed copies without hiding the app's own root routes.
+fixture: fixtures/python/fastapi_mount_subapp/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/app"
+    method: "GET"
+  - url: "/subapi/sub"
+    method: "GET"
+  - url: "/admin/users/{user_id}"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+  - url: "/static/*"
+    method: "GET"
+  - url: "/prefixed/app"
+    method: "GET"
+  - url: "/prefixed/subapi/sub"
+    method: "GET"
+  - url: "/prefixed/admin/users/{user_id}"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+  - url: "/prefixed/static/*"
+    method: "GET"

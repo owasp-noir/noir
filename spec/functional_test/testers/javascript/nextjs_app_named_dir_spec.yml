@@ -1,0 +1,14 @@
+# A Next.js project directory itself named `app` (`app/src/app/`,
+# `apps/app/app/`): the router is the `app/` at the top of the project or in
+# its `src/`, not the first `app/` in the path.
+fixture: fixtures/javascript/nextjs_app_named_dir/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/orders"
+    method: "POST"
+  - url: "/api/ok"
+    method: "GET"
+  - url: "/api/legacy"
+    method: "GET"

@@ -1,0 +1,71 @@
+# Params read by the callback: `get_param`, `$request['x']`, `get_header`
+# and `get_file_params()` for REST; superglobals, `filter_input` and the
+# `check_ajax_referer` nonce field for admin-ajax / admin-post hooks.
+fixture: fixtures/php/wordpress_callback_params/
+counts: {techs: 2, endpoints: 11}
+endpoints:
+  - url: "/wp-json/myplugin/v1/control/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "declared", type: "query"}
+  - url: "/wp-json/myplugin/v1/orders"
+    method: "POST"
+    params:
+      - {name: "sku", type: "form"}
+      - {name: "qty", type: "form"}
+      - {name: "X-Shop-Token", type: "header"}
+      - {name: "receipt", type: "file"}
+  - url: "/wp-json/myplugin/v1/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/wp-admin/admin-ajax.php?action=myplugin_save"
+    method: "GET"
+    params:
+      - {name: "action", type: "query", value: "myplugin_save"}
+      - {name: "title", type: "form"}
+      - {name: "nonce", type: "query"}
+  - url: "/wp-admin/admin-ajax.php?action=myplugin_save"
+    method: "POST"
+    params:
+      - {name: "action", type: "query", value: "myplugin_save"}
+      - {name: "title", type: "form"}
+      - {name: "nonce", type: "form"}
+  - url: "/wp-admin/admin-ajax.php?action=myplugin_lookup"
+    method: "GET"
+    params:
+      - {name: "action", type: "query", value: "myplugin_lookup"}
+      - {name: "term", type: "query"}
+      - {name: "post_id", type: "query"}
+  - url: "/wp-admin/admin-ajax.php?action=myplugin_lookup"
+    method: "POST"
+    params:
+      - {name: "action", type: "query", value: "myplugin_lookup"}
+      - {name: "term", type: "query"}
+      - {name: "post_id", type: "form"}
+  - url: "/wp-admin/admin-post.php?action=myplugin_export"
+    method: "GET"
+    params:
+      - {name: "action", type: "query", value: "myplugin_export"}
+      - {name: "format", type: "query"}
+      - {name: "theme", type: "cookie"}
+  - url: "/wp-admin/admin-post.php?action=myplugin_export"
+    method: "POST"
+    params:
+      - {name: "action", type: "query", value: "myplugin_export"}
+      - {name: "format", type: "query"}
+      - {name: "theme", type: "cookie"}
+  - url: "/wp-admin/admin-ajax.php?action=myplugin_upload"
+    method: "GET"
+    params:
+      - {name: "action", type: "query", value: "myplugin_upload"}
+      - {name: "attachment", type: "file"}
+      - {name: "USER-AGENT", type: "header"}
+  - url: "/wp-admin/admin-ajax.php?action=myplugin_upload"
+    method: "POST"
+    params:
+      - {name: "action", type: "query", value: "myplugin_upload"}
+      - {name: "attachment", type: "file"}
+      - {name: "USER-AGENT", type: "header"}

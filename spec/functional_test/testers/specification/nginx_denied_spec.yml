@@ -1,0 +1,8 @@
+# `/status` (`deny all` before any `allow`) must not be reported.
+fixture: fixtures/specification/nginx_denied/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/metrics"
+    method: "ANY"
+  - url: "/api/"
+    method: "ANY"

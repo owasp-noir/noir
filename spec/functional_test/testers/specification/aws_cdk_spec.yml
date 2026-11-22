@@ -1,0 +1,17 @@
+fixture: fixtures/specification/aws_cdk/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/me"
+    method: "GET"

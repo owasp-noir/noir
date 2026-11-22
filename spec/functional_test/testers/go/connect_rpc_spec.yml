@@ -1,0 +1,28 @@
+fixture: fixtures/go/connect_rpc/
+counts: {techs: 3, endpoints: 4}
+endpoints:
+  - url: "/user.v1.UserService/GetUser"
+    method: "POST"
+    params:
+      - {name: "user_id", type: "json"}
+  - url: "/user.v1.UserService/CreateUser"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "age", type: "json"}
+  - url: "/user.v1.UserService/ListUsers"
+    method: "POST"
+    params:
+      - {name: "page", type: "json"}
+      - {name: "page_size", type: "json"}
+  - url: "/user.v1.UserService/StreamUsers"
+    method: "POST"
+    params:
+      - {name: "page", type: "json"}
+      - {name: "page_size", type: "json"}
+# The .proto file in the fixture also fires the gRPC spec detector, so
+# both `grpc` and `go_connect_rpc` techs are expected. The main server
+# also uses bare net/http (http.NewServeMux) so `go_http` is detected too
+# (legitimate). After endpoint optimization the pure-GRPC paths are
+# deduplicated, leaving exactly the expected endpoints.

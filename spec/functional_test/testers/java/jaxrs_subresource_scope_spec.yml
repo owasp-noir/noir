@@ -1,0 +1,17 @@
+# #3271: a sub-resource class in another file resolves its `@BeanParam` and
+# body DTO types through its own imports, not the parent resource's.
+fixture: fixtures/java/jaxrs_subresource_scope/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/users/{userId}/items"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "page", type: "query"}
+      - {name: "X-Tenant", type: "header"}
+  - url: "/users/{userId}/items"
+    method: "POST"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "name", type: "json"}
+      - {name: "price", type: "json"}

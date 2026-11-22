@@ -1,0 +1,17 @@
+# `app.use('/p', a, b)` and `app.use('/p', [a, b])` mount every router of
+# the call; only one of them took the prefix, the others stayed at root.
+fixture: fixtures/javascript/express_multi_router_use/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/posts"
+    method: "GET"
+  - url: "/v2/users"
+    method: "GET"
+  - url: "/v2/tags"
+    method: "GET"
+  - url: "/same-file/local-a"
+    method: "GET"
+  - url: "/same-file/local-b"
+    method: "GET"

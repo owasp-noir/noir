@@ -1,0 +1,14 @@
+# The AdonisJS walker must gate its verb/`on` dispatch on the chain ROOT
+# receiver being `router`/`Route`. `env.get(...)`, `session.get(...)` and a
+# Lucid `query()...delete('*')` are shaped like registrations but are not
+# routes, so only the three real router registrations survive — and
+# `router.on('/path')` (always GET) is recovered.
+fixture: fixtures/javascript/adonisjs_receiver_gate/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/about"
+    method: "GET"
+  - url: "/terms"
+    method: "GET"

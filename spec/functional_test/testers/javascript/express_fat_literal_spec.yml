@@ -1,0 +1,29 @@
+# A hand-written Express module that carries one fat inline literal (here
+# a ~20 KB base64 data URI; an embedded JWKS, a long regex or a JSON seed
+# behave the same). The whole-file average line length is dragged over
+# `MINIFIED_AVG_LINE_THRESHOLD` by that single line, which used to make
+# `minified_content?` call the file a bundle — every route below was then
+# dropped silently, with no warning, no `errors` entry and exit 0.
+fixture: fixtures/javascript/express_fat_literal/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/logo"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/health"
+    method: "GET"

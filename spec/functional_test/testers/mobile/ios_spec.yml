@@ -1,0 +1,87 @@
+# iOS deep links: Info.plist custom schemes + .entitlements universal links.
+# Mobile endpoints keep method = "GET"; the protocol carries the semantics.
+# Endpoint is a struct, so `.tap(&.protocol=)` would NOT persist (the block
+# mutates a copy) — build via a Proc that returns the mutated local so
+# FunctionalTester actually asserts the protocol, callees, and params.
+fixture: fixtures/mobile/ios/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "myapp://"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "redirect", type: "query"}
+      - {name: "token", type: "query"}
+    callees:
+      - {name: "handleDeepLink"}
+      - {name: "webView?.load"}
+      - {name: "routeOpenURL"}
+      - {name: "handleObjcDeepLink"}
+  - url: "myapp-alt://"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "redirect", type: "query"}
+      - {name: "token", type: "query"}
+    callees:
+      - {name: "handleDeepLink"}
+      - {name: "webView?.load"}
+      - {name: "routeOpenURL"}
+      - {name: "handleObjcDeepLink"}
+  - url: "resolvedscheme://"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "redirect", type: "query"}
+      - {name: "token", type: "query"}
+  - url: "resolvedscheme-nested://"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "redirect", type: "query"}
+      - {name: "token", type: "query"}
+  - url: "pbxscheme://"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "redirect", type: "query"}
+      - {name: "token", type: "query"}
+  - url: "pbxscheme-alt://"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "redirect", type: "query"}
+      - {name: "token", type: "query"}
+  - url: "https://myapp.example.com/"
+    method: "GET"
+    protocol: "universal-link"
+    callees:
+      - {name: "routeUniversalLink"}
+      - {name: "routeObjcUniversalLink"}
+  - url: "https://www.example.com/"
+    method: "GET"
+    protocol: "universal-link"
+    callees:
+      - {name: "routeUniversalLink"}
+  - url: "https://clip.example.com/"
+    method: "GET"
+    protocol: "universal-link"
+    callees:
+      - {name: "routeUniversalLink"}
+# Custom schemes (mobile-scheme), linked to the URL handlers: SceneDelegate
+# `scene(_:openURLContexts:)` callees + the `redirect` query param, plus
+# `routeOpenURL` from the AppDelegate `application(_:open:)` (multi-line
+# signature), and `handleObjcDeepLink` + the `token` query param from the
+# Objective-C `application:openURL:` in LegacyAppDelegate.m.
+# CFBundleURLSchemes entry `$(BUNDLE_URL_SCHEME)` resolved from Config.xcconfig.
+# CFBundleURLSchemes entry `$(NESTED_BUNDLE_URL_SCHEME)` resolves through
+# another build-setting reference in Config.xcconfig.
+# CFBundleURLSchemes entry `$(PBXPROJ_URL_SCHEME)` resolves from multiple
+# project.pbxproj build configurations.
+# Universal links (universal-link), linked to the userActivity handlers:
+# the Swift `routeUniversalLink` and the Objective-C `routeObjcUniversalLink`
+# from LegacyAppDelegate.m `application:continueUserActivity:`.
+# App Clip domain (appclips: in App.entitlements). Same https:// URL
+# mechanism as a universal link, so it shares the protocol and handler
+# linkage. `appclips:myapp.example.com` overlaps the applinks entry above and
+# collapses on the URL, so only this App-Clip-only domain is a new endpoint.

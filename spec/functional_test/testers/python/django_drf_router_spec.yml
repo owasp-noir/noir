@@ -1,0 +1,59 @@
+# Regression: a Django REST Framework app module that names `django` nowhere.
+#
+# `catalog/urls.py` builds a router and assigns `urlpatterns = router.urls`;
+# `catalog/views.py` subclasses `rest_framework` viewsets. Neither imports
+# `django`, because DRF supplies everything the module needs — and this is the
+# canonical shape of an app-level `urls.py` in a REST project, not a corner
+# case. The Django *detector* only looked for `django` imports, so nothing was
+# detected here, the analyzer never ran, and the whole REST surface read as
+# zero endpoints even though `extract_drf_direct_router_endpoints` had handled
+# `urlpatterns = router.urls` all along.
+#
+# The router is `BulkRouter`, a `DefaultRouter` subclass imported from
+# `myproject.api.routers` — a package that does not exist in this fixture, on
+# purpose. Subclassing the router to add bulk operations or a custom root view
+# is standard practice (NetBox ships `NetBoxRouter`), and the subclass usually
+# lives in another package the scan may not even cover. Router recognition is
+# therefore keyed on the `<name>.register(prefix, viewset)` call, never on the
+# constructor's class: an unresolvable base class must not cost us the routes.
+# The false-positive risk that buys is already contained downstream — a
+# `register()` on something that isn't a DRF router resolves to no ViewSet and
+# emits nothing.
+fixture: fixtures/python/django_drf_router/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  # ModelViewSet -> the full REST set, plus the @action detail route.
+  - url: "/widgets/"
+    method: "GET"
+  - url: "/widgets/"
+    method: "POST"
+  - url: "/widgets/{pk}/"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/widgets/{pk}/"
+    method: "PUT"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/widgets/{pk}/"
+    method: "PATCH"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/widgets/{pk}/"
+    method: "DELETE"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/widgets/{pk}/activate/"
+    method: "POST"
+    params:
+      - {name: "reason", type: "form"}
+      - {name: "pk", type: "path"}
+  # ReadOnlyModelViewSet -> list + retrieve only, keyed by lookup_url_kwarg.
+  - url: "/gadgets/"
+    method: "GET"
+    params:
+      - {name: "kind", type: "query"}
+  - url: "/gadgets/{gadget_id}/"
+    method: "GET"
+    params:
+      - {name: "gadget_id", type: "path"}

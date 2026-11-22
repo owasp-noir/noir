@@ -1,0 +1,72 @@
+fixture: fixtures/javascript/nitro_callees/
+counts: {techs: 1, endpoints: 7}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "getQuery", line: 2}
+      - {name: "listUsers", line: 3}
+      - {name: "AuditLog.write", line: 4}
+      - {name: "sendUsers", line: 6}
+      - {name: "serializeUsers", line: 6}
+  - url: "/users"
+    method: "PUT"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "getQuery", line: 2}
+      - {name: "listUsers", line: 3}
+      - {name: "AuditLog.write", line: 4}
+      - {name: "sendUsers", line: 6}
+      - {name: "serializeUsers", line: 6}
+  - url: "/users"
+    method: "DELETE"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "getQuery", line: 2}
+      - {name: "listUsers", line: 3}
+      - {name: "AuditLog.write", line: 4}
+      - {name: "sendUsers", line: 6}
+      - {name: "serializeUsers", line: 6}
+  - url: "/users"
+    method: "PATCH"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "getQuery", line: 2}
+      - {name: "listUsers", line: 3}
+      - {name: "AuditLog.write", line: 4}
+      - {name: "sendUsers", line: 6}
+      - {name: "serializeUsers", line: 6}
+  - url: "/users"
+    method: "HEAD"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "getQuery", line: 2}
+      - {name: "listUsers", line: 3}
+      - {name: "AuditLog.write", line: 4}
+      - {name: "sendUsers", line: 6}
+      - {name: "serializeUsers", line: 6}
+  - url: "/users"
+    method: "OPTIONS"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "getQuery", line: 2}
+      - {name: "listUsers", line: 3}
+      - {name: "AuditLog.write", line: 4}
+      - {name: "sendUsers", line: 6}
+      - {name: "serializeUsers", line: 6}
+  - url: "/users"
+    method: "POST"
+    callees:
+      - {name: "readBody", line: 2}
+      - {name: "serviceFactory().create", line: 3}
+      - {name: "AuditLog.write", line: 4}
+      - {name: "sendUser", line: 6}

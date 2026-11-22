@@ -1,0 +1,12 @@
+fixture: fixtures/go/mux_route_constraints/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/multi"
+    method: "GET"
+  - url: "/multi"
+    method: "POST"
+  - url: "/filter"
+    method: "GET"
+    params:
+      - {name: "type", type: "query"}
+      - {name: "page", type: "query"}

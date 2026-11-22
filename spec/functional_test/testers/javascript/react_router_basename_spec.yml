@@ -1,0 +1,8 @@
+# `basename: "/my-app"` in react-router.config.ts prefixes every route.
+fixture: fixtures/javascript/react_router_basename/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/my-app"
+    method: "GET"
+  - url: "/my-app/api/users"
+    method: "GET"

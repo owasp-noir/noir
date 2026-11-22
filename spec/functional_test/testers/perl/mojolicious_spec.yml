@@ -1,0 +1,111 @@
+fixture: fixtures/perl/mojolicious/
+counts: {techs: 1, endpoints: 30}
+endpoints:
+  # script/myapp.pl (Mojolicious::Lite)
+  - url: "/hello"
+    method: "GET"
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "email", type: "form"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+  - url: "/protected"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "X-Api-Key", type: "header"}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+      - {name: "user_preference", type: "cookie"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id/profile"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/health"
+    method: "OPTIONS"
+  - url: "/files/*path"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}
+  - url: "/echo"
+    method: "GET"
+    protocol: "ws"
+  - url: "/multi"
+    method: "GET"
+  - url: "/multi"
+    method: "POST"
+  # lib/MyApp.pm (full app)
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/login"
+    method: "POST"
+  - url: "/api/sync"
+    method: "GET"
+  - url: "/api/sync"
+    method: "POST"
+  - url: "/api/socket"
+    method: "GET"
+    protocol: "ws"
+  - url: "/api/legacy"
+    method: "GET"
+  # `my $admin = $r->any('/admin')` gets children, so it is only a prefix:
+  # a Mojolicious route with children never matches on its own.
+  - url: "/admin/users"
+    method: "GET"
+  - url: "/admin/users"
+    method: "POST"
+  - url: "/admin/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # Nested `$admin->under('/audit')` builds `/admin/audit/...`.
+  - url: "/admin/audit/logs"
+    method: "GET"
+  # Inline `$r->under('/v2')->get('/health')` — no named var, prefix
+  # comes from the chain.
+  - url: "/v2/health"
+    method: "GET"
+  # lib/MyApp/Routes.pm — prefix held in a scalar (`my $p = '/tests/<id:num>'`)
+  # then consumed by `$r->any($p)`; angle placeholders normalized to `:name`;
+  # an empty leaf (`get('')`) resolves to the prefix itself.
+  - url: "/tests/:testid"
+    method: "GET"
+    params:
+      - {name: "testid", type: "path"}
+  - url: "/tests/:testid/status"
+    method: "GET"
+    params:
+      - {name: "testid", type: "path"}
+  - url: "/tests/:testid/modules/:name"
+    method: "GET"
+    params:
+      - {name: "testid", type: "path"}
+      - {name: "name", type: "path"}
+  # Multi-line `my $api_admin\n  = $api->under('/')->...` keeps the `/api/v1`
+  # prefix; relative leaves (`jobs`) join onto it.
+  - url: "/api/v1/jobs"
+    method: "POST"
+  - url: "/api/v1/jobs/:jobid"
+    method: "DELETE"
+    params:
+      - {name: "jobid", type: "path"}

@@ -1,0 +1,23 @@
+# A `routes![..]` entry is resolved to the file that defines the handler:
+# `use`-imported handlers, an inline `mod`, rocket_okapi's
+# `openapi_get_routes!` and a `let`-bound route list all keep their mount
+# prefix. An unmounted handler keeps its bare path.
+fixture: fixtures/rust/rocket_mount_imports/
+counts: {techs: 1, endpoints: 7}
+options:
+  only_techs: "rust_rocket"
+endpoints:
+  - url: "/posts/recent"
+    method: "GET"
+  - url: "/posts"
+    method: "POST"
+  - url: "/hello/hello"
+    method: "GET"
+  - url: "/hello/world"
+    method: "GET"
+  - url: "/api/v1/users"
+    method: "GET"
+  - url: "/v1/a"
+    method: "GET"
+  - url: "/loose"
+    method: "GET"

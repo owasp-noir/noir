@@ -1,0 +1,51 @@
+fixture: fixtures/ruby/hanami_callees/
+counts: {techs: 1, endpoints: 6}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "request.params", line: 6}
+      - {name: "UserService.list", line: 7}
+      - {name: "AuditLog.write", line: 8}
+      - {name: "response.render", line: 9}
+      - {name: "serialize_users", line: 9}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "source", type: "query"}
+    callees:
+      - {name: "BuildUser.call", line: 11}
+      - {name: "request.params", line: 11}
+      - {name: "UserService.create", line: 12}
+      - {name: "response.render", line: 13}
+      - {name: "serialize_user", line: 13}
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "Feature.enabled?", line: 6}
+      - {name: "UserService.find", line: 7}
+      - {name: "UserFallback.find", line: 9}
+      - {name: "response.render", line: 11}
+      - {name: "serialize_user", line: 11}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "UserService.delete", line: 5}
+      - {name: "response.status", line: 5}
+  - url: "/ready"
+    method: "GET"
+    callees:
+      - {name: "response.render", line: 5}
+      - {name: "HealthCheck.ready", line: 5}
+  - url: "/missing"
+    method: "GET"

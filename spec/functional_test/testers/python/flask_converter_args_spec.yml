@@ -1,0 +1,18 @@
+# `<int(signed=True):num>` and `<any(about, help):page>` are Werkzeug
+# converters with arguments. The `(...)` made the converter fail the
+# builtin-name check, so the whole placeholder resolved to no param at all.
+fixture: fixtures/python/flask_converter_args/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/n/<int(signed=True):num>"
+    method: "GET"
+    params:
+      - {name: "num", type: "path"}
+  - url: "/k/<any(about, help):page>"
+    method: "GET"
+    params:
+      - {name: "page", type: "path"}
+  - url: "/files/<path:subpath>"
+    method: "GET"
+    params:
+      - {name: "subpath", type: "path"}

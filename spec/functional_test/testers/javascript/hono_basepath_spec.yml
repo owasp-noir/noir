@@ -1,0 +1,15 @@
+# Hono attaches its app prefix via `.basePath('/api')`, either chained on
+# construction (`const app = new Hono().basePath('/api')`) or on an
+# existing instance (`v2.basePath('/v2')`). Routes registered on the
+# instance must carry that prefix.
+fixture: fixtures/javascript/hono_basepath/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v2/ping"
+    method: "GET"

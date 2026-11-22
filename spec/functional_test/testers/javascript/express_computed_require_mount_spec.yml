@@ -1,0 +1,22 @@
+# A router bound through a computed `require()` specifier
+# (`__dirname + '/x'`, `` `${__dirname}/x` ``, `path.join(__dirname, ...)`,
+# `path.resolve(__dirname, ...)`) keeps its `app.use` mount prefix.
+fixture: fixtures/javascript/express_computed_require_mount/
+counts: {techs: 1}
+endpoints:
+  - url: "/api/pets/all"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/api/owners/all"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/api/vets/all"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/api/toys/all"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}

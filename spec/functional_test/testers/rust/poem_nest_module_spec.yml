@@ -1,0 +1,22 @@
+# `.nest("/admin", admin::routes())` names admin.rs's `routes`, not the
+# same-named fn in main.rs, so main.rs's own routes stay unprefixed and
+# admin.rs's carry `/admin`.
+# `twice()` is nested under two prefixes and keeps its bare path; inline
+# nests compose outermost first.
+fixture: fixtures/rust/poem_nest_module/
+counts: {techs: 1, endpoints: 6}
+options:
+  only_techs: "rust_poem"
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/after"
+    method: "GET"
+  - url: "/api/inline"
+    method: "GET"
+  - url: "/api/deep/d"
+    method: "GET"
+  - url: "/admin/panel"
+    method: "GET"
+  - url: "/t"
+    method: "GET"

@@ -1,0 +1,25 @@
+fixture: fixtures/swift/vapor_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "req.parameters.get", line: 5}
+      - {name: "req.content.decode", line: 6}
+      - {name: "UserService.build", line: 7}
+      - {name: "AuditLog.write", line: 8}
+      - {name: "user.save", line: 9}
+      - {name: "ResponseBuilder.created", line: 10}
+  - url: "/health"
+    method: "GET"
+    callees:
+      - {name: "HealthService.check", line: 19}
+  - url: "/ping"
+    method: "GET"
+    callees:
+      - {name: "PingService.pong", line: 23}

@@ -1,0 +1,20 @@
+fixture: fixtures/specification/krakend/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  # `method` defaults to GET.
+  - url: "/v1/products/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "fields", type: "query"}
+      - {name: "Authorization", type: "header"}
+      - {name: "X-Request-Id", type: "header"}
+  - url: "/v1/orders"
+    method: "POST"
+  # KrakenD 1.x (`version: 2`) parameter keys.
+  - url: "/v1/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "X-Tenant", type: "header"}

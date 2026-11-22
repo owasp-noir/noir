@@ -1,0 +1,22 @@
+# A class with no `@Path` of its own is the root resource of the `@Path`
+# interface it implements (`class PetsApiImpl implements PetsApi`): its
+# inherited routes and its own annotated methods sit at the interface path.
+fixture: fixtures/java/jaxrs_interface_root/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/members"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/members/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/members/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v2/teams/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}

@@ -1,0 +1,9 @@
+# A `typeDefs` schema inside `test/yoga.test.ts` is a fixture, not a deployed
+# GraphQL endpoint.
+fixture: fixtures/javascript/graphql_yoga_test_file/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/graphql#Query.hello"
+    method: "POST"
+    params:
+      - {name: "graphql_query_hello", type: "json"}

@@ -1,0 +1,9 @@
+fixture: fixtures/specification/aws_cloudformation/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/orders"
+    method: "GET"

@@ -1,0 +1,18 @@
+# Regression test: an accessor read wrapped over lines
+# (`env.params.query[` / `"q2"` / `]`) was missed by the per-line scan.
+fixture: fixtures/crystal/kemal_wrapped_params/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/one"
+    method: "GET"
+    params:
+      - {name: "q1", type: "query"}
+      - {name: "X-H1", type: "header"}
+  - url: "/split"
+    method: "POST"
+    params:
+      - {name: "q2", type: "query"}
+      - {name: "f2", type: "form"}
+      - {name: "X-H2", type: "header"}
+      - {name: "j2", type: "json"}
+      - {name: "c2", type: "cookie"}

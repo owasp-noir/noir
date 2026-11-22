@@ -1,0 +1,39 @@
+# Regression test for --include-callee on fasthttp (#1366). Fasthttp
+# extends `Analyzer` directly (not `GoEngine`), so the analyzer builds
+# `file_contents` inline at analyze() entry and uses the module-level
+# twins on `GoCalleeExtractor` (same shape as Chi and httprouter).
+#
+# Coverage:
+#   - POST /users   — named handler `createUser` in sibling
+#                     `handlers.go`; the body also contains a
+#                     `string(ctx.FormValue("name"))` type-conversion
+#                     wrap, locking in that the `string` builtin is
+#                     filtered while `ctx.FormValue` still surfaces as
+#                     a callee on its own.
+#   - GET /healthz  — inline `func(ctx *fasthttp.RequestCtx)` closure
+#                     handler in main.go.
+#   - GET /profile  — second named handler in handlers.go.
+fixture: fixtures/go/fasthttp_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "ctx.FormValue", line: 8}
+      - {name: "saveUser", path: "./spec/functional_test/fixtures/go/fasthttp_callees/helpers.go", line: 3}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/fasthttp_callees/helpers.go", line: 7}
+      - {name: "ctx.WriteString", line: 11}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "ctx.WriteString", line: 18}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/fasthttp_callees/helpers.go", line: 10}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/fasthttp_callees/helpers.go", line: 7}
+      - {name: "ctx.WriteString", line: 17}

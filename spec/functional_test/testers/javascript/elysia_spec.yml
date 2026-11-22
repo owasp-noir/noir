@@ -1,0 +1,51 @@
+fixture: fixtures/javascript/elysia/
+counts: {techs: 1, endpoints: 14}
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "filter", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "x-trace", type: "header"}
+      - {name: "id", type: "path"}
+  - url: "/api/v1/health"
+    method: "GET"
+  - url: "/api/v1/submit"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "x-token", type: "header"}
+  - url: "/api/v1/items/:itemId"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "itemId", type: "path"}
+  - url: "/sessions/:id"
+    method: "DELETE"
+    params:
+      - {name: "session", type: "cookie"}
+      - {name: "id", type: "path"}
+  # `.all('/health', ...)` fans out to GET / POST / PUT / DELETE / PATCH.
+  - url: "/health"
+    method: "GET"
+  - url: "/health"
+    method: "POST"
+  - url: "/health"
+    method: "PUT"
+  - url: "/health"
+    method: "DELETE"
+  - url: "/health"
+    method: "PATCH"
+  # `new Elysia({ prefix })` — on the chain and on an inline `.use()` plugin.
+  - url: "/admin/stats"
+    method: "GET"
+    params:
+      - {name: "range", type: "query"}
+  - url: "/admin/audit/log"
+    method: "GET"

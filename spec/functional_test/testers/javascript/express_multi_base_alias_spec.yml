@@ -1,0 +1,9 @@
+fixture: fixtures/javascript/express_multi_base_alias/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/javascript/express_multi_base_alias/service_a", "./spec/functional_test/fixtures/javascript/express_multi_base_alias/service_b"]
+endpoints:
+  - url: "/a/route-a"
+    method: "GET"
+  - url: "/b/route-b"
+    method: "GET"

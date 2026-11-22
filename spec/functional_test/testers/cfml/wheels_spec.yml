@@ -1,0 +1,125 @@
+# Wheels routes are one fluent `mapper()` chain. It is order-dependent,
+# so the analyzer walks it with a prefix stack: `scope`, a nested
+# `resources` and `member` each push a segment and `end()` pops it.
+fixture: fixtures/cfml/wheels/
+counts: {techs: 2, endpoints: 34}
+endpoints:
+  # `pattern` is optional and falls back to the route name.
+  - url: "/login"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+  # `[token]` is Wheels' placeholder spelling, not `:token`.
+  - url: "/verify/:token"
+    method: "GET"
+    params:
+      - {name: "token", type: "path"}
+  # Plural resources: full REST set, update answering PUT and PATCH.
+  - url: "/tweets"
+    method: "GET"
+  - url: "/tweets"
+    method: "POST"
+  - url: "/tweets/new"
+    method: "GET"
+  - url: "/tweets/:key"
+    method: "GET"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/tweets/:key/edit"
+    method: "GET"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/tweets/:key"
+    method: "PUT"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/tweets/:key"
+    method: "PATCH"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/tweets/:key"
+    method: "DELETE"
+    params:
+      - {name: "key", type: "path"}
+  # Singular resource: no index and no key segment, narrowed by `only`.
+  - url: "/account"
+    method: "GET"
+  - url: "/account/edit"
+    method: "GET"
+  - url: "/account"
+    method: "PUT"
+  - url: "/account"
+    method: "PATCH"
+  # Everything inside the scope is prefixed with its path.
+  - url: "/admin/users"
+    method: "GET"
+  - url: "/admin/users"
+    method: "POST"
+  - url: "/admin/users/new"
+    method: "GET"
+  - url: "/admin/users/:key"
+    method: "GET"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/admin/users/:key/edit"
+    method: "GET"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/admin/users/:key"
+    method: "PUT"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/admin/users/:key"
+    method: "PATCH"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/admin/users/:key"
+    method: "DELETE"
+    params:
+      - {name: "key", type: "path"}
+  # `nested=true` scopes the child resource under the parent's key.
+  - url: "/admin/users/:userKey/permissions"
+    method: "GET"
+    params:
+      - {name: "userKey", type: "path"}
+  - url: "/admin/users/:userKey/permissions"
+    method: "POST"
+    params:
+      - {name: "userKey", type: "path"}
+  - url: "/admin/users/:userKey/permissions/:key"
+    method: "GET"
+    params:
+      - {name: "userKey", type: "path"}
+      - {name: "key", type: "path"}
+  # `member()` routes act on the existing record.
+  - url: "/admin/users/:key/assume"
+    method: "POST"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/admin/users/:key/reset"
+    method: "PUT"
+    params:
+      - {name: "key", type: "path"}
+  # `except` drops actions; the scope prefix still applies after the
+  # nested block closes.
+  - url: "/admin/roles"
+    method: "GET"
+  - url: "/admin/roles"
+    method: "POST"
+  - url: "/admin/roles/:key"
+    method: "PUT"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/admin/roles/:key"
+    method: "PATCH"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/admin/roles/:key"
+    method: "DELETE"
+    params:
+      - {name: "key", type: "path"}
+  # `wildcard()` maps every controller/action pair and is deliberately
+  # not expanded, so only `root` remains at the top level.
+  - url: "/"
+    method: "GET"
+# Detection still sees cfml_wheels and cfml_pure

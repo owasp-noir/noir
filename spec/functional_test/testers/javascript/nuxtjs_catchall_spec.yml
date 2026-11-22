@@ -1,0 +1,8 @@
+# An unnamed catch-all (`[...].ts`) is h3's `_` param, not a literal segment.
+fixture: fixtures/javascript/nuxtjs_catchall/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/api/proxy/:_"
+    method: "ANY"
+    params:
+      - {name: "_", type: "path"}

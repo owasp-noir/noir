@@ -1,0 +1,23 @@
+# Kotlin-DSL gradle module (build.gradle.kts two directories above the
+# manifest). The manifest has no `package` attribute, so the package and
+# all `${...}` placeholders resolve from gradle: applicationId, indexed
+# manifestPlaceholders["k"] = "v", mapOf("k" to "v") and put("k", "v").
+fixture: fixtures/mobile/android_kts/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "ktsauth://auth.example.com/callback"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "ktslegacy://legacy"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "intent://com.example.ktsapp/.KtsService"
+    method: "GET"
+    protocol: "android-intent"
+  - url: "com.example.ktsapp://oauth/callback"
+    method: "GET"
+    protocol: "mobile-scheme"
+# ${authScheme} / ${authHost} from manifestPlaceholders (indexed + mapOf)
+# ${legacyScheme} from manifestPlaceholders.put(...)
+# Data-less exported service: package comes from the gradle applicationId
+# Navigation deep link whose scheme is ${applicationId}

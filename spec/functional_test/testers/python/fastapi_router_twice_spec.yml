@@ -1,0 +1,11 @@
+# A router included more than once (two prefixes, or via a second parent)
+# is served under every inclusion; only the first used to survive.
+fixture: fixtures/python/fastapi_router_twice/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/v1/ping"
+    method: "GET"
+  - url: "/v2/ping"
+    method: "GET"
+  - url: "/outer/ping"
+    method: "GET"

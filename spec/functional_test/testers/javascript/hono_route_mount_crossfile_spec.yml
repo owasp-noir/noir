@@ -1,0 +1,15 @@
+# Hono mounts an imported sub-app on an anonymous fluent chain
+# (`export default new Hono().route('/api', TodoAPI)`). The child file's
+# routes inherit the `/api` prefix even though there is no named caller
+# for the mount call to bind to.
+fixture: fixtures/javascript/hono_route_mount_crossfile/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/todos"
+    method: "GET"
+  - url: "/api/todos"
+    method: "POST"
+  - url: "/api/todos/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

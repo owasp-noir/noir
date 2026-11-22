@@ -1,0 +1,10 @@
+# Paths built from a string constant: `${prefix}/users` and `prefix + '/users'`.
+fixture: fixtures/javascript/egg_const_paths/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/control"
+    method: "GET"
+  - url: "/api/v1/users"
+    method: "GET"
+  - url: "/api/v1/users"
+    method: "POST"

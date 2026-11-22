@@ -1,0 +1,8 @@
+# A rule without `matches` matches every path.
+fixture: fixtures/specification/k8s_gateway_api_catchall/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/login"
+    method: "ANY"
+  - url: "/"
+    method: "ANY"

@@ -1,0 +1,18 @@
+# Every document of a multi-document manifest (the first is a Middleware),
+# `PathRegexp` / `Path` arguments holding `(...)`, and Swarm `deploy.labels`.
+# The regex routes used to collapse to a single `/`.
+fixture: fixtures/specification/traefik_documents/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/first"
+    method: "ANY"
+  - url: "/second"
+    method: "ANY"
+  - url: "/api/(v1|v2)/items"
+    method: "ANY"
+  - url: "/legacy/{name}"
+    method: "ANY"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/swarm-api"
+    method: "ANY"

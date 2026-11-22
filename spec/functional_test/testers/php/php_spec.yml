@@ -1,0 +1,55 @@
+fixture: fixtures/php/php/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/get.php"
+    method: "GET"
+    params:
+      - {name: "param1", type: "query"}
+  - url: "/header.php"
+    method: "GET"
+    params:
+      - {name: "X-API-KEY", type: "header"}
+      - {name: "param1", type: "query"}
+  - url: "/modern.php"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+      - {name: "session_id", type: "cookie"}
+      - {name: "AUTHORIZATION", type: "header"}
+  - url: "/modern.php"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "avatar", type: "file"}
+      - {name: "AUTHORIZATION", type: "header"}
+      - {name: "session_id", type: "cookie"}
+  - url: "/post.php"
+    method: "GET"
+  - url: "/post.php"
+    method: "POST"
+    params:
+      - {name: "param1", type: "form"}
+      - {name: "password", type: "form"}
+  - url: "/request.php"
+    method: "GET"
+    params:
+      - {name: "param1", type: "query"}
+  - url: "/request.php"
+    method: "POST"
+    params:
+      - {name: "param1", type: "form"}
+  # repeated.php exercises the order-preserving param dedup path inside the
+  # pure PHP analyzer (same (name, param_type) appears via superglobal +
+  # filter_input, and via COOKIE which populates both lists). The dedup
+  # helper must keep first-seen order and produce exactly one Param per
+  # (name, type) on the resulting pseudo-endpoints.
+  - url: "/repeated.php"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+      - {name: "token", type: "cookie"}
+  - url: "/repeated.php"
+    method: "POST"
+    params:
+      - {name: "data", type: "form"}
+      - {name: "token", type: "cookie"}

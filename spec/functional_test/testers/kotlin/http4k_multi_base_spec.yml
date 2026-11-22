@@ -1,0 +1,9 @@
+fixture: fixtures/kotlin/http4k_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/kotlin/http4k_multi_base/service_a", "./spec/functional_test/fixtures/kotlin/http4k_multi_base/service_b"]
+endpoints:
+  - url: "/http4k-a"
+    method: "GET"
+  - url: "/http4k-b"
+    method: "GET"

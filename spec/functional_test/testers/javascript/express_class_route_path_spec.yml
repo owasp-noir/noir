@@ -1,0 +1,23 @@
+# Route classes (typescript-express-starter): `public path = '/users'` and
+# `this.router.get(`${this.path}`, …)` / `this.path + '/:id'`. The field
+# was never read, so these routes were dropped or became `/{path}/:id`.
+# A field two classes of one file set differently stays a placeholder.
+fixture: fixtures/javascript/express_class_route_path/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/{path}/status"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}

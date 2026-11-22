@@ -1,0 +1,45 @@
+# Regression guard for two-level Express mount resolution through a
+# route-config array iterated with forEach. The layout mirrors
+# hagopj13/node-express-boilerplate, where it was originally found:
+#
+#   app.js                   app.use('/v1', routes)
+#   routes/v1/index.js       defaultRoutes.forEach((r) =>
+#                              router.use(r.path, r.route))
+#                            defaultRoutes: [
+#                              { path: '/auth',  route: authRoute },
+#                              { path: '/users', route: userRoute },
+#                            ]
+#   routes/v1/auth.route.js  router.post('/register', …)
+#   routes/v1/user.route.js  router.route('/').get(...).post(...)
+#                            router.route('/:userId').get().patch().delete()
+#
+# Every leaf endpoint must be resolved with the full `/v1/{auth,users}`
+# prefix. Pre-fix, noir only had `/register`, `/login`, `/`, `/:userId`
+# because the mount scanner's regex required a string literal and could
+# not see through `router.use(r.path, r.route)`. This spec fails if
+# that regression comes back.
+fixture: fixtures/javascript/express_config_array/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/v1/auth/register"
+    method: "POST"
+  - url: "/v1/auth/login"
+    method: "POST"
+  - url: "/v1/auth/logout"
+    method: "POST"
+  - url: "/v1/users/"
+    method: "GET"
+  - url: "/v1/users/"
+    method: "POST"
+  - url: "/v1/users/:userId"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+  - url: "/v1/users/:userId"
+    method: "PATCH"
+    params:
+      - {name: "userId", type: "path"}
+  - url: "/v1/users/:userId"
+    method: "DELETE"
+    params:
+      - {name: "userId", type: "path"}

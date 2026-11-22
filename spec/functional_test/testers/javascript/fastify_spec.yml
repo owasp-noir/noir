@@ -1,0 +1,92 @@
+fixture: fixtures/javascript/fastify/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  # Basic routes
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "x-api-key", type: "header"}
+  - url: "/register"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "password", type: "json"}
+      - {name: "client-id", type: "header"}
+  # Route with URL parameters
+  - url: "/users/:userId"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "fields", type: "query"}
+  # Routes with different HTTP methods
+  - url: "/products"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/products"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "price", type: "json"}
+      - {name: "category", type: "json"}
+      - {name: "store-id", type: "header"}
+  # Route with cookies
+  - url: "/dashboard"
+    method: "GET"
+    params:
+      - {name: "view", type: "query"}
+      - {name: "sessionId", type: "cookie"}
+  # Routes from plugin functions
+  - url: "/api/v1/status"
+    method: "GET"
+    params:
+      - {name: "format", type: "query"}
+      - {name: "x-status-key", type: "header"}
+  - url: "/api/v1/config"
+    method: "PUT"
+    params:
+      - {name: "theme", type: "json"}
+      - {name: "notifications", type: "json"}
+      - {name: "configToken", type: "cookie"}
+  - url: "/admin/stats"
+    method: "GET"
+    params:
+      - {name: "period", type: "query"}
+      - {name: "admin-token", type: "header"}
+  - url: "/admin/users/create"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "role", type: "json"}
+      - {name: "permissions", type: "json"}
+      - {name: "masterKey", type: "cookie"}
+  - url: "/admin/system/logs"
+    method: "GET"
+    params:
+      - {name: "date", type: "query"}
+      - {name: "level", type: "query"}
+  - url: "/payments/process/:methodId"
+    method: "POST"
+    params:
+      - {name: "methodId", type: "path"}
+      - {name: "amount", type: "json"}
+      - {name: "currency", type: "json"}
+      - {name: "description", type: "json"}
+      - {name: "payment-key", type: "header"}
+  - url: "/payments/transactions"
+    method: "GET"
+    params:
+      - {name: "startDate", type: "query"}
+      - {name: "endDate", type: "query"}
+      - {name: "merchant-id", type: "header"}
+  # Content-type specific route
+  - url: "/upload"
+    method: "POST"
+    params:
+      - {name: "content-type", type: "header"}
+      - {name: "upload-token", type: "header"}
+  - url: "/assets/hello.txt"
+    method: "GET"

@@ -1,0 +1,51 @@
+# `ViewSet.as_view({"get": "list", ...})` serves exactly the mapped verbs on
+# its URL, each with the params of the action it names: inline, bound to a
+# name in the urlconf, or bound in the views module. DRF's
+# `obtain_auth_token` and simplejwt's token views serve POST only.
+fixture: fixtures/python/django_drf_as_view_map/
+counts: {techs: 1, endpoints: 13}
+endpoints:
+  - url: "/snippets/"
+    method: "GET"
+  - url: "/snippets/"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/snippets/<int:pk>/"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/snippets/<int:pk>/"
+    method: "PUT"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/snippets/<int:pk>/"
+    method: "PATCH"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/snippets/<int:pk>/"
+    method: "DELETE"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/inline/"
+    method: "GET"
+  - url: "/inline/"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/inline/<int:pk>/"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/inline/<int:pk>/"
+    method: "DELETE"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/api-token-auth/"
+    method: "POST"
+  - url: "/api/token/"
+    method: "POST"
+  - url: "/highlight/<int:pk>/"
+    method: "POST"
+    params:
+      - {name: "pk", type: "path"}

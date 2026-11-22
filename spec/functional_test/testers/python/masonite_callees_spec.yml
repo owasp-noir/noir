@@ -1,0 +1,15 @@
+# Regression test for --include-callee on Masonite. The fixture exercises
+# the string controller binding + a same-file import; the spec confirms
+# that a callee with a reachable imported definition resolves to the
+# definition location instead of the call site inside the controller.
+fixture: fixtures/python/masonite_callees/
+counts: {techs: 1, endpoints: 1}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/{uid}"
+    method: "GET"
+    params:
+      - {name: "uid", type: "path"}
+    callees:
+      - {name: "fetch_user", path: "./spec/functional_test/fixtures/python/masonite_callees/app/db.py", line: 1}

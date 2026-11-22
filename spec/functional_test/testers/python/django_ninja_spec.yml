@@ -1,0 +1,87 @@
+fixture: fixtures/python/django_ninja/
+counts: {techs: 2, endpoints: 17}
+endpoints:
+  - url: "/api/add"
+    method: "GET"
+    params:
+      - {name: "a", type: "query"}
+      - {name: "b", type: "query"}
+  - url: "/api/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "price", type: "json"}
+      - {name: "quantity", type: "json", value: "1"}
+  - url: "/api/items/{item_id}"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "q", type: "query"}
+  - url: "/api/items/{item_id}"
+    method: "PUT"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "name", type: "json"}
+      - {name: "price", type: "json"}
+      - {name: "quantity", type: "json", value: "1"}
+  - url: "/api/aliased"
+    method: "GET"
+    params:
+      - {name: "X-Custom", type: "header"}
+      - {name: "q-n", type: "query"}
+  - url: "/api/aliased_body"
+    method: "POST"
+    params:
+      - {name: "userName", type: "json"}
+      - {name: "age", type: "json"}
+  - url: "/api/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "limit", type: "query", value: "10"}
+  - url: "/api/upload"
+    method: "POST"
+    params:
+      - {name: "note", type: "form"}
+      - {name: "attachment", type: "form"}
+  - url: "/api/whoami"
+    method: "GET"
+    params:
+      - {name: "x_api_key", type: "header"}
+      - {name: "session", type: "cookie"}
+  # Body schema imported from another module (`from myproject.schemas import BlogIn`),
+  # declared on a multi-line decorator.
+  - url: "/api/blogs"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "body", type: "json"}
+      - {name: "published", type: "json", value: "false"}
+  # @api.api_operation(["POST", "PATCH"], "/mixed") emits one endpoint per verb.
+  - url: "/api/mixed"
+    method: "POST"
+  - url: "/api/mixed"
+    method: "PATCH"
+  # Router mounted with `api.add_router("/events/", events_router)`.
+  - url: "/api/events/"
+    method: "GET"
+  - url: "/api/events/{event_id}"
+    method: "GET"
+    params:
+      - {name: "event_id", type: "path"}
+  # Router mounted with the dotted-string form `api.add_router("/news/", "news.api.router")`.
+  - url: "/api/news/latest"
+    method: "GET"
+    params:
+      - {name: "page", type: "query", value: "1"}
+  # Router mounted via a module-attribute reference: `from blog import api as
+  # blog_api` + `api.add_router("/blog/", blog_api.router)`.
+  - url: "/api/blog/recent"
+    method: "GET"
+    params:
+      - {name: "tag", type: "query"}
+  # Emitted by the Django analyzer: `path("api/", api.urls)` in urls.py
+  # can't resolve `api.urls` to a view, so it falls back to one GET. Both
+  # `python_django` and `python_django_ninja` fire on this project.
+  - url: "/api/"
+    method: "GET"

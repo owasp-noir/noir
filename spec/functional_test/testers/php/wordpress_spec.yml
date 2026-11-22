@@ -1,0 +1,95 @@
+fixture: fixtures/php/wordpress/
+counts: {techs: 2, endpoints: 22}
+endpoints:
+  # REST API (register_rest_route -> /wp-json/{namespace}/{route})
+  - url: "/wp-json/myplugin/v1/books"
+    method: "GET"
+  - url: "/wp-json/myplugin/v1/books/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/wp-json/myplugin/v1/books/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/wp-json/myplugin/v1/books/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/wp-json/myplugin/v1/books/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/wp-json/myplugin/v2/authors"
+    method: "GET"
+  - url: "/wp-json/myplugin/v2/authors"
+    method: "POST"
+  - url: "/wp-json/store/v1/checkout"
+    method: "POST"
+  # Nested-group named param normalizes cleanly (no stray ')').
+  - url: "/wp-json/myplugin/v1/items/{type}"
+    method: "GET"
+    params:
+      - {name: "type", type: "path"}
+  # Optional non-capturing segment: (?:...) and trailing ? stripped.
+  - url: "/wp-json/myplugin/v1/optional/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # Commented-out 'methods' => 'DELETE' must not emit a phantom verb.
+  - url: "/wp-json/myplugin/v1/comments"
+    method: "GET"
+  # admin-ajax.php actions (wp_ajax_ / wp_ajax_nopriv_), with the input
+  # their callbacks read (`$_REQUEST` follows the verb)
+  - url: "/wp-admin/admin-ajax.php?action=get_user_data"
+    method: "GET"
+    params:
+      - {name: "action", type: "query", value: "get_user_data"}
+      - {name: "user", type: "query"}
+  - url: "/wp-admin/admin-ajax.php?action=get_user_data"
+    method: "POST"
+    params:
+      - {name: "action", type: "query", value: "get_user_data"}
+      - {name: "user", type: "form"}
+  - url: "/wp-admin/admin-ajax.php?action=save_settings"
+    method: "GET"
+    params:
+      - {name: "action", type: "query", value: "save_settings"}
+      - {name: "settings", type: "form"}
+  - url: "/wp-admin/admin-ajax.php?action=save_settings"
+    method: "POST"
+    params:
+      - {name: "action", type: "query", value: "save_settings"}
+      - {name: "settings", type: "form"}
+  # admin-post.php actions (admin_post_ / admin_post_nopriv_)
+  - url: "/wp-admin/admin-post.php?action=export_csv"
+    method: "GET"
+    params:
+      - {name: "action", type: "query", value: "export_csv"}
+  - url: "/wp-admin/admin-post.php?action=export_csv"
+    method: "POST"
+    params:
+      - {name: "action", type: "query", value: "export_csv"}
+  - url: "/wp-admin/admin-post.php?action=public_submit"
+    method: "GET"
+    params:
+      - {name: "action", type: "query", value: "public_submit"}
+  - url: "/wp-admin/admin-post.php?action=public_submit"
+    method: "POST"
+    params:
+      - {name: "action", type: "query", value: "public_submit"}
+  # WP_REST_Controller: `$this->namespace`, `'/' . $this->rest_base`, and
+  # each handler's `'args'` keys
+  - url: "/wp-json/itemsplugin/v2/items"
+    method: "GET"
+    params:
+      - {name: "per_page", type: "query"}
+  - url: "/wp-json/itemsplugin/v2/items"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/wp-json/itemsplugin/v2/items/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+# php_wordpress + php_pure (suppressed in analysis)

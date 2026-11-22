@@ -1,0 +1,24 @@
+# tRPC v9 chain routers used `.query("name", { input, resolve })` and
+# `.merge("prefix.", childRouter)` instead of v10's object router map.
+# min-todo is an OSS example that uses this shape.
+fixture: fixtures/typescript/trpc_v9/
+counts: {techs: 1, endpoints: 4}
+options:
+  only_techs: "ts_trpc"
+endpoints:
+  - url: "/api/trpc/todo.get-all"
+    method: "GET"
+    params:
+      - {name: "sortBy", type: "query"}
+  - url: "/api/trpc/todo.get"
+    method: "GET"
+    params:
+      - {name: "todoId", type: "query"}
+  - url: "/api/trpc/todo.add"
+    method: "POST"
+    params:
+      - {name: "input", type: "body"}
+  - url: "/api/trpc/todo.delete"
+    method: "POST"
+    params:
+      - {name: "id", type: "body"}

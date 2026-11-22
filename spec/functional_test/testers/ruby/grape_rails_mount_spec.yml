@@ -1,0 +1,21 @@
+# A Grape API mounted from Rails routes (`mount API::Base, at: "/api"`,
+# `mount Internal::API => "/internal"`) serves its routes under that path,
+# down through the classes it mounts.
+fixture: fixtures/ruby/grape_rails_mount/
+counts: {techs: 2, endpoints: 6}
+endpoints:
+  - url: "/api/v1/users"
+    method: "GET"
+  - url: "/api/v1/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/internal/status"
+    method: "GET"
+  # Rails side: the routes file itself.
+  - url: "/up"
+    method: "GET"
+  - url: "/api"
+    method: "GET"
+  - url: "/internal"
+    method: "GET"

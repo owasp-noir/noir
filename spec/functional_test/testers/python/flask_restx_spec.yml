@@ -1,0 +1,24 @@
+# flask-restx: a Blueprint carries the url_prefix, an Api is mounted on
+# the blueprint, and `add_namespace(ns, "/users")` sets the mount path —
+# all in app.py — while the namespace's Resource routes live in
+# resources.py. The fully-resolved prefix is `/api/v1` (blueprint) +
+# `/users` (add_namespace), and each Resource verb-method is its own
+# endpoint.
+fixture: fixtures/python/flask_restx/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/v1/users/<int:user_id>"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+  - url: "/api/v1/users/<int:user_id>"
+    method: "DELETE"
+    params:
+      - {name: "user_id", type: "path"}
+  - url: "/api/v1/users/me"
+    method: "GET"
+  # `@users_ns.route("")` is the namespace path itself, no trailing slash.
+  - url: "/api/v1/users"
+    method: "GET"
+  - url: "/api/v1/users"
+    method: "POST"

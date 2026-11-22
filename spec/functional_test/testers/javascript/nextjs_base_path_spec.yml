@@ -1,0 +1,38 @@
+# #3266: `basePath` in `next.config.js` prefixes every route, pages router
+# and app router alike. A nested app whose own config sets none
+# (`apps/plain`) does not inherit it.
+fixture: fixtures/javascript/nextjs_base_path/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  - url: "/shop/api/items"
+    method: "GET"
+  - url: "/shop/api/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/ping"
+    method: "GET"
+  - url: "/shop/api/search"
+    method: "POST"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/ping"
+    method: "POST"
+  - url: "/shop/api/search"
+    method: "PUT"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/ping"
+    method: "PUT"
+  - url: "/shop/api/search"
+    method: "DELETE"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/ping"
+    method: "DELETE"
+  - url: "/shop/api/search"
+    method: "PATCH"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/ping"
+    method: "PATCH"

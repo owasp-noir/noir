@@ -1,0 +1,43 @@
+# FastMCP `custom_route`s on a module-level server (server.py), a server built
+# in a factory function (factory.py), the official MCP SDK's FastMCP
+# (sdk_server.py) and an aliased import (alias.py). scopes.py resolves the
+# receiver by Python's scope rules: a local or a parameter that shadows a
+# server, or a name bound only in a docstring, is not a server. decoy.py
+# calls `custom_route` on another object. Neither decoy yields a route. The
+# fixtures also import Starlette, which is detected (2 techs) but reports
+# none of these routes.
+fixture: fixtures/python/fastmcp/
+counts: {techs: 2, endpoints: 10}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/items/{item_id}"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "q", type: "query"}
+  - url: "/items/{item_id}"
+    method: "DELETE"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "q", type: "query"}
+  - url: "/users/{user_id}"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+      - {name: "x-trace-id", type: "header"}
+  - url: "/webhook"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "event", type: "json"}
+  - url: "/ready"
+    method: "GET"
+  - url: "/status"
+    method: "GET"
+  - url: "/alias"
+    method: "GET"
+  - url: "/spaced"
+    method: "GET"
+  - url: "/local"
+    method: "POST"

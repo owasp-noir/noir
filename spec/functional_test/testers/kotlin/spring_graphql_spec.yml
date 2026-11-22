@@ -1,0 +1,58 @@
+fixture: fixtures/kotlin/spring_graphql/
+counts: {techs: 1, endpoints: 8}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/graphql#Query.article"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "graphql_query_article", type: "json", value: "query($id: String) { article(id: $id) }"}
+    callees:
+      - {name: "articleService.findArticle", line: 13}
+  - url: "/api/graphql#Mutation.createArticle"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "graphql_mutation_createArticle", type: "json", value: "mutation($input: CreateArticleInput) { createArticle(input: $input) }"}
+    callees:
+      - {name: "articleService.createArticle", line: 18}
+  - url: "/api/graphql#Mutation.addComment"
+    method: "POST"
+    params:
+      - {name: "articleId", type: "json"}
+      - {name: "body", type: "json"}
+      - {name: "graphql_mutation_addComment", type: "json", value: "mutation($articleId: String, $input: CommentInput) { addComment(articleId: $articleId, input: $input) }"}
+    callees:
+      - {name: "articleService.addComment", line: 23}
+  - url: "/api/graphql#Mutation.createTaggedArticle"
+    method: "POST"
+    params:
+      - {name: "tags.label", type: "json"}
+      - {name: "graphql_mutation_createTaggedArticle", type: "json", value: "mutation($tags: List<TagInput>) { createTaggedArticle(tags: $tags) }"}
+    callees:
+      - {name: "articleService.createTaggedArticle", line: 28}
+  - url: "/api/graphql#Article.author"
+    method: "POST"
+    params:
+      - {name: "graphql_field_author", type: "json", value: "field Article.author"}
+    callees:
+      - {name: "articleService.findAuthor", line: 33}
+  - url: "/api/graphql#Article.comments"
+    method: "POST"
+    params:
+      - {name: "graphql_field_comments", type: "json", value: "field Article.comments"}
+    callees:
+      - {name: "articleService.findComments", line: 38}
+  - url: "/api/graphql#Article.summary"
+    method: "POST"
+    params:
+      - {name: "graphql_field_summary", type: "json", value: "field Article.summary"}
+    callees:
+      - {name: "summaryService.buildSummary", line: 10}
+  - url: "/api/graphql#Query.ping"
+    method: "POST"
+    params:
+      - {name: "graphql_query_ping", type: "json", value: "query { ping }"}
+    callees:
+      - {name: "GraphqlController.ping", line: 41}

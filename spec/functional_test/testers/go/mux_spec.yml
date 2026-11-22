@@ -1,0 +1,83 @@
+fixture: fixtures/go/mux/
+counts: {techs: 1, endpoints: 21}
+endpoints:
+  - url: "/ping"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "age", type: "query"}
+  - url: "/admin"
+    method: "GET"
+    params:
+      - {name: "auth_token", type: "cookie"}
+  - url: "/submit"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+      - {name: "User-Agent", type: "header"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{id}/posts/{postid}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "postid", type: "path"}
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/v1/health"
+    method: "GET"
+  - url: "/static/test.txt"
+    method: "GET"
+  - url: "/multiline"
+    method: "GET"
+  - url: "/handler-route"
+    method: "POST"
+  - url: "/builder-route"
+    method: "PATCH"
+  - url: "/builder-query"
+    method: "GET"
+    params:
+      - {name: "type", type: "query"}
+  # handlers.go: PUT method with path variable
+  - url: "/items/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  # handlers.go: DELETE method with path variable
+  - url: "/items/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # handlers.go: PATCH method with path variable and form param
+  - url: "/items/{id}/status"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "status", type: "form"}
+  # handlers.go: multiple path variables with query param
+  - url: "/shops/{shopId}/products/{productId}"
+    method: "GET"
+    params:
+      - {name: "shopId", type: "path"}
+      - {name: "productId", type: "path"}
+      - {name: "detail", type: "query"}
+  # handlers.go: header and cookie extraction
+  - url: "/secure"
+    method: "GET"
+    params:
+      - {name: "X-API-Key", type: "header"}
+      - {name: "session_id", type: "cookie"}
+  # handlers.go: nested subrouter
+  - url: "/v2/health"
+    method: "GET"
+  # server.go: idiomatic `http.MethodX` constant form must resolve to the
+  # verb instead of defaulting to GET.
+  - url: "/profile"
+    method: "PUT"
+  - url: "/profile"
+    method: "GET"
+  - url: "/profile"
+    method: "HEAD"

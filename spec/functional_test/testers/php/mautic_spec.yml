@@ -1,0 +1,25 @@
+# Mautic registers routes in per-bundle `Config/config.php` arrays grouped by
+# main/public/api. The `api` group is mounted under `/api`; verbs come from the
+# optional `'method'` key (`'GET|POST'`, pipe-separated, default GET); path
+# params are `{brace}`-style.
+fixture: fixtures/php/mautic/
+counts: {techs: 1, endpoints: 6}
+options:
+  only_techs: "php_mautic"
+endpoints:
+  - url: "/test"
+    method: "GET"
+  - url: "/test/{objectId}"
+    method: "POST"
+    params:
+      - {name: "objectId", type: "path"}
+  - url: "/public/ping"
+    method: "GET"
+  - url: "/api/widgets/{dir}"
+    method: "GET"
+    params:
+      - {name: "dir", type: "path"}
+  - url: "/api/widgets/new"
+    method: "GET"
+  - url: "/api/widgets/new"
+    method: "POST"

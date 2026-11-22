@@ -1,0 +1,25 @@
+# `do`/`end` inside string literals (`desc 'things to do'`, a params
+# `desc:`) must not open or close a block, and chained closers
+# (`end.compact`, `end.each do`) must close one. Otherwise a resource prefix
+# leaks onto every later route, or a params block swallows the routes after
+# it.
+fixture: fixtures/ruby/grape_block_strings/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/tasks"
+    method: "GET"
+  - url: "/users/me"
+    method: "GET"
+  - url: "/items/archive"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "mode", type: "json"}
+  - url: "/items/recent"
+    method: "GET"
+  - url: "/reports"
+    method: "GET"
+  - url: "/exports"
+    method: "GET"
+  - url: "/health"
+    method: "GET"

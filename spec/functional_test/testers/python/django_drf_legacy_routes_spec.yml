@@ -1,0 +1,41 @@
+# DRF 2.x / Taiga extra actions: `@list_route(...)` is `@action(detail=False)`,
+# `@detail_route(...)` is `@action(detail=True)`, inherited from a mixin
+# too; no `methods=` means GET and `url_path=` names the segment.
+# `request.QUERY_PARAMS` / `request.DATA` are DRF 2.x's `query_params` /
+# `data`. A commented-out decorator routes nothing, and a `self.lookup_field`
+# set inside an action (or a method-local `lookup_field`) does not rename the detail route's `{pk}`.
+fixture: fixtures/python/django_drf_legacy_routes/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/issues/filters_data"
+    method: "GET"
+    params:
+      - {name: "project", type: "query"}
+  - url: "/issues/bulk-create"
+    method: "POST"
+    params:
+      - {name: "bulk_issues", type: "form"}
+  - url: "/issues/by_ref"
+    method: "GET"
+  - url: "/issues/{pk}/upvote"
+    method: "POST"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/issues/{pk}/history"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/issues/{pk}/history"
+    method: "PUT"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/issues"
+    method: "GET"
+  - url: "/issues/{pk}"
+    method: "DELETE"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/issues/{pk}"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}

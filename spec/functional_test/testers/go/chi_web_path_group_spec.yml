@@ -1,0 +1,31 @@
+# gitea's `modules/web` wrapper over chi: a suffix registered on a group
+# path (`m.Get(".{diffType:diff|patch}", h)`) and `PathGroup` / `MatchPath`
+# routes, whose `<name:...>` placeholders read as `{name}`.
+fixture: fixtures/go/chi_web_path_group/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/pulls/{index}"
+    method: "GET"
+    params:
+      - {name: "index", type: "path"}
+  - url: "/pulls/{index}.{diffType:diff|patch}"
+    method: "GET"
+    params:
+      - {name: "diffType", type: "path"}
+      - {name: "index", type: "path"}
+  - url: "/feed.rss"
+    method: "GET"
+  - url: "/commits/{ref}/status"
+    method: "GET"
+    params:
+      - {name: "ref", type: "path"}
+  - url: "/commits/{ref}/upload/{name}"
+    method: "POST"
+    params:
+      - {name: "name", type: "path"}
+      - {name: "ref", type: "path"}
+  - url: "/commits/{ref}/upload/{name}"
+    method: "PUT"
+    params:
+      - {name: "name", type: "path"}
+      - {name: "ref", type: "path"}

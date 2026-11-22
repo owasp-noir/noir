@@ -1,0 +1,15 @@
+fixture: fixtures/specification/vercel/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/before"
+    method: "ANY"
+  - url: "/after/(.*)"
+    method: "ANY"
+  - url: "/fallback"
+    method: "ANY"
+  - url: "/old"
+    method: "ANY"
+  - url: "/legacy/(.*)"
+    method: "ANY"
+  - url: "/(.*)"
+    method: "ANY"

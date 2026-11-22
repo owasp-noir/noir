@@ -1,0 +1,22 @@
+# Routers nested inside a router that is itself nested exist only at their
+# full prefix. The endpoint count pins the absence of the shorter copies
+# (`/api/`, `/api/stats`, `/x/leaf`, `/users/list`, `/reports/report`).
+fixture: fixtures/rust/axum_nested_phantom/
+counts: {techs: 1, endpoints: 7}
+options:
+  only_techs: "rust_axum"
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/api/users/"
+    method: "GET"
+  - url: "/api/users/"
+    method: "POST"
+  - url: "/api/admin/stats"
+    method: "GET"
+  - url: "/deep/x/leaf"
+    method: "GET"
+  - url: "/v2/users/list"
+    method: "GET"
+  - url: "/v2/reports/report"
+    method: "GET"

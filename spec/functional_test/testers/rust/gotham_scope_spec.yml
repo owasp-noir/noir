@@ -1,0 +1,22 @@
+# Gotham scoped routing: `route.scope("/api", |route| { ... })` prepends
+# a segment, nested scopes compose (`/api/v2/...`), and
+# `route.with_pipeline_chain(chain, |route| { ... })` adds middleware
+# without changing the path. Handler-body enrichment (the Authorization
+# header) still resolves through the composed route.
+fixture: fixtures/rust/gotham_scope/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+  - url: "/api/v2/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/profile"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}

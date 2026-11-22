@@ -1,0 +1,53 @@
+# Regression test for the --include-callee feature: Flask analyzer must
+# emit 1-hop callees observed inside each handler body, deduped and capped.
+# Builtins (print/len/range/...) and Python dunder methods are filtered;
+# framework calls like `jsonify` are kept on purpose because they tell a
+# reviewer how the endpoint shapes its output.
+#
+# Imported helper callees (build_user_query, run_sql_query, log_audit,
+# notify_admin) resolve to their definitions in helpers.py; framework
+# calls like `jsonify` stay unresolved (no Python definition reachable
+# from the project root) and keep their call-site location.
+fixture: fixtures/python/flask_callees/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+endpoints:
+  # POST /users — exercises every callee in the handler plus dedup
+  # (`run_sql_query` is only called once but `request.form[...]` is a
+  # subscript, not a call, so it must not show up).
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "build_user_query", path: "./spec/functional_test/fixtures/python/flask_callees/helpers.py", line: 1}
+      - {name: "run_sql_query", path: "./spec/functional_test/fixtures/python/flask_callees/helpers.py", line: 5}
+      - {name: "log_audit", path: "./spec/functional_test/fixtures/python/flask_callees/helpers.py", line: 14}
+      - {name: "notify_admin", path: "./spec/functional_test/fixtures/python/flask_callees/helpers.py", line: 10}
+      - {name: "jsonify"}
+  # GET /orders/<order_id> — same helpers as POST /users (verifies the
+  # callee list is per-handler, not deduped across endpoints).
+  - url: "/orders/<order_id>"
+    method: "GET"
+    params:
+      - {name: "order_id", type: "path"}
+    callees:
+      - {name: "build_user_query", path: "./spec/functional_test/fixtures/python/flask_callees/helpers.py", line: 1}
+      - {name: "run_sql_query", path: "./spec/functional_test/fixtures/python/flask_callees/helpers.py", line: 5}
+      - {name: "jsonify"}
+  # GET /healthz — single callee, confirms small handlers still get
+  # populated rather than left empty.
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "jsonify"}
+  # GET /many — handler has 12 unique calls; spec asserts the first 10
+  # surface (c1..c10) and that jsonify (the 13th call in source order)
+  # gets dropped under Callee::MAX_PER_ENDPOINT. Functional presence
+  # check; the strict 10-count guarantee lives in the model unit test.
+  - url: "/many"
+    method: "GET"
+    callees:
+      - {name: "c1"}
+      - {name: "c10"}

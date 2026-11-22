@@ -1,0 +1,27 @@
+# Regression test for --include-callee on Armeria annotated services.
+# Builder-chain routes are regex-only and have no handler body here;
+# annotated services already expose the method node and can provide
+# 1-hop callees.
+fixture: fixtures/java/armeria_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/annotated/users/{userId}"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "Content-Type", type: "header"}
+      - {name: "userId", type: "path"}
+    callees:
+      - {name: "validate", line: 17}
+      - {name: "service.save", line: 18}
+      - {name: "AuditLog.write", line: 19}
+      - {name: "HttpResponse.of", line: 20}
+  - url: "/annotated/users/profile"
+    method: "GET"
+    callees:
+      - {name: "this.buildProfile", line: 25}
+      - {name: "AuditLog.write", line: 26}
+      - {name: "HttpResponse.of", line: 27}

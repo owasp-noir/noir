@@ -1,0 +1,16 @@
+# A one-line `scope ..., do: route` has no `end`. Its prefix covers that line
+# only — in the router and inside a route macro body alike — and must not
+# leak onto the routes after it.
+fixture: fixtures/elixir/phoenix_inline_scope/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/admin/inline"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"
+  - url: "/after"
+    method: "GET"
+  - url: "/ops/health"
+    method: "GET"
+  - url: "/macro-after"
+    method: "GET"

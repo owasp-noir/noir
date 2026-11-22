@@ -1,0 +1,20 @@
+# `const api = new Router({ prefix: '/api' })` then
+# `api.use('/users', users.routes())`: the cross-file child is served under
+# the parent's constructor prefix too.
+fixture: fixtures/javascript/koa_ctor_prefix/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/api/users/"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/api/health"
+    method: "GET"

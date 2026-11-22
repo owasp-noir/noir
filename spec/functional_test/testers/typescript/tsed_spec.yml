@@ -1,0 +1,29 @@
+# `mount: { "/rest": [...] }` in the server's `@Configuration` prefixes the
+# controllers.
+fixture: fixtures/typescript/tsed/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/rest/calendars"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/rest/calendars/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/rest/calendars"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+      - {name: "x-api-key", type: "header"}
+  - url: "/rest/calendars/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "name", type: "body"}
+  - url: "/rest/calendars/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}
+# `:techs => 1`: the `@Controller` file must not also detect as ts_nestjs.

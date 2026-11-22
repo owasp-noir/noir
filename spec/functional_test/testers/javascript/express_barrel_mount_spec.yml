@@ -1,0 +1,26 @@
+# Routers mounted through a re-export barrel (`routes/index.js`):
+#
+#   export { default as users } from './users.js'      app.use('/users', routes.users)
+#   import tagsRouter from './tags.js'; export { tagsRouter as tags }
+#   module.exports = { accounts: require('./accounts'), admin }
+#   export default { orders, carts }                    app.use('/orders', routes.orders)
+#
+# The mount prefix used to be keyed on the barrel, which defines no routes,
+# so every router behind it was reported at its bare path.
+fixture: fixtures/javascript/express_barrel_mount/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/users/list"
+    method: "GET"
+  - url: "/posts/recent"
+    method: "GET"
+  - url: "/tags/popular"
+    method: "GET"
+  - url: "/api/accounts"
+    method: "GET"
+  - url: "/admin/stats"
+    method: "GET"
+  - url: "/orders/pending"
+    method: "GET"
+  - url: "/carts/current"
+    method: "GET"

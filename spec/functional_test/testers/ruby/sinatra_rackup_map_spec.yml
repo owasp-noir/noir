@@ -1,0 +1,17 @@
+# The one-line rackup `map('/users') { run UsersController }` mounts the
+# class under its prefix, like the `map "/posts" do ... end` form.
+fixture: fixtures/ruby/sinatra_rackup_map/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

@@ -1,0 +1,24 @@
+# Cross-file scope composition: the `web::scope("/auth").service(
+# mod::handler)` tree lives in `main.rs`, but the `#[get]/#[post]`
+# handlers it mounts are defined in sibling modules (`users.rs`,
+# `posts.rs`, `admin.rs`). The analyzer must prefix each handler with
+# the scope it is registered under in the *other* file, resolving the
+# right scope module-aware so the `list` leaf shared by `posts` and
+# `admin` keeps `/auth/v1/posts` distinct from `/admin/list`.
+fixture: fixtures/rust/actix_crossfile_scope/
+counts: {techs: 1, endpoints: 6}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/auth/me"
+    method: "GET"
+  - url: "/auth/v1/users"
+    method: "GET"
+  - url: "/auth/v1/posts"
+    method: "POST"
+  - url: "/auth/v1/posts"
+    method: "GET"
+  - url: "/admin/dashboard"
+    method: "GET"
+  - url: "/admin/list"
+    method: "GET"

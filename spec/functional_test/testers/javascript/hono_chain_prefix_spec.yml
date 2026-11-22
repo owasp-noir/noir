@@ -1,0 +1,32 @@
+# Verbs chained on a Hono instance take the instance's prefix:
+#
+#   const books = new Hono().get('/', h).post('/', h)          // mounted at /api/books
+#   const app = new Hono().basePath('/api').route('/books', books)
+#   app.get('/endpoint', h).post(h)                             // POST /api/endpoint
+#   const v2 = root.basePath('/v2')                             // v2 is prefixed, root is not
+#
+# Links after the first lost the prefix, a chained `.route()` mounted
+# nothing, path-less links were dropped, and `basePath` prefixed `root`.
+fixture: fixtures/javascript/hono_chain_prefix/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/api/books/"
+    method: "GET"
+  - url: "/api/books/"
+    method: "POST"
+  - url: "/api/books/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/endpoint"
+    method: "GET"
+  - url: "/api/endpoint"
+    method: "POST"
+  - url: "/api/endpoint"
+    method: "DELETE"
+  - url: "/ping"
+    method: "GET"
+  - url: "/v2/users"
+    method: "GET"

@@ -1,0 +1,15 @@
+# #3291: a Glue app is detected from its package.json alone (no `require('hapi')`
+# in code), and the manifest's `routes.prefix` applies to the plugin it
+# registers: Glue 4 `registrations[].options.routes` (glue4/) and Glue 8
+# `register.plugins[].routes`, from a separate manifest file (glue8/).
+fixture: fixtures/javascript/hapi_glue_manifest/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/tags"
+    method: "GET"
+  - url: "/api/articles/{slug}"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+  - url: "/api/ping"
+    method: "GET"

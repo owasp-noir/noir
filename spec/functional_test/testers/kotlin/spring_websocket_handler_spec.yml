@@ -1,0 +1,21 @@
+# Plain WebSocket handlers registered with
+# `WebSocketHandlerRegistry.addHandler(handler, paths...)` (#3268).
+fixture: fixtures/kotlin/spring_websocket_handler/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/chat"
+    method: "GET"
+    protocol: "ws"
+    callees:
+      - {name: "WebSocketHandlerRegistry.addHandler", line: 16}
+  - url: "/ticker"
+    method: "GET"
+    protocol: "ws"
+  - url: "/ticker/legacy"
+    method: "GET"
+    protocol: "ws"
+# The commented-out `addHandler(oldHandler, "/old")` is not a route.

@@ -1,0 +1,110 @@
+fixture: fixtures/php/symfony/
+counts: {techs: 2, endpoints: 27}
+endpoints:
+  # From UserController annotations
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "search", type: "query"}
+      - {name: "X-API-Key", type: "header"}
+      - {name: "session_id", type: "cookie"}
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "email", type: "form"}
+      - {name: "Authorization", type: "header"}
+      - {name: "avatar", type: "file"}
+  - url: "/api/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "Content-Type", type: "header"}
+  - url: "/api/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # From ProductController attributes
+  - url: "/api/products"
+    method: "GET"
+  - url: "/api/products/{slug}"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+  - url: "/api/products"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "price", type: "form"}
+      - {name: "category", type: "query"}
+      - {name: "User-Agent", type: "header"}
+      - {name: "image", type: "file"}
+  - url: "/api/products/{slug}"
+    method: "PATCH"
+    params:
+      - {name: "slug", type: "path"}
+      - {name: "X-CSRF-Token", type: "header"}
+      - {name: "preferences", type: "cookie"}
+  # From AdminController class-level prefix and named path attributes
+  - url: "/api/admin/stats"
+    method: "GET"
+  - url: "/api/admin/reports/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  # From StorefrontController multi-line #[Route] attributes whose verbs are
+  # `Request::METHOD_*` constants and whose `path:` sits after a newline.
+  - url: "/account/login"
+    method: "GET"
+  - url: "/account/login"
+    method: "POST"
+  - url: "/account/order/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/account/order/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  # From routes.yaml
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/docs"
+    method: "GET"
+  - url: "/api/categories"
+    method: "GET"
+  - url: "/api/categories"
+    method: "POST"
+  - url: "/api/categories/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/categories/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/categories/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/search"
+    method: "GET"
+  - url: "/webhooks/{provider}"
+    method: "POST"
+    params:
+      - {name: "provider", type: "path"}
+  - url: "/api/status-check"
+    method: "GET"
+  # `#[Route('')]` under a class prefix
+  - url: "/tasks"
+    method: "GET"
+  - url: "/tasks"
+    method: "POST"
+# Detection still sees php_symfony and php_pure
+# Analysis suppresses redundant php_pure file endpoints

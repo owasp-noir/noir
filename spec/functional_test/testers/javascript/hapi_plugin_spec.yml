@@ -1,0 +1,21 @@
+# Plugin modules never import hapi; the project's package.json puts them in
+# scope, and `register(..., { routes: { prefix } })` serves them under it.
+fixture: fixtures/javascript/hapi_plugin/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/api/users/{userId}"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+  - url: "/api/orders/{orderId}"
+    method: "DELETE"
+    params:
+      - {name: "orderId", type: "path"}
+  - url: "/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

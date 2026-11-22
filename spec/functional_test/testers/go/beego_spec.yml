@@ -1,0 +1,33 @@
+fixture: fixtures/go/beego/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/alice"
+    method: "POST"
+    params:
+      - {name: "query", type: "form"}
+      - {name: "auth", type: "cookie"}
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "lang", type: "query"}
+  # Controller getters: form on POST/PUT/PATCH, query on GET and DELETE.
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/post"
+    method: "POST"
+    params:
+      - {name: "message", type: "form"}
+  - url: "/post"
+    method: "PUT"
+    params:
+      - {name: "n", type: "form"}
+  - url: "/post"
+    method: "PATCH"
+    params:
+      - {name: "on", type: "form"}
+  - url: "/post"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "query"}

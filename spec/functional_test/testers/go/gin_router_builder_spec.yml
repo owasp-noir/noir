@@ -1,0 +1,20 @@
+# The canonical gin layout splits route registration across
+# `func addXRoutes(rg *gin.RouterGroup)` helpers called from a central
+# function with a versioned group. The prefix (`/v1`) lives at the call
+# site, not in the helper, and the helper's parameter name (`rg`) does
+# NOT match the caller's group variable (`v1`) — so the helper's routes
+# need the call-site prefix grafted on. addPingRoutes is reused under
+# both /v1 and /v2, so it must yield a route for each.
+fixture: fixtures/go/gin_router_builder/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/v1/users/"
+    method: "GET"
+  - url: "/v1/users/"
+    method: "POST"
+  - url: "/v1/users/comments"
+    method: "GET"
+  - url: "/v1/ping/"
+    method: "GET"
+  - url: "/v2/ping/"
+    method: "GET"

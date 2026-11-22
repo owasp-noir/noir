@@ -1,0 +1,50 @@
+fixture: fixtures/scala/http4s/
+counts: {techs: 1, endpoints: 13}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "CreateUser"}
+  - url: "/api/items/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json", value: "UpdateItem"}
+  - url: "/api/search"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/api/ping"
+    method: "GET"
+  - url: "/api/ping"
+    method: "HEAD"
+  - url: "/api/bulk"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "CreateUser"}
+  - url: "/v1/health"
+    method: "GET"
+  # AuthedRoutes mounted at /auth; the trailing `as user` must not become a path.
+  - url: "/auth/profile"
+    method: "GET"
+  - url: "/auth/account"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "UpdateItem"}
+  # FindRoutes.scala: keys come from QueryMatchers.scala, not the bindings.
+  - url: "/find"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "limit", type: "query"}

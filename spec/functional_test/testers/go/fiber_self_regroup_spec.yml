@@ -1,0 +1,7 @@
+fixture: fixtures/go/fiber_self_regroup/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/v1/x"
+    method: "GET"
+  - url: "/a/y"
+    method: "GET"

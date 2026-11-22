@@ -1,0 +1,21 @@
+# `#[rocket::get("/x")]` is a Rocket route like `#[get("/x")]`; another
+# crate's `#[other_web::get]` is not.
+fixture: fixtures/rust/rocket_qualified_attr/
+counts: {techs: 1, endpoints: 4}
+options:
+  only_techs: "rust_rocket"
+endpoints:
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/api/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}

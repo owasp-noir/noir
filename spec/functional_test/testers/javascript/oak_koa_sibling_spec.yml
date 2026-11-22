@@ -1,0 +1,15 @@
+# A Deno Oak service beside a Koa API. Koa's `api.use('/users',
+# users.routes())` is Oak's mount shape too, and both write the same
+# per-file prefix key: Oak resolving the Koa mount pushed a bare `/users`
+# onto the Koa child, so it surfaced twice (and only when Oak ran first).
+fixture: fixtures/javascript/oak_koa_sibling/
+counts: {techs: 2, endpoints: 3}
+endpoints:
+  - url: "/api/v1/users/"
+    method: "GET"
+  - url: "/api/v1/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/ping"
+    method: "GET"

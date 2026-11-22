@@ -1,0 +1,23 @@
+# `rootPath: "/api"` in the `InversifyExpressServer` options prefixes every
+# controller.
+fixture: fixtures/typescript/inversify/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+      - {name: "x-api-key", type: "header"}
+  - url: "/api/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}

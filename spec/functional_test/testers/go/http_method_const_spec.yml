@@ -1,0 +1,20 @@
+# Go 1.22 patterns whose method is a stdlib constant (`http.MethodGet+" /users"`).
+fixture: fixtures/go/http_method_const/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/ctl"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/items/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/orders"
+    method: "GET"

@@ -1,0 +1,30 @@
+fixture: fixtures/specification/caido/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "Authorization", type: "header", value: "Bearer token123"}
+      - {name: "Accept", type: "header", value: "application/json"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/api/users/123"
+    method: "PUT"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "email", type: "form"}
+  # LF-only separator + Cookie header.
+  - url: "/admin"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+      - {name: "theme", type: "cookie"}
+  # Binary body (PNG bytes) must not blow up header extraction.
+  - url: "/api/upload"
+    method: "POST"
+    params:
+      - {name: "Authorization", type: "header", value: "Bearer xyz"}

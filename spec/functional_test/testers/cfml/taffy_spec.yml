@@ -1,0 +1,64 @@
+# Taffy declares the path as a component attribute and takes the HTTP
+# verb from the handler function's name, so every route is statically
+# known. `{token}` placeholders become path params; the remaining
+# arguments are query params on GET and body params otherwise.
+fixture: fixtures/cfml/taffy/
+counts: {techs: 2, endpoints: 12}
+endpoints:
+  # Tag syntax: taffy_uri + <cfargument>. `buildRepresentation` is not a
+  # verb name, so it is not a handler.
+  - url: "/artists"
+    method: "GET"
+  - url: "/artists"
+    method: "POST"
+    params:
+      - {name: "firstname", type: "form"}
+      - {name: "lastname", type: "form"}
+  # A token that is also declared as an argument stays a path param and
+  # must not surface a second time as query/body.
+  - url: "/artist/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/artist/{id}"
+    method: "PUT"
+    params:
+      - {name: "email", type: "form"}
+      - {name: "id", type: "path"}
+  - url: "/artist/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Script syntax with the colon spelling. The braces in the URI must not
+  # truncate the component header, and inline per-argument validators
+  # (`taffy_minlength=`) must not be read as argument names.
+  - url: "/echo/{parentId}/child/{childId}"
+    method: "GET"
+    params:
+      - {name: "parentId", type: "path"}
+      - {name: "childId", type: "path"}
+  - url: "/echo/{parentId}/child/{childId}"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "value", type: "form"}
+      - {name: "childId", type: "path"}
+      - {name: "parentId", type: "path"}
+  # taffy_verb overrides the function name; a function with neither a
+  # verb name nor the attribute is not a handler.
+  - url: "/custom"
+    method: "GET"
+  - url: "/custom"
+    method: "PATCH"
+  - url: "/custom"
+    method: "OPTIONS"
+  # One resource may answer on several comma-separated URIs.
+  - url: "/alpha"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/beta"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+# Detection still sees cfml_taffy and cfml_pure

@@ -1,0 +1,19 @@
+# TypeScript ESM (`moduleResolution: NodeNext`) imports a sibling `.ts`
+# source through a `.js` specifier (`import usersRouter from
+# './controllers/users.js'` where the file on disk is `users.ts`).
+# The cross-file router-mount resolver must rewrite the `.js` extension
+# to its `.ts` counterpart, otherwise the mount prefix never attaches
+# and every sub-route loses it (`/me` instead of `/users/me`).
+fixture: fixtures/javascript/express_ts_esm_mount/
+counts: {techs: 1}
+endpoints:
+  - url: "/users/me"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/"
+    method: "GET"
+  - url: "/posts/"
+    method: "POST"

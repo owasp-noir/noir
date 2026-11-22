@@ -1,0 +1,60 @@
+fixture: fixtures/typescript/loopback/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  # `@param.query.*` shortcuts.
+  - url: "/products"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+      - {name: "filter", type: "query"}
+  # `@param.path.string('id')` + LoopBack's OpenAPI-style `{id}` path.
+  - url: "/products/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # `@requestBody()` — always a single generic `body` param.
+  - url: "/products"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+  # Decorator stacking: `@authenticate`/`@authorize` sit between the
+  # route decorator and the method signature and must not break param
+  # extraction.
+  - url: "/products/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "body"}
+  - url: "/products/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "body"}
+  - url: "/products/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # `id` has no `@param.path` decorator — recovered from the `{id}` URL
+  # placeholder fallback — plus `@param.header.string(...)`.
+  - url: "/products/{id}/reviews"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "x-api-key", type: "header"}
+  # `@param.array('tags', 'query', ...)`.
+  - url: "/products/search"
+    method: "GET"
+    params:
+      - {name: "tags", type: "query"}
+  # Generic `@operation('get', '/path', spec)` escape hatch.
+  - url: "/products/count"
+    method: "GET"
+  # Multiline route decorator in a second controller in the same file.
+  - url: "/categories"
+    method: "GET"
+  # Multiline route decorator with `@param.path.string('id')` holding `)` in an option string.
+  - url: "/categories/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "filter", type: "query"}

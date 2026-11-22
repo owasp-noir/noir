@@ -1,0 +1,23 @@
+# warp's `path!` macro (literal + typed segments) and filter-returning
+# helper functions whose tail expression IS the route. A non-route
+# helper filter (`with_auth`, no path) must not become an endpoint.
+fixture: fixtures/rust/warp_path_macro/
+counts: {techs: 1, endpoints: 5}
+options:
+  only_techs: "rust_warp"
+endpoints:
+  - url: "/hello/from/warp"
+    method: "GET"
+  - url: "/sum/:param1/:param2"
+    method: "GET"
+    params:
+      - {name: "param1", type: "path"}
+      - {name: "param2", type: "path"}
+  - url: "/todos"
+    method: "GET"
+  - url: "/todos"
+    method: "POST"
+  - url: "/todos/:param"
+    method: "PUT"
+    params:
+      - {name: "param", type: "path"}

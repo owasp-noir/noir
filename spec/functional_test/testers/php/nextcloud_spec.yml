@@ -1,0 +1,55 @@
+# `appinfo/routes.php` routes/resources live under `/apps/<id>`, OCS ones
+# under `/ocs/v2.php/apps/<id>`; `#[FrontpageRoute]` / `#[ApiRoute]` take
+# the same prefixes. Split route files under `appinfo/routes/` are read, a
+# non-core app's `root` is ignored, and commented-out attributes are not
+# routes. The app's own `.php` files are not URLs (no php_pure
+# file-path endpoints).
+fixture: fixtures/php/nextcloud/
+counts: {techs: 2, endpoints: 11}
+endpoints:
+  - url: "/apps/notes/"
+    method: "GET"
+  - url: "/apps/notes/home"
+    method: "GET"
+  - url: "/ocs/v2.php/apps/notes/api/v1/share/{token}"
+    method: "DELETE"
+    params:
+      - {name: "token", type: "path"}
+      - {name: "shareWith", type: "query"}
+      - {name: "permissions", type: "query"}
+  - url: "/apps/notes/notes/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "content", type: "form"}
+  - url: "/ocs/v2.php/apps/notes/api/v1/share"
+    method: "POST"
+    params:
+      - {name: "shareWith", type: "form"}
+      - {name: "permissions", type: "form"}
+  - url: "/apps/notes/notes"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+  - url: "/apps/notes/notes"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+      - {name: "content", type: "form"}
+  - url: "/apps/notes/notes/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/apps/notes/notes/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/ocs/v2.php/apps/notes/api/{apiVersion}/notes/{id}"
+    method: "GET"
+    params:
+      - {name: "apiVersion", type: "path"}
+      - {name: "id", type: "path"}
+  - url: "/apps/notes/settings"
+    method: "POST"
+    params:
+      - {name: "defaultFolder", type: "form"}

@@ -1,0 +1,33 @@
+fixture: fixtures/crystal/lucky/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "locale", type: "query"}
+  - url: "/secret.html"
+    method: "GET"
+  - url: "/api/me"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "query", type: "query"}
+      - {name: "filter", type: "query"}
+      - {name: "X-Forwarded-For", type: "header"}
+  - url: "/api/sign_ins"
+    method: "POST"
+    params:
+      - {name: "users", type: "json"}
+  - url: "/api/sign_ups"
+    method: "POST"
+    params:
+      - {name: "name1", type: "cookie"}
+      - {name: "name2", type: "cookie"}
+  # `action do` routes inferred from the action class name (Lucky's
+  # resourceful routing).
+  - url: "/posts"
+    method: "GET"
+  - url: "/posts/:post_id"
+    method: "GET"
+    params:
+      - {name: "post_id", type: "path"}

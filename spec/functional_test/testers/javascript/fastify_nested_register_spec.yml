@@ -1,0 +1,16 @@
+# Inline `register(fn, { prefix })` calls nest: routes inside the inner
+# plugin carry every enclosing prefix, outermost first, under the file's own
+# cross-file register prefix.
+fixture: fixtures/javascript/fastify_nested_register/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/a"
+    method: "GET"
+  - url: "/api/v2/b"
+    method: "GET"
+  - url: "/internal/ping"
+    method: "GET"
+  - url: "/internal/v2/echo"
+    method: "POST"
+  - url: "/internal/v2/config"
+    method: "PUT"

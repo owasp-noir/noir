@@ -1,0 +1,18 @@
+# cadwyn's `VersionedAPIRouter` subclasses `fastapi.APIRouter`: its routes
+# are served, its prefix stays its own (it used to land on the file's one
+# known router), and a `VersionedAPIRouter` parent passes its prefix down.
+fixture: fixtures/python/fastapi_cadwyn_router/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/dag-runs/{run_id}/state"
+    method: "GET"
+    params:
+      - {name: "run_id", type: "path"}
+  - url: "/dags/{dag_id}"
+    method: "GET"
+    params:
+      - {name: "dag_id", type: "path"}
+  - url: "/execution/variables/{variable_key}"
+    method: "GET"
+    params:
+      - {name: "variable_key", type: "path"}

@@ -1,0 +1,24 @@
+# Modular tRPC layout that large apps (documenso, cal.com, ...) use:
+#   * a composition root (`appRouter = router({ user: userRouter })`) with
+#     NO inline procedure — must still be detected and compose dotted paths;
+#   * procedures defined in their own files and referenced by name
+#     (`get: getUserRoute`) — resolved cross-file;
+#   * an inline nested router (`profile: router({ update: ... })`);
+#   * a plain-object nested router (`settings: { read: ... }`, tRPC v11);
+#   * a `endpoint: `/${string}`` TS *type* that must NOT hijack the prefix
+#     (it stays the default /api/trpc).
+fixture: fixtures/typescript/trpc_modular/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/api/trpc/user.get"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/api/trpc/user.profile.update"
+    method: "POST"
+    params:
+      - {name: "displayName", type: "body"}
+  - url: "/api/trpc/user.settings.read"
+    method: "GET"
+  - url: "/api/trpc/admin.stats"
+    method: "GET"

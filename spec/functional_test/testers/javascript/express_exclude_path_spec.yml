@@ -1,0 +1,15 @@
+# Regression test for --exclude-path.
+#
+# The fixture ships three Express files:
+#   - app.js                 → real route, must survive
+#   - app.test.js            → excluded by basename glob "*.test.js"
+#   - tests/integration.js   → excluded by path glob "tests/*"
+#
+# With both patterns active only the /api/users route should appear.
+fixture: fixtures/javascript/express_exclude_path/
+counts: {techs: 1, endpoints: 1}
+options:
+  exclude_path: "*.test.js,tests/*"
+endpoints:
+  - url: "/api/users"
+    method: "GET"

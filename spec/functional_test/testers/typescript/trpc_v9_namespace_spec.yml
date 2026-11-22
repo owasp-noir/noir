@@ -1,0 +1,11 @@
+fixture: fixtures/typescript/trpc_v9_namespace/
+counts: {techs: 1, endpoints: 2}
+options:
+  only_techs: "ts_trpc"
+endpoints:
+  - url: "/api/trpc/sub.a"
+    method: "GET"
+    params:
+      - {name: "input", type: "query"}
+  - url: "/api/trpc/m"
+    method: "POST"

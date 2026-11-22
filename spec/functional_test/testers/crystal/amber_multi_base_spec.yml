@@ -1,0 +1,11 @@
+fixture: fixtures/crystal/amber_multi_base/
+counts: {techs: 1, endpoints: 3}
+options:
+  base: ["./spec/functional_test/fixtures/crystal/amber_multi_base/service_a", "./spec/functional_test/fixtures/crystal/amber_multi_base/service_b"]
+endpoints:
+  - url: "/a"
+    method: "GET"
+  - url: "/b"
+    method: "GET"
+  - url: "/a_asset.txt"
+    method: "GET"

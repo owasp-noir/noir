@@ -1,0 +1,16 @@
+fixture: fixtures/java/helidon_mp/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/greet"
+    method: "GET"
+    params:
+      - {name: "lang", type: "query"}
+  - url: "/greet/{name}"
+    method: "GET"
+    params:
+      - {name: "X-Trace-Id", type: "header"}
+      - {name: "name", type: "path"}
+  - url: "/greet/greeting"
+    method: "PUT"
+    params:
+      - {name: "message", type: "json"}

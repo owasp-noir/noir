@@ -1,0 +1,71 @@
+# go-zero registers routes three ways, all exercised by the fixture:
+#   - `server.AddRoute(rest.Route{...})` single struct (main.go)
+#   - `apiGroup := server.Group("/api/v1")` + `apiGroup.AddRoute(...)`
+#     group prefix -> `/api/v1/products`
+#   - `server.Get/Post/Put(...)` verb form
+#   - `.api` DSL with `@server(prefix: /admin)` -> `/admin/...`
+# The struct-form routes (`AddRoute`), the `/api/v1` group prefix, the
+# `/admin` `.api` prefix, and the `/` home route were all previously
+# missed (FN); they're now resolved to full mounted paths and dedupe
+# against their `.api` counterparts by (method, url).
+fixture: fixtures/go/gozero/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  # Root + main-service routes (main.go AddRoute / .api, no prefix).
+  - url: "/"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "name", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "name", type: "json"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "email", type: "json"}
+      - {name: "name", type: "json"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "GET"
+  - url: "/profile"
+    method: "GET"
+  - url: "/profile"
+    method: "PUT"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "name", type: "json"}
+  - url: "/health"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "password", type: "form"}
+      - {name: "username", type: "form"}
+  # Group-prefixed routes (`server.Group("/api/v1")`).
+  - url: "/api/v1/products"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+  - url: "/api/v1/products"
+    method: "POST"
+  # `@server(prefix: /admin)` `.api` block.
+  - url: "/admin/users"
+    method: "GET"
+  - url: "/admin/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/users"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "name", type: "json"}

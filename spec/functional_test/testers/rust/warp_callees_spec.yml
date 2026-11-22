@@ -1,0 +1,47 @@
+fixture: fixtures/rust/warp_callees/
+counts: {techs: 1, endpoints: 6}
+options:
+  include_callee: true
+  only_techs: "rust_warp"
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "HealthCheck::ready", line: 15}
+      - {name: "render_home", line: 16}
+  - url: "/users/:param"
+    method: "GET"
+    params:
+      - {name: "param", type: "path"}
+    callees:
+      - {name: "UserService::load", line: 20}
+      - {name: "AuditLog::read_user", line: 21}
+      - {name: "UserPresenter::render", line: 22}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "CreateUser", type: "json"}
+    callees:
+      - {name: "UserService::create", line: 26}
+      - {name: "AuditLog::write", line: 27}
+      - {name: "UserPresenter::render", line: 28}
+  - url: "/external"
+    method: "POST"
+    params:
+      - {name: "CreateUser", type: "json"}
+    callees:
+      - {name: "ExternalService::create", line: 2}
+      - {name: "AuditLog::write_external", line: 3}
+      - {name: "UserPresenter::render", line: 4}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "SearchQuery", type: "query"}
+    callees:
+      - {name: "ProfileService::search", line: 32}
+      - {name: "ProfilePresenter::render", line: 33}
+  - url: "/generic"
+    method: "GET"
+    callees:
+      - {name: "GenericService::load", line: 37}
+      - {name: "GenericPresenter::render", line: 38}

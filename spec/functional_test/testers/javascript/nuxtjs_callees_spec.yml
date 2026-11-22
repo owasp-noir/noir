@@ -1,0 +1,21 @@
+fixture: fixtures/javascript/nuxtjs_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/orders"
+    method: "GET"
+    params:
+      - {name: "status", type: "query"}
+    callees:
+      - {name: "getQuery", line: 4}
+      - {name: "listOrders", line: 5}
+      - {name: "sendOrders", line: 6}
+      - {name: "serializeOrders", line: 6}
+  - url: "/auth"
+    method: "ANY"
+    params:
+      - {name: "session", type: "cookie"}
+    callees:
+      - {name: "getCookie", line: 4}
+      - {name: "authorizeUser", line: 5}

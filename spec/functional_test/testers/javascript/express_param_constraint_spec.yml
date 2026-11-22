@@ -1,0 +1,17 @@
+# Express param regex constraints (`:id([0-9]+)`) normalize down to the
+# bare param. The constraint body must not leak a phantom path param.
+fixture: fixtures/javascript/express_param_constraint/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/files/:name"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/items/:pk"
+    method: "DELETE"
+    params:
+      - {name: "pk", type: "path"}

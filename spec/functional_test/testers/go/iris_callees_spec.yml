@@ -1,0 +1,38 @@
+# Regression test for --include-callee on Iris (#1366). Iris uses
+# `.Party(...)` for route groups; the route extractor handles that via
+# `group_method: "Party"`, and callee wiring is identical to Gin/Hertz
+# (with the same ANY-verb fan-out branch).
+#
+# Coverage:
+#   - POST /users   — named handler `createUser` in sibling
+#                     `handlers.go`; cross-file lookup.
+#   - GET /healthz  — inline closure in main.go.
+#   - GET /profile  — second named handler in handlers.go.
+#
+# This fixture does not exercise the ANY-route fan-out path; the
+# callee push lives in both branches of iris.cr, but adding an
+# `.Any("/x", h)` here would just re-state the same assertion N times.
+fixture: fixtures/go/iris_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "ctx.PostValue", line: 8}
+      - {name: "saveUser", path: "./spec/functional_test/fixtures/go/iris_callees/helpers.go", line: 3}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/iris_callees/helpers.go", line: 7}
+      - {name: "ctx.JSON", line: 11}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "ctx.JSON", line: 11}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/iris_callees/helpers.go", line: 10}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/iris_callees/helpers.go", line: 7}
+      - {name: "ctx.JSON", line: 17}

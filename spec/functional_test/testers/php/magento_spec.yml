@@ -1,0 +1,35 @@
+fixture: fixtures/php/magento/
+counts: {techs: 2, endpoints: 10}
+endpoints:
+  # Web API (webapi.xml -> /rest prefix)
+  - url: "/rest/V1/blog/posts"
+    method: "GET"
+  - url: "/rest/V1/blog/posts"
+    method: "POST"
+  - url: "/rest/V1/blog/posts/{postId}"
+    method: "GET"
+    params:
+      - {name: "postId", type: "path"}
+  - url: "/rest/V1/blog/posts/{postId}"
+    method: "DELETE"
+    params:
+      - {name: "postId", type: "path"}
+  # MVC controllers (routes.xml frontName + Controller/.../Action.php)
+  - url: "/blog/index/index"
+    method: "GET"
+  - url: "/blog/post/view"
+    method: "GET"
+  - url: "/blog/post/save"
+    method: "POST"
+  # Adminhtml controllers sit under the backend front name (default `admin`).
+  - url: "/admin/acme_blog/post/edit"
+    method: "GET"
+  # Nested Controller/Order/Creditmemo/ collapses to one underscore segment.
+  - url: "/blog/order_creditmemo/save"
+    method: "POST"
+  # Implements HttpGetActionInterface only; the imported (but unimplemented)
+  # HttpPostActionInterface must NOT add POST.
+  - url: "/blog/feed/view"
+    method: "GET"
+# Controller/Support/Helper.php has only executeInternal() -> no endpoint.
+# php_magento + php_pure (suppressed in analysis)

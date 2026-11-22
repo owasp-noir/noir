@@ -1,0 +1,149 @@
+fixture: fixtures/java/javalin/
+counts: {techs: 1, endpoints: 36}
+endpoints:
+  - url: "/hello"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "User"}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json", value: "User"}
+      - {name: "X-Trace", type: "header"}
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/v1/health"
+    method: "GET"
+  - url: "/api/v1/submit"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "Submission"}
+      - {name: "X-Token", type: "header"}
+  - url: "/api/v1/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "category", type: "query"}
+  - url: "/sessions/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}
+  - url: "/profile"
+    method: "PATCH"
+    params:
+      - {name: "email", type: "form"}
+      - {name: "phone", type: "form"}
+  - url: "/uploads/{uploadId}"
+    method: "POST"
+    params:
+      - {name: "verbose", type: "query"}
+      - {name: "files", type: "form"}
+      - {name: "tags", type: "form"}
+      - {name: "X-Batch", type: "header"}
+      - {name: "uploadId", type: "path"}
+  - url: "/raw"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "scope", type: "query"}
+      - {name: "body", type: "json"}
+  - url: "/stream/{streamId}"
+    method: "GET"
+    params:
+      - {name: "streamId", type: "path"}
+  - url: "/advanced-search/{searchId}"
+    method: "QUERY"
+    params:
+      - {name: "searchId", type: "path"}
+      - {name: "cursor", type: "query"}
+  - url: "/api/reports/{reportId}"
+    method: "GET"
+    params:
+      - {name: "reportId", type: "path"}
+      - {name: "X-Report-Trace", type: "header"}
+  - url: "/api/projects"
+    method: "GET"
+  - url: "/api/projects"
+    method: "POST"
+  - url: "/api/projects/{projectId}"
+    method: "GET"
+    params:
+      - {name: "projectId", type: "path"}
+  - url: "/api/projects/{projectId}"
+    method: "PATCH"
+    params:
+      - {name: "projectId", type: "path"}
+  - url: "/api/projects/{projectId}"
+    method: "DELETE"
+    params:
+      - {name: "projectId", type: "path"}
+  - url: "/api/admin/audit/{auditId}"
+    method: "GET"
+    params:
+      - {name: "auditId", type: "path"}
+      - {name: "expand", type: "query"}
+  - url: "/imports/{importId}"
+    method: "POST"
+    params:
+      - {name: "importId", type: "path"}
+      - {name: "body", type: "json", value: "ImportRequest"}
+  - url: "/webhooks/{webhookId}"
+    method: "POST"
+    params:
+      - {name: "webhookId", type: "path"}
+      - {name: "dryRun", type: "query"}
+      - {name: "X-Signature", type: "header"}
+      - {name: "body", type: "json", value: "WebhookPayload"}
+  - url: "/**"
+    method: "GET"
+  - url: "/api/assets/**"
+    method: "GET"
+  - url: "/webjars/**"
+    method: "GET"
+  - url: "/portal/context/status"
+    method: "GET"
+  - url: "/api/teams/{teamId}"
+    method: "GET"
+    params:
+      - {name: "teamId", type: "path"}
+      - {name: "filter", type: "query"}
+  - url: "/api/teams/{teamId}"
+    method: "PUT"
+    params:
+      - {name: "teamId", type: "path"}
+      - {name: "body", type: "json", value: "Team"}
+  - url: "/api/teams/{teamId}"
+    method: "DELETE"
+    params:
+      - {name: "teamId", type: "path"}
+  - url: "/api/tasks"
+    method: "GET"
+  - url: "/api/tasks"
+    method: "POST"
+  - url: "/api/tasks/{taskId}"
+    method: "GET"
+    params:
+      - {name: "taskId", type: "path"}
+  - url: "/api/tasks/{taskId}"
+    method: "PATCH"
+    params:
+      - {name: "taskId", type: "path"}
+  - url: "/api/tasks/{taskId}"
+    method: "DELETE"
+    params:
+      - {name: "taskId", type: "path"}
+  - url: "/api/ws/{roomId}"
+    method: "GET"
+    protocol: "ws"
+    params:
+      - {name: "roomId", type: "path"}
+      - {name: "token", type: "query"}

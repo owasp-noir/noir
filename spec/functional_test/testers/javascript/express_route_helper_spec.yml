@@ -1,0 +1,61 @@
+# Express routes registered through a project-local forwarding helper.
+# The layout mirrors NodeBB, where the whole write API, every page route
+# and every admin page route is registered this way:
+#
+#   routes/helpers.js       helpers.setupApiRoute = function (...args) {
+#                             const [router, verb, name] = args;
+#                             router[verb](name, middlewares, controller);
+#                           }
+#                           helpers.setupPageRoute = function (...args) {
+#                             const [router, name] = args;
+#                             router.get(name, …);
+#                             router.get(`/api${name}`, …);
+#                           }
+#   routes/index.js         const { setupPageRoute } = helpers;
+#                           setupPageRoute(router, '/login', [], …)
+#   routes/write/index.js   router.use('/api/v3/users', require('./users')())
+#   routes/write/users.js   const { setupApiRoute } = routeHelpers;
+#                           setupApiRoute(router, 'get', '/:uid', [], …)
+#
+# Three things have to line up for this to work: reading the verb and the
+# path out of the helper's positional destructuring of a rest parameter,
+# following `const { setupApiRoute } = routeHelpers` back to the module
+# that defines it, and taking the `/api/v3/users` prefix from a mount
+# whose router is a function parameter.
+#
+# The fixture also pins what must NOT be emitted:
+#   * the commented-out `setupApiRoute` in routes/write/users.js,
+#   * the call whose path is built by a function (`buildPath('exports')`),
+#   * the call from test/api.js,
+#   * `/api${name}` from the helper's own body — that line is the
+#     definition of a rewrite, not a registration.
+fixture: fixtures/javascript/express_route_helper/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/login"
+    method: "GET"
+  - url: "/api/login"
+    method: "GET"
+  - url: "/reset/:code?"
+    method: "GET"
+    params:
+      - {name: "code", type: "path"}
+  - url: "/api/reset/:code?"
+    method: "GET"
+    params:
+      - {name: "code", type: "path"}
+  - url: "/api/v3/ping"
+    method: "GET"
+  - url: "/api/v3/users/:uid"
+    method: "GET"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/api/v3/users/:uid"
+    method: "PUT"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/api/v3/users/:uid/tokens/:token"
+    method: "DELETE"
+    params:
+      - {name: "uid", type: "path"}
+      - {name: "token", type: "path"}

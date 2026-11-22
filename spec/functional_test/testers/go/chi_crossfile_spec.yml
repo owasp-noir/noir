@@ -1,0 +1,21 @@
+fixture: fixtures/go/chi_crossfile/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/api/settings/"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+  - url: "/api/settings/"
+    method: "PUT"
+    params:
+      - {name: "theme", type: "form"}

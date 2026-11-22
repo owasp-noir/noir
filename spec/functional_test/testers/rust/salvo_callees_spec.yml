@@ -1,0 +1,41 @@
+fixture: fixtures/rust/salvo_callees/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+  only_techs: "rust_salvo"
+endpoints:
+  - url: "/hello"
+    method: "GET"
+    callees:
+      - {name: "HealthCheck::ready", line: 5}
+      - {name: "render_home", line: 6}
+  - url: "/users/<id>"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Token", type: "header"}
+      - {name: "session_id", type: "cookie"}
+    callees:
+      - {name: "req.header", line: 11}
+      - {name: "req.cookie", line: 12}
+      - {name: "UserService::load", line: 13}
+      - {name: "AuditLog::read_user", line: 14}
+      - {name: "UserPresenter::render", line: 15}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "req.extract", line: 20}
+      - {name: "UserService::create", line: 21}
+      - {name: "UserPresenter::render", line: 22}
+  - url: "/api/submit/<id>"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "form", type: "form"}
+      - {name: "Authorization", type: "header"}
+    callees:
+      - {name: "req.extract", line: 28}
+      - {name: "req.header", line: 29}
+      - {name: "SubmitService::save", line: 30}

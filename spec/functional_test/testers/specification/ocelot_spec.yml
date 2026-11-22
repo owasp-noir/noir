@@ -1,0 +1,23 @@
+fixture: fixtures/specification/ocelot/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/posts/{postId}"
+    method: "GET"
+    params:
+      - {name: "postId", type: "path"}
+  - url: "/posts/{postId}"
+    method: "PUT"
+    params:
+      - {name: "postId", type: "path"}
+  # No `UpstreamHttpMethod` means Ocelot matches every verb.
+  - url: "/health"
+    method: "ANY"
+  # The query half of a template is matched, not part of the path.
+  - url: "/units/{unitId}/updates"
+    method: "GET"
+    params:
+      - {name: "unitId", type: "path"}
+      - {name: "since", type: "query"}
+  # Aggregates are GET-only.
+  - url: "/feed"
+    method: "GET"

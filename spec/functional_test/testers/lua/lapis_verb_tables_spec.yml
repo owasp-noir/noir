@@ -1,0 +1,79 @@
+fixture: fixtures/lua/lapis_verb_tables/
+counts: {techs: 1, endpoints: 30}
+endpoints:
+  # A verb-keyed application table declares its whole method set: Lapis
+  # answers 405 for anything it does not name, so a single-verb table is a
+  # single endpoint, not a five-verb fan-out.
+  - url: "/cache"
+    method: "DELETE"
+  - url: "/cache/:key"
+    method: "GET"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/cache/:key"
+    method: "DELETE"
+    params:
+      - {name: "key", type: "path"}
+  # One handler bound to several verbs.
+  - url: "/shared"
+    method: "GET"
+  - url: "/shared"
+    method: "HEAD"
+  # Bracketed string keys are the same declaration.
+  - url: "/bracket-keys"
+    method: "GET"
+  - url: "/bracket-keys"
+    method: "OPTIONS"
+  # Descriptor form — the verbs live under a `methods` sub-table.
+  - url: "/clustering/data-planes"
+    method: "GET"
+  # `respond_to({ ... })` names its verbs explicitly.
+  - url: "/wrapped"
+    method: "GET"
+  - url: "/wrapped"
+    method: "POST"
+  # Values that carry no method evidence keep the all-verbs fallback: a
+  # module reference, a filter-only table, a bare function, a named string
+  # handler.
+  - url: "/disabled"
+    method: "GET"
+  - url: "/disabled"
+    method: "POST"
+  - url: "/disabled"
+    method: "PUT"
+  - url: "/disabled"
+    method: "DELETE"
+  - url: "/disabled"
+    method: "PATCH"
+  - url: "/fallback/filtered"
+    method: "GET"
+  - url: "/fallback/filtered"
+    method: "POST"
+  - url: "/fallback/filtered"
+    method: "PUT"
+  - url: "/fallback/filtered"
+    method: "DELETE"
+  - url: "/fallback/filtered"
+    method: "PATCH"
+  - url: "/fallback/inline"
+    method: "GET"
+  - url: "/fallback/inline"
+    method: "POST"
+  - url: "/fallback/inline"
+    method: "PUT"
+  - url: "/fallback/inline"
+    method: "DELETE"
+  - url: "/fallback/inline"
+    method: "PATCH"
+  - url: "/fallback/named"
+    method: "GET"
+  - url: "/fallback/named"
+    method: "POST"
+  - url: "/fallback/named"
+    method: "PUT"
+  - url: "/fallback/named"
+    method: "DELETE"
+  - url: "/fallback/named"
+    method: "PATCH"
+# `["/fallback/lookup"] = true` is a URL-keyed lookup table, not a route,
+# and is deliberately absent from the expectations above.

@@ -1,0 +1,34 @@
+fixture: fixtures/go/huma/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+      - {name: "cursor", type: "query"}
+      - {name: "X-Auth", type: "header"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}
+  # The inline `Body struct {...}` is listed by its JSON field names.
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Huma v2 sugar helpers (path is the 2nd argument).
+  - url: "/health"
+    method: "GET"
+    params:
+      - {name: "verbose", type: "query"}
+  - url: "/users/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}

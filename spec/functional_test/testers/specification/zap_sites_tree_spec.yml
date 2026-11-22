@@ -1,0 +1,25 @@
+fixture: fixtures/specification/zap/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/about"
+    method: "GET"
+  - url: "/about/"
+    method: "GET"
+  - url: "/zz"
+    method: "GET"
+  - url: "/zz/"
+    method: "DELETE"
+  # ZAP records the URL a node was reached with, query string included. Only
+  # the path used to be kept, so every query parameter ZAP had already
+  # discovered was thrown away.
+  - url: "/111"
+    method: "PUT"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/about/"
+    method: "POST"
+    params:
+      - {name: "data", type: "form"}
+      - {name: "id", type: "form"}

@@ -1,0 +1,58 @@
+# Coverage for real-world NestJS patterns the analyzer used to miss:
+#   - `app.setGlobalPrefix('api')` propagation
+#   - `@Controller({ version: ['1', '2'] })` → `/v1` and `/v2`
+#   - `@Sse()` treated as GET
+#   - `@UploadedFile`/`@UploadedFiles` (named + unnamed)
+#   - `@HostParam` surfacing subdomain captures
+#   - commented-out decorators ignored (FP fix)
+#   - `setGlobalPrefix(..., { exclude: [...] })` avoiding prefix FPs
+#   - unnamed `@Query()` / `@Headers()` surfacing broad request params
+fixture: fixtures/typescript/nestjs_advanced/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  # /events under v1 and v2 with @Sse('stream') + bare @Sse()
+  - url: "/api/v1/events/stream"
+    method: "GET"
+  - url: "/api/v2/events/stream"
+    method: "GET"
+  - url: "/api/v1/events"
+    method: "GET"
+  - url: "/api/v2/events"
+    method: "GET"
+  # Subdomain host param surfaces as a path-typed param.
+  - url: "/api/tenant/:slug"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+      - {name: "account", type: "path"}
+  - url: "/api/tenant/lookup"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "headers", type: "header"}
+  # Multipart upload routes — named file / files args.
+  - url: "/api/uploads/avatar"
+    method: "POST"
+    params:
+      - {name: "avatar", type: "body"}
+  - url: "/api/uploads/attachments"
+    method: "POST"
+    params:
+      - {name: "files", type: "body"}
+  # Bare @UploadedFile() / @UploadedFiles() default to 'file' / 'files'.
+  - url: "/api/uploads/blob"
+    method: "POST"
+    params:
+      - {name: "file", type: "body"}
+  - url: "/api/uploads/bulk"
+    method: "POST"
+    params:
+      - {name: "files", type: "body"}
+  # Global-prefix exclude: this POST remains unprefixed.
+  - url: "/uploads/public"
+    method: "POST"
+    params:
+      - {name: "file", type: "body"}
+  # Global-prefix exclude: health remains unprefixed.
+  - url: "/health"
+    method: "GET"

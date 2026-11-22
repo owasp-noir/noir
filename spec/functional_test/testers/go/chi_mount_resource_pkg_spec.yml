@@ -1,0 +1,38 @@
+# `r.Mount("/todos", todos.Resource{}.Routes())` with the resource in its own
+# package, bound to a variable first (`pr := &posts.Resource{}`, `var tr
+# todos.Resource`) or held in a struct field (`a.users.Routes()`), keeps the
+# mount prefix. So does a sub-router mounted by name in a function whose
+# `r.Route` closure redeclares `r`.
+fixture: fixtures/go/chi_mount_resource_pkg/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  - url: "/local/"
+    method: "GET"
+  - url: "/todos/"
+    method: "GET"
+  - url: "/todos/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/todos-var/"
+    method: "GET"
+  - url: "/todos-var/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/"
+    method: "GET"
+  - url: "/posts/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/"
+    method: "GET"
+  - url: "/admin/accounts"
+    method: "GET"

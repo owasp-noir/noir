@@ -1,0 +1,26 @@
+# Decorators read off the TypeScript AST: route-looking text inside a string
+# or a comment is not a route or a controller, a `@Version(\n '2',\n)` split
+# over lines still versions its route, a `)` inside a string argument does
+# not end it, and `@UploadedFile(pipe)` is the upload field like
+# `@UploadedFile()`.
+fixture: fixtures/typescript/nestjs_decorator_ast/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/v1/reports"
+    method: "GET"
+    params:
+      - {name: "sort", type: "query"}
+  - url: "/v2/reports/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "fields)", type: "query"}
+  - url: "/v1/reports"
+    method: "POST"
+    params:
+      - {name: "title", type: "body"}
+      - {name: "tags", type: "body"}
+  - url: "/v1/reports/upload"
+    method: "POST"
+    params:
+      - {name: "file", type: "body"}

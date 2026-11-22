@@ -1,0 +1,45 @@
+fixture: fixtures/rust/gotham_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+  only_techs: "rust_gotham"
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "HealthCheck::ready", line: 7}
+      - {name: "render_home", line: 8}
+      - {name: "respond", line: 9}
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "UserService::load", line: 13}
+      - {name: "AuditLog::read_user", line: 14}
+      - {name: "UserPresenter::render", line: 15}
+      - {name: "respond", line: 16}
+  - url: "/users"
+    method: "POST"
+    callees:
+      - {name: "UserService::create", line: 20}
+      - {name: "AuditLog::write", line: 21}
+      - {name: "UserPresenter::render", line: 22}
+      - {name: "respond", line: 23}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+    callees:
+      - {name: "state.cookie", line: 27}
+      - {name: "AuthService::session", line: 28}
+      - {name: "respond", line: 29}
+  - url: "/auth"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "X-API-Key", type: "header"}
+    callees:
+      - {name: "state.headers", line: 33}
+      - {name: "AuthService::validate", line: 35}
+      - {name: "respond", line: 36}

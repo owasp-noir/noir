@@ -1,0 +1,30 @@
+# A handler argument named by a `dependencies = {...: Provide(...)}` key is
+# injected, not read from the request; `data` is the request body, so its
+# type's fields are the params (form fields for a URL-encoded `Body`, the
+# type imported from another module). A key declared in one file (admin's
+# `page`) does not hide a same-named query param elsewhere, a `key=` on a
+# later line of a multi-line `dependencies = helper(...)` counts, and a
+# model with a base this pass does not follow keeps the plain `data` param.
+fixture: fixtures/python/litestar_di_params/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/admin/stats"
+    method: "GET"
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/api/access/signup"
+    method: "POST"
+    params:
+      - {name: "data", type: "json"}
+  - url: "/api/access/forgot-password"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+  - url: "/api/access/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}

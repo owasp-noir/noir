@@ -1,0 +1,11 @@
+# Routes registered inside a `#[cfg(test)] mod tests { ... }` block are
+# unit-test scaffolding, not production endpoints. The gotham analyzer now
+# gates them out via the shared cfg(test) region scan (like axum/loco/tide/
+# salvo), so only the production route surfaces.
+fixture: fixtures/rust/gotham_cfgtest/
+counts: {techs: 1, endpoints: 1}
+options:
+  only_techs: "rust_gotham"
+endpoints:
+  - url: "/health"
+    method: "GET"

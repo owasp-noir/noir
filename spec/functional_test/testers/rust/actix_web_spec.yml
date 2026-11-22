@@ -1,0 +1,56 @@
+fixture: fixtures/rust/actix_web/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/echo"
+    method: "POST"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{user_id}/posts/{post_id}"
+    method: "GET"
+    params:
+      - {name: "post_id", type: "path"}
+      - {name: "user_id", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "q", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "password", type: "form"}
+      - {name: "username", type: "form"}
+  - url: "/protected"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+  - url: "/articles/{id}"
+    method: "PUT"
+    params:
+      - {name: "X-API-Token", type: "header"}
+      - {name: "id", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/api/posts"
+    method: "GET"
+  - url: "/api/reports/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/root/api/nested"
+    method: "GET"
+  - url: "/grouped/tuple-a"
+    method: "GET"
+  - url: "/grouped/tuple-b"
+    method: "POST"

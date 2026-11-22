@@ -1,0 +1,25 @@
+# A URLconf may hold several `path()` / `re_path()` calls on one source
+# line, either as siblings or as the body of an inline `include([...])`.
+# Only the first call on each line used to survive. Comments on those
+# lines are not code.
+fixture: fixtures/python/django_inline_routes/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/about/"
+    method: "GET"
+  - url: "/items/<int:pk>/"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/api/users/"
+    method: "GET"
+  - url: "/api/teams/"
+    method: "GET"
+  - url: "/api/ping/"
+    method: "GET"
+  - url: "/kept/"
+    method: "GET"
+  - url: "/split/"
+    method: "GET"

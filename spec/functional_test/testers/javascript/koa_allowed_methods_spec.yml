@@ -1,0 +1,19 @@
+# `api.use('/users', users.routes(), users.allowedMethods())`: the trailing
+# middleware argument must not cost the cross-file child its mount prefix.
+fixture: fixtures/javascript/koa_allowed_methods/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/users/"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/health"
+    method: "GET"

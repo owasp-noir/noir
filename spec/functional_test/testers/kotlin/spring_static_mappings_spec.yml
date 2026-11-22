@@ -1,0 +1,9 @@
+# An `@EnableWebMvc` configuration that registers `/**` over
+# `classpath:/static/` itself: `static/` stays served through that handler,
+# `public/` is no longer a static location, and the location built from an
+# injected property is unknown.
+fixture: fixtures/kotlin/spring_static_mappings/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/robots.txt"
+    method: "GET"

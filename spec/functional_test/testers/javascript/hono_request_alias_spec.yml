@@ -1,0 +1,34 @@
+# `const body = await c.req.json()`, `c.req.json<T>()`, `c.req.parseBody()`
+# bound to a local, and `const { a } = c.req.query()`.
+fixture: fixtures/javascript/hono_request_alias/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/h00-control"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+  - url: "/h01-var"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "slug", type: "json"}
+  - url: "/h02-var-destructure"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "password", type: "json"}
+  - url: "/h03-typed"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "age", type: "json"}
+  - url: "/h04-form-var"
+    method: "POST"
+    params:
+      - {name: "avatar", type: "form"}
+      - {name: "caption", type: "form"}
+  - url: "/h05-query-destructure"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}

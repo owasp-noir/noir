@@ -1,0 +1,11 @@
+fixture: fixtures/javascript/express_spaced_methods/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/spaced-get"
+    method: "GET"
+    params:
+      - {name: "mode", type: "query"}
+  - url: "/spaced-post"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}

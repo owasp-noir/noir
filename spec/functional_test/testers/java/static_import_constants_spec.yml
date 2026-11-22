@@ -1,0 +1,18 @@
+# `import static pkg.Class.NAME` (or `.*`) brings a constant in under its bare
+# name. It used to stay unresolved: a class-level `@RequestMapping(NAME + "/ops")`
+# lost its whole prefix and every method was emitted root-relative
+# (`POST /raft` instead of `POST /api/admin/ops/raft`), and a method-level
+# `@GetMapping(NAME)` dropped the route.
+fixture: fixtures/java/static_import_constants/
+counts: {techs: 2, endpoints: 4}
+endpoints:
+  - url: "/api/admin/ops/raft"
+    method: "POST"
+  - url: "/api/admin/ops/version"
+    method: "GET"
+  - url: "/api/tasks/poll/{taskType}"
+    method: "GET"
+    params:
+      - {name: "taskType", type: "path"}
+  - url: "/api/admin/state/liveness"
+    method: "GET"

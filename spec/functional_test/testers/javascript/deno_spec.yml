@@ -1,0 +1,42 @@
+fixture: fixtures/javascript/deno/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/books/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/authors/:name"
+    method: "POST"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "x-api-key", type: "header"}
+      - {name: "username", type: "json"}
+  - url: "/health"
+    method: "GET"
+  - url: "/metrics"
+    method: "GET"
+  - url: "/items/:sku"
+    method: "GET"
+    params:
+      - {name: "sku", type: "path"}
+  # Same `match` alias declared in two blocks for different patterns.
+  - url: "/orders/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/invoices/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  # Negated `if (!m)` guard followed by a method branch.
+  - url: "/carts/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

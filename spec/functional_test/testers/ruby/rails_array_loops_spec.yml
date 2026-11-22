@@ -1,0 +1,23 @@
+# A loop over a bracket array of symbol or string literals unrolls like a
+# `%w[...]` one; an array holding a runtime value stays as written.
+fixture: fixtures/ruby/rails_array_loops/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/legal/terms"
+    method: "GET"
+  - url: "/legal/privacy"
+    method: "GET"
+  - url: "/about"
+    method: "GET"
+  - url: "/contact"
+    method: "GET"
+  - url: "/auth/facebook/callback"
+    method: "GET"
+  - url: "/auth/github/callback"
+    method: "GET"
+  - url: "/p/{page}"
+    method: "GET"
+    params:
+      - {name: "page", type: "path"}
+  - url: "/after"
+    method: "GET"

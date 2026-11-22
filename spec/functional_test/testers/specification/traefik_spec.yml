@@ -1,0 +1,18 @@
+# A rule with no `Method()` matcher matches every verb, so it is `ANY`.
+fixture: fixtures/specification/traefik/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/v1"
+    method: "ANY"
+  - url: "/admin"
+    method: "GET"
+  - url: "/foo"
+    method: "ANY"
+  - url: "/bar"
+    method: "ANY"
+  - url: "/compose"
+    method: "DELETE"
+  - url: "/ing"
+    method: "POST"
+  - url: "/toml"
+    method: "PUT"

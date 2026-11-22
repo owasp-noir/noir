@@ -1,0 +1,29 @@
+# Regression test for issue #1903:
+#   "Express analyzer scans unrelated frontend/generated JS after a
+#    single Express server is detected."
+#
+# A tiny Express server (app.js) sits next to the kind of files a real
+# monorepo carries around it:
+#
+#   * src/lib/app-bundle.js     — a minified webpack bundle (one 8 KB
+#                                 line) whose packed `app.get('/bundle-leak')`
+#                                 must NOT be tokenized or extracted.
+#   * public/widget.js          — a browser script under public/ whose
+#                                 `app.get('/public-leak')` is static
+#                                 output, not a route.
+#   * src/datasources/UsersAPI.ts — an Apollo RESTDataSource whose
+#                                 `this.get('/ds-leak/...')` calls are
+#                                 OUTBOUND requests, not registrations.
+#
+# Only the two real Express routes from app.js may survive. Before the
+# fix, the bundle alone could dominate scan time and every `*-leak`
+# shape leaked as a phantom endpoint.
+fixture: fixtures/javascript/express_frontend_noise/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}

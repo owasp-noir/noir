@@ -1,0 +1,22 @@
+# A `_redirects` source may be a bare path or a fully-qualified URL for a
+# domain-level rule. The scheme and host of the latter are routing context, not
+# part of the request path — the host lands in a `netlify-host` tag and the
+# endpoint carries `/legacy`, not `https://old.example.com/legacy`.
+fixture: fixtures/specification/netlify/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/home"
+    method: "ANY"
+  - url: "/blog/*"
+    method: "ANY"
+  - url: "/legacy"
+    method: "ANY"
+  - url: "/api/*"
+    method: "ANY"
+  - url: "/toml-api/*"
+    method: "ANY"
+  # `[[context.production.redirects]]`
+  - url: "/prod-only"
+    method: "ANY"
+  - url: "/edge/*"
+    method: "ANY"

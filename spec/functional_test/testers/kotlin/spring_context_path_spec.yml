@@ -1,0 +1,18 @@
+fixture: fixtures/kotlin/spring_context_path/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "profileService.find", line: 16}
+  - url: "/api/graphql#Query.profile"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "graphql_query_profile", type: "json", value: "query($id: String) { profile(id: $id) }"}
+    callees:
+      - {name: "profileService.find", line: 24}

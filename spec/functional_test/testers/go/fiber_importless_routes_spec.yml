@@ -1,0 +1,7 @@
+fixture: fixtures/go/fiber_importless_routes/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/features"
+    method: "GET"
+  - url: "/features"
+    method: "POST"

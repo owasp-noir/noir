@@ -1,0 +1,12 @@
+# Regression: `urlpatterns = [path(.., include(urlpatterns))]` used to make
+# the analyzer recurse into its own list until the stack overflowed (exit 10,
+# no output). The rebinding now includes the previous binding.
+fixture: fixtures/python/django_self_include/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/health/"
+    method: "GET"
+  - url: "/v1/health/"
+    method: "GET"
+  - url: "/loop/ping/pong/"
+    method: "GET"

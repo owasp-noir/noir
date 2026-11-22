@@ -1,0 +1,183 @@
+fixture: fixtures/java/armeria/
+counts: {techs: 1, endpoints: 45}
+endpoints:
+  - url: "/graphql"
+    method: "ANY"
+  - url: "/internal/l7check"
+    method: "ANY"
+  - url: "/zipkin/config.json"
+    method: "ANY"
+  - url: "/zipkin/api"
+    method: "ANY"
+  - url: "/zipkin"
+    method: "GET"
+  - url: "/zipkin"
+    method: "HEAD"
+  - url: "/favicon.ico"
+    method: "GET"
+  - url: "/favicon.ico"
+    method: "HEAD"
+  - url: "/"
+    method: "GET"
+  - url: "/"
+    method: "HEAD"
+  # Create endpoints with path parameters from TestParametersService.java
+  - url: "/api/users/{userId}"
+    method: "ANY"
+    params:
+      - {name: "userId", type: "path"}
+  - url: "/api/products/{productId}/reviews"
+    method: "ANY"
+    params:
+      - {name: "productId", type: "path"}
+  - url: "/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+  - url: "/orders/{orderId}/confirm"
+    method: "POST"
+    params:
+      - {name: "orderId", type: "path"}
+  - url: "/accounts/{accountId}/settings"
+    method: "PUT"
+    params:
+      - {name: "accountId", type: "path"}
+  - url: "/comments/{commentId}"
+    method: "DELETE"
+    params:
+      - {name: "commentId", type: "path"}
+  - url: "/posts/{postId}/status"
+    method: "PATCH"
+    params:
+      - {name: "postId", type: "path"}
+  - url: "/open/{openId}"
+    method: "ANY"
+    params:
+      - {name: "openId", type: "path"}
+  - url: "/bulk/{bulkId}"
+    method: "GET"
+    params:
+      - {name: "bulkId", type: "path"}
+  - url: "/bulk/{bulkId}"
+    method: "POST"
+    params:
+      - {name: "bulkId", type: "path"}
+  - url: "/insights/{insightId}"
+    method: "PUT"
+    params:
+      - {name: "insightId", type: "path"}
+  - url: "/insights/{insightId}"
+    method: "DELETE"
+    params:
+      - {name: "insightId", type: "path"}
+  - url: "/wildcards/{wildcardId}"
+    method: "ANY"
+    params:
+      - {name: "wildcardId", type: "path"}
+  - url: "/route-builder/{builderId}"
+    method: "GET"
+    params:
+      - {name: "builderId", type: "path"}
+  - url: "/route-builder/{builderId}"
+    method: "POST"
+    params:
+      - {name: "builderId", type: "path"}
+  - url: "/catalog/{catalogId}"
+    method: "GET"
+    params:
+      - {name: "catalogId", type: "path"}
+  - url: "/catalog/{catalogId}/status"
+    method: "PATCH"
+    params:
+      - {name: "catalogId", type: "path"}
+  - url: "/catalog-prefix/catalog/{catalogId}"
+    method: "GET"
+    params:
+      - {name: "catalogId", type: "path"}
+  - url: "/catalog-prefix/catalog/{catalogId}/status"
+    method: "PATCH"
+    params:
+      - {name: "catalogId", type: "path"}
+  # Create endpoints from AnnotatedService.java - annotation-based service definitions
+  # GET /annotated/users with query params: page, limit
+  - url: "/annotated/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query", value: "25"}
+  # GET /annotated/users/{userId} with path param: userId and header: Authorization
+  - url: "/annotated/users/{userId}"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "userId", type: "path"}
+  # POST /annotated/users with json body fields from User and header: Content-Type
+  - url: "/annotated/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "Content-Type", type: "header"}
+  # PUT /annotated/users/{userId} with path param: userId and json body fields from User
+  - url: "/annotated/users/{userId}"
+    method: "PUT"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "userId", type: "path"}
+  # DELETE /annotated/users/{userId} with path param: userId and header: X-Request-Id
+  - url: "/annotated/users/{userId}"
+    method: "DELETE"
+    params:
+      - {name: "X-Request-Id", type: "header"}
+      - {name: "userId", type: "path"}
+  # PATCH /annotated/users/{userId}/status with path param: userId and query param: status
+  - url: "/annotated/users/{userId}/status"
+    method: "PATCH"
+    params:
+      - {name: "status", type: "query"}
+      - {name: "userId", type: "path"}
+  # GET /annotated/search with query params: q, category and header: Accept-Language
+  - url: "/annotated/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "category", type: "query"}
+      - {name: "Accept-Language", type: "header"}
+  # HEAD /annotated/health (no params)
+  - url: "/annotated/health"
+    method: "HEAD"
+  # GET /annotated/files/{*filePath} — rest-path capture binds `filePath`
+  # as a single path param (no `*filePath`, no spurious query param).
+  - url: "/annotated/files/{*filePath}"
+    method: "GET"
+    params:
+      - {name: "filePath", type: "path"}
+  # OPTIONS /annotated/cors with header: Origin
+  - url: "/annotated/cors"
+    method: "OPTIONS"
+    params:
+      - {name: "Origin", type: "header"}
+  - url: "/annotated/prefix/reports/{reportId}"
+    method: "GET"
+    params:
+      - {name: "X-Trace", type: "header"}
+      - {name: "reportId", type: "path"}
+  - url: "/annotated/prefix/submit"
+    method: "POST"
+  - url: "/annotated/prefix/submit-alt"
+    method: "POST"
+  - url: "/mounted/details/{detailId}"
+    method: "GET"
+    params:
+      - {name: "detailId", type: "path"}
+  - url: "/mounted/create"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+  # DocExampleService.java: only the real builder route is detected.
+  # The Server.builder() chains inside the Javadoc comment and the Java
+  # text block (/doc-comment-route, /api/comment-thrift, /doc-textblock-route)
+  # must NOT surface as endpoints.
+  - url: "/real/ping"
+    method: "ANY"

@@ -1,0 +1,45 @@
+fixture: fixtures/go/httprouter/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/ping"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "age", type: "query"}
+  - url: "/submit"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "User-Agent", type: "header"}
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id/posts/:postid"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "postid", type: "path"}
+  - url: "/items/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items/:id/status"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "status", type: "query"}
+  - url: "/secure"
+    method: "GET"
+    params:
+      - {name: "X-API-Key", type: "header"}
+      - {name: "session_id", type: "cookie"}
+  # server.go: Handle(http.MethodPut, ...) must resolve the constant to PUT
+  - url: "/hello/:name"
+    method: "PUT"
+    params:
+      - {name: "name", type: "path"}

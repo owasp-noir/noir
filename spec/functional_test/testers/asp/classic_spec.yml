@@ -1,0 +1,46 @@
+# Classic ASP is file-path routed, so each requestable `.asp` becomes an
+# endpoint. A page is also POST when it reads the form collection or a
+# bare `Request(...)` that could resolve to it.
+fixture: fixtures/asp/classic/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  # `<%@ %>` directive skipped; commented-out reads and client-side
+  # <script> are not server code, so `legacy_id` / `clientside` must not
+  # appear. `Request.QueryString ("sort")` has a space before `(`.
+  - url: "/default.asp"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "sort", type: "query"}
+  # IIS default document also answers the bare directory URL.
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "sort", type: "query"}
+  # Cookies and `HTTP_*` server variables map to their own param types;
+  # an apostrophe inside a VBScript string must not truncate the scan.
+  - url: "/login.asp"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+      - {name: "x-forwarded-for", type: "header"}
+  - url: "/login.asp"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+      - {name: "session", type: "cookie"}
+      - {name: "x-forwarded-for", type: "header"}
+  # Bare `Request("q")` is ambiguous, so it lands on both methods.
+  # `Request("prefix-" & userId)` is runtime-built and must be skipped,
+  # and the `_` line continuation must not hide `page`.
+  - url: "/admin/search.asp"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/admin/search.asp"
+    method: "POST"
+    params:
+      - {name: "q", type: "form"}

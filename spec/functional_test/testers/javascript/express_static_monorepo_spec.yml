@@ -1,0 +1,9 @@
+fixture: fixtures/javascript/express_static_monorepo/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/health"
+    method: "GET"
+  - url: "/assets"
+    method: "GET"
+  - url: "/assets/app-only.txt"
+    method: "GET"

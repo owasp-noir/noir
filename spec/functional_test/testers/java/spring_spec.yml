@@ -1,0 +1,321 @@
+fixture: fixtures/java/spring/
+counts: {techs: 1, endpoints: 83}
+endpoints:
+  # MyRoutingConfiguration.java
+  - url: "/{user}"
+    method: "GET"
+    params:
+      - {name: "user", type: "path"}
+  - url: "/{user}/metadata"
+    method: "HEAD"
+    params:
+      - {name: "user", type: "path"}
+  - url: "/{user}/customers"
+    method: "GET"
+    params:
+      - {name: "user", type: "path"}
+  - url: "/{user}/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_.~"
+    method: "GET"
+    params:
+      - {name: "user", type: "path"}
+  - url: "/{user}"
+    method: "DELETE"
+    params:
+      - {name: "user", type: "path"}
+  - url: "/{user}"
+    method: "POST"
+    params:
+      - {name: "user", type: "path"}
+  - url: "/{user}"
+    method: "PUT"
+    params:
+      - {name: "user", type: "path"}
+  - url: "/{user}/options"
+    method: "OPTIONS"
+    params:
+      - {name: "user", type: "path"}
+  # QuoteRouter.java
+  - url: "/hello"
+    method: "GET"
+  # CommentedRouter.java: the commented-out andRoute calls are not routes.
+  - url: "/live-router"
+    method: "GET"
+  - url: "/echo"
+    method: "POST"
+  - url: "/quotes/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/quotes"
+    method: "GET"
+  - url: "/quotes/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_.~"
+    method: "GET"
+  # GatewayRouteConfig.java
+  - url: "/gateway/mcp"
+    method: "POST"
+  - url: "/gateway/reports/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/socket/chat/{roomId}"
+    method: "GET"
+    protocol: "ws"
+    params:
+      - {name: "roomId", type: "path"}
+  - url: "/portfolio"
+    method: "GET"
+    protocol: "ws"
+  - url: "/app/chat/send/{roomId}"
+    method: "SEND"
+    protocol: "ws"
+    params:
+      - {name: "roomId", type: "path"}
+  - url: "/app/chat/presence/{roomId}"
+    method: "SUBSCRIBE"
+    protocol: "ws"
+    params:
+      - {name: "roomId", type: "path"}
+  # WebSocketConfig.java — STOMP handshake endpoints.
+  # ChatMessageController.java — STOMP application destinations.
+  # boot-context application.properties — Spring Boot servlet context path
+  - url: "/portal/context/status"
+    method: "GET"
+  # ComposedAnnotationController.java
+  - url: "/internal/reports"
+    method: "GET"
+  - url: "/internal/submit"
+    method: "POST"
+  # ExternalComposedAnnotationController.java
+  - url: "/external/audit"
+    method: "GET"
+  - url: "/external/reports/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "id", type: "query"}
+  # CatalogApi.java + CatalogController.java
+  - url: "/api/catalog/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "view", type: "query"}
+  - url: "/api/catalog"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "count", type: "json"}
+  # ProductRouter.java — WebMvc.fn `nest(path("/product"), ...)`
+  # adds `/product` to every verb call inside the lambda body.
+  - url: "/product/name/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/product/id/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/catalog/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/catalog"
+    method: "POST"
+  # StaticResourceConfig.java — WebMvcConfigurer resource handlers.
+  - url: "/assets/**"
+    method: "GET"
+  - url: "/webjars/**"
+    method: "GET"
+  # ItemController.java
+  - url: "/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items/json/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "name", type: "json"}
+  - url: "/items/update/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "id", type: "json"}
+      - {name: "name", type: "json"}
+  - url: "/items/delete/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items/requestmap/put"
+    method: "PUT"
+  - url: "/items/requestmap/delete"
+    method: "DELETE"
+  - url: "/items/any-method"
+    method: "ANY"
+  - url: "/items/multiple/methods"
+    method: "GET"
+  - url: "/items/multiple/methods"
+    method: "POST"
+  - url: "/items/multiple/methods2"
+    method: "GET"
+  - url: "/items/multiple/methods2"
+    method: "POST"
+  - url: "/items/constants"
+    method: "GET"
+    params:
+      - {name: "filter", type: "query", value: "all"}
+      - {name: "X-Client", type: "header"}
+      - {name: "session-id", type: "cookie"}
+  - url: "/greet"
+    method: "GET"
+    params:
+      - {name: "header", type: "header"}
+      - {name: "name", type: "query"}
+  - url: "/greet2"
+    method: "GET"
+    params:
+      - {name: "myname", type: "query"}
+      - {name: "b", type: "query"}
+      - {name: "name", type: "query"}
+  # ItemController2.java
+  - url: "/items2/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items2/create"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "name", type: "json"}
+  - url: "/items2/edit/"
+    method: "PUT"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "name", type: "json"}
+  - url: "/items2/{id}/thePath"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # EmptyController.java
+  - url: "/empty"
+    method: "GET"
+    params:
+      - {name: "tenant", type: "query"}
+  - url: "/empty/filtered"
+    method: "GET"
+    params:
+      - {name: "tenant", type: "query"}
+      - {name: "mode", type: "query", value: "full"}
+      - {name: "X-Client", type: "header", value: "mobile"}
+  # MyController.java
+  - url: "/api/v1/test"
+    method: "GET"
+    params:
+      - {name: "header", type: "header"}
+      - {name: "name", type: "query"}
+  # TApiResponses.java
+  - url: "/multi/annotation"
+    method: "GET"
+    params:
+      - {name: "header", type: "header"}
+      - {name: "name", type: "query"}
+  # TRequestHeader.java
+  - url: "/request/header"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "header", type: "header"}
+      - {name: "name", type: "query"}
+  # DuplicateParameter.java
+  - url: "/duplicate/parameter/{token}/test"
+    method: "DELETE"
+    params:
+      - {name: "token", type: "path"}
+  # ThrowsMultiException.java
+  - url: "/throws/multi/exception"
+    method: "GET"
+    params:
+      - {name: "header", type: "header"}
+      - {name: "name", type: "query"}
+  # InventoryClient.java
+  - url: "/api/v2/items/{id}/stock"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "quantity", type: "json"}
+  - url: "/api/v2/items"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+  - url: "/api/v2/items"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "name", type: "json"}
+  - url: "/api/v2/items/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # InventoryHttpClient.java — Spring HTTP Interface client.
+  - url: "/api/v3/items/{id}/availability"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "region", type: "query"}
+  - url: "/api/v3/items/bulk"
+    method: "POST"
+    params:
+      - {name: "tenant", type: "query"}
+  # CrudReportController.java extends AbstractCrudController.java — the
+  # abstract base's @GetMapping routes are inherited under the `/crud`
+  # prefix, and the base must NOT emit un-prefixed `/list` or `/{id}`.
+  - url: "/crud"
+    method: "POST"
+  - url: "/crud/list"
+    method: "GET"
+  - url: "/crud/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # plain/ non-standard source layout — interface and composed annotation
+  # declarations in sibling package directories still share the same base.
+  - url: "/plain/items"
+    method: "GET"
+  - url: "/plain/plain-audit"
+    method: "GET"
+  # PlaceholderPathController.java — Spring property placeholders (generic + error path).
+  - url: "/error"
+    method: "ANY"
+  - url: "/configured-api/items"
+    method: "GET"
+  - url: "/configured-api/docs/guide"
+    method: "GET"
+  # SharedPathController.java — constants from another file / an interface.
+  - url: "/shared/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v3/ping"
+    method: "GET"
+  - url: "/v3/pong"
+    method: "GET"
+  # NestedBuilderRouter.java — andNest, builder .path(...), path-less verbs.
+  - url: "/clinic"
+    method: "GET"
+  - url: "/clinic-admin/stats"
+    method: "GET"
+  - url: "/clinic-admin/cache"
+    method: "DELETE"
+  - url: "/person/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/person"
+    method: "GET"
+  - url: "/person"
+    method: "POST"
+  - url: "/vets"
+    method: "GET"

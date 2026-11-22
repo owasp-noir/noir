@@ -1,0 +1,46 @@
+fixture: fixtures/javascript/hapi/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "filter", type: "query"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "x-trace", type: "header"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+      - {name: "session", type: "cookie"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/users/{id}"
+    method: "OPTIONS"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/health"
+    method: "GET"
+  - url: "/health"
+    method: "POST"
+  - url: "/health"
+    method: "PUT"
+  - url: "/health"
+    method: "DELETE"
+  - url: "/health"
+    method: "PATCH"

@@ -1,0 +1,27 @@
+# Regression test: gorilla/mux handlers are almost always method values
+# (`a.ListUsers`) or wrapped method values (`mid.Use(as.Foo, ...)` in
+# gophish). Both used to yield zero callees. Method-value handlers now
+# resolve through the package method-body map, and wrapper calls are
+# peeled to their underlying handler.
+#
+# Coverage:
+#   - GET /users      — bare method-value handler `a.ListUsers`
+#                       (callees `fetchUsers`, `w.Write`).
+#   - GET /users/{id} — wrapped method-value handler `wrap(a.GetUser)`
+#                       (callee `mux.Vars` from the unwrapped method body).
+fixture: fixtures/go/mux_method_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "GET"
+    callees:
+      - {name: "fetchUsers"}
+      - {name: "w.Write"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "mux.Vars"}

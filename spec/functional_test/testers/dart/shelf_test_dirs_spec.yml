@@ -1,0 +1,11 @@
+# Only bin/server.dart is a real route. The fake servers under tests/,
+# lib/src/testing/, lib/test_utils/, integration_test/ and test_driver/,
+# and the scaffold templates under __brick__/ and {{name}}/, are not served
+# by the app.
+fixture: fixtures/dart/shelf_test_dirs/
+counts: {techs: 1, endpoints: 1}
+options:
+  only_techs: "dart_shelf"
+endpoints:
+  - url: "/real"
+    method: "GET"

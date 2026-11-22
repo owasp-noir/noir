@@ -1,0 +1,99 @@
+fixture: fixtures/php/laminas/
+counts: {techs: 2, endpoints: 30}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/items"
+    method: "GET"
+  - url: "/api/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+  - url: "/admin/users"
+    method: "POST"
+  - url: "/status"
+    method: "GET"
+  - url: "/application/{action}"
+    method: "GET"
+    params:
+      - {name: "action", type: "path"}
+  - url: "/locale/{locale}-{slug}"
+    method: "GET"
+    params:
+      - {name: "locale", type: "path"}
+      - {name: "slug", type: "path"}
+  - url: "/download/{id}.{format}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "format", type: "path"}
+  - url: "/blog/rss"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+  - url: "/api/reports/{reportId}"
+    method: "GET"
+    params:
+      - {name: "reportId", type: "path"}
+  - url: "/api/reports/{reportId}"
+    method: "PATCH"
+    params:
+      - {name: "reportId", type: "path"}
+  - url: "/api/audit/{auditId}"
+    method: "GET"
+    params:
+      - {name: "auditId", type: "path"}
+  - url: "/api/audit/{auditId}"
+    method: "POST"
+    params:
+      - {name: "auditId", type: "path"}
+  - url: "/api/audit/{auditId}"
+    method: "PUT"
+    params:
+      - {name: "auditId", type: "path"}
+  - url: "/api/audit/{auditId}"
+    method: "PATCH"
+    params:
+      - {name: "auditId", type: "path"}
+  - url: "/api/audit/{auditId}"
+    method: "DELETE"
+    params:
+      - {name: "auditId", type: "path"}
+  - url: "/api/audit/{auditId}"
+    method: "OPTIONS"
+    params:
+      - {name: "auditId", type: "path"}
+  - url: "/api/audit/{auditId}"
+    method: "HEAD"
+    params:
+      - {name: "auditId", type: "path"}
+  - url: "/api/broadcast"
+    method: "GET"
+  - url: "/api/broadcast"
+    method: "POST"
+  - url: "/api/broadcast"
+    method: "PUT"
+  - url: "/api/broadcast"
+    method: "PATCH"
+  - url: "/api/broadcast"
+    method: "DELETE"
+  - url: "/api/broadcast"
+    method: "OPTIONS"
+  - url: "/api/broadcast"
+    method: "HEAD"
+  - url: "/api/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "force", type: "query"}
+  # The front controller under the document root. php_pure resolves URLs
+  # against `public/` now, so this is the one genuinely servable `.php`
+  # file in the tree — the rest (config/, src/) is correctly skipped (#2358).
+  - url: "/index.php"
+    method: "GET"

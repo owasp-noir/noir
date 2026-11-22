@@ -1,0 +1,49 @@
+# Any() expands to all seven HTTP methods for /health.
+fixture: fixtures/go/hertz/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  - url: "/ping"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "age", type: "query"}
+  - url: "/submit"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+      - {name: "User-Agent", type: "header"}
+  - url: "/admin"
+    method: "GET"
+    params:
+      - {name: "abcd_token", type: "cookie"}
+  - url: "/group/users"
+    method: "GET"
+  - url: "/group/v1/migration"
+    method: "GET"
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "name", type: "form"}
+  # BindQuery must not fabricate a query param from the bind target expression
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/public/index.html"
+    method: "GET"
+  - url: "/health"
+    method: "GET"
+  - url: "/health"
+    method: "POST"
+  - url: "/health"
+    method: "PUT"
+  - url: "/health"
+    method: "DELETE"
+  - url: "/health"
+    method: "PATCH"
+  - url: "/health"
+    method: "OPTIONS"
+  - url: "/health"
+    method: "HEAD"

@@ -1,0 +1,32 @@
+# `APIRouter(prefix="/v1")` handed to a helper whose `app.include_router`
+# names a parameter: no app is seen to include it, yet the routers it
+# includes (and theirs in turn) are served under `/v1`, not bare.
+fixture: fixtures/python/fastapi_unmounted_router_root/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/v1/items/{item_id}"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+  # `from portal import router` names the package `__init__.py`, and
+  # `from ..session import router` the parent package's module.
+  - url: "/v1/portal/orders/"
+    method: "GET"
+  - url: "/v1/portal/account/me"
+    method: "GET"
+  - url: "/v1/portal/account/session/start"
+    method: "POST"
+  - url: "/v1/checkouts/client/{client_secret}"
+    method: "GET"
+    params:
+      - {name: "client_secret", type: "path"}
+  - url: "/v1/checkouts/custom/client/{client_secret}"
+    method: "GET"
+    params:
+      - {name: "client_secret", type: "path"}
+  # A router nothing includes keeps its own prefix.
+  - url: "/standalone/ping"
+    method: "GET"
+  # A dead router including `items` adds no `/legacy/items/...`.
+  - url: "/legacy/ping"
+    method: "GET"

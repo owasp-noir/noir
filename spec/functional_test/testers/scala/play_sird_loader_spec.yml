@@ -1,0 +1,30 @@
+# Play SIRD routers built with `Router.from { ... }` in an
+# `ApplicationLoader`, with no `conf/routes` naming them (#3268). An
+# interpolated `withPrefix(s"/items/$name")` keeps `$name` as a segment, a
+# variable prefix becomes a `:prefix` segment, and a router bound to a name
+# takes the prefix of its `name.withPrefix(...)`. Commented-out, in-string
+# and `test/` routers are not routes.
+fixture: fixtures/scala/play_sird_loader/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/health_check"
+    method: "GET"
+  - url: "/items/:name/:version"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+      - {name: "version", type: "path"}
+  - url: "/items/:name/-/refresh"
+    method: "POST"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/api/members/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/infix/feed"
+    method: "GET"
+  - url: "/:prefix/settings"
+    method: "GET"
+    params:
+      - {name: "prefix", type: "path"}

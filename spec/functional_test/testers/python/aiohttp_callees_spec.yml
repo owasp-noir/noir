@@ -1,0 +1,20 @@
+# Regression test for --include-callee on aiohttp. Routes use the
+# RouteTableDef decorator form; the analyzer already had the handler
+# body in hand at emit time, so wiring is a one-liner — this spec
+# locks the per-endpoint scope (web.json_response shows up on both
+# routes, save_order only on /orders).
+fixture: fixtures/python/aiohttp_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/orders"
+    method: "POST"
+    callees:
+      - {name: "request.json", path: "./spec/functional_test/fixtures/python/aiohttp_callees/app.py", line: 9}
+      - {name: "save_order", path: "./spec/functional_test/fixtures/python/aiohttp_callees/db.py", line: 1}
+      - {name: "web.json_response", path: "./spec/functional_test/fixtures/python/aiohttp_callees/app.py", line: 11}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "web.json_response", path: "./spec/functional_test/fixtures/python/aiohttp_callees/app.py", line: 16}

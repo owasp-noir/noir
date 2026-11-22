@@ -1,0 +1,26 @@
+fixture: fixtures/scala/play/
+counts: {techs: 1, endpoints: 22}
+options:
+  include_callee: true
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "Ok"}
+  - url: "/api/protected"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "session_id", type: "cookie"}
+    callees:
+      - {name: "request.headers.get"}
+      - {name: "request.cookies.get"}
+      - {name: "Ok"}
+  - url: "/api/data"
+    method: "POST"
+    params:
+      - {name: "Content-Type", type: "header"}
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "request.headers.get"}
+      - {name: "Json.toJson"}

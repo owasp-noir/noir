@@ -1,0 +1,15 @@
+fixture: fixtures/javascript/hono_on_receiver/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/g"
+    method: "GET"
+  - url: "/on1"
+    method: "GET"
+  - url: "/on2"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/on2"
+    method: "POST"
+    params:
+      - {name: "id", type: "query"}

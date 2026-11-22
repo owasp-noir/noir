@@ -1,0 +1,52 @@
+# `@RestController` mounts under `/rest`, `@PublicApiController` under
+# `/api/v1`, `@RootLevelController` at the root. `@Body payload: Dto` (the
+# bare form) reads the DTO's `Z.class({...})` fields.
+fixture: fixtures/typescript/n8n/
+counts: {techs: 2, endpoints: 13}
+endpoints:
+  - url: "/rest/login"
+    method: "POST"
+    params:
+      - {name: "emailOrLdapLoginId", type: "body"}
+      - {name: "password", type: "body"}
+      - {name: "mfaCode", type: "body"}
+  - url: "/rest/me"
+    method: "GET"
+  - url: "/rest/describe"
+    method: "GET"
+  - url: "/rest/resolve-signup-token"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+  - url: "/rest/préférences"
+    method: "GET"
+  - url: "/rest/workflows/:workflowId"
+    method: "GET"
+    params:
+      - {name: "workflowId", type: "path"}
+  - url: "/rest/workflows/public-ping"
+    method: "GET"
+  - url: "/rest/workflows/:workflowId"
+    method: "PATCH"
+    params:
+      - {name: "workflowId", type: "path"}
+  - url: "/rest/workflows/:workflowId"
+    method: "DELETE"
+    params:
+      - {name: "workflowId", type: "path"}
+  - url: "/api/v1/tags"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+  - url: "/api/v1/tags/:tagId"
+    method: "GET"
+    params:
+      - {name: "tagId", type: "path"}
+  - url: "/scim/v2/Users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/scim/v2/ServiceProviderConfig"
+    method: "GET"
+# `:techs => 2`: `import type { Response } from 'express'` also detects
+# js_express, which finds no routes here.

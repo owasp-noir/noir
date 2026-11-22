@@ -1,0 +1,14 @@
+# Regression test: Sanic RequestParameters expose `getlist("key")` for
+# repeated keys. The param extractor previously matched only `.get(`.
+fixture: fixtures/python/sanic_multivalue/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "ids", type: "query"}
+      - {name: "tag", type: "query"}
+  - url: "/bulk"
+    method: "POST"
+    params:
+      - {name: "names", type: "form"}

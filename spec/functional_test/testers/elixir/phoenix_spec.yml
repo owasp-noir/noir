@@ -1,0 +1,217 @@
+fixture: fixtures/elixir/phoenix/
+counts: {techs: 1, endpoints: 47}
+endpoints:
+  # Basic HTTP methods with query and form parameters
+  - url: "/page"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/page"
+    method: "POST"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "form"}
+      - {name: "limit", type: "form"}
+  - url: "/page"
+    method: "PUT"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "form"}
+      - {name: "limit", type: "form"}
+  - url: "/page"
+    method: "PATCH"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "form"}
+      - {name: "limit", type: "form"}
+  - url: "/page"
+    method: "DELETE"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "form"}
+      - {name: "limit", type: "form"}
+  - url: "/socket"
+    method: "GET"
+  - url: "/live"
+    method: "GET"
+  - url: "/phoenix/live_reload/socket"
+    method: "GET"
+  # Path parameter routes with headers
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "authorization", type: "header"}
+      - {name: "x-api-key", type: "header"}
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "email", type: "form"}
+      - {name: "age", type: "form"}
+      - {name: "session_id", type: "cookie"}
+      - {name: "user_preference", type: "cookie"}
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:user_id/posts/:id"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+      - {name: "id", type: "path"}
+  # Wildcard parameter routes
+  - url: "/files/*path"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}
+  # LiveView routes
+  - url: "/live/users"
+    method: "GET"
+  - url: "/live/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/live/users/:id/edit"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # Resources routes with query and form parameters
+  - url: "/posts"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+      - {name: "content", type: "form"}
+      - {name: "tags", type: "form"}
+  - url: "/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "user_id", type: "query"}
+  - url: "/posts/:id"
+    method: "PUT"
+    params:
+      - {name: "title", type: "form"}
+      - {name: "content", type: "form"}
+      - {name: "id", type: "path"}
+  - url: "/posts/:id"
+    method: "PATCH"
+    params:
+      - {name: "title", type: "form"}
+      - {name: "content", type: "form"}
+      - {name: "id", type: "path"}
+  - url: "/posts/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/new"
+    method: "GET"
+  - url: "/posts/:id/edit"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/comments"
+    method: "GET"
+    params:
+      - {name: "post_id", type: "query"}
+  - url: "/comments/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/accounts/:id"
+    method: "GET"
+    params:
+      - {name: "include", type: "query"}
+      - {name: "x-api-version", type: "header"}
+      - {name: "id", type: "path"}
+  - url: "/api/page"
+    method: "POST"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "form"}
+      - {name: "limit", type: "form"}
+  # Plug-style routes (the controller is a Plug, the 3rd arg is opts not an
+  # `:action` atom). The HTTP-client calls in api_client.ex must NOT add
+  # phantom endpoints.
+  - url: "/api/openapi"
+    method: "GET"
+  - url: "/api/swaggerui"
+    method: "GET"
+  - url: "/api/hooks"
+    method: "POST"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "form"}
+      - {name: "limit", type: "form"}
+  - url: "/api/hooks"
+    method: "PUT"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "form"}
+      - {name: "limit", type: "form"}
+  # RFC 10008 HTTP QUERY method via `match :query, ...`
+  - url: "/api/hooks"
+    method: "QUERY"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "form"}
+      - {name: "limit", type: "form"}
+  - url: "/dev/dashboard"
+    method: "GET"
+  - url: "/dev/mailbox{/*path}"
+    method: "ANY"
+  # Nested resources under a scope: child mounts on the parent's
+  # `/:podcast_id` member segment; `only:` behind `as:` still applies.
+  - url: "/admin/podcasts"
+    method: "GET"
+  - url: "/admin/podcasts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/podcasts/:podcast_id/episodes"
+    method: "GET"
+    params:
+      - {name: "podcast_id", type: "path"}
+  # Parenthesised call form + singleton resource (no `/:id` member)
+  - url: "/account/session"
+    method: "POST"
+  - url: "/account/session"
+    method: "DELETE"
+  # `param:` renames the member capture
+  - url: "/account/keys/:key_id"
+    method: "GET"
+    params:
+      - {name: "key_id", type: "path"}
+  - url: "/account/keys/:key_id"
+    method: "DELETE"
+    params:
+      - {name: "key_id", type: "path"}
+  # A verb route wrapped onto a second line after a trailing comment.
+  - url: "/account/keys/export"
+    method: "GET"
+  # Keyword-list scopes: `path:` / `alias:` options set prefix and module.
+  - url: "/kw/accounts/:id"
+    method: "GET"
+    params:
+      - {name: "include", type: "query"}
+      - {name: "x-api-version", type: "header"}
+      - {name: "id", type: "path"}
+  - url: "/kw2/accounts/:id"
+    method: "GET"
+    params:
+      - {name: "include", type: "query"}
+      - {name: "x-api-version", type: "header"}
+      - {name: "id", type: "path"}
+  # Macro-generated routes with unquoted scope/controller defaults
+  - url: "/macro-admin-v2/dashboard"
+    method: "GET"
+  - url: "/macro-admin-v2/dashboard"
+    method: "OPTIONS"

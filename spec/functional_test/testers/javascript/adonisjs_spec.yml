@@ -1,0 +1,70 @@
+fixture: fixtures/javascript/adonisjs/
+counts: {techs: 1, endpoints: 23}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/health"
+    method: "GET"
+  - url: "/api/v1/users"
+    method: "GET"
+  - url: "/api/v1/users"
+    method: "POST"
+  - url: "/api/v1/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/blog/posts"
+    method: "GET"
+  - url: "/api/v1/blog/posts"
+    method: "POST"
+  - url: "/api/v1/blog/posts/:postId"
+    method: "PATCH"
+    params:
+      - {name: "postId", type: "path"}
+  # `Route.resource('articles', ...).apiOnly()` — the API resource bundle.
+  - url: "/articles"
+    method: "GET"
+  - url: "/articles"
+    method: "POST"
+  - url: "/articles/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # `.only(['index', 'show'])` — restricts to two of the actions.
+  - url: "/tags"
+    method: "GET"
+  - url: "/tags/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # `Route.any(...)` fans out to GET / POST / PUT / DELETE / PATCH.
+  - url: "/wildcard"
+    method: "GET"
+  - url: "/wildcard"
+    method: "POST"
+  - url: "/wildcard"
+    method: "PUT"
+  - url: "/wildcard"
+    method: "DELETE"
+  - url: "/wildcard"
+    method: "PATCH"

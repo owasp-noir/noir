@@ -1,0 +1,40 @@
+fixture: fixtures/elixir/phoenix_callees/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+  only_techs: "elixir_phoenix"
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "UserService.list", line: 6}
+      - {name: "AuditLog.write", line: 7}
+      - {name: "JsonPresenter.render", line: 8}
+      - {name: "json", line: 8}
+  - url: "/users"
+    method: "POST"
+    callees:
+      - {name: "UserPayload.from_conn", line: 12}
+      - {name: "UserService.create", line: 13}
+      - {name: "put_status", line: 15}
+      - {name: "json", line: 16}
+      - {name: "render_user", line: 16}
+  - url: "/posts"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+    callees:
+      - {name: "PostQuery.list", line: 6}
+      - {name: "PostPresenter.render", line: 7}
+      - {name: "render", line: 7}
+  - url: "/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "PostQuery.find", line: 11}
+      - {name: "AuditLog.read_post", line: 12}
+      - {name: "PostPresenter.render", line: 13}
+      - {name: "render", line: 13}

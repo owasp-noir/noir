@@ -1,0 +1,22 @@
+# `c.Bind(req)` with `req` already a pointer, and a bind method on the
+# request type (`req.bind(c)` calling `c.Bind(r)`), both read the request
+# struct's tagged fields.
+fixture: fixtures/go/echo_bind_request_method/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "user", type: "json"}
+  - url: "/drafts"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+  - url: "/replies"
+    method: "POST"
+    params:
+      - {name: "text", type: "json"}
+  - url: "/direct"
+    method: "POST"
+    params:
+      - {name: "user", type: "json"}

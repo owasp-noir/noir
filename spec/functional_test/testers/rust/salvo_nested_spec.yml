@@ -1,0 +1,22 @@
+# Salvo nested-router prefix composition through `.push(...)`, bare-root
+# verbs (`Router::new().get(h)` -> `/`), `.path()`-method chains, and a
+# regex-constrained raw-string param (`r"delete/{id|...}"` -> `{id}`).
+fixture: fixtures/rust/salvo_nested/
+counts: {techs: 1, endpoints: 5}
+options:
+  only_techs: "rust_salvo"
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/api/todos"
+    method: "GET"
+  - url: "/api/todos"
+    method: "POST"
+  - url: "/api/todos/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/user/delete/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}

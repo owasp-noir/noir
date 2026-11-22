@@ -1,0 +1,24 @@
+fixture: fixtures/specification/yarp/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  # `{**catch-all}` / `{*rest}` match any remaining path.
+  - url: "/api/*"
+    method: "GET"
+  - url: "/api/*"
+    method: "POST"
+  - url: "/orders/{id}"
+    method: "ANY"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "version", type: "query"}
+      - {name: "X-Tenant", type: "header"}
+  # Built in code with `new RouteMatch { ... }`.
+  - url: "/admin/*"
+    method: "DELETE"
+  # Target-typed `Match = new() { ... }`.
+  - url: "/reports"
+    method: "ANY"
+  - url: "/status/{name}"
+    method: "PATCH"
+    params:
+      - {name: "name", type: "path"}

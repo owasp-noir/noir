@@ -1,0 +1,11 @@
+# An unused `FastAPI()` app in a parent directory (`service/main.py`) must
+# not hide `service/app/main.py`'s `/api` prefix, nor the Pydantic body
+# model `routes.py` imports from `app.schemas`.
+fixture: fixtures/python/fastapi_shallow_root/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/api/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "price", type: "json"}

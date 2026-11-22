@@ -1,0 +1,63 @@
+fixture: fixtures/rust/actix_web_callees/
+counts: {techs: 1, endpoints: 8}
+options:
+  include_callee: true
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "HealthCheck::ready", line: 13}
+      - {name: "HttpResponse::Ok", line: 14}
+      - {name: "render_home", line: 14}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "UserService::load", line: 19}
+      - {name: "path.into_inner", line: 19}
+      - {name: "AuditLog::read_user", line: 20}
+      - {name: "HttpResponse::Ok", line: 21}
+      - {name: "UserPresenter::render", line: 21}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+    callees:
+      - {name: "UserService::create", line: 26}
+      - {name: "body.into_inner", line: 26}
+      - {name: "AuditLog::write", line: 27}
+      - {name: "HttpResponse::Created", line: 28}
+      - {name: "UserPresenter::render", line: 28}
+  - url: "/protected"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+    callees:
+      - {name: "req.headers", line: 37}
+      - {name: "AuthService::validate", line: 38}
+      - {name: "HttpResponse::Ok", line: 39}
+  - url: "/multi-a"
+    method: "GET"
+    callees:
+      - {name: "MultiService::serve", line: 47}
+      - {name: "HttpResponse::Ok", line: 48}
+  - url: "/multi-b"
+    method: "POST"
+    callees:
+      - {name: "MultiService::serve", line: 47}
+      - {name: "HttpResponse::Ok", line: 48}
+  - url: "/multi-c"
+    method: "PUT"
+    callees:
+      - {name: "MultiService::serve", line: 47}
+      - {name: "HttpResponse::Ok", line: 48}
+  - url: "/external"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+    callees:
+      - {name: "ExternalService::create", line: 6}
+      - {name: "body.into_inner", line: 6}
+      - {name: "HttpResponse::Created", line: 7}

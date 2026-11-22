@@ -232,33 +232,28 @@ The fixture should cover realistic patterns: path params, query/form/header/cook
 
 ### 5. Spec
 
-Create `spec/functional_test/testers/{language}/{framework}_spec.cr`:
+Create `spec/functional_test/testers/{language}/{framework}_spec.yml`. Use a Crystal tester when the fixture needs custom assertions or setup.
 
-```crystal
-require "../../func_spec.cr"
-
-expected_endpoints = [
-  Endpoint.new("/ping", "GET", [
-    Param.new("name", "", "query"),
-    Param.new("age", "", "query"),
-  ]),
-  Endpoint.new("/submit", "POST", [
-    Param.new("username", "", "form"),
-    Param.new("password", "", "form"),
-    Param.new("User-Agent", "", "header"),
-  ]),
-  # ... etc
-]
-
-FunctionalTester.new("fixtures/go/hertz/", {
-  :techs     => 1,
-  :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+```yaml
+fixture: fixtures/go/hertz/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/ping"
+    method: GET
+    params:
+      - {name: name, type: query}
+      - {name: age, type: query}
+  - url: "/submit"
+    method: POST
+    params:
+      - {name: username, type: form}
+      - {name: password, type: form}
+      - {name: User-Agent, type: header}
 ```
 
 The tester checks that:
 - The detector finds exactly 1 tech (your framework).
-- The analyzer produces exactly N endpoints (`expected_endpoints.size`).
+- The analyzer produces exactly the number of endpoints in `counts.endpoints`.
 - For each expected endpoint, an endpoint with the same URL and method exists in the output.
 - For each expected param, a param with the same `name` and `param_type` is attached to that endpoint.
 

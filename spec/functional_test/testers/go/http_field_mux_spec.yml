@@ -1,0 +1,29 @@
+# `s.mux.HandleFunc(...)` on a struct field declared `*http.ServeMux` is a
+# route; `w.jobs.Handle(...)` on a field of another type is not.
+fixture: fixtures/go/http_field_mux/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/api/health"
+    method: "GET"
+  - url: "/legacy"
+    method: "GET"
+  - url: "/legacy"
+    method: "POST"
+  - url: "/legacy"
+    method: "PUT"
+  - url: "/legacy"
+    method: "DELETE"
+  - url: "/legacy"
+    method: "PATCH"
+  - url: "/legacy"
+    method: "HEAD"
+  - url: "/legacy"
+    method: "OPTIONS"

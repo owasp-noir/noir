@@ -1,0 +1,15 @@
+fixture: fixtures/specification/smithy/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/users/{userId}/sessions"
+    method: "POST"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "X-Session-Token", type: "header"}
+      - {name: "region", type: "query"}
+      - {name: "body", type: "json"}
+  - url: "/users/{userId}"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "verbose", type: "query"}

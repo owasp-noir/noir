@@ -1,0 +1,61 @@
+# Micronaut controllers written in Kotlin (#2856): context path from
+# `application.yml`, implicit URI variables, a `{?q,limit}` query
+# template, `@Body` data classes resolved across files (also through a
+# `Mono<T>` wrapper), a form `consumes`, `@CustomHttpMethod` and a
+# `@ServerWebSocket`.
+fixture: fixtures/java/micronaut_kotlin/
+counts: {techs: 1, endpoints: 9}
+options:
+  include_callee: true
+endpoints:
+  - url: "/v1/books"
+    method: "GET"
+    params:
+      - {name: "max", type: "query", value: "10"}
+      - {name: "X-Trace", type: "header"}
+    callees:
+      - {name: "repository.findAll", line: 25}
+  - url: "/v1/books/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v1/books/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/v1/books"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "author", type: "json"}
+      - {name: "year", type: "json"}
+  - url: "/v1/books/form"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+      - {name: "author", type: "form"}
+      - {name: "year", type: "form"}
+  - url: "/v1/books/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "title", type: "json"}
+      - {name: "author", type: "json"}
+      - {name: "year", type: "json"}
+  - url: "/v1/books/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}
+  - url: "/v1/books/advanced"
+    method: "QUERY"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "author", type: "json"}
+      - {name: "year", type: "json"}
+  - url: "/v1/ws/books/{topic}"
+    method: "GET"
+    protocol: "ws"
+    params:
+      - {name: "topic", type: "path"}

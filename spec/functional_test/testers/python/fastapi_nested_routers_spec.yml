@@ -1,0 +1,33 @@
+# Regression for deep router-prefix inheritance the way real FastAPI
+# apps (fastapi-realworld-example-app, Netflix/dispatch) wire it:
+#
+#   * `from app.api import router as api_router` — an ALIASED router
+#     import. The target module registers the router under its original
+#     symbol (`router`); the alias must be translated back or the whole
+#     sub-tree's prefixes are dropped.
+#   * `from app.items import api as items` then `include_router(items.router)`
+#     — a MODULE-alias re-export that has to resolve to app/items/api.py.
+#   * `router.include_router(secure_router)` where `secure_router` is a
+#     LOCAL router carrying its own constructor prefix and itself
+#     including another local router — every level must inherit `/api`.
+fixture: fixtures/python/fastapi_nested_routers/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/ping"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/users/profile"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/items/{item_id}"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+  - url: "/api/secure/admin/dashboard"
+    method: "GET"
+  # `@router.get("")` on the `/users`-prefixed router resolves to the
+  # prefix with no trailing slash (Router.join empty-path handling).
+  - url: "/api/users"
+    method: "GET"

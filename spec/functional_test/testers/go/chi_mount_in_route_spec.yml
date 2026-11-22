@@ -1,0 +1,24 @@
+# `r.Mount("/admin", adminRouter())` inside `r.Route("/api", ...)` /
+# `r.Route("/v1", ...)` closures serves the sub-router under the closures'
+# prefix too, at any depth, also for a Mount inside a `Route` of a mounted
+# router (`/jobs` + `/queue`). A top-level Mount keeps its own prefix only.
+# The endpoint count fails if a route is also reported without the prefix.
+fixture: fixtures/go/chi_mount_in_route/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/healthz"
+    method: "GET"
+  - url: "/api/v1/me"
+    method: "GET"
+  - url: "/api/v1/admin/users"
+    method: "GET"
+  - url: "/api/v1/admin/users/{userID}"
+    method: "DELETE"
+    params:
+      - {name: "userID", type: "path"}
+  - url: "/api/v1/admin/jobs/queue/flush"
+    method: "POST"
+  - url: "/api/internal/metrics"
+    method: "GET"
+  - url: "/debug/vars"
+    method: "GET"

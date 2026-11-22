@@ -1,0 +1,31 @@
+# Two failures that both come from lexing JavaScript, in one semicolon-free
+# Express file:
+#
+#   * `(s) => /["']/.test(s)` and `if (!/['"]/.test(...))` — the lexer's
+#     regex-context check accepted only `( [ { , : ; =` and a keyword list,
+#     so the '/' after `=>` or `!` lexed as division. The quote inside the
+#     regex then opened a string token that ran to end of file and the scan
+#     reported zero endpoints for the whole file.
+#
+#   * `app.route('/profile').get(...)` written without semicolons — the
+#     chained-verb walk stopped only at a `;`, so it ran on through the
+#     following statements and reported POST /profile and DELETE /profile
+#     alongside the real POST /orders and DELETE /carts.
+#
+# The endpoint count is asserted so the two phantom /profile verbs cannot
+# come back unnoticed.
+fixture: fixtures/javascript/express_regex_literal_state/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/profile"
+    method: "GET"
+  - url: "/orders"
+    method: "POST"
+  - url: "/carts"
+    method: "DELETE"

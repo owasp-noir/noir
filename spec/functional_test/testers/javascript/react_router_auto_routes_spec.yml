@@ -1,0 +1,22 @@
+# #3309: `autoRoutes()` (react-router-auto-routes) maps folders to segments
+# and `index.tsx` to its folder's URL.
+fixture: fixtures/javascript/react_router_auto_routes/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/about"
+    method: "GET"
+  - url: "/blog"
+    method: "GET"
+  - url: "/blog/{slug}"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+  - url: "/calls/{season}/{episode}"
+    method: "GET"
+    params:
+      - {name: "season", type: "path"}
+      - {name: "episode", type: "path"}
+  - url: "/resources/search"
+    method: "GET"

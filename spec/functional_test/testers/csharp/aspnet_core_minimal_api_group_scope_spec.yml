@@ -1,0 +1,24 @@
+# Two extension methods in one file that each declare `var group`, and a
+# `this RouteGroupBuilder group` parameter beside them: every `group` is the
+# one of its own method. A top-level local function sees the top-level group.
+fixture: fixtures/csharp/aspnet_core_minimal_api_group_scope/
+counts: {techs: 2, endpoints: 7}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/orders"
+    method: "GET"
+  - url: "/api/orders"
+    method: "POST"
+  - url: "/api/v1/products"
+    method: "GET"
+  - url: "/api/v1/products/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/shared/ping"
+    method: "GET"

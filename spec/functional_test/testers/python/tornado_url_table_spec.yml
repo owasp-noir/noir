@@ -1,0 +1,18 @@
+# The route table lives in a `urls.py` that imports only handler classes and
+# never names `tornado`; `app.py` hands it to `Application.__init__`. A list
+# whose handler is defined outside any Tornado module is not a route table.
+fixture: fixtures/python/tornado_url_table/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/p01-foo"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/p01-foo"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/p02-bar/(\\d+)"
+    method: "GET"
+    params:
+      - {name: "bar_id", type: "path"}

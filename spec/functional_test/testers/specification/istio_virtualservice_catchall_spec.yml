@@ -1,0 +1,13 @@
+# On an ingress gateway, a route with no `match` and a match with no `uri`
+# take every path; the header-only match's conditions are its params. The
+# mesh-only VirtualService in the same file reports nothing.
+fixture: fixtures/specification/istio_virtualservice_catchall/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api"
+    method: "ANY"
+  - url: "/"
+    method: "ANY"
+    params:
+      - {name: "x-canary", type: "header", value: "1"}
+      - {name: "debug", type: "query", value: "on"}

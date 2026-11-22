@@ -1,0 +1,23 @@
+# `AddRoutes` rows get the handler factory's 1-hop callees, and
+# `httpx.Parse(r, &req)` reads `req`'s tagged fields.
+fixture: fixtures/go/gozero_handler_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/run"
+    method: "POST"
+    params:
+      - {name: "cmd", type: "json"}
+    callees:
+      - {name: "httpx.Parse"}
+      - {name: "logic.NewRunLogic"}
+      - {name: "l.Run"}
+  # goctl's multi-line `{\n Method: ...,\n Handler: h,\n}` form.
+  - url: "/run2"
+    method: "POST"
+    params:
+      - {name: "cmd", type: "json"}
+    callees:
+      - {name: "logic.NewRunLogic"}
+      - {name: "l.Run"}

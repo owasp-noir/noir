@@ -1,0 +1,16 @@
+# One package.json, three apps. apps/api bootstraps with a global prefix
+# (excluding `health`, matched without the version) and a `defaultVersion`
+# read from a constant; apps/worker bootstraps on its own, so neither
+# setting reaches it; apps/admin is an Nx application (`project.json`), so
+# neither reaches it either.
+fixture: fixtures/typescript/nestjs_monorepo_bootstraps/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/v1/health"
+    method: "GET"
+  - url: "/api/v1/items"
+    method: "GET"
+  - url: "/jobs"
+    method: "GET"
+  - url: "/users"
+    method: "GET"

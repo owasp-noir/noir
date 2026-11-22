@@ -1,0 +1,11 @@
+fixture: fixtures/go/echo_crossfile/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/v2/data"
+    method: "POST"
+    params:
+      - {name: "payload", type: "form"}
+  - url: "/api/v2/items"
+    method: "GET"

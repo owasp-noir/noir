@@ -1,0 +1,42 @@
+# Modern Loco registers routes explicitly via the
+# `Routes::new().prefix(...).add("/path", verb(handler))` builder. The
+# controller-level prefix is composed onto every route, a single `.add`
+# can fan out into several verbs, brace path params (`{id}`) are
+# captured, and the Axum extractors in each handler signature surface as
+# params.
+fixture: fixtures/rust/loco/
+counts: {techs: 2, endpoints: 8}
+endpoints:
+  - url: "/api/posts"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+  - url: "/api/posts"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/api/posts/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/api/posts/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/{id}/comments"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/login"
+    method: "POST"
+    params:
+      - {name: "form", type: "form"}
+  - url: "/api/posts/me"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}

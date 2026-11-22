@@ -1,0 +1,33 @@
+# Test files are not part of the attack surface, whatever they import:
+#   * `test/orders_spec.js`     — `_spec.` suffix plus a describe/supertest harness
+#   * `test/Router.js`          — a plain-named mocha suite that imports express
+#   * `test/fixtures/apps/...`  — a fixture app only the test run loads
+#   * `vitest.setup.ts`         — throwaway `@epic-web/test-server` routes
+#   * `types/reply.tst.ts`      — tstyche type tests
+#   * `src/middleware/session-timeout.test.ts` — a terminal `app.use('/api', …)`
+#     handler, read by Express's own use-handler pass rather than the extractor
+# `routes/ab_test.js` is an A/B-test feature router (express import, no
+# harness) and keeps its route.
+fixture: fixtures/javascript/express_test_file_gate/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/api/orders"
+    method: "POST"
+  - url: "/assign"
+    method: "POST"
+  - url: "/files"
+    method: "GET"
+  - url: "/files"
+    method: "POST"
+  - url: "/files"
+    method: "PUT"
+  - url: "/files"
+    method: "DELETE"
+  - url: "/files"
+    method: "PATCH"
+  - url: "/files"
+    method: "HEAD"
+  - url: "/files"
+    method: "OPTIONS"

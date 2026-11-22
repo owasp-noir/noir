@@ -1,0 +1,23 @@
+# --include-callee on the JDK HttpServer analyzer. Handler bodies are
+# resolved across all three registration forms and walked for 1-hop
+# callees:
+#   - lambda body            (/users  -> listUsers)
+#   - named HttpHandler      (/upload -> storeUpload, via handle())
+#   - method reference       (/health -> renderHealth, via health())
+fixture: fixtures/java/httpserver_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "GET"
+    callees:
+      - {name: "listUsers", line: 16}
+  - url: "/upload"
+    method: "GET"
+    callees:
+      - {name: "storeUpload", line: 41}
+  - url: "/health"
+    method: "GET"
+    callees:
+      - {name: "renderHealth", line: 32}

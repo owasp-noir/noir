@@ -1,0 +1,116 @@
+fixture: fixtures/php/codeigniter/
+counts: {techs: 2, endpoints: 42}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/about"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+  - url: "/users/{num}"
+    method: "GET"
+    params:
+      - {name: "num", type: "path"}
+  - url: "/users/{num}"
+    method: "PUT"
+    params:
+      - {name: "num", type: "path"}
+  - url: "/users/{num}"
+    method: "DELETE"
+    params:
+      - {name: "num", type: "path"}
+  - url: "/contact"
+    method: "GET"
+  - url: "/contact"
+    method: "POST"
+  - url: "/webhook"
+    method: "GET"
+  - url: "/webhook"
+    method: "POST"
+  - url: "/webhook"
+    method: "PUT"
+  - url: "/webhook"
+    method: "PATCH"
+  - url: "/webhook"
+    method: "DELETE"
+  - url: "/photos"
+    method: "GET"
+  - url: "/photos"
+    method: "POST"
+  - url: "/photos/new"
+    method: "GET"
+  - url: "/photos/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/photos/{id}/edit"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/photos/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/photos/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/photos/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles"
+    method: "GET"
+  - url: "/articles/show/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/new"
+    method: "GET"
+  - url: "/articles/create"
+    method: "POST"
+  - url: "/articles/edit/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/update/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/remove/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/delete/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  # resource()/presenter() honour only/except
+  - url: "/tags"
+    method: "GET"
+  - url: "/tags/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/albums"
+    method: "GET"
+  - url: "/admin/dashboard"
+    method: "GET"
+  - url: "/admin/users"
+    method: "GET"
+  - url: "/admin/settings/profile"
+    method: "GET"
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/items"
+    method: "POST"
+  - url: "/tenant/{num}/billing"
+    method: "GET"
+    params:
+      - {name: "num", type: "path"}
+  - url: "/debug"
+    method: "GET"
+  - url: "/typed/ping"
+    method: "GET"
+# Detection still sees php_codeigniter and php_pure
+# Analysis suppresses redundant php_pure file endpoints

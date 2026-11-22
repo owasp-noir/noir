@@ -1,0 +1,47 @@
+fixture: fixtures/javascript/bun/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/api/version"
+    method: "GET"
+  - url: "/"
+    method: "GET"
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/api/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "authorization", type: "header"}
+      - {name: "session", type: "cookie"}
+  - url: "/api/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "authorization", type: "header"}
+      - {name: "session", type: "cookie"}
+  - url: "/webhook"
+    method: "POST"
+    params:
+      - {name: "event", type: "form"}
+  # Typed arrow + `switch (req.method)` dispatch.
+  - url: "/api/items"
+    method: "POST"
+  - url: "/api/items"
+    method: "DELETE"
+  # `req.method !== "POST"` guard; casted, optional-chained json body.
+  - url: "/api/upload"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+  # Pre-1.2.3 `static` map, options passed as an identifier.
+  - url: "/legacy"
+    method: "GET"

@@ -1,0 +1,11 @@
+# `web::scope("/api").configure(web_api::config)` where `web_api` is the
+# workspace crate `web-api`: its routes keep the `/api` prefix.
+fixture: fixtures/rust/actix_hyphen_crate/
+counts: {techs: 1, endpoints: 2}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/stats"
+    method: "GET"

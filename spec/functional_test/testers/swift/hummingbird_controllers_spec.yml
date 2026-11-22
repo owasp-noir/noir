@@ -1,0 +1,49 @@
+# Exercises the controller-oriented Hummingbird routing styles:
+#   * `addRoutes(to: router.group("api/todos"))` + fluent builder chains
+#   * `RouteCollection` mounted via `addRoutes(_:atPath:)`
+#   * builder chains that resume across trailing closures
+#   * builder chains that *open* with `.add(middleware:)`
+#   * `.on(method:)`, HEAD and `.ws` verbs
+# The fixture also contains non-router `.get(...)`/`.delete(...)` calls
+# (environment.get, storage.get, repository.delete) that must NOT surface
+# as endpoints, and a `vapor/*` ecosystem dependency that must NOT tag the
+# project as Vapor.
+fixture: fixtures/swift/hummingbird_controllers/
+counts: {techs: 1, endpoints: 14}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/status"
+    method: "HEAD"
+  - url: "/socket"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/session/login"
+    method: "POST"
+  - url: "/users/session/logout"
+    method: "POST"
+  - url: "/api/todos"
+    method: "GET"
+  - url: "/api/todos/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/todos"
+    method: "POST"
+  - url: "/api/todos/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/todos/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/todos/me"
+    method: "GET"
+  - url: "/api/todos/logout"
+    method: "POST"

@@ -1,0 +1,80 @@
+# `option (google.api.http).<field> = <value>;` — protobuf's generic
+# "one field per statement" spelling of the same annotation the brace form
+# writes in one block. Argo CD writes 70 of its 109 annotations this way, and
+# noir used to read none of them.
+fixture: fixtures/specification/grpc_field_form/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  # A single statement carrying the whole route. GET has no body, so the
+  # non-path message fields become query params.
+  - url: "/v1/widgets/{widget_id}"
+    method: "GET"
+    params:
+      - {name: "widget_id", type: "path"}
+      - {name: "name", type: "query"}
+      - {name: "note", type: "query"}
+  # Verb + body + two repeated additional_bindings statements assembled into
+  # one rule: the primary PUT and both PATCH bindings.
+  - url: "/v1/widgets/{widget_id}"
+    method: "PUT"
+    params:
+      - {name: "widget_id", type: "path"}
+      - {name: "name", type: "json"}
+      - {name: "note", type: "json"}
+  - url: "/v1/widgets/{widget_id}"
+    method: "PATCH"
+    params:
+      - {name: "widget_id", type: "path"}
+      - {name: "name", type: "json"}
+      - {name: "note", type: "json"}
+  - url: "/v2/widgets/{widget_id}"
+    method: "PATCH"
+    params:
+      - {name: "widget_id", type: "path"}
+      - {name: "name", type: "json"}
+      - {name: "note", type: "json"}
+  # `.custom.kind` / `.custom.path`: the CustomHttpPattern spelled as two
+  # separate field statements.
+  - url: "/v1/widgets/{widget_id}/inspect"
+    method: "OPTIONS"
+    params:
+      - {name: "widget_id", type: "path"}
+      - {name: "name", type: "json"}
+      - {name: "note", type: "json"}
+  # `.body = "name"` names one field as the body; the rest go to the query.
+  - url: "/v1/widgets/{widget_id}/rename"
+    method: "POST"
+    params:
+      - {name: "widget_id", type: "path"}
+      - {name: "name", type: "json"}
+      - {name: "note", type: "query"}
+  # An rpc with no annotation is still a pure gRPC endpoint.
+  - url: "/field.v1.WidgetService/WatchWidget"
+    method: "POST"
+    params:
+      - {name: "widget_id", type: "json"}
+      - {name: "name", type: "json"}
+      - {name: "note", type: "json"}
+  # mixed_form.proto — brace form and field form in one file.
+  - url: "/v1/gadgets/{gadget_id}"
+    method: "GET"
+    params:
+      - {name: "gadget_id", type: "path"}
+      - {name: "label", type: "query"}
+  - url: "/v1/gadgets"
+    method: "GET"
+    params:
+      - {name: "gadget_id", type: "query"}
+      - {name: "label", type: "query"}
+  # ...and both spellings on one rpc: each is read independently, so neither
+  # route is dropped.
+  - url: "/v1/gadgets/{gadget_id}"
+    method: "PUT"
+    params:
+      - {name: "gadget_id", type: "path"}
+      - {name: "label", type: "json"}
+  - url: "/v1/gadgets/{gadget_id}/replace"
+    method: "POST"
+    params:
+      - {name: "gadget_id", type: "path"}
+      - {name: "label", type: "json"}

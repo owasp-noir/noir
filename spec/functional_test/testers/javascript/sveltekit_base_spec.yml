@@ -1,0 +1,15 @@
+# `kit.paths.base` in svelte.config.js prefixes every route; the root page
+# is the bare base.
+fixture: fixtures/javascript/sveltekit_base/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/greenhouse"
+    method: "GET"
+  - url: "/greenhouse/garden"
+    method: "GET"
+  - url: "/greenhouse/api/seeds"
+    method: "GET"
+  - url: "/greenhouse/plant"
+    method: "GET"
+  - url: "/greenhouse/plant"
+    method: "POST"

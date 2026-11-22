@@ -1,0 +1,31 @@
+# A slash-less pattern next to a `Handler` variable or a handler object is a
+# route when it reads as one: it carries a slash or a `{param}`, sits in a
+# `path()` / `routes()` group, or is `addHandler(HandlerType.X, ..)`. The
+# collection calls that share the verb names (`sessions.put("k", new ..)`,
+# `sessions.put("handlers", getOne)`, `row.get("C", String.class)`, and a
+# `put` inside a `before(ctx -> ..)` handler body) must stay suppressed.
+fixture: fixtures/java/lambda_dsl_handler_objects/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/new"
+    method: "POST"
+  - url: "/reports"
+    method: "GET"
+  - url: "/users/{id}/profile"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/health"
+    method: "GET"
+  - url: "/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/files/list"
+    method: "GET"

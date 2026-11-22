@@ -1,0 +1,27 @@
+fixture: fixtures/rust/warp/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/hello"
+    method: "GET"
+  - url: "/users/:param"
+    method: "GET"
+    params:
+      - {name: "param", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "SearchQuery", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "CreateUser", type: "json"}
+  - url: "/protected"
+    method: "GET"
+    params:
+      - {name: "authorization", type: "header"}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}

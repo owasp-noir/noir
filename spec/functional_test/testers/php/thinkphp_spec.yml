@@ -1,0 +1,174 @@
+fixture: fixtures/php/thinkphp/
+counts: {techs: 2, endpoints: 44}
+endpoints:
+  # Explicit routes from route/app.php
+  - url: "/hello/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/save"
+    method: "POST"
+  - url: "/update"
+    method: "PUT"
+  - url: "/update"
+    method: "PATCH"
+  # Resource routes generated for "blog"
+  - url: "/blog"
+    method: "GET"
+  - url: "/blog/create"
+    method: "GET"
+  - url: "/blog"
+    method: "POST"
+  - url: "/blog/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/blog/{id}/edit"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/blog/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/blog/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Group routes with "admin" prefix
+  - url: "/admin/dashboard"
+    method: "GET"
+  - url: "/admin/users"
+    method: "POST"
+  # Implicit routes from app/controller/UserController.php
+  - url: "/user/index"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/user"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/user/view"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+      - {name: "get_id", type: "query"}
+      - {name: "name", type: "form"}
+  - url: "/user/view"
+    method: "POST"
+    params:
+      - {name: "id", type: "query"}
+      - {name: "get_id", type: "query"}
+      - {name: "name", type: "form"}
+  - url: "/user/create"
+    method: "GET"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+  - url: "/user/create"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+  # Test: Nested controller subdirectories (slash & dot mappings)
+  - url: "/admin/group/index"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/admin.group/index"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/admin/group"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/admin.group"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  # Test: Multi-app route prefix auto-extraction (/shop prefix)
+  - url: "/shop/orders"
+    method: "GET"
+  # Test: Annotation/Attribute Routes inside controllers
+  - url: "/home"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/profile/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "get_id", type: "query"}
+      - {name: "name", type: "form"}
+  - url: "/profile/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "get_id", type: "query"}
+      - {name: "name", type: "form"}
+  - url: "/user/advanced"
+    method: "GET"
+    params:
+      - {name: "verbose", type: "query"}
+      - {name: "admin_token", type: "query"}
+      - {name: "query_facade", type: "query"}
+      - {name: "X-Facade-Header", type: "header"}
+      - {name: "username_raw", type: "form"}
+      - {name: "X-Correlation-Id", type: "header"}
+      - {name: "email", type: "form"}
+      - {name: "phone", type: "form"}
+      - {name: "crmeb_page", type: "query"}
+      - {name: "crmeb_limit", type: "query"}
+      - {name: "crmeb_form_field", type: "form"}
+  - url: "/user/advanced"
+    method: "POST"
+    params:
+      - {name: "verbose", type: "query"}
+      - {name: "admin_token", type: "query"}
+      - {name: "query_facade", type: "query"}
+      - {name: "X-Facade-Header", type: "header"}
+      - {name: "username_raw", type: "form"}
+      - {name: "X-Correlation-Id", type: "header"}
+      - {name: "email", type: "form"}
+      - {name: "phone", type: "form"}
+      - {name: "crmeb_page", type: "query"}
+      - {name: "crmeb_limit", type: "query"}
+      - {name: "crmeb_form_field", type: "form"}
+  # Route::any endpoint expectations
+  - url: "/any-route"
+    method: "GET"
+  - url: "/any-route"
+    method: "POST"
+  - url: "/any-route"
+    method: "PUT"
+  - url: "/any-route"
+    method: "PATCH"
+  - url: "/any-route"
+    method: "DELETE"
+  - url: "/any-route"
+    method: "OPTIONS"
+  - url: "/any-route"
+    method: "HEAD"
+  # Route::rule with '*' endpoint expectations
+  - url: "/rule-route"
+    method: "GET"
+  - url: "/rule-route"
+    method: "POST"
+  - url: "/rule-route"
+    method: "PUT"
+  - url: "/rule-route"
+    method: "PATCH"
+  - url: "/rule-route"
+    method: "DELETE"
+  - url: "/rule-route"
+    method: "OPTIONS"
+  - url: "/rule-route"
+    method: "HEAD"
+  # Typed closure group
+  - url: "/typed/ping"
+    method: "GET"

@@ -1,0 +1,33 @@
+# Salvo single-field request reads: `req.query::<u32>("page")` and
+# `req.form::<String>("name")` name the parameter they read.
+fixture: fixtures/rust/salvo_named_params/
+counts: {techs: 1, endpoints: 7}
+options:
+  only_techs: "rust_salvo"
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/api/users/<id>"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "authorization", type: "header"}
+  - url: "/api/users/<id>"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "authorization", type: "header"}
+  - url: "/files/<**rest>"
+    method: "GET"
+  - url: "/posts/<id:num>"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

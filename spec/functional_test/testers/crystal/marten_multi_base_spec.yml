@@ -1,0 +1,15 @@
+fixture: fixtures/crystal/marten_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/crystal/marten_multi_base/service_a", "./spec/functional_test/fixtures/crystal/marten_multi_base/service_b"]
+  include_callee: true
+  only_techs: "crystal_marten"
+endpoints:
+  - url: "/a/users"
+    method: "GET"
+    callees:
+      - {name: "ServiceA.list", line: 3}
+  - url: "/b/users"
+    method: "GET"
+    callees:
+      - {name: "ServiceB.list", line: 3}
