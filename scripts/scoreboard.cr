@@ -4,6 +4,7 @@ require "file_utils"
 require "uri"
 require "../src/techs/techs"
 require "./scoreboard/measurements"
+require "./scoreboard/audit"
 
 # Run only through `just scoreboard`. Requiring this module in the unit suite
 # exercises arithmetic without checking out repositories or running scanners.
@@ -21,7 +22,7 @@ module Scoreboard
   end
 
   def score(report : JSON::Any, technology : String) : JSON::Any
-    matched = spec_only = code_only = marked = 0
+    matched = spec_only = code_only = marked = marked_matched = 0
     claims = Hash(String, Int32).new(0)
     report["endpoints"].as_a.each do |endpoint|
       next unless endpoint["protocol"]?.try(&.as_s) == "http"
@@ -37,13 +38,14 @@ module Scoreboard
       end
       if code && (marks = endpoint["resolution"]?.try(&.as_h)) && !marks.empty?
         marked += 1
+        marked_matched += 1 if spec
         marks.each { |claim, status| claims["#{claim}:#{status.as_s}"] += 1 }
       end
     end
     code_count = matched + code_only
     JSON.parse({matched: matched, spec_only: spec_only, code_only: code_only,
                 recall: ratio(matched, matched + spec_only), agreement: ratio(matched, code_count),
-                marked: marked, marked_share: ratio(marked, code_count),
+                marked: marked, marked_matched: marked_matched, marked_code_only: marked - marked_matched, marked_share: ratio(marked, code_count),
                 claims: claims.keys.sort!.to_h { |key| {key, {count: claims[key], share: ratio(claims[key], code_count)}} }}.to_json)
   end
 
@@ -163,7 +165,7 @@ module Scoreboard
       spec = technologies.any? { |tech| NoirTechs.view(tech) == "spec" }
       next unless code || spec
       side = code && spec ? "matched" : code ? "code-only" : "spec-only"
-      JSON.parse({side: side, method: endpoint["method"], url: endpoint["url"], locations: endpoint["details"]["code_paths"]}.to_json)
+      JSON.parse({side: side, method: endpoint["method"], url: endpoint["url"], marked: !!endpoint["resolution"]?.try { |marks| !marks.as_h.empty? }, locations: endpoint["details"]["code_paths"]}.to_json)
     end.sort_by! { |row| {row["side"].as_s, row["method"].as_s, row["url"].as_s} }
   end
 
@@ -270,13 +272,21 @@ module Scoreboard
         end
       end
     end
+    samples = reports.keys.to_h { |tech| {tech, sample(unmatched[tech])} }
+    labels = File.open(LABELS) { |io| read_labels(io) }
+    results.each do |row|
+      scoped = labels.select { |l| l.repository == row["name"] && l.technology == row["technology"] }
+      row.as_h["audit"] = audit_summary([row], samples, scoped)
+    end
+    overall = audit_summary(results, samples, labels)
     totals = reports.keys.sort!.map do |tech|
       result = score(JSON.parse({endpoints: reports[tech]}.to_json), tech).as_h
       result["name"] = JSON::Any.new(tech)
       repositories = results.select { |row| row["technology"] == tech }
       result.merge!(measurement_totals(repositories).as_h)
       result["repositories"] = JSON::Any.new(repositories.size.to_i64)
-      File.write(File.join(ROWS, "#{tech}-audit-sample.json"), sample(unmatched[tech]).to_pretty_json + "\n")
+      result["audit"] = audit_summary(repositories, samples, labels.select { |l| l.technology == tech })
+      File.write(File.join(ROWS, "#{tech}-audit-sample.json"), samples[tech].to_pretty_json + "\n")
       JSON::Any.new(result)
     end
     revision = IO::Memory.new
@@ -288,9 +298,10 @@ module Scoreboard
                   else
                     Time.utc.to_s("%F")
                   end
-    data = JSON.parse({measured_on: measured_on, analyzer_revision: revision.to_s.strip, technologies: totals, repositories: results}.to_json)
+    data = JSON.parse({measured_on: measured_on, analyzer_revision: revision.to_s.strip, technologies: totals, repositories: results, total: overall}.to_json)
     generated = "Measured: #{measured_on}. Analyzer source: `#{revision.to_s.strip}`.\n\nA technology measured on one repository is a single data point.\n\n" + table(totals, "Technology", repository_counts: true)
     generated += "\n\n" + table(results, "Repository") + "\n"
+    generated += audit_table((totals + results).map { |row| {row["name"].as_s, row["audit"]} } + [{"Total", overall}])
     generated += measurement_tables(totals, results)
     generated += "\n| Technology | Resolution claim | Marked endpoints | Share of code endpoints |\n| --- | --- | ---: | ---: |\n"
     totals.each do |row|

@@ -43,6 +43,35 @@ Measured: 2026-11-22. Analyzer source: `03395ca4ddd53eaa6bc34506ab9f0b4a6e8cc020
 | pretalx | 133 | 0 | 300 | 100.0% | 30.7% | 1 (0.2%) |
 | vikunja | 153 | 19 | 115 | 89.0% | 57.1% | 5 (1.9%) |
 
+| Scope | Estimated precision | Estimated recall | Marked matched / code-only |
+| --- | ---: | ---: | ---: |
+| cs_aspnet_core_minimal_api | 100.0% (n=0, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| go_chi | 100.0% (n=17, 0 unlabelled, 0 undecided) | 100.0% (n=8, 0 unlabelled, 0 undecided) | 0 / 21 |
+| go_echo | 100.0% (n=5, 0 unlabelled, 8 undecided) | 92.4% (n=12, 0 unlabelled, 0 undecided) | 0 / 5 |
+| go_gin | 100.0% (n=22, 0 unlabelled, 0 undecided) | 100.0% (n=3, 0 unlabelled, 0 undecided) | 198 / 32 |
+| go_mux | 100.0% (n=21, 0 unlabelled, 3 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 26 / 82 |
+| java_spring | 100.0% (n=23, 0 unlabelled, 0 undecided) | 100.0% (n=2, 0 unlabelled, 0 undecided) | 0 / 0 |
+| js_express | 91.7% (n=17, 0 unlabelled, 0 undecided) | 99.4% (n=8, 0 unlabelled, 0 undecided) | 108 / 120 |
+| python_django | 100.0% (n=25, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 1 |
+| python_fastapi | 100.0% (n=24, 0 unlabelled, 0 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 19 / 2 |
+| ts_nestjs | 100.0% (n=17, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| InvokeAI | 100.0% (n=3, 0 unlabelled, 0 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 0 / 0 |
+| NodeBB | 90.8% (n=9, 0 unlabelled, 0 undecided) | 99.3% (n=8, 0 unlabelled, 0 undecided) | 108 / 120 |
+| answer | 100.0% (n=12, 0 unlabelled, 0 undecided) | 100.0% (n=3, 0 unlabelled, 0 undecided) | 196 / 32 |
+| auth | 100.0% (n=9, 0 unlabelled, 0 undecided) | 100.0% (n=8, 0 unlabelled, 0 undecided) | 0 / 0 |
+| dvws-node | 100.0% (n=8, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| eShop | 100.0% (n=0, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| flowable-engine | 100.0% (n=23, 0 unlabelled, 0 undecided) | 100.0% (n=2, 0 unlabelled, 0 undecided) | 0 / 0 |
+| gotify | 100.0% (n=10, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 2 / 0 |
+| immich | 100.0% (n=17, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| langflow | 100.0% (n=21, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 19 / 2 |
+| owncast | 100.0% (n=8, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 21 |
+| podinfo | 100.0% (n=21, 0 unlabelled, 3 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 26 / 82 |
+| pokeapi | 100.0% (n=0, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
+| pretalx | 100.0% (n=25, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 1 |
+| vikunja | 100.0% (n=5, 0 unlabelled, 8 undecided) | 92.4% (n=12, 0 unlabelled, 0 undecided) | 0 / 5 |
+| Total | 98.3% (n=171, 0 unlabelled, 11 undecided) | 99.3% (n=35, 0 unlabelled, 0 undecided) | 351 / 263 |
+
 | Technology | Detected / repositories | Other technologies detected | Forced-only rows | Automatic-only rows |
 | --- | ---: | --- | ---: | ---: |
 | cs_aspnet_core_minimal_api | 1 / 1 | http_file, oas3 | 0 | 0 |
@@ -180,11 +209,19 @@ Flowable은 프로세스 컨트롤러 라이브러리에 `spec_prefix: "/flowabl
 
 Owncast는 다릅니다. `webserver/router/router.go:93`은 생성된 API를 `/api/`에 마운트합니다. 명세의 `/api`는 소스에도 있으므로 유지합니다. Supabase Auth와 Flowable에만 접두사 보정이 있습니다. 파라미터 표기는 Noir 자체 정규화를 사용하며 대소문자, 끝 슬래시, `ANY`, 와일드카드, 상수 접두사, 게이트웨이 재작성 매칭을 추가하지 않습니다. 게이트웨이 규칙은 API 동작과 일대일로 대응하지 않아 제외합니다.
 
-### 소스 감사
+### 소스 판정에 따른 추정치
+
+기술별로 코드에만 있는 행과 명세에만 있는 행을 **모두 합쳐 최대 25개**를 검토합니다. 저장소와 양쪽 목록에 표본 수를 배분한 뒤, 정렬한 각 목록에서 일정 간격으로 행을 뽑습니다. 특정 설정에서 실제로 요청을 처리한다는 근거가 있으면 조건부 경로도 `real`로 판정합니다. 라우터가 등록한 메서드는 도달한 핸들러가 그 메서드를 직접 거부하더라도 `real`로 판정합니다. 요청이 라우터에서 핸들러까지 전달되기 때문이며, 아래 런타임 대조와 같은 기준입니다. Noir가 올바르게 보고한 패턴이 명세의 경로를 이미 포함하면 `covered`로 표시합니다. 기존 대조 결과에는 두 표기가 그대로 남습니다.
+
+추정 정밀도는 (일치 행 + 코드에만 있는 실제 경로의 추정 수)를 전체 보고 행 수로 나눈 값입니다. 추정 재현율은 일치 행 수를 (일치 행 + 명세에만 있는 행 중 누락되었거나 주소가 잘못 보고된 경로의 추정 수)로 나눈 값입니다. 저장소별로 판정이 가능한 표본의 비율을 해당 쪽 전체 행 수에 곱한 뒤 합산합니다. 두 지표 모두 일치 행이 유효하다고 가정합니다. 표본을 결정적으로 선택하므로 신뢰 구간을 산출하지 않으며, 코드 분석과 명세에서 모두 빠진 경로는 측정할 수 없습니다. 추정치에는 판정 가능한 표본 수, 미분류 수, 판정 보류 수(`cannot_tell`)가 함께 표시됩니다. 불일치 행이 있는 저장소에서 해당 쪽에 판정 가능한 표본이 하나도 없으면 그 추정치는 제공하지 않습니다. 결과 JSON의 `marked_by_verdict`를 코드 쪽 판정별 개수와 비교하면 오류와 실제 경로에 각각 얼마나 자주 resolution 표시가 붙는지 확인할 수 있습니다.
+
+판정을 추가하려면 워크플로 산출물의 기술별 `*-audit-sample.json`을 열고, 고정 커밋에서 핸들러와 마운트 경로를 확인합니다. `scripts/scoreboard/labels.tsv`에 저장소, 기술, 앱 커밋, 표본의 원래 side·메서드·URL, 판정, 상대 경로와 줄 번호(`file:line`), 한 문장의 근거를 탭으로 구분해 추가합니다. 코드 쪽은 `real`, `false_positive`, `wrong_address`를, 명세 쪽은 `miss`, `not_served`, `covered`, `wrong_address`를 사용합니다. 어느 쪽이든 소스만으로 판단하기 어렵다면 `cannot_tell`과 그 이유를 기록합니다. 커밋이나 표본이 바뀌어 기존 판정이 맞지 않으면 새 근거를 확인한 뒤 갱신합니다.
+
+### 과거 소스 감사
 
 아래 날짜가 있는 표는 측정 스냅샷에 대한 수동 감사입니다. 초기 감사는 기술별로 불일치 행을 최대 25개씩 확인했습니다. 저장소와 spec-only/code-only 조합에 표본 수를 배분하고 정렬된 목록에서 일정 간격으로 선택합니다. 전체 오류 추정치가 아닌 표본 개수이며, 같은 동작이 양쪽 불일치에 포함될 수 있습니다.
 
-분류는 분석기 누락, 분석기 오탐, 오래되거나 잘못된 명세, 문서화되지 않은 경로, 분석기 오류가 아닌 접두사·메서드·끝 슬래시 차이, 기타입니다. 분류는 비율을 바꾸지 않습니다. 행별 근거는 커밋하지 않습니다. 새 측정을 게시하기 전에 바뀐 행을 다시 확인하고 이 날짜가 있는 표를 갱신해야 합니다. 레시피는 측정값만 생성하며 수동 감사를 재생성하지 않습니다.
+분류는 분석기 누락, 분석기 오탐, 오래되거나 잘못된 명세, 문서화되지 않은 경로, 분석기 오류가 아닌 접두사·메서드·끝 슬래시 차이, 기타입니다. 분류는 비율을 바꾸지 않습니다. 이 표는 행별 판정을 저장소에 기록하기 전에 작성했습니다.
 
 <!-- AUDIT -->
 
@@ -230,7 +267,7 @@ bash docs/scripts/check_doc_parity.sh
 hwaro build -i docs
 ```
 
-레시피는 필요할 때 실행하며 컴파일 게이트를 거치는 `build-release`에 의존합니다. git, tar, 캐시에 없는 커밋을 가져올 네트워크가 필요합니다. 체크아웃과 복사본은 `$TMPDIR/noir-codex-scoreboard/`에 보관합니다. `TMPDIR`이 없으면 `/tmp/noir-codex-scoreboard/`를 사용합니다. 저장소별 matched/spec-only/code-only 목록과 기술별 감사 표본은 git에서 제외된 `tmp/scoreboard/`에 작성하며 커밋하지 않습니다.
+매주 또는 수동 실행 시 워크플로가 기본 브랜치에서 측정하고 행별 결과를 업로드합니다. 저장소별 일치 행이 줄거나 명세에만 있는 행이 늘면 작업이 실패합니다. 레시피는 컴파일 게이트를 거치는 `build-release`에 의존합니다. git, tar, 캐시에 없는 커밋을 가져올 네트워크가 필요합니다. 체크아웃과 복사본은 `$TMPDIR/noir-codex-scoreboard/`에 보관합니다. `TMPDIR`이 없으면 `/tmp/noir-codex-scoreboard/`를 사용합니다. 저장소별 matched/spec-only/code-only 목록과 기술별 감사 표본은 git에서 제외된 `tmp/scoreboard/`에 작성하며 커밋하지 않습니다.
 
 작은 회귀 비교 스냅샷인 [`scripts/scoreboard/results.json`](https://github.com/owasp-noir/noir/blob/main/scripts/scoreboard/results.json)에는 개수, 비율, 표시 개수, 저장소 커밋, 날짜, 분석기 리비전이 있습니다. 분석기 리비전과 코퍼스가 같으면 스냅샷 날짜를 유지합니다. 실행 전에 분석기와 의존성 변경을 커밋해야 합니다. 수정되거나 추적되지 않은 `src` 파일과 변경된 shard 매니페스트가 있으면 거부합니다. 출력은 정렬하며 실행 시간과 절대 임시 경로를 넣지 않습니다.
 
