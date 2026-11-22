@@ -813,7 +813,7 @@ module Noir::CLI::Inspect
   # The path as rules compare it: no query, no trailing slash, every
   # whole-segment placeholder spelled `{}` (as the optimizer's dedup does).
   def self.gateway_key(url : String) : String
-    normalize(url).gsub(EndpointOptimizer::WHOLE_SEGMENT_PLACEHOLDER_RE, "{}")
+    Noir::URLPath.unify_path_placeholders(normalize(url))
   end
 
   # A rule's path, its subtree spelling (`/*`, `{proxy+}`) dropped.

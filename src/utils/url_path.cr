@@ -152,6 +152,27 @@ module Noir
       path.starts_with?("/") ? path : "/#{path}"
     end
 
+    # A whole-segment path placeholder in any framework's spelling: `{id}`,
+    # `:id` (Express/Rails/Postman) or `<id>` / `<int:id>` (Flask/Django).
+    # Constraints were stripped by `normalize_url_shape`, except a regex
+    # router's (`{id:[0-9]+}`, `{sha:[a-f0-9]{7,64}}`), which still unifies
+    # with a spec's `{id}`. An optional slot (`{id?}`: Laravel, ASP.NET) is the
+    # slot a spec lists as `{id}`.
+    WHOLE_SEGMENT_PLACEHOLDER_RE = %r{(?<=/)(?:\{([A-Za-z_]\w*)\??(?::(?:[^{}/]|\{[^{}/]*\})+)?\}|:([A-Za-z_]\w*)|<(?:([A-Za-z_]\w*):)?([A-Za-z_]\w*)>)(?=[/?#]|\z)}
+
+    def self.unify_path_placeholders(url : String) : String
+      url.gsub(WHOLE_SEGMENT_PLACEHOLDER_RE, "{}")
+    end
+
+    # Parameter names in route order, using the same slots as the dedup key.
+    def self.placeholder_names(url : String, path_names : Array(String)) : Array(String)
+      url.scan(WHOLE_SEGMENT_PLACEHOLDER_RE).map do |match|
+        # Frameworks use both <converter:name> and <name:converter>.
+        # The independent report already identifies which name is a param.
+        match[1]? || match[2]? || (path_names.includes?(match[4]) ? match[4] : match[3]? || match[4])
+      end
+    end
+
     # Routers whose `{name:regex}` constraint picks the route: chi,
     # gorilla/mux and Slim (FastRoute) route `/{type:issues}` /
     # `/{id:[0-9]+}` and `/{type:pulls}` / `/{name}` to different

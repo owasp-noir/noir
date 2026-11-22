@@ -3,6 +3,7 @@ require "yaml"
 require "file_utils"
 require "uri"
 require "../src/techs/techs"
+require "./scoreboard/measurements"
 
 # Run only through `just scoreboard`. Requiring this module in the unit suite
 # exercises arithmetic without checking out repositories or running scanners.
@@ -97,7 +98,7 @@ module Scoreboard
     end
   end
 
-  def scan(repo : JSON::Any, work : String) : JSON::Any
+  def stage_repository(repo : JSON::Any, work : String) : String
     dir = checkout(repo, work)
     stage = File.join(work, "scan", repo["name"].as_s)
     FileUtils.rm_rf(stage)
@@ -129,12 +130,11 @@ module Scoreboard
         File.write(path, path.ends_with?(".json") ? doc.to_pretty_json : YAML.parse(doc.to_json).to_yaml)
       end
     end
-    config = File.join(work, "config.yml")
-    File.write(config, "{}\n")
-    report_path = File.join(work, "#{repo["name"].as_s}.json")
-    technologies = repo["technologies"].as_a.map(&.as_s)
-    exclusions = %w[*.wasm *.csv] + (repo["exclude_paths"]?.try(&.as_a.map(&.as_s)) || [] of String)
-    command("./bin/noir", ["scan", stage, "--config-file", config, "--only-techs", (technologies + %w[oas2 oas3]).join(','), "--techs", technologies.join(','), "--concurrency", "1", "--exclude-path", exclusions.join(','), "--no-log", "--no-color", "-f", "json", "-o", report_path], output: :close)
+    stage
+  end
+
+  def scan(stage, base_args, scan_args, report_path) : JSON::Any
+    command("./bin/noir", ["scan", stage] + base_args + scan_args + ["-o", report_path], output: :close)
     report = JSON.parse(File.read(report_path))
     raise "Scanner reported incomplete coverage: #{report["errors"].to_json}" unless report["errors"].as_a.empty?
     report["endpoints"].as_a.each do |endpoint|
@@ -185,6 +185,32 @@ module Scoreboard
     lines.join('\n')
   end
 
+  def measurement_tables(totals, repositories) : String
+    String.build do |io|
+      io << "\n| Technology | Detected / repositories | Other technologies detected | Forced-only rows | Automatic-only rows |\n| --- | ---: | --- | ---: | ---: |\n"
+      totals.each do |row|
+        d = row["detection"]
+        io << "| #{row["name"]} | #{d["detected_repositories"]} / #{row["repositories"]} | #{d["other_technologies"].as_a.join(", ")} | #{d["forced_only"]} | #{d["automatic_only"]} |\n"
+      end
+      io << "\n| Repository | Technology | Detected | Other technologies detected | Forced-only rows | Automatic-only rows |\n| --- | --- | --- | --- | ---: | ---: |\n"
+      repositories.each do |row|
+        d = row["detection"]
+        io << "| #{row["name"]} | #{row["technology"]} | #{d["detected"]} | #{d["other_technologies"].as_a.join(", ")} | #{d["forced_only"]} | #{d["automatic_only"]} |\n"
+      end
+      io << "\n| Technology | Inputs on matched rows | Both | Document only | Code only | Recall | Agreement |\n| --- | --- | ---: | ---: | ---: | ---: | ---: |\n"
+      totals.each do |row|
+        {"params" => "Parameters", "body_fields" => "Body fields"}.each do |field, label|
+          p = row[field]
+          io << "| #{row["name"]} | #{label} | #{p["both"]} | #{p["spec_only"]} | #{p["code_only"]} | #{percent(p["recall"])} | #{percent(p["agreement"])} |\n"
+        end
+      end
+      io << "\n| Technology | Both guarded | Both open | Document guarded, code open | Document open, code guarded |\n| --- | ---: | ---: | ---: | ---: |\n"
+      totals.each do |row|
+        io << "| #{row["name"]} | #{GUARDS.map { |key| row["guards"][key] }.join(" | ")} |\n"
+      end
+    end
+  end
+
   def pin(repo : JSON::Any) : Hash(String, JSON::Any)
     repo.as_h.select { |key, _| PIN_FIELDS.includes?(key) }
   end
@@ -202,14 +228,28 @@ module Scoreboard
     reports = Hash(String, Array(JSON::Any)).new { |hash, tech| hash[tech] = [] of JSON::Any }
     unmatched = Hash(String, Array(JSON::Any)).new { |hash, tech| hash[tech] = [] of JSON::Any }
     Dir.mkdir_p(ROWS)
+    config = File.join(work, "config.yml")
+    File.write(config, "{}\n")
     repos.each do |repo|
       puts "Scoring #{repo["name"]} @ #{repo["commit"]}"
-      report = scan(repo, work)
-      repo["technologies"].as_a.map(&.as_s).sort!.each do |tech|
+      stage = stage_repository(repo, work)
+      pins = repo["technologies"].as_a.map(&.as_s).sort!
+      exclusions = %w[*.wasm *.csv] + (repo["exclude_paths"]?.try(&.as_a.map(&.as_s)) || [] of String)
+      base_args = ["--config-file", config, "--concurrency", "1", "--exclude-path", exclusions.join(','), "--no-log", "--no-color", "-f", "json"]
+      path = File.join(work, repo["name"].as_s)
+      report = scan(stage, base_args, ["--only-techs", (pins + OAS_TECHS).join(','), "--techs", pins.join(',')], "#{path}.json")
+      automatic = scan(stage, base_args, [] of String, "#{path}-automatic.json")
+      document = scan(stage, base_args, ["--only-techs", OAS_TECHS.join(',')], "#{path}-oas.json")
+      pins.each do |tech|
+        code = scan(stage, base_args, ["--techs", tech, "--only-techs", tech, "--use-all-taggers"], "#{path}-#{tech}.json")
+        delta = detection_rows(report, automatic, tech)
         reports[tech].concat(report["endpoints"].as_a)
         result = score(report, tech).as_h.merge(pin(repo))
+        result.merge!(matched_measurements(report, code, document, tech).as_h)
+        result["detection"] = detection(automatic, pins, tech, delta)
         result["technology"] = JSON::Any.new(tech)
         results << JSON::Any.new(result)
+        File.write(File.join(ROWS, "#{repo["name"].as_s}-#{tech}-detection.json"), delta.to_pretty_json + "\n")
         partitions = rows(report, tech).group_by(&.["side"].as_s)
         %w[matched spec-only code-only].each { |side| partitions[side] ||= [] of JSON::Any }
         File.write(File.join(ROWS, "#{repo["name"].as_s}-#{tech}.json"), partitions.to_pretty_json + "\n")
@@ -222,7 +262,9 @@ module Scoreboard
     totals = reports.keys.sort!.map do |tech|
       result = score(JSON.parse({endpoints: reports[tech]}.to_json), tech).as_h
       result["name"] = JSON::Any.new(tech)
-      result["repositories"] = JSON::Any.new(results.count { |row| row["technology"].as_s == tech }.to_i64)
+      repositories = results.select { |row| row["technology"] == tech }
+      result.merge!(measurement_totals(repositories).as_h)
+      result["repositories"] = JSON::Any.new(repositories.size.to_i64)
       File.write(File.join(ROWS, "#{tech}-audit-sample.json"), sample(unmatched[tech]).to_pretty_json + "\n")
       JSON::Any.new(result)
     end
@@ -238,6 +280,7 @@ module Scoreboard
     data = JSON.parse({measured_on: measured_on, analyzer_revision: revision.to_s.strip, technologies: totals, repositories: results}.to_json)
     generated = "Measured: #{measured_on}. Analyzer source: `#{revision.to_s.strip}`.\n\nA technology measured on one repository is a single data point.\n\n" + table(totals, "Technology", repository_counts: true)
     generated += "\n\n" + table(results, "Repository") + "\n"
+    generated += measurement_tables(totals, results)
     generated += "\n| Technology | Resolution claim | Marked endpoints | Share of code endpoints |\n| --- | --- | ---: | ---: |\n"
     totals.each do |row|
       row["claims"].as_h.each do |claim, mark|

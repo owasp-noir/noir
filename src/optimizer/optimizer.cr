@@ -555,7 +555,7 @@ class EndpointOptimizer
   end
 
   private def templated_url?(url : String) : Bool
-    (url.includes?("{") && url.includes?("}")) || url.matches?(WHOLE_SEGMENT_PLACEHOLDER_RE)
+    (url.includes?("{") && url.includes?("}")) || url.matches?(Noir::URLPath::WHOLE_SEGMENT_PLACEHOLDER_RE)
   end
 
   private def collection_endpoint?(endpoint : Endpoint) : Bool
@@ -977,14 +977,6 @@ class EndpointOptimizer
     normalize_url_shape(normalized, collection_endpoint?(endpoint), regex_placeholders?(endpoint))
   end
 
-  # A whole-segment path placeholder in any framework's spelling: `{id}`,
-  # `:id` (Express/Rails/Postman) or `<id>` / `<int:id>` (Flask/Django).
-  # Constraints were stripped by `normalize_url_shape`, except a regex
-  # router's (`{id:[0-9]+}`, `{sha:[a-f0-9]{7,64}}`), which still unifies
-  # with a spec's `{id}`. An optional slot (`{id?}`: Laravel, ASP.NET) is the
-  # slot a spec lists as `{id}`.
-  WHOLE_SEGMENT_PLACEHOLDER_RE = %r{(?<=/)(?:\{[A-Za-z_]\w*\??(?::(?:[^{}/]|\{[^{}/]*\})+)?\}|:[A-Za-z_]\w*|<(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*>)(?=[/?#]|\z)}
-
   # Dedup-key form of a URL: every whole-segment placeholder becomes `{}`, so
   # one route reported by its code (`/users/:id`) and by a spec or collection
   # (`/users/{userId}`) is one endpoint. A literal segment (`/users/new`)
@@ -996,7 +988,7 @@ class EndpointOptimizer
   # with no constraint wins over `{id:[0-9]+}`
   # (`drop_foreign_placeholder_constraint`).
   private def unify_path_placeholders(url : String) : String
-    url.gsub(WHOLE_SEGMENT_PLACEHOLDER_RE, "{}")
+    Noir::URLPath.unify_path_placeholders(url)
   end
 
   # Handlers that share an address but match different request conditions
