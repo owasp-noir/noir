@@ -268,6 +268,6 @@ Status codes come from live requests, so `url` must point at a running instance 
 
 ## Implementation Notes
 
-- The action runs the `ghcr.io/owasp-noir/noir` Docker image. The image tag follows the ref you pin: `@v1.4.0` uses `1.4.0`, `@main` uses `main`, and a commit SHA uses `latest`. If the tag can't be pulled (for example, a branch with no published image), the action falls back to `latest` with a warning.
+- The action runs the `ghcr.io/owasp-noir/noir` Docker image. The image tag follows the ref you pin: `@v1.4.0` uses `1.4.0`, `@main` uses `main`, and a commit SHA uses `latest`. If the tag can't be pulled (for example, a branch with no published image), the action falls back to `latest` with a warning. The `main` image is rebuilt by a nightly job, so with `@main` an analyzer change is normally available after the next nightly build.
 - Each input maps to one CLI flag.
 - See supported technologies: `noir list techs`

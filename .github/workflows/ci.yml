@@ -4,9 +4,10 @@ name: CI
 # workflow-level `paths:` list. A workflow-level filter can only answer "run the
 # whole thing or none of it", which was wrong in both directions here: a
 # docs-only push to main still paid for two Docker builds and a 10-minute
-# snapcraft build, while a non-Crystal fixture change (`spec/**` is mostly .py /
-# .java / .ts) or a hand-edit to a generated table in README.md matched nothing
-# and silently ran no CI at all.
+# snapcraft build (both have since moved to nightly runs of their own), while
+# a non-Crystal fixture change (`spec/**` is mostly .py / .java / .ts) or a
+# hand-edit to a generated table in README.md matched nothing and silently ran
+# no CI at all.
 on:
   pull_request:
     branches: [main]
@@ -20,16 +21,15 @@ on:
         default: ""
 
 # Rapid pushes to a PR branch used to leave every superseded Docker build
-# running to completion. Pushes to main are never cancelled — publish-ghcr and
-# the murals key off them.
+# running to completion. Pushes to main are never cancelled: each one is the
+# only run that tests that exact merged tree.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Nothing here publishes: the images are built with `push: false` and the
-# snapcraft job already asked for this explicitly. Stating it at the workflow
-# level also covers dorny/paths-filter, which reads the pull request's file
-# list through the API.
+# Nothing here publishes: the images are built with `push: false`. Stating it
+# at the workflow level also covers dorny/paths-filter, which reads the pull
+# request's file list through the API.
 permissions:
   contents: read
 
@@ -48,7 +48,6 @@ jobs:
       docker: ${{ steps.gate.outputs.docker }}
       action: ${{ steps.gate.outputs.action }}
       generated_docs: ${{ steps.gate.outputs.generated_docs }}
-      snap: ${{ steps.gate.outputs.snap }}
       nix: ${{ steps.gate.outputs.nix }}
       tag_rules: ${{ steps.gate.outputs.tag_rules }}
       test_versions: ${{ steps.gate.outputs.test_versions }}
@@ -98,9 +97,6 @@ jobs:
               - docs/content/_index.md
               - docs/content/_index.ko.md
               - docs/content/usage/supported/**
-            snap:
-              - *crystal
-              - snap/**
             nix:
               # Deliberately not the whole of `src/**`: the flake pins its
               # dependency set from shard.lock, so ordinary analyzer changes
@@ -129,14 +125,14 @@ jobs:
         # step sees an empty change set and would skip every job. Running the
         # workflow by hand is an explicit request for a full run, so force all
         # gates open — this is also what makes the `workflow_dispatch` entry
-        # point (and build-snapcraft's dispatch path) still mean something.
+        # point still mean something.
         #
         # A change set made up of nothing but tag rule files takes a short path.
         # Those files are data: `scripts/check_tag_rules.cr` (the tag-rules job)
         # proves each rule against its own examples in seconds, and the spec
         # suite still runs once as the full check. What a rule file cannot
         # affect is skipped: a second Crystal version, the plain build, lint,
-        # both Docker images, the action e2e and the snap. windows.yml carries
+        # both Docker images and the action e2e. windows.yml carries
         # the matching `!src/tagger/rules/**`. The first contribution most
         # people make is a word added to one of these files, and without this a
         # room of them queues eleven jobs each for a one-line YAML edit.
@@ -151,7 +147,7 @@ jobs:
           fi
           echo "rules_only=$rules_only"
 
-          for gate in crystal spec lint docker action generated_docs snap nix tag_rules; do
+          for gate in crystal spec lint docker action generated_docs nix tag_rules; do
             if [ "$FORCE_ALL" = "true" ]; then
               value=true
             else
@@ -159,7 +155,7 @@ jobs:
             fi
             if [ "$rules_only" = "true" ]; then
               case "$gate" in
-                crystal | lint | docker | action | snap) value=false ;;
+                crystal | lint | docker | action) value=false ;;
               esac
             fi
             echo "$gate=$value" >> "$GITHUB_OUTPUT"
@@ -249,9 +245,10 @@ jobs:
       - name: Build
         run: shards build
   build-docker:
-    # Pull requests only. A push to main builds and *publishes* the very same
-    # Dockerfile for both architectures in publish-ghcr.yml, so running this
-    # here as well bought nothing but a second full image build.
+    # Pull requests and manual runs, not pushes. Every source change reaches
+    # main through a pull request that built both images, and publish-ghcr.yml
+    # builds the release image from main every night, so an image build per
+    # push bought nothing.
     needs: changes
     if: github.event_name != 'push' && needs.changes.outputs.docker == 'true'
     # linux/arm64 used to cross-build under QEMU on an x86 runner, which took
@@ -291,16 +288,16 @@ jobs:
           # A plain build, not `--release`: the release compile was ~13 of
           # this job's ~14 minutes, and what this job proves (the Dockerfile
           # builds and links statically on both arches) does not depend on
-          # optimizer output. publish-ghcr.yml still builds the release image
-          # on every main push, so a release-only break surfaces there.
+          # optimizer output. publish-ghcr.yml builds the release image every
+          # night, so a release-only break surfaces there.
           build-args: NOIR_BUILD_FLAGS=
           # Read publish-ghcr.yml's scope as well as this job's own. GitHub
           # scopes its Actions cache per ref, so a pull request can only read
           # entries written on its own branch or on main — and now that this
           # job no longer runs on pushes to main, its own scope is never
           # populated there. publish-ghcr.yml builds the identical Dockerfile
-          # on every main push, so its layers are what keep pull requests off
-          # a cold cache.
+          # from main every night, so its layers (base image, packages,
+          # shards) are what keep pull requests off a cold cache.
           cache-from: |
             type=gha,scope=ci-${{ matrix.slug }}
             type=gha,scope=ghcr-${{ matrix.slug }}
@@ -603,8 +600,8 @@ jobs:
     # the old shard.
     #
     # The check-and-evaluate half is cheap enough to run on every pull request.
-    # The release build costs about as much as build-snapcraft below and is
-    # gated the same way.
+    # The release build takes about ten minutes, so it runs only on pushes to
+    # main that touch the flake's inputs, and on manual runs.
     name: Nix flake
     needs: changes
     if: needs.changes.outputs.nix == 'true'
@@ -629,25 +626,3 @@ jobs:
           github.event_name == 'push' && github.ref == 'refs/heads/main' ||
           github.event_name == 'workflow_dispatch'
         run: nix build .#default --print-build-logs
-  build-snapcraft:
-    # ~10 minutes, and it only ever proves that snap/snapcraft.yaml still builds
-    # the current source — so it needs neither pull requests nor pushes that
-    # leave both untouched.
-    needs: changes
-    if: >-
-      needs.changes.outputs.snap == 'true' &&
-      (github.event_name == 'push' && github.ref == 'refs/heads/main' ||
-      github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [amd64]
-    steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v7
-      - name: Build snapcraft package
-        uses: canonical/action-build@v1
-        id: build

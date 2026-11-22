@@ -268,6 +268,6 @@ jobs:
 
 ## 구현 참고 사항
 
-- Action은 `ghcr.io/owasp-noir/noir` Docker 이미지로 실행됩니다. 이미지 태그는 고정한 ref를 따릅니다. `@v1.4.0`은 `1.4.0`, `@main`은 `main`, 커밋 SHA는 `latest`를 씁니다. 태그를 받을 수 없으면(예: 이미지가 없는 브랜치) 경고를 남기고 `latest`로 대신 실행합니다.
+- Action은 `ghcr.io/owasp-noir/noir` Docker 이미지로 실행됩니다. 이미지 태그는 고정한 ref를 따릅니다. `@v1.4.0`은 `1.4.0`, `@main`은 `main`, 커밋 SHA는 `latest`를 씁니다. 태그를 받을 수 없으면(예: 이미지가 없는 브랜치) 경고를 남기고 `latest`로 대신 실행합니다. `main` 이미지는 야간 작업으로 다시 빌드되므로, `@main`을 쓰면 분석기 변경은 보통 다음 야간 빌드 이후에 반영됩니다.
 - 입력값 하나가 CLI 플래그 하나에 대응합니다.
 - 지원 기술 목록: `noir list techs`
