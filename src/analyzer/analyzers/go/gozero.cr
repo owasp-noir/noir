@@ -101,7 +101,7 @@ module Analyzer::Go
         api_prefix = ""
         in_server_block = false
         api_types = File.extname(path) == ".api" ? api_request_types(content) : Hash(String, Array(Noir::GoStructFields::Field)).new
-        named = Noir::GoNamedHandler.new(content, path, routes_by_line.values.flatten, named_scope)
+        named = go_named_handler(content, path, routes_by_line.values.flatten, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)
@@ -146,6 +146,7 @@ module Analyzer::Go
           if File.extname(path) == ".go"
             if ts_hits = routes_by_line[index]?
               ts_hits.each do |route|
+                details = go_route_details(route, path, content)
                 Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                   new_endpoint = Endpoint.new(route.path, verb, details)
                   if entries = callees_by_route[route.line]?

@@ -83,7 +83,7 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        named = go_named_handler(content, path, ts_routes, named_scope)
 
         # Resolve 1-hop callees for every route in this file.
         # Inline-closure handlers walk in place; bare
@@ -134,8 +134,6 @@ module Analyzer::Go
           # A named handler's body belongs to the route that names it.
           next if named.claim?(index, line)
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           # Emit endpoints for any verb route that begins on this
           # line. Gin allows the same verb method name upper/lower
           # (`r.GET` vs `r.Get`); both are covered by the TS
@@ -145,6 +143,7 @@ module Analyzer::Go
             segment = [] of String
             last_endpoints = [] of Endpoint
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               # `r.Any(...)` / `r.All(...)` register one route under
               # every HTTP method. Fan out so downstream formats
               # (SARIF / Postman / openapi) get a usable verb per

@@ -287,7 +287,7 @@ module Analyzer::Go
         mounted_func_brace_count = 0
         # Named handlers (`r.Get("/a", listA)`): their bodies sit outside any
         # inline closure, so they are attributed to the route that names them.
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        named = go_named_handler(content, path, ts_routes, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)
@@ -330,8 +330,6 @@ module Analyzer::Go
             end
           end
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if line.includes?(".Mount(")
             if (target = parse_mount_target(mount_call(lines, index, dir), string_values_for(dir))) &&
                (target_dir = resolve_mount_dir(path, dir, target, file_contents_cache))
@@ -339,6 +337,7 @@ module Analyzer::Go
                 package_files, file_contents_cache, file_lines_cache, [] of String, target[:then_method])
               prefix = mount_join(mount_scopes[index]? || "", target[:prefix])
               endpoints.each do |ep|
+                apply_mount_middleware(ep, path, content, index)
                 ep.url = mount_join(prefix, ep.url)
                 result << ep
               end
@@ -352,6 +351,7 @@ module Analyzer::Go
           # below only attributes params to the enclosing route.
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                 endpoint = Endpoint.new(route.path, verb, details)
                 if entries = callees_by_route[route.line]?
@@ -634,6 +634,22 @@ module Analyzer::Go
       Regex.new("\\b(\\w+)\\s+\\*?(?:#{type_alt})\\b(?!\\.)|\\b(\\w+)\\s*:?=\\s*&?(?:#{value_alt})")
     end
 
+    private def apply_mount_middleware(endpoint, file, content, row)
+      scope = go_middleware(file, content).scopes[row]?
+      endpoint.details.code_paths.map! do |location|
+        if chain = location.route_middleware
+          if scope
+            steps = Noir::TreeSitterGoRouteExtractor.scoped_steps(scope, file, endpoint.url)
+            # The analyzer followed the mount. Its existing guard proof
+            # only certifies installs on the router inside one function.
+            location.route_middleware = steps.map { |step| step.copy_with(origin: :mount, scope_proven: false) } + chain
+          end
+          location.middleware_scope_unresolved = true unless scope.try(&.complete)
+        end
+        location
+      end
+    end
+
     # Route paths from the walker always start with `/` (or are empty for
     # a `m.Get("", h)` at the router root), so joining is a matter of not
     # doubling the slash when the mount prefix is `/` or `` — gitea mounts
@@ -746,6 +762,7 @@ module Analyzer::Go
               next unless target_dir
               expand_mounted_router(target_dir, target[:func_name], target[:recv_type],
                 package_files, file_contents_cache, file_lines_cache, ancestors + [key], target[:then_method]).each do |ep|
+                apply_mount_middleware(ep, search_path, content, row - 1)
                 ep.url = mount_join(mount_join(mount_scopes[row - 1]? || "", target[:prefix]), ep.url)
                 nested << ep
               end
@@ -803,7 +820,7 @@ module Analyzer::Go
                                  routes : Array(Noir::TreeSitterGoRouteExtractor::Route),
                                  file_lines_cache : Hash(String, Array(String)),
                                  named_params : Bool = false) : Array(Endpoint)
-      named = Noir::GoNamedHandler.new(file_content, route_file, routes, @named_scope)
+      named = go_named_handler(file_content, route_file, routes, @named_scope)
       inline_params = nil
       if named_params && (scope = @named_scope)
         dir = File.dirname(route_file)
@@ -813,7 +830,7 @@ module Analyzer::Go
       end
       file_endpoints = [] of Endpoint
       routes.each do |route|
-        details = Details.new(PathInfo.new(route_file, route.line + 1))
+        details = go_route_details(route, route_file, file_content)
         handler = named.handler_for(route)
         Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
           endpoint = Endpoint.new(route.path, verb, details)

@@ -48,7 +48,7 @@ module Analyzer::Go
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
         # `sub.GET("/{key}", backupDownload)`: the handler's name, and the
         # request reads of its body (wherever it is declared).
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        named = go_named_handler(content, path, ts_routes, named_scope)
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         lines = GoEngine.strip_comments(content).lines
@@ -63,10 +63,10 @@ module Analyzer::Go
           next if named.claim?(index, line)
           code = line.gsub(LITERAL, %(""))
           delta = code.count('{') - code.count('}')
-          details = Details.new(PathInfo.new(path, index + 1))
           route_eps = [] of Endpoint
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                 endpoint = Endpoint.new(route.path, verb, details)
                 if entries = callees_by_route[route.line]?

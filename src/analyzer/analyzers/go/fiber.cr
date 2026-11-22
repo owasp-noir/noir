@@ -53,7 +53,7 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        named = go_named_handler(content, path, ts_routes, named_scope)
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
         expand_builders += router_wrapper_expansions(content, path, wrappers, expand_builders) unless wrappers.empty?
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
@@ -88,12 +88,11 @@ module Analyzer::Go
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if ts_hits = routes_by_line[index]?
             add_fiber_body_params(segment, path, [last_endpoint], named_scope.structs)
             segment = [] of String
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                 new_endpoint = Endpoint.new(route.path, verb, details)
                 new_endpoint.protocol = "ws" if route.handler.includes?("websocket.New(")

@@ -101,15 +101,14 @@ module Analyzer::Go
         routes_by_line.each_key { |row| route_rows << row }
         external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
-        named = Noir::GoNamedHandler.new(content, path, verb_routes, named_scope)
+        named = go_named_handler(content, path, verb_routes, named_scope)
 
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               controller_body = beego_router_lines.includes?(route.line) ? controller_method(import_aliases, path, content, raw_lines, route, named_scope) : nil
               # `?:owner` is an optional segment, not a query string.
               verbs = Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb)

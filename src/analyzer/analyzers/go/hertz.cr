@@ -61,7 +61,7 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        named = go_named_handler(content, path, ts_routes, named_scope)
         expand_builders = router_builder_expansions(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups)
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
@@ -89,10 +89,9 @@ module Analyzer::Go
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               callee_entries = callees_by_route[route.line]?
               if route.verb == "ANY"
                 HTTP_METHODS_EXPANDED.each do |m|

@@ -68,10 +68,9 @@ module Analyzer::Go
         end
 
         lines.each_index do |index|
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if ts_hits = routes_by_line[index]?
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               # A method-less `.Route(...)` accepts any method;
               # treat it as the "any verb" wildcard so
               # `fan_out_verbs` expands into one endpoint per

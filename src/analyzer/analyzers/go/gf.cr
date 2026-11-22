@@ -75,7 +75,7 @@ module Analyzer::Go
           routes_by_line[r.line] << r
         end
 
-        named = Noir::GoNamedHandler.new(content, path, ts_routes, named_scope)
+        named = go_named_handler(content, path, ts_routes, named_scope)
 
         # Resolve 1-hop callees for every route (see Gin).
         route_rows = Set(Int32).new
@@ -86,11 +86,10 @@ module Analyzer::Go
         lines.each_with_index do |line, index|
           next if named.claim?(index, line)
 
-          details = Details.new(PathInfo.new(path, index + 1))
-
           if ts_hits = routes_by_line[index]?
             last_endpoints = [] of Endpoint
             ts_hits.each do |route|
+              details = go_route_details(route, path, content)
               # `BindHandler("/x", h)` and `group.ALL("/x", h)` answer every
               # method, like a `g.Meta` `method:"all"` route.
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|

@@ -440,7 +440,8 @@ end
 
 # Source and registration position of one step in a framework's middleware chain.
 record RouteMiddleware, source : String, file : String, origin : Symbol = :route,
-  handler_position : Bool = false, receiver : String = "", prefix : String? = nil, verb : String = "use"
+  handler_position : Bool = false, receiver : String = "", prefix : String? = nil, verb : String = "use",
+  line : Int32? = nil, scope_proven : Bool = false
 
 struct PathInfo
   include JSON::Serializable
@@ -455,6 +456,12 @@ struct PathInfo
   @[JSON::Field(ignore: true)]
   @[YAML::Field(ignore: true)]
   property route_middleware : Array(RouteMiddleware)?
+
+  # The registration arguments were read, but a caller or mount can
+  # supply additional middleware the analyzer could not place.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  property? middleware_scope_unresolved = false
 
   def initialize(@path : String)
     @line = nil

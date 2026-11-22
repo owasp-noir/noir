@@ -170,11 +170,11 @@ class Noir::GoNamedHandler
 
   # `handler_first`: the handler is the first argument after the path and
   # middleware follows it (Echo's `GET(path, h, m...)`), not the last.
-  def initialize(@content : String, @path : String, routes : Array(Noir::TreeSitterGoRouteExtractor::Route), scope : Scope? = nil, @handler_first : Bool = false)
+  def initialize(@content : String, @path : String, routes : Array(Noir::TreeSitterGoRouteExtractor::Route), scope : Scope? = nil, @handler_first : Bool = false, middleware_index : Noir::TreeSitterGoRouteExtractor::MiddlewareIndex? = nil)
     content = @content
     path = @path
     return if routes.empty?
-    @middleware = Noir::TreeSitterGoRouteExtractor.route_middleware(content, routes)
+    @middleware = Noir::TreeSitterGoRouteExtractor.route_middleware(content, routes, middleware_index)
     references = Hash(String, Tuple(String, String)).new
     wrapped = Set(String).new
     routes.each do |r|

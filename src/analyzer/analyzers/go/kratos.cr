@@ -29,6 +29,7 @@ module Analyzer::Go
   # so they don't need to be extracted here.
   class Kratos < Analyzer
     include GoTestPath
+    include GoRouteDetails
     analyzer_for "go_kratos"
 
     # Only `.go` files that import Kratos' own HTTP transport package
@@ -84,7 +85,7 @@ module Analyzer::Go
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
         ts_routes.each do |route|
-          details = Details.new(PathInfo.new(path, route.line + 1))
+          details = go_route_details(route, path, content)
 
           ignores_context = route.handler_args.size == 1 && handlers_ignoring_context.includes?(route.handler)
           Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
