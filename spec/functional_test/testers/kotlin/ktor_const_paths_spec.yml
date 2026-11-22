@@ -1,0 +1,35 @@
+# `"$CONST/x"` and `"${Obj.CONST}/x"` templates resolve like `CONST + "/x"`,
+# constants built from other constants resolve, and `Type.CONST` from
+# another file is a route path. An unknown name keeps its placeholder.
+fixture: fixtures/kotlin/ktor_const_paths/
+counts: {techs: 1, endpoints: 13}
+endpoints:
+  - url: "/api/v2/a-short"
+    method: "GET"
+  - url: "/api/v2/b-braced"
+    method: "GET"
+  - url: "/api/v2/c-concat"
+    method: "GET"
+  - url: "/api/v1/d-object"
+    method: "GET"
+  - url: "/api/v1/users"
+    method: "GET"
+  - url: "/api/v2/admin/e-derived"
+    method: "GET"
+  - url: "/api/v2/f-route/create"
+    method: "POST"
+  - url: "/g-real/{id}/{UNKNOWN_SUFFIX}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "UNKNOWN_SUFFIX", type: "path"}
+  - url: "/api/v1"
+    method: "GET"
+  - url: "/api/v1/h-cross-concat"
+    method: "GET"
+  - url: "/local"
+    method: "GET"
+  - url: "/local/items"
+    method: "GET"
+  - url: "/local/items2"
+    method: "GET"

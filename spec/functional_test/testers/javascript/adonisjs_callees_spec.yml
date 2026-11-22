@@ -1,0 +1,19 @@
+fixture: fixtures/javascript/adonisjs/
+counts: {techs: 1, endpoints: 23}
+options:
+  include_callee: true
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "HomeController.index"}
+  - url: "/api/v1/users"
+    method: "POST"
+    callees:
+      - {name: "UsersController.store"}
+  - url: "/articles/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "ArticlesController.destroy"}

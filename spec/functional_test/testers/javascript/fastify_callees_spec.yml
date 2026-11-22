@@ -1,0 +1,24 @@
+# Regression test for --include-callee on Fastify. Fastify consumes
+# JSRouteExtractor, so it can reuse the shared JS callee extractor
+# introduced for Hono.
+fixture: fixtures/javascript/fastify_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "parseUser", line: 20}
+      - {name: "serviceFactory().save", line: 8}
+      - {name: "AuditLog.write", line: 9}
+      - {name: "reply.send", line: 11}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "userId", type: "query"}
+    callees:
+      - {name: "loadProfile", line: 28}
+      - {name: "reply.send", line: 17}

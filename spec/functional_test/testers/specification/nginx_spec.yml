@@ -1,0 +1,15 @@
+fixture: fixtures/specification/nginx/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/v1/users"
+    method: "ANY"
+  - url: "/admin/.*"
+    method: "ANY"
+  - url: "/healthz"
+    method: "ANY"
+  - url: "/api/"
+    method: "ANY"
+  - url: "/api/"
+    method: "POST"
+  - url: "/v[0-9]{1,2}/.+.json"
+    method: "ANY"

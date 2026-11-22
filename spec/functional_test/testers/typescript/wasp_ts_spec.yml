@@ -1,0 +1,86 @@
+# Wasp Spec (`main.wasp.ts` + feature `*.wasp.ts`, Wasp 0.24+). The app's
+# `auth` is a config object imported from another spec file.
+fixture: fixtures/typescript/wasp_ts/
+counts: {techs: 1, endpoints: 21}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/login"
+    method: "GET"
+  - url: "/tasks/:taskId"
+    method: "GET"
+    params:
+      - {name: "taskId", type: "path"}
+  - url: "/operations/get-tasks"
+    method: "POST"
+  - url: "/operations/get-oldest-task"
+    method: "POST"
+    params:
+      - {name: "listId", type: "json"}
+  - url: "/operations/create-task"
+    method: "POST"
+    params:
+      - {name: "description", type: "json"}
+      - {name: "isDone", type: "json"}
+  # `updateTask as renameTask`: Wasp names the operation after the local alias.
+  - url: "/operations/rename-task"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "title", type: "json"}
+  - url: "/api/tasks/export"
+    method: "GET"
+    params:
+      - {name: "format", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/api/tasks/:listId/upload"
+    method: "POST"
+    params:
+      - {name: "listId", type: "path"}
+      - {name: "tasks", type: "json"}
+  - url: "/crud/tasks/get"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+  - url: "/crud/tasks/update"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+  - url: "/auth/me"
+    method: "GET"
+  - url: "/auth/logout"
+    method: "POST"
+  - url: "/auth/email/login"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "password", type: "json"}
+  - url: "/auth/email/signup"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "password", type: "json"}
+  - url: "/auth/email/request-password-reset"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+  - url: "/auth/email/reset-password"
+    method: "POST"
+    params:
+      - {name: "token", type: "json"}
+      - {name: "password", type: "json"}
+  - url: "/auth/email/verify-email"
+    method: "POST"
+    params:
+      - {name: "token", type: "json"}
+  - url: "/auth/github/login"
+    method: "GET"
+  - url: "/auth/github/callback"
+    method: "GET"
+    params:
+      - {name: "code", type: "query"}
+      - {name: "state", type: "query"}
+  - url: "/auth/exchange-code"
+    method: "POST"
+    params:
+      - {name: "code", type: "json"}

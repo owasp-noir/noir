@@ -1,0 +1,31 @@
+# Endless methods: `def index = ...` is an action, and endless helpers
+# (`def post_params = params.require(:post).permit(...)`, `def allowed =
+# %i[...]`) still supply their permit lists.
+fixture: fixtures/ruby/rails_endless_methods/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/posts"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "body", type: "json"}
+  - url: "/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "summary", type: "json"}
+      - {name: "tags", type: "json"}
+  - url: "/posts/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "summary", type: "json"}
+      - {name: "tags", type: "json"}

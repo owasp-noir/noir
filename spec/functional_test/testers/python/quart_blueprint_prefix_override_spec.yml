@@ -1,0 +1,20 @@
+# A url_prefix passed to register_blueprint() replaces the blueprint's own
+# url_prefix; the own prefix is used only when url_prefix is omitted.
+# A blueprint registered twice is served under both registrations.
+fixture: fixtures/python/quart_blueprint_prefix_override/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/mounted/o"
+    method: "GET"
+  - url: "/api/child/c"
+    method: "GET"
+  - url: "/outer/mounted-inner/i"
+    method: "GET"
+  - url: "/e"
+    method: "GET"
+  - url: "/kept/k"
+    method: "GET"
+  - url: "/v1/t"
+    method: "GET"
+  - url: "/v2/t"
+    method: "GET"

@@ -1,0 +1,180 @@
+fixture: fixtures/java/spring_data_rest/
+counts: {techs: 2, endpoints: 35}
+endpoints:
+  # @RepositoryRestResource(path = "people"), Paging + Crud.
+  - url: "/people"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "size", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/people"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "firstName", type: "json"}
+      - {name: "lastName", type: "json"}
+  - url: "/people/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/people/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "firstName", type: "json"}
+      - {name: "lastName", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/people/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "firstName", type: "json"}
+      - {name: "lastName", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/people/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/people/search"
+    method: "GET"
+  - url: "/people/search/findByLastName"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  # Unannotated: pluralized entity path; delete + deleteById exported = false drop DELETE.
+  - url: "/orders"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "size", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/orders"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "status", type: "json"}
+  - url: "/orders/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/orders/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "status", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/orders/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "status", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/orders/search"
+    method: "GET"
+  - url: "/orders/search/byStatus"
+    method: "GET"
+    params:
+      - {name: "status", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "size", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/orders/search/deleteByStatus"
+    method: "GET"
+    params:
+      - {name: "status", type: "query"}
+  # Selective exposure through a @NoRepositoryBean base that extends Repository.
+  - url: "/tags/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/tags/search"
+    method: "GET"
+  - url: "/tags/search/findByName"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  # Read-only Repository: only declared finders.
+  - url: "/categories"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "size", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/categories/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/categories/search"
+    method: "GET"
+  - url: "/categories/search/countByName"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  # Through a @NoRepositoryBean base repository.
+  - url: "/companies"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "size", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/companies"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "name", type: "json"}
+  - url: "/companies/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/companies/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "name", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/companies/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "name", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/companies/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # inventory module: spring.data.rest.base-path = /api.
+  - url: "/api/items"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "size", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/api/items"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "sku", type: "json"}
+  - url: "/api/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/items/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "sku", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/api/items/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "sku", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/api/items/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+# java_spring + java_spring_data_rest. SecretRepository (exported = false),
+# the package-private AuditRepository and the plain-JPA legacy module's
+# WidgetRepository export nothing.

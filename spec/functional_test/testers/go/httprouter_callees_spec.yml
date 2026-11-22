@@ -1,0 +1,47 @@
+# Regression test for --include-callee on httprouter (#1366).
+# Httprouter has two route shapes that the analyzer threads through
+# `extract_routes(handle_method: "Handle")`:
+#
+#   1. Verb-method form: `r.GET("/x", h)` / `r.POST("/x", h)` etc.
+#   2. Method-first form: `r.Handle("METHOD", "/x", h)`.
+#
+# `find_handler_arg` in `GoCalleeExtractor` picks the first non-string
+# positional arg after the path string, which works for both shapes
+# transparently (Handle has two leading strings, then the handler).
+#
+# httprouter extends `Analyzer` directly (not `GoEngine`), so the
+# analyzer builds `file_contents` inline and uses the module-level
+# twins on `GoCalleeExtractor` — this spec confirms that path
+# resolves cross-file handlers correctly.
+#
+# Coverage:
+#   - POST /users   — verb-method form, named handler in sibling
+#                     `handlers.go`.
+#   - GET /healthz  — verb-method form with inline closure handler.
+#   - GET /profile  — method-first form `r.Handle("GET", "/profile",
+#                     listProfile)`, second named handler in sibling
+#                     file.
+fixture: fixtures/go/httprouter_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "query"}
+    callees:
+      - {name: "r.FormValue", line: 10}
+      - {name: "saveUser", path: "./spec/functional_test/fixtures/go/httprouter_callees/helpers.go", line: 3}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/httprouter_callees/helpers.go", line: 7}
+      - {name: "w.Write", line: 13}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "w.Write", line: 13}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/httprouter_callees/helpers.go", line: 10}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/httprouter_callees/helpers.go", line: 7}
+      - {name: "w.Write", line: 19}

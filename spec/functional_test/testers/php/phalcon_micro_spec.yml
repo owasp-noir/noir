@@ -1,0 +1,41 @@
+fixture: fixtures/php/phalcon_micro/
+counts: {techs: 2, endpoints: 10}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Auth-Token", type: "header"}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/login"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "session", type: "cookie"}
+  - url: "/invoices/view/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/invoices/add"
+    method: "POST"
+# Detection still sees php_phalcon and php_pure

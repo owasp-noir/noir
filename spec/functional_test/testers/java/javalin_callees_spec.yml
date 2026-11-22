@@ -1,0 +1,42 @@
+# Regression test for --include-callee on Javalin (#1366). Javalin
+# runs on the lambda-DSL shape — `app.get("/x", ctx -> { ... })` —
+# so callees come out of a Java `lambda_expression`'s body, not a
+# `method_declaration`. The shared JVM lambda DSL extractor already
+# locates that body for parameter scanning; callee extraction reuses
+# it via `JavaCalleeExtractor.callees_in_lambda`.
+#
+# Coverage:
+#   - POST /users    — selector-on-identifier (`ctx.queryParam`,
+#                      `ctx.result`) and bare-static
+#                      (`UserService.save`, `AuditLog.write`)
+#                      receivers.
+#   - GET  /profile  — bare unqualified call (`buildProfile`).
+#   - GET  /legacy   — chained-on-call (`getLegacy().toString()`)
+#                      drops the outer `toString` and keeps only
+#                      the inner `getLegacy`.
+fixture: fixtures/java/javalin_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "query"}
+    callees:
+      - {name: "ctx.queryParam", line: 10}
+      - {name: "UserService.save", line: 11}
+      - {name: "AuditLog.write", line: 12}
+      - {name: "ctx.result", line: 13}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", line: 17}
+      - {name: "AuditLog.write", line: 18}
+      - {name: "ctx.result", line: 19}
+  - url: "/legacy"
+    method: "GET"
+    callees:
+      - {name: "AuditLog.write", line: 23}
+      - {name: "ctx.result", line: 24}
+      - {name: "getLegacy", line: 24}

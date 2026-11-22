@@ -1,0 +1,25 @@
+# Regression test for --include-callee on Koa. Koa consumes
+# JSRouteExtractor, so it can reuse the shared JS callee extractor.
+fixture: fixtures/javascript/koa_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Actor", type: "header"}
+    callees:
+      - {name: "ctx.get", line: 9}
+      - {name: "parseBody", line: 24}
+      - {name: "serviceFactory().save", line: 11}
+      - {name: "AuditLog.write", line: 12}
+      - {name: "serializeUser", line: 32}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "sessionId", type: "cookie"}
+    callees:
+      - {name: "ctx.cookies.get", line: 18}
+      - {name: "loadProfile", line: 36}

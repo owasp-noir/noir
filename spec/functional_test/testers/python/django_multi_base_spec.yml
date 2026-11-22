@@ -1,0 +1,11 @@
+fixture: fixtures/python/django_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/python/django_multi_base/service_a", "./spec/functional_test/fixtures/python/django_multi_base/service_b"]
+endpoints:
+  # Each service has a static/ dir (a.txt, b.txt). Django serves static files
+  # under STATIC_URL, never at the site root, so they are not endpoints.
+  - url: "/a-only/"
+    method: "GET"
+  - url: "/b-only/"
+    method: "GET"

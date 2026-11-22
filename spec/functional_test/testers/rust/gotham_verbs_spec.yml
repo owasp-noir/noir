@@ -1,0 +1,28 @@
+# Gotham verb coverage: a typed-extractor pipeline between the verb and
+# `.to` (`.get("/p").with_path_extractor::<T>().to(h)`), the `get_or_head`
+# convenience verb, the multi-method `request(vec![Method::GET, ...])`
+# form, static `to_file` terminals, and `associate` closures whose inner
+# `assoc.<verb>().to(h)` calls register under the associate path.
+fixture: fixtures/rust/gotham_verbs/
+counts: {techs: 1, endpoints: 8}
+options:
+  only_techs: "rust_gotham"
+endpoints:
+  - url: "/user/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/products"
+    method: "GET"
+  - url: "/products"
+    method: "HEAD"
+  - url: "/home"
+    method: "GET"
+  - url: "/home"
+    method: "HEAD"
+  - url: "/doc"
+    method: "GET"
+  - url: "/address"
+    method: "POST"
+  - url: "/address"
+    method: "GET"

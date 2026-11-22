@@ -1,0 +1,42 @@
+fixture: fixtures/lua/lor/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  # Direct route on the application object (`app:get("/", ...)`).
+  - url: "/"
+    method: "GET"
+  # In-file router mount: `app:use("/api", apiRouter())` with a same-file
+  # `apiRouter = lor:Router()`.
+  - url: "/api/ping"
+    method: "GET"
+  # Cross-file mount prefix: routes declared in app/routes/auth.lua are mounted
+  # under `/auth` by app/router.lua.
+  - url: "/auth/login"
+    method: "GET"
+  - url: "/auth/login"
+    method: "POST"
+  - url: "/auth/logout"
+    method: "GET"
+  # Cross-file mount prefix `/todo`, including verbs, a path param, a relative
+  # (no leading slash) path, and `:all`.
+  - url: "/todo/complete"
+    method: "POST"
+  - url: "/todo/add"
+    method: "PUT"
+  - url: "/todo/delete"
+    method: "DELETE"
+  - url: "/todo/find/:filter"
+    method: "GET"
+    params:
+      - {name: "filter", type: "path"}
+  - url: "/todo/index"
+    method: "POST"
+  - url: "/todo/status"
+    method: "GET"
+  - url: "/todo/status"
+    method: "POST"
+  - url: "/todo/status"
+    method: "PUT"
+  - url: "/todo/status"
+    method: "DELETE"
+  - url: "/todo/status"
+    method: "PATCH"

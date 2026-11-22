@@ -1,0 +1,27 @@
+# A route path containing a Rust string escape must survive intact.
+#
+# tree-sitter-rust splits a string literal at every escape, so
+# `"/page-{id:\d+}"` parses as string_content `/page-{id:`, escape_sequence
+# `\d`, string_content `+}`. Eight of the ten Rust adapters read only the
+# first `string_content` child, which truncated the path to `/page-{id:` —
+# a URL that matches nothing, with the param lost.
+#
+# Regex-constrained path params are ordinary in tide, actix and rocket, so
+# this is not an exotic shape. No pre-existing Rust fixture carried one,
+# which is exactly why the truncation survived: the whole fixture sweep
+# compared clean either way.
+fixture: fixtures/rust/tide_escaped_paths/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/page-{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/file-{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/plain/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}

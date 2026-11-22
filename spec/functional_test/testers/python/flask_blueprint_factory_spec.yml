@@ -1,0 +1,27 @@
+# Factory-built blueprints take the url_prefix their registration gives,
+# including one mounted on a factory blueprint declared in another file.
+fixture: fixtures/python/flask_blueprint_factory/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  - url: "/tags/list"
+    method: "GET"
+  - url: "/settings/general"
+    method: "GET"
+  - url: "/settings/ai/models"
+    method: "GET"
+  - url: "/mcp/v1/"
+    method: "POST"
+  - url: "/h"
+    method: "GET"
+  - url: "/rss/feed"
+    method: "GET"
+  - url: "/pa"
+    method: "GET"
+  - url: "/pb"
+    method: "GET"
+  - url: "/A/alpha"
+    method: "GET"
+  - url: "/B/beta"
+    method: "GET"
+  - url: "/F/alpha"
+    method: "GET"

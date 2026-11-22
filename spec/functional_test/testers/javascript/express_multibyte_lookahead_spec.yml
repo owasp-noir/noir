@@ -1,0 +1,17 @@
+# A bounded look-ahead that ends inside a multi-byte character is invalid
+# UTF-8, and matching a regex against it raises. The parameter scan took
+# such a slice after `({ ... })` and after `const { ... }`, and the error
+# cost the file every route.
+fixture: fixtures/javascript/express_multibyte_lookahead/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+  - url: "/signup"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+  - url: "/health"
+    method: "GET"

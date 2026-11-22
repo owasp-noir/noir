@@ -1,0 +1,19 @@
+# `register_blueprint(bp, url_prefix=<expression>)`: a prefix built from a
+# string constant (imported by name, read off an imported module, or bound
+# in the registering file) with `+` or an f-string is the string it
+# evaluates to. `API_PREFIX + "/users"` used to mount the blueprint at the
+# root, and `f"{API_PREFIX}/items"` reported `/{API_PREFIX}/items/` with
+# `API_PREFIX` as a path parameter.
+fixture: fixtures/python/flask_blueprint_prefix_expression/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/api/v1/users/<int:user_id>"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+  - url: "/api/v1/items/"
+    method: "POST"
+  - url: "/api/v1/reports/daily"
+    method: "GET"
+  - url: "/admin/stats"
+    method: "GET"

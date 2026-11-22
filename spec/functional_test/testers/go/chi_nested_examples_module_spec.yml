@@ -1,0 +1,9 @@
+# `_examples/rest` is its own module (it has a go.mod), so Go builds it as an
+# ordinary package and its routes count even when the scan starts at the
+# parent module. `_examples/shared` belongs to the parent module and stays
+# excluded.
+fixture: fixtures/go/chi_nested_examples_module/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/ping"
+    method: "GET"

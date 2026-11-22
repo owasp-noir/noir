@@ -1,0 +1,16 @@
+# `@hono/zod-validator`: `zValidator(target, schema)` middleware, inline or
+# a same-file schema constant.
+fixture: fixtures/javascript/hono_zod_validator/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "content", type: "json"}
+      - {name: "draft", type: "query"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}

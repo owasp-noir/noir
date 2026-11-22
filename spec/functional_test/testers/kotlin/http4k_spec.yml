@@ -1,0 +1,62 @@
+fixture: fixtures/kotlin/http4k/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  - url: "/constant-health"
+    method: "GET"
+  - url: "/hello"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "filter", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-API-Key", type: "header"}
+      - {name: "body", type: "json"}
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/search"
+    method: "QUERY"
+    params:
+      - {name: "filter", type: "query"}
+  - url: "/api/v1/health"
+    method: "GET"
+  - url: "/api/v1/submit"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "X-Token", type: "header"}
+  - url: "/api/v1/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "category", type: "query"}
+  - url: "/api/contract-search"
+    method: "QUERY"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/sessions/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/profile"
+    method: "PATCH"
+    params:
+      - {name: "email", type: "form"}
+      - {name: "phone", type: "form"}
+  - url: "/widgets/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/widgets/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

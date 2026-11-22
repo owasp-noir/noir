@@ -1,0 +1,50 @@
+# Regression test for --include-callee on Fiber (#1366). Mirrors the
+# Gin/Echo coverage. Notable Fiber-specific shape: lowercase verb
+# methods (`app.Get` / `app.Post`) and `*fiber.Ctx` receiver — the
+# extractor handles both transparently because it keys off the verb
+# field text without case-sensitive matching.
+fixture: fixtures/go/fiber_callees/
+counts: {techs: 1, endpoints: 6}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "c.FormValue", line: 8}
+      - {name: "saveUser", path: "./spec/functional_test/fixtures/go/fiber_callees/helpers.go", line: 3}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/fiber_callees/helpers.go", line: 7}
+      - {name: "c.JSON", line: 11}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "c.JSON", line: 11}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/fiber_callees/helpers.go", line: 10}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/fiber_callees/helpers.go", line: 7}
+      - {name: "c.JSON", line: 17}
+  - url: "/remote/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "loadRemoteProfile", path: "./spec/functional_test/fixtures/go/fiber_callees/remote/handler.go", line: 10}
+      - {name: "c.JSON", path: "./spec/functional_test/fixtures/go/fiber_callees/remote/handler.go", line: 7}
+  - url: "/remote-factory/:name"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+    callees:
+      - {name: "buildRemoteFactoryProfile", path: "./spec/functional_test/fixtures/go/fiber_callees/remote/handler.go", line: 21}
+      - {name: "c.JSON", path: "./spec/functional_test/fixtures/go/fiber_callees/remote/handler.go", line: 17}
+  - url: "/remote-controller/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "loadRemoteProfile", path: "./spec/functional_test/fixtures/go/fiber_callees/remote/handler.go", line: 10}
+      - {name: "c.JSON", path: "./spec/functional_test/fixtures/go/fiber_callees/remote/handler.go", line: 33}

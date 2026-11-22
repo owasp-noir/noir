@@ -1,0 +1,60 @@
+fixture: fixtures/scala/akka_callees/
+counts: {techs: 1, endpoints: 7}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "GET"
+    callees:
+      - {name: "UserService.list", line: 16}
+      - {name: "complete", line: 17}
+      - {name: "renderUsers", line: 17}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "User"}
+    callees:
+      - {name: "entity", line: 20}
+      - {name: "UserService.create", line: 21}
+      - {name: "AuditLog.write", line: 22}
+      - {name: "complete", line: 23}
+      - {name: "renderUser", line: 23}
+  - url: "/api/v1/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+    callees:
+      - {name: "ItemService.find", line: 35}
+      - {name: "complete", line: 36}
+      - {name: "renderItem", line: 36}
+  - url: "/api/v1/items/{itemId}"
+    method: "PUT"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "body", type: "json", value: "Item"}
+      - {name: "Authorization", type: "header"}
+    callees:
+      - {name: "entity", line: 39}
+      - {name: "headerValueByName", line: 40}
+      - {name: "ItemService.update", line: 41}
+      - {name: "complete", line: 42}
+      - {name: "renderItem", line: 42}
+  - url: "/api/v1/items/{itemId}"
+    method: "DELETE"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "X-API-Key", type: "header"}
+    callees:
+      - {name: "optionalHeaderValueByName", line: 47}
+      - {name: "ItemService.delete", line: 48}
+      - {name: "complete", line: 49}
+  - url: "/compact"
+    method: "GET"
+    callees:
+      - {name: "complete", line: 57}
+      - {name: "HealthService.check", line: 57}
+  - url: "/multi"
+    method: "GET"
+    callees:
+      - {name: "FirstService.call", line: 63}
+      - {name: "SecondService.call", line: 67}

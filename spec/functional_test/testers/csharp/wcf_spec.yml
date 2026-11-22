@@ -1,0 +1,83 @@
+fixture: fixtures/csharp/wcf/
+counts: {techs: 1, endpoints: 20}
+endpoints:
+  - url: "/orders/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "expand", type: "query"}
+  - url: "/orders"
+    method: "POST"
+    params:
+      - {name: "order", type: "json"}
+  - url: "/orders/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "order", type: "json"}
+  - url: "/orders/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/Ping"
+    method: "POST"
+    params:
+      - {name: "payload", type: "json"}
+  - url: "/Search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/files/{path}"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}
+  - url: "/status"
+    method: "GET"
+  - url: "/status/{component}"
+    method: "PATCH"
+    params:
+      - {name: "component", type: "path"}
+      - {name: "s", type: "json"}
+  - url: "/Fetch"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/Latest"
+    method: "GET"
+  - url: "/pages/{page}"
+    method: "GET"
+    params:
+      - {name: "page", type: "path"}
+  - url: "/echo"
+    method: "GET"
+    params:
+      - {name: "body", type: "query"}
+  - url: "/echo"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/echo"
+    method: "PUT"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/echo"
+    method: "PATCH"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/echo"
+    method: "DELETE"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/echo"
+    method: "OPTIONS"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/echo"
+    method: "HEAD"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/echo"
+    method: "TRACE"
+    params:
+      - {name: "body", type: "json"}

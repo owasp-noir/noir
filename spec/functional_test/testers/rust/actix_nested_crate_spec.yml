@@ -1,0 +1,9 @@
+# The root package depends on actix-web and so does the workspace listing;
+# the member crate under `lib/` does not, so its files are not actix source.
+fixture: fixtures/rust/actix_nested_crate/
+counts: {techs: 1, endpoints: 1}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/real"
+    method: "GET"

@@ -1,0 +1,13 @@
+fixture: fixtures/go/gin_multi_base/
+counts: {techs: 1, endpoints: 4}
+options:
+  base: ["./spec/functional_test/fixtures/go/gin_multi_base/service_a", "./spec/functional_test/fixtures/go/gin_multi_base/service_b"]
+endpoints:
+  - url: "/a-only"
+    method: "GET"
+  - url: "/b-only"
+    method: "GET"
+  - url: "/assets/a.txt"
+    method: "GET"
+  - url: "/assets/b.txt"
+    method: "GET"

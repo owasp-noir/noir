@@ -1,0 +1,31 @@
+# #3318: `r.get true` serves the bare prefix, and `[Integer, true]` serves the
+# route both with and without the integer segment.
+fixture: fixtures/ruby/roda_tree/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/profile"
+    method: "GET"
+  - url: "/settings/email"
+    method: "GET"
+  - url: "/settings/password"
+    method: "GET"
+  - url: "/settings/tokens"
+    method: "GET"
+  - url: "/reports/income"
+    method: "GET"
+  - url: "/reports/income/{year}"
+    method: "GET"
+    params:
+      - {name: "year", type: "path"}
+  # The block's params reach both rows of the optional matcher.
+  - url: "/reports/entry"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/reports/entry/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "q", type: "query"}

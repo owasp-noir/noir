@@ -1,0 +1,26 @@
+# Params read in helpers below the last route belong to the routes that
+# reach them (wrapper bodies and 1-hop callees), not to that last route.
+# `feedAnimal` reads `c.Param("enclosure")`, which `/keepers/feed` has no
+# slot for, and `unused` is reached by no route at all.
+fixture: fixtures/go/echo_helper_params/
+counts: {techs: 1}
+endpoints:
+  - url: "/keepers/list"
+    method: "GET"
+    params:
+      - {name: "X-Keeper-Token", type: "header"}
+      - {name: "page", type: "query"}
+  - url: "/keepers/feed"
+    method: "POST"
+    params:
+      - {name: "X-Keeper-Token", type: "header"}
+      - {name: "Food", type: "json"}
+  - url: "/keepers/cages/:cage"
+    method: "DELETE"
+    params:
+      - {name: "X-Keeper-Token", type: "header"}
+      - {name: "cage", type: "path"}
+  - url: "/birds"
+    method: "GET"
+    params:
+      - {name: "color", type: "query"}

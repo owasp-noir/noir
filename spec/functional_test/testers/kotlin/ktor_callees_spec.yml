@@ -1,0 +1,56 @@
+# Regression test for --include-callee on Ktor (#1366). Unlike
+# annotation-driven analyzers, Ktor declares routes via a DSL —
+# `routing { get("/x") { ... } }` — so the handler body is a lambda
+# `statements` node, not a `function_declaration`. The route
+# extractor already locates that lambda for receive/parameter/header
+# scanning; callee extraction reuses the same body via
+# `KotlinCalleeExtractor.callees_in_lambda`.
+#
+# A nested routing DSL call (`route("/admin") { get("/dashboard") { ... } }`)
+# must NOT leak the inner route's callees into the outer route's
+# list — that's what `skip_routing: true` in the callee walker is
+# for, and `/admin/dashboard` here exercises the boundary.
+#
+# Coverage:
+#   - POST /users            — selector-on-identifier (`service.save`),
+#                              bare-static (`AuditLog.write`), and
+#                              chained-identifier (`call.respondText`)
+#                              receivers.
+#   - GET  /profile          — `this.foo` receiver shape.
+#   - GET  /legacy           — chained-on-call (`getLegacy().toString()`)
+#                              drops the outer `toString` and keeps
+#                              only the inner `getLegacy`.
+#   - GET  /admin/dashboard  — nested `route { get { ... } }` block;
+#                              the parent `route("/admin")` lambda
+#                              does NOT pick up `renderDashboard`,
+#                              and the nested route emits it on its
+#                              own.
+fixture: fixtures/kotlin/ktor_callees/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "query"}
+    callees:
+      - {name: "service.save", line: 12}
+      - {name: "AuditLog.write", line: 13}
+      - {name: "call.respondText", line: 14}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "this.buildProfile", line: 18}
+      - {name: "AuditLog.write", line: 19}
+      - {name: "call.respondText", line: 20}
+  - url: "/legacy"
+    method: "GET"
+    callees:
+      - {name: "AuditLog.write", line: 24}
+      - {name: "call.respondText", line: 25}
+      - {name: "getLegacy", line: 25}
+  - url: "/admin/dashboard"
+    method: "GET"
+    callees:
+      - {name: "renderDashboard", line: 30}

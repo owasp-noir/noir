@@ -1,0 +1,20 @@
+# Regression test for --include-callee on Falcon. Falcon's class-based
+# resource pattern means each responder (on_get / on_post / …) is a
+# separate handler with its own body — the spec verifies that callees
+# stay scoped to the right HTTP method and don't bleed across responders
+# in the same class.
+fixture: fixtures/python/falcon_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/items"
+    method: "GET"
+    callees:
+      - {name: "list_items", path: "./spec/functional_test/fixtures/python/falcon_callees/db.py", line: 1}
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "save_item", path: "./spec/functional_test/fixtures/python/falcon_callees/db.py", line: 5}

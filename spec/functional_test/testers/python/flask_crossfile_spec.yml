@@ -1,0 +1,20 @@
+fixture: fixtures/python/flask_crossfile/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/v1/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+  - url: "/api/v1/logout"
+    method: "GET"
+  - url: "/api/v2/items"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/v2/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/api/v3/reports"
+    method: "GET"

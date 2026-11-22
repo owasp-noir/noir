@@ -1,0 +1,8 @@
+# `include(shop.urls)` after `import shop.urls` mounts the shop urlconf
+# under /shop/; it used to be mistaken for a DRF router's url list, losing
+# the prefix and adding a phantom `GET /shop/`.
+fixture: fixtures/python/django_module_include/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/shop/cart/"
+    method: "GET"

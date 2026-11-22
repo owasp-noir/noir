@@ -1,0 +1,26 @@
+fixture: fixtures/c/libmicrohttpd/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  # `#define`d URL, method in the same condition (past a `;` in a string).
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "user", type: "form"}
+  # Method from a guard in the branch; params from the helper it calls.
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "Accept-Language", type: "header"}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "sid", type: "cookie"}
+  # `strncmp` is a prefix match.
+  - url: "/static/*"
+    method: "GET"
+  # A handler that never compares the URL serves every path.
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}

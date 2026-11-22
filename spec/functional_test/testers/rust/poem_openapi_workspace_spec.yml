@@ -1,0 +1,11 @@
+# A workspace crate that depends on `poem-openapi` alone still holds poem
+# routes, though a sibling crate is the one depending on `poem`.
+fixture: fixtures/rust/poem_openapi_workspace/
+counts: {techs: 1, endpoints: 1}
+options:
+  only_techs: "rust_poem"
+endpoints:
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

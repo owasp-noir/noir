@@ -1,0 +1,12 @@
+# Fresh ignores `*.test.ts` / `*_test.tsx` under `routes/` (its own
+# TEST_FILE_PATTERN), and `new App()` inside a `*_test.tsx` or under
+# `tests/` is a harness, not the served app. `routes/test.tsx` is a page.
+fixture: fixtures/javascript/fresh_test_apps/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/test"
+    method: "GET"
+  - url: "/ping"
+    method: "GET"

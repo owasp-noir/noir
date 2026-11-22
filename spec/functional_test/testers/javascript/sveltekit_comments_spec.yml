@@ -1,0 +1,10 @@
+# Commented-out verb exports and form actions are not routes.
+fixture: fixtures/javascript/sveltekit_comments/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/login"
+    method: "GET"
+  - url: "/api/todos/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

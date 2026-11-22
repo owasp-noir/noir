@@ -1,0 +1,11 @@
+# Loco: explicit `Routes::new().prefix().add(...)` routes are reported,
+# but a `#[cfg(test)]` route builder in the same controller is excluded.
+fixture: fixtures/rust/loco_test_gate/
+counts: {techs: 1, endpoints: 2}
+options:
+  only_techs: "rust_loco"
+endpoints:
+  - url: "/api/notes"
+    method: "GET"
+  - url: "/api/notes"
+    method: "POST"

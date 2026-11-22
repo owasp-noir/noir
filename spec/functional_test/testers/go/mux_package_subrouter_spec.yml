@@ -1,0 +1,8 @@
+# b.go re-scopes the package-level `r` (set to `/api` in main.go) with
+# `r = r.PathPrefix("/v1").Subrouter()`. The handler's own `r *http.Request`
+# param in b.go must not make that `r` look local and drop the `/api` seed.
+fixture: fixtures/go/mux_package_subrouter/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/api/v1/x"
+    method: "GET"

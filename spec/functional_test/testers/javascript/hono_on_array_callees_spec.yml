@@ -1,0 +1,37 @@
+fixture: fixtures/javascript/hono_on_array/
+counts: {techs: 1}
+options:
+  include_callee: true
+endpoints:
+  - url: "/items/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "c.req.param", line: 10}
+      - {name: "c.json", line: 11}
+      - {name: "itemService.lookup", line: 11}
+  - url: "/items/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "c.req.param", line: 10}
+      - {name: "c.json", line: 11}
+      - {name: "itemService.lookup", line: 11}
+  - url: "/users/:userId"
+    method: "PUT"
+    params:
+      - {name: "userId", type: "path"}
+    callees:
+      - {name: "c.req.param", line: 16}
+      - {name: "c.json", line: 17}
+      - {name: "UserService.update", line: 17}
+  - url: "/users/:userId"
+    method: "PATCH"
+    params:
+      - {name: "userId", type: "path"}
+    callees:
+      - {name: "c.req.param", line: 16}
+      - {name: "c.json", line: 17}
+      - {name: "UserService.update", line: 17}

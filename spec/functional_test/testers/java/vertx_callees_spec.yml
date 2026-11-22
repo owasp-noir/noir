@@ -1,0 +1,28 @@
+# Regression test for --include-callee on Vert.x method-reference
+# handlers. Regex route discovery still owns route matching; the
+# analyzer resolves `this::handler` references to method bodies and
+# attaches the handler's 1-hop callees.
+fixture: fixtures/java/vertx_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "ctx.pathParam", line: 19}
+      - {name: "parseUser", line: 20}
+      - {name: "service.save", line: 21}
+      - {name: "AuditLog.write", line: 22}
+      - {name: "ctx.response", line: 23}
+  - url: "/orders/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "ctx.pathParam", line: 27}
+      - {name: "findOrder", line: 28}
+      - {name: "AuditLog.write", line: 29}
+      - {name: "ctx.response", line: 30}

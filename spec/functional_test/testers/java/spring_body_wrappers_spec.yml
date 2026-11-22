@@ -1,0 +1,35 @@
+fixture: fixtures/java/spring_body_wrappers/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  # A body read through `Mono`/`Flux` or handed over as `HttpEntity`/`RequestEntity`
+  # binds the element type's fields, like a plain or `List<T>` body.
+  - url: "/java/orders/control"
+    method: "POST"
+    params:
+      - {name: "sku", type: "json"}
+      - {name: "quantity", type: "json"}
+  - url: "/java/orders/control-list"
+    method: "POST"
+    params:
+      - {name: "sku", type: "json"}
+      - {name: "quantity", type: "json"}
+  - url: "/java/orders/mono"
+    method: "POST"
+    params:
+      - {name: "sku", type: "json"}
+      - {name: "quantity", type: "json"}
+  - url: "/java/orders/flux"
+    method: "POST"
+    params:
+      - {name: "sku", type: "json"}
+      - {name: "quantity", type: "json"}
+  - url: "/java/orders/http-entity"
+    method: "POST"
+    params:
+      - {name: "sku", type: "json"}
+      - {name: "quantity", type: "json"}
+  - url: "/java/orders/request-entity"
+    method: "POST"
+    params:
+      - {name: "sku", type: "json"}
+      - {name: "quantity", type: "json"}

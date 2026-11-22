@@ -1,0 +1,26 @@
+# Regex routes reach the output without their `^` / `$` / `\Z` anchors and
+# with `\.` unescaped. Each analyzer strips them itself, only on routes it
+# knows are regexes: Kong's non-regex `/kong-literal$` keeps its `$`.
+fixture: fixtures/specification/regex_anchors/
+counts: {techs: 8, endpoints: 9}
+endpoints:
+  - url: "/traefik/[0-9]+"
+    method: "ANY"
+  - url: "/istio/[0-9]+"
+    method: "ANY"
+  - url: "/gateway/[0-9]+"
+    method: "ANY"
+  - url: "/kong/[0-9]+"
+    method: "ANY"
+  - url: "/kong-literal$"
+    method: "ANY"
+  - url: "/ingress/[0-9]+"
+    method: "ANY"
+  - url: "/tornado/([0-9]+).json"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/drogon/([0-9]+)"
+    method: "GET"
+  - url: "/httplib/(\\d+)"
+    method: "GET"

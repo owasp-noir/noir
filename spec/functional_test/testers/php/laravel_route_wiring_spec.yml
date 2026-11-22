@@ -1,0 +1,34 @@
+# A route file's prefix comes from where the app loads it, not from the file.
+#   * legacy: RouteServiceProvider — nested chained `->prefix('/admin')->group(base_path(...))`
+#     and the older `Route::group(['prefix' => 'api'], function () { require ... })`;
+#     a commented-out wiring line must not win.
+#   * modern: `bootstrap/app.php` `withRouting(api: ..., apiPrefix: 'api/v2', then: ...)`.
+#   * bare: no wiring found, so the skeleton default `/api` applies to routes/api.php.
+fixture: fixtures/php/laravel_route_wiring/
+counts: {techs: 2, endpoints: 10}
+endpoints:
+  - url: "/admin/settings"
+    method: "GET"
+  - url: "/api/legacy-items"
+    method: "GET"
+  - url: "/legacy-home"
+    method: "GET"
+  - url: "/api/v2/modern-items"
+    method: "GET"
+  - url: "/modern-home"
+    method: "GET"
+  - url: "/webhooks/stripe"
+    method: "POST"
+  - url: "/api/bare-items"
+    method: "GET"
+  # modern: `withRouting(health: '/up')`
+  - url: "/up"
+    method: "GET"
+  # aliased: a provider outside `*Provider.php`, `Facade::prefix('{tenant_id}')`,
+  # `config('api.prefix')` read from config/api.php.
+  - url: "/{tenant_id}/invoices"
+    method: "GET"
+    params:
+      - {name: "tenant_id", type: "path"}
+  - url: "/v1/ping"
+    method: "GET"

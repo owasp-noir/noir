@@ -1,0 +1,13 @@
+# `app.client.*`, `app.cache.get`, `app.redis.get` and `app.queues.queue.get`
+# are service calls on a member of the registered `app`, not routes, and the
+# routes under the package-benchmark `Benchmarks/` directory are not served by
+# the app. `app.routes.grouped(...)` stays a router.
+fixture: fixtures/swift/vapor_client_receivers/
+counts: {techs: 1, endpoints: 2}
+options:
+  only_techs: "swift_vapor"
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/api/status"
+    method: "GET"

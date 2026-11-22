@@ -1,0 +1,50 @@
+fixture: fixtures/crystal/amber/
+counts: {techs: 1, endpoints: 16}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/search"
+    method: "GET"
+  - url: "/upload"
+    method: "POST"
+  # WebSocket endpoint
+  - url: "/socket"
+    method: "GET"
+  - url: "/test.html"
+    method: "GET"
+  - url: "/style.css"
+    method: "GET"
+  # `routes :web, "/admin" do resources "/articles", … end` expands to the
+  # seven RESTful routes, each prefixed with the "/admin" scope.
+  - url: "/admin/articles"
+    method: "GET"
+  - url: "/admin/articles/new"
+    method: "GET"
+  - url: "/admin/articles"
+    method: "POST"
+  - url: "/admin/articles/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/articles/:id/edit"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/articles/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/articles/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/articles/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

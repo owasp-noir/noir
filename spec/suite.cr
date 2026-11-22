@@ -24,4 +24,5 @@
 # the binary from the repository root.
 require "spec"
 require "./unit_test/**"
+require "./functional_test/data_testers_spec"
 require "./functional_test/testers/**"

@@ -1,0 +1,28 @@
+# A router handed through an aggregator factory (#3575):
+#
+#   app.use('/api', routes(router))
+#   // routes/index.js
+#   module.exports = (router) => { users(router); require('./notes')(router) }
+#
+# `users`, `notes` and the `comments` factory `notes` hands the router on
+# to all register on the mounted router, so they are served under `/api`.
+# `status(app)` is a plain call on the app, not a mount: `/status` stays.
+fixture: fixtures/javascript/express_factory_mount/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/api/v2/users"
+    method: "GET"
+  - url: "/api/v2/users"
+    method: "POST"
+  - url: "/api/v2/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v2/notes"
+    method: "GET"
+  - url: "/api/v2/notes/:id/comments"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/status"
+    method: "GET"

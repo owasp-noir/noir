@@ -1,0 +1,9 @@
+fixture: fixtures/kotlin/spring_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/kotlin/spring_multi_base/service_a", "./spec/functional_test/fixtures/kotlin/spring_multi_base/service_b"]
+endpoints:
+  - url: "/from-a"
+    method: "GET"
+  - url: "/from-b"
+    method: "GET"

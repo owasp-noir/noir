@@ -1,0 +1,19 @@
+# Handlers and configure fns brought in with `use` (`use users::{user_config,
+# list_all}`, `use crate::posts::configure as posts_config`) keep the scope
+# they are mounted under, as does a handler imported into a configured fn of
+# another file (`api::config` registers `crate::handlers::health`).
+fixture: fixtures/rust/actix_use_import/
+counts: {techs: 1, endpoints: 5}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/users/list"
+    method: "GET"
+  - url: "/users/stats"
+    method: "GET"
+  - url: "/posts/recent"
+    method: "GET"
+  - url: "/all/everything"
+    method: "GET"
+  - url: "/api/health"
+    method: "GET"

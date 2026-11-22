@@ -1,0 +1,122 @@
+fixture: fixtures/specification/supabase/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  # Under PostgREST the column name is itself the query key.
+  - url: "/rest/v1/authors"
+    method: "GET"
+    params:
+      - {name: "select", type: "query"}
+      - {name: "order", type: "query"}
+      - {name: "name", type: "query", value: "string"}
+      - {name: "email", type: "query"}
+      - {name: "id", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "offset", type: "query"}
+  - url: "/rest/v1/authors"
+    method: "POST"
+    params:
+      - {name: "on_conflict", type: "query"}
+      - {name: "id", type: "json", value: "string"}
+      - {name: "name", type: "json", value: "string"}
+      - {name: "email", type: "json", value: "string"}
+      - {name: "apikey", type: "header"}
+      - {name: "Prefer", type: "header"}
+      - {name: "Authorization", type: "header"}
+  - url: "/rest/v1/authors"
+    method: "PATCH"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "apikey", type: "header"}
+      - {name: "Prefer", type: "header"}
+      - {name: "email", type: "json"}
+      - {name: "id", type: "json"}
+      - {name: "name", type: "json"}
+      - {name: "email", type: "query"}
+      - {name: "id", type: "query"}
+      - {name: "name", type: "query"}
+  - url: "/rest/v1/authors"
+    method: "DELETE"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "apikey", type: "header"}
+      - {name: "email", type: "query"}
+      - {name: "id", type: "query"}
+      - {name: "name", type: "query"}
+  - url: "/rest/v1/posts"
+    method: "GET"
+    params:
+      - {name: "author_id", type: "query"}
+      - {name: "created_at", type: "query"}
+      - {name: "id", type: "query"}
+      - {name: "published", type: "query"}
+      - {name: "score", type: "query"}
+      - {name: "slug", type: "query"}
+      - {name: "title", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "offset", type: "query"}
+      - {name: "order", type: "query"}
+      - {name: "select", type: "query"}
+  # `rating` was renamed to `score` and `body` dropped by the second
+  # migration; `slug` was added by it. The generated `search_vector`
+  # column is not writable and never appears.
+  - url: "/rest/v1/posts"
+    method: "POST"
+    params:
+      - {name: "on_conflict", type: "query"}
+      - {name: "title", type: "json", value: "string"}
+      - {name: "score", type: "json", value: "number"}
+      - {name: "slug", type: "json", value: "string"}
+      - {name: "published", type: "json", value: "boolean"}
+      - {name: "created_at", type: "json", value: "datetime"}
+      - {name: "Authorization", type: "header"}
+      - {name: "apikey", type: "header"}
+      - {name: "Prefer", type: "header"}
+      - {name: "author_id", type: "json"}
+      - {name: "id", type: "json"}
+  - url: "/rest/v1/posts"
+    method: "PATCH"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "apikey", type: "header"}
+      - {name: "Prefer", type: "header"}
+      - {name: "author_id", type: "json"}
+      - {name: "created_at", type: "json"}
+      - {name: "id", type: "json"}
+      - {name: "published", type: "json"}
+      - {name: "score", type: "json"}
+      - {name: "slug", type: "json"}
+      - {name: "title", type: "json"}
+      - {name: "author_id", type: "query"}
+      - {name: "created_at", type: "query"}
+      - {name: "id", type: "query"}
+      - {name: "published", type: "query"}
+      - {name: "score", type: "query"}
+      - {name: "slug", type: "query"}
+      - {name: "title", type: "query"}
+  - url: "/rest/v1/posts"
+    method: "DELETE"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "apikey", type: "header"}
+      - {name: "author_id", type: "query"}
+      - {name: "created_at", type: "query"}
+      - {name: "id", type: "query"}
+      - {name: "published", type: "query"}
+      - {name: "score", type: "query"}
+      - {name: "slug", type: "query"}
+      - {name: "title", type: "query"}
+  # A view is read-only through PostgREST.
+  - url: "/rest/v1/published_posts"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+      - {name: "offset", type: "query"}
+      - {name: "order", type: "query"}
+      - {name: "select", type: "query"}
+  - url: "/rest/v1/rpc/search_posts"
+    method: "POST"
+    params:
+      - {name: "query", type: "json", value: "string"}
+      - {name: "max_results", type: "json", value: "int"}
+      - {name: "Authorization", type: "header"}
+      - {name: "apikey", type: "header"}

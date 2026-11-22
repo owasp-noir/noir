@@ -1,0 +1,43 @@
+# Test cases for Express prefix handling edge cases
+#
+# Issue 1: Prefix "bleeds" to unmounted routers when a mounted symbol is a factory function
+#   - When mounting createPublicRouter() from a file that also exports createAdminRouter(),
+#     the /api prefix should NOT apply to createAdminRouter() routes.
+#
+# Issue 2: Router detection with multiple identifiers in .use() args
+#   - Must handle both patterns:
+#     - app.use('/path', router, middleware) - router first
+#     - app.use('/path', middleware, router) - middleware first
+#
+# Issue 3: Same-file nested routers with middleware (both orderings)
+# Expected CORRECT behavior:
+fixture: fixtures/javascript/express_prefix_issues/
+counts: {techs: 1}
+endpoints:
+  # From createPublicRouter() mounted at /api
+  - url: "/api/public"
+    method: "GET"
+  # From createAdminRouter() - NOT MOUNTED, should have NO prefix
+  # If this appears as /api/admin, that's the BUG (prefix bleed)
+  - url: "/admin"
+    method: "GET"
+  # From userRoutes mounted at /users (router FIRST, middleware after)
+  - url: "/users/list"
+    method: "GET"
+  - url: "/users/create"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  # From orderRoutes mounted at /orders (middleware FIRST, router after)
+  - url: "/orders/pending"
+    method: "GET"
+  - url: "/orders/create"
+    method: "POST"
+    params:
+      - {name: "product", type: "json"}
+  # From subRouter mounted at /nested/sub (router first, middleware after)
+  - url: "/nested/sub/items"
+    method: "GET"
+  # From sub2Router mounted at /nested2/sub2 (middleware first, router after)
+  - url: "/nested2/sub2/data"
+    method: "GET"

@@ -1,0 +1,22 @@
+# drf-extensions' NestedRouterMixin (Read the Docs' API v3): the item
+# `router.register(...)` returns registers children under the parent's
+# prefix and a `parent_lookup_<lookup>` segment per level, on the root
+# router. A commented-out nested registration routes nothing, and a plain
+# `router.register` is unchanged.
+fixture: fixtures/python/django_drf_nested_router/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/projects/"
+    method: "GET"
+  - url: "/projects/{parent_lookup_project__slug}/versions/{slug}/"
+    method: "GET"
+    params:
+      - {name: "parent_lookup_project__slug", type: "path"}
+      - {name: "slug", type: "path"}
+  - url: "/projects/{parent_lookup_project__slug}/versions/{parent_lookup_version__slug}/builds/"
+    method: "GET"
+    params:
+      - {name: "parent_lookup_version__slug", type: "path"}
+      - {name: "parent_lookup_project__slug", type: "path"}
+  - url: "/remote/"
+    method: "GET"

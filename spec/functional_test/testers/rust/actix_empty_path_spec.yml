@@ -1,0 +1,26 @@
+# `#[get("")]` registers a handler at the root of its scope. The path is the
+# attribute's first literal even when empty, so a later `guard = ".."`,
+# `name = ".."` or `method = ".."` string is not taken as the path.
+fixture: fixtures/rust/actix_empty_path/
+counts: {techs: 1, endpoints: 8}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/"
+    method: "GET"
+  - url: "/a"
+    method: "GET"
+  - url: "/a"
+    method: "POST"
+  - url: "/b"
+    method: "GET"
+  - url: "/c"
+    method: "GET"

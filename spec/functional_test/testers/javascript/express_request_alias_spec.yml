@@ -1,0 +1,26 @@
+# Request data bound to a local first: `const body = req.body; body.x`.
+fixture: fixtures/javascript/express_request_alias/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/x00-control"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "page", type: "query"}
+  - url: "/x01-alias"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "slug", type: "json"}
+      - {name: "page", type: "query"}
+  - url: "/x02-alias-destructure"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "password", type: "json"}
+  - url: "/x04-or-default"
+    method: "POST"
+    params:
+      - {name: "limit", type: "query"}
+      - {name: "offset", type: "query"}
+      - {name: "token", type: "json"}

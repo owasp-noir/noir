@@ -1,0 +1,23 @@
+# `debug.get.dev.ts` / `metrics.prod.ts`: the environment suffix is no part
+# of the URL, and the method suffix before it still applies.
+fixture: fixtures/javascript/nitro_env_suffix/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/debug"
+    method: "GET"
+  - url: "/ok"
+    method: "GET"
+  - url: "/metrics"
+    method: "GET"
+  - url: "/metrics"
+    method: "POST"
+  - url: "/metrics"
+    method: "PUT"
+  - url: "/metrics"
+    method: "DELETE"
+  - url: "/metrics"
+    method: "PATCH"
+  - url: "/metrics"
+    method: "HEAD"
+  - url: "/metrics"
+    method: "OPTIONS"

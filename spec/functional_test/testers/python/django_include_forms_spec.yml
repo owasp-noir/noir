@@ -1,0 +1,14 @@
+# `include()` of a package urlconf (`api/urls/__init__.py`) and of the
+# `(module, app_name)` tuple both keep the mount prefix; neither used to be
+# followed, leaving unprefixed routes plus a bare GET on the mount point.
+fixture: fixtures/python/django_include_forms/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/users/<uuid:id>/"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v1/x/<int:pk>/"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}

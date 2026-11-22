@@ -1,0 +1,28 @@
+fixture: fixtures/go/goyave/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/create"
+    method: "POST"
+  # `{id:[0-9]+}` — the regex is a constraint, not a value, and the
+  # analyzer records none. Same rule as php/laminas `constraints`.
+  - url: "/product/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/version"
+    method: "GET"
+  # `api.Route([]string{"PUT", http.MethodPatch}, ...)`: one route per method.
+  - url: "/api/users/{userID}"
+    method: "PUT"
+    params:
+      - {name: "userID", type: "path"}
+  - url: "/api/users/{userID}"
+    method: "PATCH"
+    params:
+      - {name: "userID", type: "path"}
+  - url: "/static/index.html"
+    method: "GET"

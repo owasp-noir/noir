@@ -1,0 +1,13 @@
+# A framework's own repo keeps sample apps under `test/` (each with its own
+# svelte.config.js), and docs sites keep tutorial overlays nested below the
+# real app. Neither serves traffic. `src/routes/test/` and `api/e2e/` are
+# real URLs and stay.
+fixture: fixtures/javascript/sveltekit_test_apps/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/test"
+    method: "GET"
+  - url: "/api/e2e"
+    method: "GET"

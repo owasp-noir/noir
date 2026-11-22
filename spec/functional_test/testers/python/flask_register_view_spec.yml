@@ -1,0 +1,52 @@
+# FlaskBB's `register_view(bp, routes=[...], view_func=View.as_view(...))`
+# helper: each route is an `add_url_rule` on `bp`, so a MethodView serves
+# the verbs it defines and a function view the call's `methods=`. The
+# blueprint is built inside the function that registers it, under
+# `url_prefix=app.config["X"]`, read from the class `from_object` names
+# (not a subclass's override, nor a same-named module constant
+# elsewhere), with an `os.environ.get` default; a key only sibling
+# classes set gives one row per value. A helper whose definition never
+# calls `add_url_rule`, rewrites the rule or registers conditionally, a
+# built `routes=` list, an unread helper handed no `view_func=`, and the
+# `as_view` endpoint name give no row.
+fixture: fixtures/python/flask_register_view/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/user/topic/<int:topic_id>"
+    method: "GET"
+    params:
+      - {name: "topic_id", type: "path"}
+  - url: "/user/topic/<int:topic_id>"
+    method: "POST"
+    params:
+      - {name: "topic_id", type: "path"}
+  - url: "/user/topic/<int:topic_id>-<slug>"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+      - {name: "topic_id", type: "path"}
+  - url: "/user/topic/<int:topic_id>-<slug>"
+    method: "POST"
+    params:
+      - {name: "slug", type: "path"}
+      - {name: "topic_id", type: "path"}
+  - url: "/user/login"
+    method: "GET"
+  - url: "/user/login"
+    method: "POST"
+  - url: "/user/post/<int:post_id>/raw"
+    method: "GET"
+    params:
+      - {name: "post_id", type: "path"}
+  - url: "/user/post/<int:post_id>/raw"
+    method: "POST"
+    params:
+      - {name: "post_id", type: "path"}
+  - url: "/admin/"
+    method: "GET"
+  - url: "/message/inbox"
+    method: "GET"
+  - url: "/api/status"
+    method: "GET"
+  - url: "/dev-api/status"
+    method: "GET"

@@ -1,0 +1,20 @@
+# An inline `warp::path("api").and(a.or(b))` prefixes each alternative,
+# whether let-bound or inline, and a prefix over a fn that only composes
+# route fns reaches those fns. No bare prefix-only route is emitted.
+fixture: fixtures/rust/warp_prefix_compose/
+counts: {techs: 1, endpoints: 6}
+options:
+  only_techs: "rust_warp"
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/posts"
+    method: "POST"
+  - url: "/v2/items"
+    method: "GET"
+  - url: "/v2/tags"
+    method: "DELETE"
+  - url: "/svc/todos"
+    method: "GET"
+  - url: "/svc/todos"
+    method: "POST"

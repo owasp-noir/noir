@@ -1,0 +1,42 @@
+# `web::resource("/p").get(h).post(h2)` (actix-web 4.4 shorthands),
+# `web::to(h)` (any method, like `web::route().to(h)`) and a multi-pattern
+# `web::resource(["/v1/ping", "/v2/ping"])`.
+fixture: fixtures/rust/actix_resource_shorthand/
+counts: {techs: 1, endpoints: 14}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v1/ping"
+    method: "GET"
+  - url: "/v2/ping"
+    method: "GET"
+  - url: "/control"
+    method: "GET"
+  - url: "/hook"
+    method: "GET"
+  - url: "/hook"
+    method: "POST"
+  - url: "/hook"
+    method: "PUT"
+  - url: "/hook"
+    method: "DELETE"
+  - url: "/hook"
+    method: "PATCH"
+  - url: "/hook"
+    method: "HEAD"
+  - url: "/hook"
+    method: "OPTIONS"

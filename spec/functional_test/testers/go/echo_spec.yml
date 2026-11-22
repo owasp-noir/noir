@@ -1,0 +1,96 @@
+fixture: fixtures/go/echo/
+counts: {techs: 1, endpoints: 28}
+endpoints:
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "abcd_token", type: "cookie"}
+  - url: "/pet"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "X-API-Key", type: "header"}
+  - url: "/pet"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/pet_form"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/public/secret.html"
+    method: "GET"
+  - url: "/public/mob.txt"
+    method: "GET"
+  - url: "/public/coffee.txt"
+    method: "GET"
+  - url: "/admin/users"
+    method: "GET"
+  - url: "/admin/v1/migration"
+    method: "GET"
+  - url: "/mixed-get"
+    method: "GET"
+  - url: "/mixed-post"
+    method: "POST"
+    params:
+      - {name: "field1", type: "form"}
+  - url: "/mixed-put"
+    method: "PUT"
+  - url: "/mixed-delete"
+    method: "DELETE"
+  - url: "/multiline"
+    method: "GET"
+    params:
+      - {name: "ml_param", type: "query"}
+  # server.go: e.File single-file static registration
+  - url: "/robots.txt"
+    method: "GET"
+  # handlers.go: PATCH method with path param
+  - url: "/users/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  # handlers.go: OPTIONS method
+  - url: "/cors-check"
+    method: "OPTIONS"
+  # handlers.go: multiple query params
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+  # handlers.go: path param with query param
+  - url: "/items/:itemId/reviews"
+    method: "GET"
+    params:
+      - {name: "sort", type: "query"}
+      - {name: "itemId", type: "path"}
+  # handlers.go: handler reference (non-inline)
+  - url: "/health"
+    method: "GET"
+  # handlers.go: deeply nested groups
+  - url: "/v2/admin/cache"
+    method: "DELETE"
+  # server.go: HTTP QUERY routes (e.QUERY, group.QUERY, e.Add, e.Match, group.Match)
+  - url: "/search-query"
+    method: "QUERY"
+    params:
+      - {name: "filter", type: "query"}
+      - {name: "body", type: "json"}
+  - url: "/admin/query-admin"
+    method: "QUERY"
+  - url: "/add-query"
+    method: "QUERY"
+  - url: "/match-query"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/match-query"
+    method: "QUERY"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/admin/match-admin"
+    method: "GET"
+  - url: "/admin/match-admin"
+    method: "QUERY"

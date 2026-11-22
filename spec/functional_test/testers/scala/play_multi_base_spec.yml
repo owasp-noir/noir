@@ -1,0 +1,25 @@
+fixture: fixtures/scala/play_multi_base/
+counts: {techs: 1, endpoints: 6}
+options:
+  base: ["./spec/functional_test/fixtures/scala/play_multi_base/service_a", "./spec/functional_test/fixtures/scala/play_multi_base/service_b"]
+endpoints:
+  - url: "/direct-a"
+    method: "GET"
+    params:
+      - {name: "X-A", type: "header"}
+  - url: "/a/from-a"
+    method: "GET"
+  - url: "/nested-a/included-a"
+    method: "GET"
+    params:
+      - {name: "X-A", type: "header"}
+  - url: "/direct-b"
+    method: "GET"
+    params:
+      - {name: "X-B", type: "header"}
+  - url: "/b/from-b"
+    method: "GET"
+  - url: "/nested-b/included-b"
+    method: "GET"
+    params:
+      - {name: "X-B", type: "header"}

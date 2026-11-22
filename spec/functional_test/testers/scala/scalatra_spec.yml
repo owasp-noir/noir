@@ -1,0 +1,52 @@
+fixture: fixtures/scala/scalatra/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/hello"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id/posts/:postId"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "postId", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "filter", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "User"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json", value: "User"}
+      - {name: "Authorization", type: "header"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-API-Key", type: "header"}
+  - url: "/items"
+    method: "GET"
+    params:
+      - {name: "tags", type: "query"}
+  - url: "/upload"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+  - url: "/download/*"
+    method: "GET"
+    params:
+      - {name: "splat", type: "path"}

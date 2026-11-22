@@ -1,0 +1,11 @@
+# A wrapped HTTP client (`import api from './api'`) hides the raw axios
+# instance behind a local module, so the axios import marker can't see
+# it. The client-side UI framework import (pinia) is the signal that
+# `web/store.js` is browser code: its `api.get(...)`/`api.post(...)`
+# calls are outbound requests, not route registrations, and must be
+# skipped. Only the real Express route survives.
+fixture: fixtures/javascript/express_frontend_client_skip/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/api/health"
+    method: "GET"

@@ -1,0 +1,11 @@
+fixture: fixtures/crystal/cli_optionparser/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "cli://tool"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "verbose", type: "flag"}
+      - {name: "name", type: "flag"}
+      - {name: "API_TOKEN", type: "env"}
+      - {name: "arg0", type: "argument"}

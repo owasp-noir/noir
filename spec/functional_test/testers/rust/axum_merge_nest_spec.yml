@@ -1,0 +1,29 @@
+# A nest prefix reaches the routers merged under it: a `let`-bound or
+# inline `Router::new().merge(mod::router())` nested by name or in place, and
+# a same-file fn nested under `/v2` that merges other same-file router fns.
+# A router fn merged at the root stays at the root.
+fixture: fixtures/rust/axum_merge_nest/
+counts: {techs: 1, endpoints: 9}
+options:
+  only_techs: "rust_axum"
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/status"
+    method: "GET"
+  - url: "/api/v1/users"
+    method: "GET"
+  - url: "/api/v1/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/posts"
+    method: "GET"
+  - url: "/api/v1/posts"
+    method: "POST"
+  - url: "/inline/tags"
+    method: "GET"
+  - url: "/v2/orders"
+    method: "GET"
+  - url: "/v2/items"
+    method: "GET"

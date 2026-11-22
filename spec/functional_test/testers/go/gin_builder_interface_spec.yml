@@ -1,0 +1,22 @@
+# A router builder whose group parameter is typed `gin.IRouter` or
+# `gin.IRoutes` takes its call-site prefix like a `*gin.RouterGroup` one.
+# One that is also handed the engine is read once, as written.
+fixture: fixtures/go/gin_builder_interface/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/api/v1/users"
+    method: "GET"
+  - url: "/api/v1/orders"
+    method: "GET"
+  - url: "/api/v1/orders/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/orders/:id/items"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/healthz"
+    method: "GET"
+  - url: "/shared"
+    method: "GET"

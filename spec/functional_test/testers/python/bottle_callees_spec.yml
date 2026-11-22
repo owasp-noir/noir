@@ -1,0 +1,19 @@
+# Regression test for --include-callee on Bottle. The fixture's /report
+# handler exercises a dotted-attribute call (request.query.get) plus a
+# helper call (build_report), and verifies that an attribute *assignment*
+# (response.content_type = "...") does NOT show up as a callee. /ping
+# has zero calls in the body, locking in that empty callees stay empty.
+fixture: fixtures/python/bottle_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/report"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "query"}
+    callees:
+      - {name: "request.query.get", path: "./spec/functional_test/fixtures/python/bottle_callees/app.py", line: 7}
+      - {name: "build_report", path: "./spec/functional_test/fixtures/python/bottle_callees/helpers.py", line: 1}
+  - url: "/ping"
+    method: "GET"

@@ -1,0 +1,8 @@
+# Quart shares the Blueprint-subclass url_prefix handling with Flask: a route
+# on `class ApiBlueprint(Blueprint)` is served under the instance's prefix,
+# never bare.
+fixture: fixtures/python/quart_blueprint_subclass/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/items/list"
+    method: "GET"

@@ -1,0 +1,30 @@
+# thunderclient.json (legacy flat array) + collections/tc_col_orders.json
+# (newer per-collection file). thunderCollection.json holds only collection
+# metadata and config/requests.json sits outside `thunder-tests/`; neither
+# may contribute endpoints.
+fixture: fixtures/specification/thunder_client/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query", value: "1"}
+      - {name: "limit", type: "query", value: "20"}
+      - {name: "Accept", type: "header", value: "application/json"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "name", type: "json", value: "bob"}
+      - {name: "age", type: "json"}
+  - url: "/orders/:orderId"
+    method: "PUT"
+    params:
+      - {name: "orderId", type: "path", value: "42"}
+      - {name: "Authorization", type: "header"}
+      - {name: "status", type: "form", value: "shipped"}
+  - url: "/orders/invoice"
+    method: "POST"
+    params:
+      - {name: "orderId", type: "form", value: "42"}
+      - {name: "invoice", type: "form"}

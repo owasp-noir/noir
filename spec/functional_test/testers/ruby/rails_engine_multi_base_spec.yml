@@ -1,0 +1,13 @@
+fixture: fixtures/ruby/rails_engine_multi_base/
+counts: {techs: 1, endpoints: 4}
+options:
+  base: ["./spec/functional_test/fixtures/ruby/rails_engine_multi_base/service_a", "./spec/functional_test/fixtures/ruby/rails_engine_multi_base/service_b"]
+endpoints:
+  - url: "/a-engine"
+    method: "GET"
+  - url: "/a-engine/posts"
+    method: "GET"
+  - url: "/b-engine"
+    method: "GET"
+  - url: "/b-engine/posts"
+    method: "GET"

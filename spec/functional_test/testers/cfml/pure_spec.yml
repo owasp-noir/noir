@@ -1,0 +1,108 @@
+# A `remote` CFC method is reachable as both GET and POST, so each one
+# yields two endpoints; `.cfm` pages yield GET plus POST when the page
+# reads the `form` scope.
+fixture: fixtures/cfml/pure/
+counts: {techs: 1, endpoints: 19}
+endpoints:
+  # Tag syntax: <cffunction access="remote"> + <cfargument>
+  - url: "/components/RemoteService.cfc?method=logMessage"
+    method: "GET"
+    params:
+      - {name: "instanceName", type: "query"}
+      - {name: "message", type: "query"}
+  - url: "/components/RemoteService.cfc?method=logMessage"
+    method: "POST"
+    params:
+      - {name: "instanceName", type: "form"}
+      - {name: "message", type: "form"}
+  # `access` is not always the second attribute, and <cfargument> may span lines
+  - url: "/components/RemoteService.cfc?method=getQueue"
+    method: "GET"
+    params:
+      - {name: "instanceName", type: "query"}
+  - url: "/components/RemoteService.cfc?method=getQueue"
+    method: "POST"
+    params:
+      - {name: "instanceName", type: "form"}
+  # Script syntax: `remote` as a leading modifier
+  - url: "/api/Proxy.cfc?method=echo"
+    method: "GET"
+    params:
+      - {name: "text", type: "query"}
+  - url: "/api/Proxy.cfc?method=echo"
+    method: "POST"
+    params:
+      - {name: "text", type: "form"}
+  # Script syntax: `access="remote"` as a trailing attribute
+  - url: "/api/Proxy.cfc?method=ping"
+    method: "GET"
+  - url: "/api/Proxy.cfc?method=ping"
+    method: "POST"
+  # Typed and defaulted script arguments
+  - url: "/api/Proxy.cfc?method=search"
+    method: "GET"
+    params:
+      - {name: "term", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/api/Proxy.cfc?method=search"
+    method: "POST"
+    params:
+      - {name: "term", type: "form"}
+      - {name: "page", type: "form"}
+  # A CFML string has no backslash escape, so a default value ending in one
+  # (a Windows path) closes at the next quote: the argument list still ends
+  # at the `)` on the same line, and `mask` is its own argument.
+  - url: "/api/Files.cfc?method=listUploads"
+    method: "GET"
+    params:
+      - {name: "folder", type: "query"}
+      - {name: "mask", type: "query"}
+  - url: "/api/Files.cfc?method=listUploads"
+    method: "POST"
+    params:
+      - {name: "folder", type: "form"}
+      - {name: "mask", type: "form"}
+  # A quote inside a string is written by doubling it, and the comma inside
+  # that literal does not separate arguments.
+  - url: "/api/Files.cfc?method=describe"
+    method: "GET"
+    params:
+      - {name: "label", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/api/Files.cfc?method=describe"
+    method: "POST"
+    params:
+      - {name: "label", type: "form"}
+      - {name: "page", type: "form"}
+  # .cfm pages are file-path routed
+  - url: "/index.cfm"
+    method: "GET"
+    params:
+      - {name: "view", type: "query"}
+      - {name: "lang", type: "query"}
+  - url: "/search.cfm"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "category", type: "query"}
+  - url: "/account/login.cfm"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+      - {name: "user-agent", type: "header"}
+  - url: "/account/login.cfm"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+      - {name: "session_id", type: "cookie"}
+      - {name: "user-agent", type: "header"}
+  # Client-side JS that manipulates a DOM `form` must not register as
+  # CFML form-scope access (no `action`/`submit` params, and no POST
+  # variant), while `#url.days#` interpolated into that same script
+  # still counts as a real request read.
+  - url: "/report.cfm"
+    method: "GET"
+    params:
+      - {name: "range", type: "query"}
+      - {name: "days", type: "query"}

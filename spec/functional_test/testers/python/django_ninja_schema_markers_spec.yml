@@ -1,0 +1,41 @@
+# `Query[Schema]` / `Schema = Query(...)` / `Form[Schema]` take the schema's
+# fields from that location (`Field(alias=)` renames one); `Path[Schema]`
+# fields are the URL's own path params.
+fixture: fixtures/python/django_ninja_schema_markers/
+counts: {techs: 2, endpoints: 6}
+endpoints:
+  - url: "/api/filter"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+      - {name: "offset", type: "query"}
+      - {name: "query", type: "query"}
+      - {name: "categories", type: "query"}
+  - url: "/api/filter-legacy"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+      - {name: "offset", type: "query"}
+      - {name: "query", type: "query"}
+      - {name: "categories", type: "query"}
+  - url: "/api/events/{year}/{month}/{day}"
+    method: "GET"
+    params:
+      - {name: "year", type: "path"}
+      - {name: "month", type: "path"}
+      - {name: "day", type: "path"}
+  - url: "/api/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "description", type: "form"}
+      - {name: "price", type: "form"}
+  - url: "/api/items-json"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "description", type: "json"}
+      - {name: "price", type: "json"}
+  # From the Django analyzer: `path("api/", api.urls)`.
+  - url: "/api/"
+    method: "GET"

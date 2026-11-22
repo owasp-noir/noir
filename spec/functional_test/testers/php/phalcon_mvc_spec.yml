@@ -1,0 +1,41 @@
+fixture: fixtures/php/phalcon_mvc/
+counts: {techs: 2, endpoints: 12}
+endpoints:
+  - url: "/products/edit/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/products/save"
+    method: "POST"
+  - url: "/products/update"
+    method: "POST"
+  - url: "/products/update"
+    method: "PUT"
+  - url: "/legacy/info"
+    method: "GET"
+  - url: "/blog/save"
+    method: "GET"
+  - url: "/blog/edit/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/products/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/products/save"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/api/products/save"
+    method: "PUT"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/users"
+    method: "GET"
+  - url: "/users/show/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Auth-Token", type: "header"}
+# Detection still sees php_phalcon and php_pure

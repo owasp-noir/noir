@@ -1,0 +1,9 @@
+fixture: fixtures/javascript/restify_client_noise/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/todo"
+    method: "GET"
+  - url: "/todo/:name"
+    method: "DELETE"
+    params:
+      - {name: "name", type: "path"}

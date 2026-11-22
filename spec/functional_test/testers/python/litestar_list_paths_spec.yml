@@ -1,0 +1,17 @@
+# Regression test: Litestar accepts a list of path strings
+# (`@get(["/a", "/b"])`, `@get(path=["/a", "/b"])`) and registers one
+# route per entry. Previously the list form was not recognized and the
+# handler was dropped.
+fixture: fixtures/python/litestar_list_paths/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/index"
+    method: "GET"
+  - url: "/health"
+    method: "GET"
+  - url: "/healthz"
+    method: "GET"
+  - url: "/status"
+    method: "GET"

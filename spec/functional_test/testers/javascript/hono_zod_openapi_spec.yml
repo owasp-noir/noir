@@ -1,0 +1,18 @@
+# #3309: an `@hono/zod-openapi` app is detected, and `createRoute({...})`
+# routes carry their `request` query / JSON body fields.
+fixture: fixtures/javascript/hono_zod_openapi/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/tasks/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "verbose", type: "query"}
+  - url: "/tasks"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/doc"
+    method: "GET"
+  - url: "/health"
+    method: "GET"

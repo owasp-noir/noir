@@ -1,0 +1,17 @@
+# `main` mounts `routes::config` under `/api`; that fn mounts
+# `users::config` under `/users` and `admin::admin_routes` with no scope.
+# Both inner fns inherit `/api`, and the same-named `users::config` is not
+# also mounted at `/api` on its own (the endpoint count pins that).
+fixture: fixtures/rust/actix_nested_configure/
+counts: {techs: 1, endpoints: 4}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/api/ping"
+    method: "GET"
+  - url: "/api/users/list"
+    method: "GET"
+  - url: "/api/users/manual"
+    method: "GET"
+  - url: "/api/stats"
+    method: "GET"

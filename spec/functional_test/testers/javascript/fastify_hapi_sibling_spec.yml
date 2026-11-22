@@ -1,0 +1,28 @@
+# A fastify-cli gateway beside a Hapi catalog service. The Hapi plugin
+# modules import nothing, and `server.route({ method, path })` reads as a
+# Fastify route config, so Fastify used to claim them (a phantom
+# `POST /api/users/` beside Hapi's `POST /api/users`). The closest
+# package.json decides which framework owns the file.
+fixture: fixtures/javascript/fastify_hapi_sibling/
+counts: {techs: 2, endpoints: 6}
+endpoints:
+  - url: "/api/orders/{orderId}"
+    method: "DELETE"
+    params:
+      - {name: "orderId", type: "path"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/api/users/{userId}"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+  - url: "/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/example/"
+    method: "GET"
+  - url: "/"
+    method: "GET"

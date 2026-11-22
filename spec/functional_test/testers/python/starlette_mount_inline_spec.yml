@@ -1,0 +1,19 @@
+# `sub = Starlette(routes=[...])` with an inline routes list, mounted via
+# `Mount("/v2", app=sub)` or positionally (`Mount("/pos", pos)`), serves its
+# routes under the mount path. An app or StaticFiles mount does not prefix
+# routes that merely share its line.
+fixture: fixtures/python/starlette_mount_inline/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/v2/items"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/pos/inner"
+    method: "GET"
+  - url: "/static/*"
+    method: "GET"
+  - url: "/after"
+    method: "GET"

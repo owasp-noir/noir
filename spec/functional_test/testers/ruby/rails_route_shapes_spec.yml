@@ -1,0 +1,34 @@
+# #3301: `only: []` draws nothing of its own, a slashed `controller:` resolves
+# inside the namespace, `resources` in `collection do` drops the parent key,
+# and `def patch(*)` in the draw block disables PATCH routes. An endless
+# `def` inside `namespace :admin` must not leak a frame (else `/posts` would
+# come out as `/admin/posts`).
+fixture: fixtures/ruby/rails_route_shapes/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/api/v1_alpha/accounts/:account_id/collections"
+    method: "GET"
+    params:
+      - {name: "account_id", type: "path"}
+  - url: "/api/v1/trends"
+    method: "GET"
+  - url: "/api/v1/trends/tags"
+    method: "GET"
+  - url: "/admin/api"
+    method: "GET"
+  - url: "/admin/api/keys"
+    method: "GET"
+  - url: "/admin/api/keys/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/:id"
+    method: "PUT"
+    params:
+      - {name: "raw", type: "form"}
+      - {name: "id", type: "path"}
+  # `def delete!` and a constraint class's `def get` shadow no mapper verb.
+  - url: "/posts/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

@@ -1,0 +1,14 @@
+# A wildcard `import static pkg.Class.*` brings every constant of that class
+# in under its bare name, but a field of the file's own with the same name is
+# the nearer declaration: `LocalResource.BASE = "/local"` must beat
+# `Commons.BASE = "/commons"`. Names only the import supplies (`ADMIN`,
+# and `BASE` in a file with no field of that name) still resolve.
+fixture: fixtures/java/static_import_own_constants/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/local/m"
+    method: "GET"
+  - url: "/local/admin/o"
+    method: "GET"
+  - url: "/commons/imp/x"
+    method: "GET"

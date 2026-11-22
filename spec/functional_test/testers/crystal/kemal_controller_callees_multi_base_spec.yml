@@ -1,0 +1,15 @@
+fixture: fixtures/crystal/kemal_controller_callees_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/crystal/kemal_controller_callees_multi_base/service_a", "./spec/functional_test/fixtures/crystal/kemal_controller_callees_multi_base/service_b"]
+  include_callee: true
+  only_techs: "crystal_kemal"
+endpoints:
+  - url: "/a"
+    method: "GET"
+    callees:
+      - {name: "aService.load", line: 3}
+  - url: "/b"
+    method: "GET"
+    callees:
+      - {name: "bService.load", line: 3}

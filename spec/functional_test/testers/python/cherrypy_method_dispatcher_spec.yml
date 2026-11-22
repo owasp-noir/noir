@@ -1,0 +1,27 @@
+fixture: fixtures/python/cherrypy_method_dispatcher/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/generator"
+    method: "GET"
+  - url: "/generator"
+    method: "POST"
+    params:
+      - {name: "length", type: "form"}
+  - url: "/generator/<value>"
+    method: "PUT"
+    params:
+      - {name: "value", type: "path"}
+  - url: "/generator"
+    method: "DELETE"
+  - url: "/item/<item_id>"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "X-Api-Token", type: "header"}
+  - url: "/item/<item_id>"
+    method: "POST"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "name", type: "form"}
+  - url: "/"
+    method: "GET"

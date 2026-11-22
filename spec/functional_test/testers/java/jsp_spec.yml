@@ -1,0 +1,90 @@
+fixture: fixtures/java/jsp/
+counts: {techs: 1, endpoints: 18}
+endpoints:
+  - url: "/get_param.jsp"
+    method: "GET"
+    params:
+      - {name: "username", type: "query"}
+      - {name: "password", type: "query"}
+  - url: "/el.jsp"
+    method: "GET"
+    params:
+      - {name: "username", type: "query"}
+  # A JSP under `src/main/webapp/` is served relative to that root — the
+  # build prefix is stripped (`/reports/summary.jsp`, not the repo path).
+  - url: "/reports/summary.jsp"
+    method: "GET"
+    params:
+      - {name: "range", type: "query"}
+  - url: "/attribute.jsp"
+    method: "GET"
+    params:
+      - {name: "userId", type: "query"}
+  - url: "/header.jsp"
+    method: "GET"
+    params:
+      - {name: "X-API-Key", type: "header"}
+  # `cookie.jsp` only calls `request.getCookies()`, which names no cookie.
+  # The endpoint is still real, it just carries no param — an empty-named
+  # one used to stand in for "reads cookies" and corrupted every builder
+  # downstream (`--cookie '='`, `{"name": "", "in": "cookie"}`).
+  - url: "/cookie.jsp"
+    method: "GET"
+  - url: "/advanced.jsp"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "tag", type: "query"}
+      - {name: "mode", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "category", type: "query"}
+      - {name: "X-Trace", type: "header"}
+      - {name: "session_id", type: "cookie"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+      - {name: "csrf", type: "form"}
+  - url: "/reports/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "status", type: "query"}
+  - url: "/reports/*"
+    method: "GET"
+    params:
+      - {name: "reportId", type: "query"}
+      - {name: "X-Report-Token", type: "header"}
+  - url: "/api/reports"
+    method: "GET"
+    params:
+      - {name: "reportId", type: "query"}
+      - {name: "X-Report-Token", type: "header"}
+  - url: "/reports/*"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/api/reports"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/legacy/submit"
+    method: "POST"
+    params:
+      - {name: "legacyId", type: "form"}
+  - url: "/audit"
+    method: "GET"
+    params:
+      - {name: "auditId", type: "query"}
+      - {name: "X-Audit-Token", type: "header"}
+  - url: "/audit"
+    method: "POST"
+    params:
+      - {name: "note", type: "form"}
+  - url: "/admin"
+    method: "GET"
+  - url: "/files/*"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}

@@ -1,0 +1,17 @@
+# Regression test: Tornado RequestHandler multi-value / scoped accessors
+# (`get_query_argument(s)`, `get_body_arguments`, `get_secure_cookie`) were
+# previously missed; only `get_argument(s)` / `get_body_argument` / `get_cookie`
+# were handled.
+fixture: fixtures/python/tornado_multivalue/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "tag", type: "query"}
+      - {name: "user", type: "cookie"}
+  - url: "/tags"
+    method: "POST"
+    params:
+      - {name: "id", type: "form"}

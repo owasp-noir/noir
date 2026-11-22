@@ -1,0 +1,35 @@
+# Regression test for --include-callee on Tornado. Covers the three
+# Tornado handler-resolution paths that exist today:
+#
+#   - UsersHandler  — defined in the same file as `Application(...)`
+#                      (local class lookup via
+#                      `extract_endpoints_from_class_in_file`).
+#   - ProfileHandler — imported from a sibling module
+#                      (`from handlers import ProfileHandler`), resolved
+#                      via the import map; exercises the
+#                      `async def get` shape so callee extraction
+#                      handles both sync and async handler methods.
+#
+# Imported helper callees (save_user, audit_log, build_profile) resolve
+# to their definitions in helpers.py; `self.*` calls stay at the
+# call-site because they aren't bare module-level names.
+fixture: fixtures/python/tornado_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "self.get_body_argument", path: "./spec/functional_test/fixtures/python/tornado_callees/app.py", line: 9}
+      - {name: "save_user", path: "./spec/functional_test/fixtures/python/tornado_callees/helpers.py", line: 1}
+      - {name: "audit_log", path: "./spec/functional_test/fixtures/python/tornado_callees/helpers.py", line: 5}
+      - {name: "self.write", path: "./spec/functional_test/fixtures/python/tornado_callees/app.py", line: 12}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "build_profile", path: "./spec/functional_test/fixtures/python/tornado_callees/helpers.py", line: 9}
+      - {name: "audit_log", path: "./spec/functional_test/fixtures/python/tornado_callees/helpers.py", line: 5}
+      - {name: "self.write", path: "./spec/functional_test/fixtures/python/tornado_callees/handlers.py", line: 10}

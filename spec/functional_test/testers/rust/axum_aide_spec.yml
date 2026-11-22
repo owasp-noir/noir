@@ -1,0 +1,20 @@
+# aide's `ApiRouter` (OpenAPI companion for axum). Covers `.api_route`,
+# `.api_route_with` (path + method-router + transform closure), the
+# `*_with` verb constructors (`post_with`), the multi-verb `get(h).head(h)`
+# method-router, and `.nest_api_service("/api/v1", v1_router())` prefix
+# composition through a same-file router-returning function.
+fixture: fixtures/rust/axum_aide/
+counts: {techs: 1, endpoints: 5}
+options:
+  only_techs: "rust_axum"
+endpoints:
+  - url: "/health/ping"
+    method: "GET"
+  - url: "/health/ping"
+    method: "HEAD"
+  - url: "/admin/redrive"
+    method: "POST"
+  - url: "/api/v1/app"
+    method: "GET"
+  - url: "/api/v1/app"
+    method: "POST"

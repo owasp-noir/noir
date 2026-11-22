@@ -1,0 +1,15 @@
+# #3291: `[...x]` spans one or more segments (`{*x}`), and `[[...x]]` also
+# serves the URL without it.
+fixture: fixtures/javascript/nextjs_catch_all/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/auth/{*nextauth}"
+    method: "GET"
+    params:
+      - {name: "nextauth", type: "path"}
+  - url: "/api/og/{*seed}"
+    method: "GET"
+    params:
+      - {name: "seed", type: "path"}
+  - url: "/api/og"
+    method: "GET"

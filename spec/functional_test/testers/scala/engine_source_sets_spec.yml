@@ -1,0 +1,14 @@
+# Specs/Suites under `src/test/` and sbt scripted projects under
+# `src/sbt-test/` build route tables nothing serves; only the `src/main`
+# routes of each ScalaEngine adapter count.
+fixture: fixtures/scala/engine_source_sets/
+counts: {techs: 4, endpoints: 4}
+endpoints:
+  - url: "/akka-live"
+    method: "GET"
+  - url: "/http4s-live"
+    method: "GET"
+  - url: "/tapir-live"
+    method: "GET"
+  - url: "/zio-live"
+    method: "GET"

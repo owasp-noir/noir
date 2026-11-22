@@ -1,0 +1,83 @@
+fixture: fixtures/javascript/restify/
+counts: {techs: 1, endpoints: 14}
+endpoints:
+  # Traditional server routes
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "X-API-Key", type: "header"}
+  - url: "/upload"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "auth", type: "cookie"}
+  # Router-based routes
+  - url: "/api"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "Authorization", type: "header"}
+  - url: "/api/submit"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "sessionId", type: "cookie"}
+  # Route with path parameter
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "x-api-key", type: "header"}
+  # Route with base path from applyRoutes
+  - url: "/products"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  # New added endpoints - server defined
+  - url: "/items"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "description", type: "json"}
+      - {name: "X-CSRF-Token", type: "header"}
+  - url: "/item/:itemId"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "fields", type: "query"}
+  - url: "/info"
+    method: "GET"
+    params:
+      - {name: "format", type: "query"}
+  # New added endpoints - router defined with path prefix
+  - url: "/dashboard"
+    method: "GET"
+    params:
+      - {name: "view", type: "query"}
+      - {name: "Admin-Key", type: "header"}
+  - url: "/users/create"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "role", type: "json"}
+      - {name: "adminToken", type: "cookie"}
+  # New added endpoints - api router endpoints
+  - url: "/products/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "price", type: "json"}
+      - {name: "stock", type: "json"}
+      - {name: "X-Access-Key", type: "header"}
+  - url: "/products/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Confirm", type: "header"}

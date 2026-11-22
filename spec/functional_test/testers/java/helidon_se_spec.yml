@@ -1,0 +1,27 @@
+fixture: fixtures/java/helidon_se/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/ping"
+    method: "ANY"
+  - url: "/greet/"
+    method: "GET"
+    params:
+      - {name: "lang", type: "query"}
+  - url: "/greet/{name}"
+    method: "GET"
+    params:
+      - {name: "X-Trace-Id", type: "header"}
+      - {name: "name", type: "path"}
+  - url: "/greet/greeting"
+    method: "PUT"
+    params:
+      - {name: "session", type: "cookie"}
+      - {name: "body", type: "json", value: "GreetingUpdate"}
+  - url: "/greet/admin/status"
+    method: "GET"
+  - url: "/greet/admin/cache/{cacheId}"
+    method: "DELETE"
+    params:
+      - {name: "cacheId", type: "path"}

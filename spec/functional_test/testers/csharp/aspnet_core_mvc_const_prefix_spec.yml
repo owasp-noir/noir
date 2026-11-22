@@ -1,0 +1,31 @@
+# `[Route(Constants.PrefixApi)]` on a base controller is read from the
+# constant's declaration; one that cannot be read is kept as a placeholder
+# (`/{Unknown}/other`, tagged `unresolved-route`), never dropped.
+fixture: fixtures/csharp/aspnet_core_mvc_const_prefix/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/api/apps/{app}/clients"
+    method: "ANY"
+    params:
+      - {name: "app", type: "path"}
+  - url: "/api/apps/{app}/clients/{id}"
+    method: "DELETE"
+    params:
+      - {name: "app", type: "path"}
+      - {name: "id", type: "path"}
+  - url: "/{Unknown}/other"
+    method: "GET"
+    params:
+      - {name: "Unknown", type: "path"}
+  - url: "/secure/guarded"
+    method: "GET"
+  - url: "/secure/open"
+    method: "GET"
+  - url: "/secure/header"
+    method: "GET"
+  - url: "/secure/plain"
+    method: "GET"
+  - url: "/whole/inside"
+    method: "GET"
+  - url: "/whole/lifted"
+    method: "GET"

@@ -1,0 +1,22 @@
+# Oak routers mount sub-routers through a `.routes()`/`.allowedMethods()`
+# middleware chain, same shape as koa-router:
+#   api.use(usersRouter.routes())        // usersRouter imported from another file
+#   router.use('/api', api.routes(), api.allowedMethods())
+# Every sub-router's route must inherit the `/api` prefix even though the
+# sub-routers live in separate files and `api`/`router` are local
+# aggregators with no backing file.
+fixture: fixtures/javascript/oak_nested_mount/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/users"
+    method: "POST"
+  - url: "/api/users/login"
+    method: "POST"
+  - url: "/api/user"
+    method: "GET"
+  - url: "/api/articles"
+    method: "GET"
+  - url: "/api/articles/:slug"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}

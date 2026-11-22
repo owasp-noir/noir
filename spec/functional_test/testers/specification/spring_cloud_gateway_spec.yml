@@ -1,0 +1,28 @@
+fixture: fixtures/specification/spring_cloud_gateway/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/api/users/**"
+    method: "GET"
+  - url: "/api/users/**"
+    method: "POST"
+  - url: "/strict/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  # Expanded `name`/`args` form under `spring.cloud.gateway.server.webflux`.
+  - url: "/api/orders/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/carts/**"
+    method: "DELETE"
+  # `.properties` form; no `Method` predicate means any verb.
+  - url: "/reports/**"
+    method: "ANY"
+  - url: "/search"
+    method: "PUT"
+  # `server.webflux.routes[0]` is not `routes[0]`; `methods: GET,POST` is a list.
+  - url: "/next/**"
+    method: "GET"
+  - url: "/next/**"
+    method: "POST"

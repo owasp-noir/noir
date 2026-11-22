@@ -1,0 +1,46 @@
+# Regression test for --include-callee on GoFrame (Gf, #1366). Gf
+# uses three route shapes; this fixture exercises two of them plus
+# the closure-scoped group flavor:
+#
+#   - GET /users         — `s.BindHandler("/users", createUser)`. Gf's
+#                          BindHandler accepts any HTTP method and
+#                          gf.cr folds the resulting "ALL" verb down to
+#                          GET. Callees come from `createUser` in
+#                          sibling `handlers.go`. The body also
+#                          contains `name.String()` nested inside
+#                          `saveUser(...)`, so we get a 5-callee list —
+#                          locks in that nested-call expressions still
+#                          surface their 1-hop callees.
+#   - GET /healthz       — `s.BindHandler("/healthz", func(r ...){...})`,
+#                          inline closure in main.go.
+#   - GET /api/profile   — `s.Group("/api", func(group ...){
+#                          group.GET("/profile", listProfile) })`.
+#                          Locks in the closure-scoped group prefix
+#                          (`/api`) + named handler from sibling file.
+fixture: fixtures/go/gf_callees/
+counts: {techs: 1, endpoints: 15}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+    callees:
+      - {name: "r.GetQuery", line: 8}
+      - {name: "saveUser", path: "./spec/functional_test/fixtures/go/gf_callees/helpers.go", line: 3}
+      - {name: "name.String", line: 9}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/gf_callees/helpers.go", line: 7}
+      - {name: "r.Response.Write", line: 11}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "r.Response.Write", line: 12}
+  - url: "/api/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/gf_callees/helpers.go", line: 10}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/gf_callees/helpers.go", line: 7}
+      - {name: "r.Response.Write", line: 17}
+# `/users` and `/healthz` are `BindHandler`/`ALL` registrations, which
+# answer every method: six more verbs each.

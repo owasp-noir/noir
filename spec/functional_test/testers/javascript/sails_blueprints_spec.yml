@@ -1,0 +1,75 @@
+fixture: fixtures/javascript/sails_blueprints/
+counts: {techs: 1, endpoints: 25}
+endpoints:
+  # Blueprint CRUD routes bound to UserController.js (no matching model
+  # file needed -- Sails still binds the default REST actions).
+  - url: "/user"
+    method: "GET"
+  - url: "/user"
+    method: "POST"
+  - url: "/user/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/user/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/user/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Blueprint CRUD routes bound to api/models/Post.js -- no controller
+  # file at all, the model alone is enough.
+  - url: "/post"
+    method: "GET"
+  - url: "/post"
+    method: "POST"
+  - url: "/post/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/post/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/post/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # "actions2" standalone action file nested under api/controllers/user/,
+  # addressed by its path relative to api/controllers -- /user/find-one.
+  # A shadow route responds to every HTTP verb; `config/blueprints.js`
+  # opts in with `actions: true` (off by default since Sails 1.0).
+  - url: "/user/find-one"
+    method: "GET"
+  - url: "/user/find-one"
+    method: "POST"
+  - url: "/user/find-one"
+    method: "PUT"
+  - url: "/user/find-one"
+    method: "DELETE"
+  - url: "/user/find-one"
+    method: "PATCH"
+  - url: "/user/find-one"
+    method: "HEAD"
+  - url: "/user/find-one"
+    method: "OPTIONS"
+  # Top-level standalone action file, not nested under a subdirectory.
+  - url: "/login"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+  - url: "/login"
+    method: "PUT"
+  - url: "/login"
+    method: "DELETE"
+  - url: "/login"
+    method: "PATCH"
+  - url: "/login"
+    method: "HEAD"
+  - url: "/login"
+    method: "OPTIONS"
+  # Default `assets/` static directory.
+  - url: "/style.css"
+    method: "GET"

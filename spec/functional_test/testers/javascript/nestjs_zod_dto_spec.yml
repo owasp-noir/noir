@@ -1,0 +1,35 @@
+# #3309: a nestjs-zod `createZodDto(Schema)` DTO has the fields of its
+# `z.object({...})` schema.
+fixture: fixtures/javascript/nestjs_zod_dto/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "body"}
+      - {name: "price", type: "body"}
+  - url: "/items"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/items"
+    method: "PUT"
+    params:
+      - {name: "name", type: "body"}
+      - {name: "price", type: "body"}
+  - url: "/items/published"
+    method: "POST"
+    params:
+      - {name: "display-label", type: "body"}
+      - {name: "timestamp", type: "body"}
+  - url: "/items/filtered"
+    method: "GET"
+    params:
+      - {name: "display-label", type: "query"}
+      - {name: "nested", type: "query"}
+      - {name: "region", type: "query"}
+  - url: "/items/dynamic"
+    method: "PUT"
+    params:
+      - {name: "body", type: "body"}

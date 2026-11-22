@@ -1,0 +1,22 @@
+# Regression test for --include-callee on Sanic. Verifies decorator-based
+# async handlers populate Endpoint.callees with both bare identifiers
+# (save_user, audit_log, json) and dotted-attribute calls
+# (request.form.get) — same shape as the Flask coverage.
+fixture: fixtures/python/sanic_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "request.form.get", path: "./spec/functional_test/fixtures/python/sanic_callees/app.py", line: 10}
+      - {name: "save_user", path: "./spec/functional_test/fixtures/python/sanic_callees/db.py", line: 1}
+      - {name: "audit_log", path: "./spec/functional_test/fixtures/python/sanic_callees/db.py", line: 5}
+      - {name: "json", path: "./spec/functional_test/fixtures/python/sanic_callees/app.py", line: 13}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "json", path: "./spec/functional_test/fixtures/python/sanic_callees/app.py", line: 18}

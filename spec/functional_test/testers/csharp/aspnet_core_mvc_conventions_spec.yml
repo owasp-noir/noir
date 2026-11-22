@@ -1,0 +1,20 @@
+# #3302: an `IApplicationModelConvention` that combines a constant
+# `RouteAttribute` with every controller selector prefixes the attribute
+# routes; `[FromBody] Create.Command` reads the nested `Command` of the
+# `Create` its namespace reaches, not another `Command`; `MapHealthChecks`
+# and `MapForwarder` map their pattern for every method.
+fixture: fixtures/csharp/aspnet_core_mvc_conventions/
+counts: {techs: 2, endpoints: 4}
+endpoints:
+  - url: "/api/tags"
+    method: "GET"
+  - url: "/api/articles"
+    method: "POST"
+    params:
+      - {name: "article", type: "json"}
+  - url: "/health"
+    method: "ANY"
+  - url: "/product-images/{id}"
+    method: "ANY"
+    params:
+      - {name: "id", type: "path"}

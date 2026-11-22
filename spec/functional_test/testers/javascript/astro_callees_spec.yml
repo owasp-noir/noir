@@ -1,0 +1,21 @@
+fixture: fixtures/javascript/astro/
+counts: {techs: 1, endpoints: 15}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+    callees:
+      - {name: "JSON.stringify"}
+  - url: "/api/users"
+    method: "POST"
+    callees:
+      - {name: "request.json"}
+      - {name: "JSON.stringify"}
+  - url: "/api/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "request.json"}
+      - {name: "JSON.stringify"}

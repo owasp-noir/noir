@@ -1,0 +1,43 @@
+# Both YAML and JSON Envoy config files live in the same fixture directory.
+# The expected endpoints below cover:
+#   YAML (route_config.virtual_hosts):
+#     - prefix match (no :method)     → /v1/users   ANY
+#     - path match with :method header → /admin      GET
+#     - safe_regex match              → /api/v[0-9]+ ANY
+#       (optimizer strips the leading `^` anchor via normalize_url_shapes)
+#     - prefix_rewrite                → /            ANY  (extra endpoint)
+#     - wildcard domain               → /health      ANY
+#   JSON (virtual_hosts at top level):
+#     - prefix match                  → /api         ANY
+#     - path match with :method header → /status      GET
+#   YAML (bootstrap: static_resources.listeners[].filter_chains[].filters[].
+#         typed_config.route_config.virtual_hosts):
+#     - prefix match                  → /bootstrap   ANY
+#     - path_separated_prefix match   → /separated   ANY
+fixture: fixtures/specification/envoy/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  # ── YAML ──────────────────────────────────────────────────────────────────
+  - url: "/v1/users"
+    method: "ANY"
+  - url: "/admin"
+    method: "GET"
+  # safe_regex: optimizer strips leading `^` from `/^/api/v[0-9]+`
+  - url: "/api/v[0-9]+"
+    method: "ANY"
+  # prefix_rewrite emits an extra endpoint with the rewritten path
+  - url: "/"
+    method: "ANY"
+  # wildcard domain ("*") → path only
+  - url: "/health"
+    method: "ANY"
+  # ── JSON ──────────────────────────────────────────────────────────────────
+  - url: "/api"
+    method: "ANY"
+  - url: "/status"
+    method: "GET"
+  # ── YAML bootstrap ────────────────────────────────────────────────────────
+  - url: "/bootstrap"
+    method: "ANY"
+  - url: "/separated"
+    method: "ANY"

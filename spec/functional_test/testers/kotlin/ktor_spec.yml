@@ -1,0 +1,84 @@
+fixture: fixtures/kotlin/ktor/
+counts: {techs: 1, endpoints: 23}
+endpoints:
+  - url: "/extension"
+    method: "GET"
+  - url: "/extension/method"
+    method: "POST"
+  - url: "/extension/query-method"
+    method: "QUERY"
+  - url: "/"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "User"}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-API-Key", type: "header"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "body", type: "json", value: "SearchRequest"}
+      - {name: "filter", type: "query"}
+  - url: "/items"
+    method: "QUERY"
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/search"
+    method: "QUERY"
+  - url: "/api/v1/health"
+    method: "GET"
+  - url: "/api/v1/submit"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "SubmitData"}
+  - url: "/api/v1/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "category", type: "query"}
+  - url: "/partial/{resourceId}"
+    method: "PATCH"
+    params:
+      - {name: "resourceId", type: "path"}
+      - {name: "Authorization", type: "header"}
+  - url: "/check/{id}"
+    method: "HEAD"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/settings"
+    method: "OPTIONS"
+  # Documented with the OpenAPI DSL: one GET route, and no QUERY route per
+  # documented query parameter.
+  - url: "/stream-bytes"
+    method: "GET"
+  # Ktor's placeholder decorations describe the segment, not the parameter:
+  # the handler reads `call.parameters["segments"]`, so `segments...` was
+  # never a name anything could match. `{...}` is anonymous and names none.
+  - url: "/listing/{segments...}"
+    method: "GET"
+    params:
+      - {name: "segments", type: "path"}
+  - url: "/optional/{slug?}"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+  - url: "/anonymous/{...}"
+    method: "GET"
+  # The literal opens the placeholder itself and interpolates only the name,
+  # so the interpolation must not add a second pair of braces.
+  - url: "/interpolated/{tail...}"
+    method: "GET"
+    params:
+      - {name: "tail", type: "path"}

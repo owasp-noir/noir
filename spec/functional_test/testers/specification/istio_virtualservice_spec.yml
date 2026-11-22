@@ -1,0 +1,14 @@
+fixture: fixtures/specification/istio_virtualservice/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/v1/users"
+    method: "GET"
+  - url: "/v1/users"
+    method: "POST"
+  - url: "/v2/.*"
+    method: "ANY"
+  - url: "/v1/legacy"
+    method: "ANY"
+  # Second document declares `kind: "VirtualService"` (quoted).
+  - url: "/v1/search"
+    method: "GET"

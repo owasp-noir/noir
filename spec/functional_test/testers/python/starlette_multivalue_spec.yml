@@ -1,0 +1,9 @@
+# Regression test: Starlette QueryParams/Headers expose `getlist("key")` for
+# repeated keys. The param extractor previously matched only `.get(`.
+fixture: fixtures/python/starlette_multivalue/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/filter"
+    method: "GET"
+    params:
+      - {name: "tag", type: "query"}

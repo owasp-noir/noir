@@ -1,0 +1,12 @@
+fixture: fixtures/specification/kong_catchall/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/api"
+    method: "ANY"
+  # `host-only` (any method) and `method-only` both match every path.
+  - url: "/"
+    method: "ANY"
+  - url: "/"
+    method: "DELETE"
+  - url: "/top-level"
+    method: "ANY"

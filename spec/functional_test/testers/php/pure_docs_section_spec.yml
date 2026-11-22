@@ -1,0 +1,18 @@
+# A plain PHP site serves its root `docs/` section like any other directory:
+# `docs/index.php?page=…` and `docs/search.php` are pages, not runnable
+# documentation snippets.
+fixture: fixtures/php/pure_docs_section/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/index.php"
+    method: "GET"
+    params:
+      - {name: "home", type: "query"}
+  - url: "/docs/index.php"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/docs/search.php"
+    method: "GET"
+    params:
+      - {name: "term", type: "query"}

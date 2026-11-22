@@ -1,0 +1,32 @@
+fixture: fixtures/csharp/aspnet_core_mvc_callees/
+counts: {techs: 2, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/Orders/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "orderService.Load", line: 12}
+      - {name: "AuditLog.Write", line: 13}
+      - {name: "Ok", line: 14}
+      - {name: "SerializeOrder", line: 14}
+  - url: "/api/Orders"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+    callees:
+      - {name: "orderService.Create", line: 20}
+      - {name: "Created", line: 21}
+      - {name: "SerializeOrder", line: 21}
+  - url: "/mapped/orders/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "expand", type: "query"}
+    callees:
+      - {name: "orderService.Save", line: 13}
+      - {name: "AuditLog.Write", line: 14}
+      - {name: "context.Response.WriteAsync", line: 15}
+      - {name: "SerializeOrder", line: 15}

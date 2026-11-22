@@ -1,0 +1,44 @@
+fixture: fixtures/rust/leptos/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/api/get_user"
+    method: "POST"
+    params:
+      - {name: "id", type: "form"}
+      - {name: "name", type: "form"}
+  - url: "/api/v2/get_post"
+    method: "GET"
+    params:
+      - {name: "slug", type: "query"}
+  - url: "/custom/add_todo"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/api/list_todos"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/api/save_settings"
+    method: "POST"
+    params:
+      - {name: "theme", type: "json"}
+  - url: "/api/todo/update"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "done", type: "json"}
+  - url: "/api/counter_stream"
+    method: "GET"
+  - url: "/api/commented"
+    method: "GET"
+    params:
+      - {name: "term", type: "query"}
+  - url: "/api/lower"
+    method: "GET"
+    params:
+      - {name: "type", type: "query"}
+  - url: "/api/empty_ep"
+    method: "POST"
+# `leptos_axum` is a companion crate, not an `axum` dependency key: axum is not
+# detected (it would have found no routes and parsed every `.rs` file).

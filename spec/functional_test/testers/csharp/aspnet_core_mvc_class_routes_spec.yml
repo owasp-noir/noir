@@ -1,0 +1,28 @@
+# Controller-level `[Route]` lookup: past a long attribute list, one route
+# per `[Route]`, inherited from a base controller unless the class declares
+# its own (even `[Route("")]`), and `[area]` replaced.
+fixture: fixtures/csharp/aspnet_core_mvc_class_routes/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/api/reports/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/products/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/v2/products/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/legacy/products"
+    method: "GET"
+  - url: "/api/Orders/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/Admin/Dashboard/Index"
+    method: "GET"
+  - url: "/GetUtcTime"
+    method: "GET"

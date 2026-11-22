@@ -1,0 +1,24 @@
+# Stdlib, pydantic and Enum annotations are query values, not dropped
+# bodies; classes FastAPI injects (Response, BackgroundTasks) are not params.
+fixture: fixtures/python/fastapi_query_value_types/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/orders"
+    method: "GET"
+    params:
+      - {name: "customer_id", type: "query"}
+      - {name: "start", type: "query"}
+      - {name: "end", type: "query"}
+      - {name: "min_total", type: "query"}
+      - {name: "status", type: "query"}
+      - {name: "order", type: "query"}
+      - {name: "kind", type: "query"}
+      - {name: "level", type: "query"}
+      - {name: "color", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "q", type: "query"}
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}

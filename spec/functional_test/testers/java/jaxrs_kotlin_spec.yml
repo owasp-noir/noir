@@ -1,0 +1,48 @@
+# JAX-RS resources written in Kotlin (#2856): `@ApplicationPath` on a
+# Kotlin `Application`, a class `@Path` from a `const val`, Kotlin
+# parameter annotations, a data-class entity resolved across files, a
+# same-file sub-resource locator and a `@ServerEndpoint` socket.
+fixture: fixtures/java/jaxrs_kotlin/
+counts: {techs: 1, endpoints: 7}
+options:
+  include_callee: true
+endpoints:
+  - url: "/chat/{room}"
+    method: "GET"
+    protocol: "ws"
+    params:
+      - {name: "room", type: "path"}
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query", value: "1"}
+      - {name: "X-Tenant", type: "header"}
+    callees:
+      - {name: "service.list", line: 33}
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "age", type: "json", value: "0"}
+    callees:
+      - {name: "service.save", line: 42}
+  - url: "/api/users/{id}/avatar"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "url", type: "form"}
+  - url: "/api/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/{id}/orders"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "status", type: "query"}

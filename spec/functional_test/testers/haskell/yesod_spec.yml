@@ -1,0 +1,37 @@
+fixture: fixtures/haskell/yesod/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/blog/:text"
+    method: "GET"
+    params:
+      - {name: "text", type: "path", value: "Text"}
+  - url: "/blog/:text"
+    method: "POST"
+    params:
+      - {name: "text", type: "path", value: "Text"}
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/users/:user_id"
+    method: "PUT"
+    params:
+      - {name: "user_id", type: "path", value: "UserId"}
+  - url: "/api/users/:user_id"
+    method: "DELETE"
+    params:
+      - {name: "user_id", type: "path", value: "UserId"}
+  - url: "/search"
+    method: "GET"
+  - url: "/files/*texts"
+    method: "GET"
+    params:
+      - {name: "texts", type: "path", value: "Texts"}
+  - url: "/feed/*texts"
+    method: "GET"
+    params:
+      - {name: "texts", type: "path", value: "Texts"}
+  - url: "/feed/*texts"
+    method: "POST"
+    params:
+      - {name: "texts", type: "path", value: "Texts"}

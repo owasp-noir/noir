@@ -1,0 +1,20 @@
+# `GET(req) { return new Response("[]") }` makes no call: a constructor is
+# not a callee, the same in a .ts handler as in a .js one.
+fixture: fixtures/javascript/fresh/
+counts: {techs: 1, endpoints: 13}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+    callees:
+      - {name: "req.json"}
+      - {name: "JSON.stringify"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "ctx.render"}

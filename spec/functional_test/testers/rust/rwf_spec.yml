@@ -1,0 +1,42 @@
+fixture: fixtures/rust/rwf/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/api"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/create"
+    method: "GET"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/form"
+    method: "GET"
+    params:
+      - {name: "form", type: "form"}
+  - url: "/auth"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "X-API-Key", type: "header"}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+  - url: "/posts/:category/:id"
+    method: "GET"
+    params:
+      - {name: "category", type: "path"}
+      - {name: "id", type: "path"}

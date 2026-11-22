@@ -1,0 +1,35 @@
+fixture: fixtures/rust/salvo/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/hello"
+    method: "GET"
+  - url: "/users/<id>"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Token", type: "header"}
+      - {name: "session_id", type: "cookie"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/import"
+    method: "POST"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "body", type: "json"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+  - url: "/items/<id>"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "form", type: "form"}
+  - url: "/api/submit/<id>"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "form", type: "form"}
+      - {name: "Authorization", type: "header"}

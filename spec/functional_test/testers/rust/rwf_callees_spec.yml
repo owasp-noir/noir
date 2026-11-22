@@ -1,0 +1,53 @@
+fixture: fixtures/rust/rwf_callees/
+counts: {techs: 1, endpoints: 6}
+options:
+  include_callee: true
+  only_techs: "rust_rwf"
+endpoints:
+  - url: "/users"
+    method: "GET"
+    callees:
+      - {name: "UserService::list", line: 12}
+      - {name: "AuditLog::list_users", line: 13}
+      - {name: "Response::new", line: 14}
+      - {name: "UserPresenter::render", line: 14}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "request.body", line: 17}
+      - {name: "UserService::create", line: 18}
+      - {name: "AuditLog::write", line: 19}
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "Authorization", type: "header"}
+    callees:
+      - {name: "request.path_parameter", line: 33}
+      - {name: "request.header", line: 34}
+      - {name: "UserService::load", line: 35}
+      - {name: "AuditLog::read_user", line: 36}
+      - {name: "UserPresenter::render", line: 37}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "redirect", type: "query"}
+      - {name: "session_id", type: "cookie"}
+    callees:
+      - {name: "request.cookie", line: 47}
+      - {name: "request.query_parameter", line: 48}
+      - {name: "AuthService::session", line: 49}
+      - {name: "Response::new", line: 50}
+  - url: "/preview"
+    method: "GET"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "X-Trace", type: "header"}
+      - {name: "preview", type: "cookie"}
+  - url: "/preview"
+    method: "POST"
+    params:
+      - {name: "X-Trace", type: "header"}
+      - {name: "preview", type: "cookie"}

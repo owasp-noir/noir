@@ -1,0 +1,79 @@
+fixture: fixtures/python/bottle/
+counts: {techs: 1, endpoints: 19}
+endpoints:
+  - url: "/ping"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "age", type: "query"}
+  - url: "/admin"
+    method: "GET"
+    params:
+      - {name: "abcd_token", type: "cookie"}
+  - url: "/submit"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+      - {name: "User-Agent", type: "header"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "password", type: "json"}
+  - url: "/users/<id:int>"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/dashboard"
+    method: "GET"
+    params:
+      - {name: "section", type: "query"}
+  - url: "/admin/reports/<report_id:int>"
+    method: "POST"
+    params:
+      - {name: "report_id", type: "path"}
+      - {name: "title", type: "json"}
+  - url: "/api/admin/metrics/<metric_id:int>"
+    method: "GET"
+    params:
+      - {name: "metric_id", type: "path"}
+      - {name: "window", type: "query"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/keyword/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "X-Login-Token", type: "header"}
+  - url: "/keyword/status/<status_id:int>"
+    method: "GET"
+    params:
+      - {name: "status_id", type: "path"}
+      - {name: "region", type: "query"}
+  - url: "/bulk"
+    method: "PUT"
+    params:
+      - {name: "action", type: "json"}
+  - url: "/bulk"
+    method: "PATCH"
+    params:
+      - {name: "action", type: "json"}
+  - url: "/health"
+    method: "GET"
+    params:
+      - {name: "probe", type: "query"}
+  # paths.py: path lists and a positional route(path, method, callback).
+  - url: "/multi/a"
+    method: "GET"
+  - url: "/multi/b"
+    method: "GET"
+  - url: "/bare/a"
+    method: "POST"
+  - url: "/bare/b"
+    method: "POST"
+  - url: "/positional"
+    method: "DELETE"

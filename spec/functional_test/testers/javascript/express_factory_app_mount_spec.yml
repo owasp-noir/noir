@@ -1,0 +1,24 @@
+# Apps built by factory modules and mounted through a project-local wrapper:
+#
+#   app.lazyUse = function lazyUse(mountPath, requireFn) { app.use(mountPath, …) }
+#   backendApp.lazyUse(API_PATH, require('./api'))   // API_PATH imported
+#   web/api/index.js: module.exports = require('./app')
+#   apiApp.lazyUse('/admin/', require('./admin/app'))
+#   adminApp.use(routes())
+#
+# The wrapper was not a mount, the imported constant was not a prefix, the
+# prefix stuck to the `index.js` barrel, and the unplaced-mount pass put
+# `/admin/` and `/api/member` at the root before their parents were placed.
+fixture: fixtures/javascript/express_factory_app_mount/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/blog/api/admin/posts"
+    method: "GET"
+  - url: "/blog/api/admin/posts/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/members/api/member/"
+    method: "PUT"
+  - url: "/members/api/session"
+    method: "POST"

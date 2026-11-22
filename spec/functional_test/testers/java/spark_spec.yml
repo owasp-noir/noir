@@ -1,0 +1,53 @@
+fixture: fixtures/java/spark/
+counts: {techs: 1, endpoints: 14}
+endpoints:
+  - url: "/**"
+    method: "GET"
+  - url: "/hello"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/v1/health"
+    method: "GET"
+  - url: "/api/v1/submit"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "X-Token", type: "header"}
+  - url: "/api/v1/items/:itemId"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "category", type: "query"}
+  - url: "/sessions/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}
+  - url: "/profile"
+    method: "PUT"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "X-Trace", type: "header"}
+  - url: "/legacy-home"
+    method: "GET"
+  - url: "/legacy-submit"
+    method: "POST"
+  - url: "/legacy-any"
+    method: "ANY"
+  - url: "/api/reports/:reportId"
+    method: "GET"
+    params:
+      - {name: "reportId", type: "path"}
+      - {name: "X-Report-Trace", type: "header"}
+  - url: "/api/events/:roomId"
+    method: "GET"
+    protocol: "ws"
+    params:
+      - {name: "roomId", type: "path"}

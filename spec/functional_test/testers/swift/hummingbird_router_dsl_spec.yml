@@ -1,0 +1,30 @@
+# Exercises the `HummingbirdRouter` declarative result-builder DSL:
+#   * `RouterBuilder { }` root with a top-level verb + inline group
+#   * a `RouterController` whose `var body: some RouterMiddleware<Context>`
+#     declares routes, with `RouteGroup` prefix composition (incl. nesting)
+#   * verbs with a `handler:` reference, a trailing closure, and no path
+#     (bound to the group root)
+# The fixture also contains look-alike PascalCase constructors inside handler
+# bodies (`Token(...)`, `Post(...)`) and a `: RouterMiddleware` conformance
+# that must NOT surface as endpoints.
+fixture: fixtures/swift/hummingbird_router_dsl/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/admin/stats"
+    method: "GET"
+  - url: "/user"
+    method: "PUT"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/user/signup"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/user/login"
+    method: "GET"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/user/mfa/enable"
+    method: "POST"

@@ -1,0 +1,28 @@
+# A blueprint registered on a blueprint declared in another file is served
+# under the parent's prefixes (#3593), the same way Flask resolves it.
+fixture: fixtures/python/quart_nested_blueprint/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/chatbot/health"
+    method: "GET"
+  # chat_bp (own /genai) on root_bp (/chatbot), across files.
+  - url: "/chatbot/genai/ask"
+    method: "POST"
+  # url_prefix at the nested registration replaces admin_bp's own /admin.
+  - url: "/chatbot/manage/users"
+    method: "GET"
+  # Two levels: leaf_bp on mid_bp on root_bp.
+  - url: "/chatbot/mid/ping"
+    method: "GET"
+  - url: "/chatbot/mid/leaf/item"
+    method: "GET"
+  # One child under two parents.
+  - url: "/chatbot/shared/status"
+    method: "GET"
+  - url: "/other/shared/status"
+    method: "GET"
+  # Never registered: its own prefix only.
+  - url: "/orphan/lonely"
+    method: "GET"
+# cycle_a/cycle_b register each other: the bounded passes must terminate.
+# Their two routes are counted, but their URLs are not asserted.

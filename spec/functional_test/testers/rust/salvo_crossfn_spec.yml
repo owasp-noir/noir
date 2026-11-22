@@ -1,0 +1,19 @@
+# Cross-function router composition. main.rs mounts builder fns from
+# `routes/` via `.push()` / `.unshift()`; the analyzer must thread the
+# `/api` base each builder is mounted under into the routes the builder
+# returns — across files, through an intermediate `.hoop()`-only router,
+# recursively (build_system_route -> build_user_route), and resolving a
+# concatenated cross-module const path (PREFIX + "panel").
+fixture: fixtures/rust/salvo_crossfn/
+counts: {techs: 1, endpoints: 4}
+options:
+  only_techs: "rust_salvo"
+endpoints:
+  - url: "/api"
+    method: "GET"
+  - url: "/api/logs"
+    method: "GET"
+  - url: "/api/system/users"
+    method: "GET"
+  - url: "/api/admin/panel"
+    method: "GET"

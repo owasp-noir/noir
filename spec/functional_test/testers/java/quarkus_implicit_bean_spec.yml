@@ -1,0 +1,21 @@
+# Quarkus REST treats a parameter whose class has annotated fields as a
+# bean parameter with or without `@BeanParam`; a plain DTO stays the body.
+fixture: fixtures/java/quarkus_implicit_bean/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/search/implicit"
+    method: "GET"
+    params:
+      - {name: "filter", type: "query"}
+      - {name: "X-Bean-H", type: "header"}
+      - {name: "page_no", type: "query"}
+  - url: "/search/explicit"
+    method: "GET"
+    params:
+      - {name: "filter", type: "query"}
+      - {name: "X-Bean-H", type: "header"}
+      - {name: "page_no", type: "query"}
+  - url: "/search/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}

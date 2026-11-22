@@ -1,0 +1,74 @@
+fixture: fixtures/java/quarkus/
+counts: {techs: 1, endpoints: 19}
+endpoints:
+  - url: "/platform/q/greetings"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "size", type: "query"}
+  - url: "/platform/q/greetings/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Trace", type: "header"}
+  - url: "/platform/q/greetings"
+    method: "POST"
+    params:
+      - {name: "message", type: "json"}
+      - {name: "locale", type: "json"}
+  - url: "/platform/q/greetings/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "pwd", type: "form"}
+  - url: "/platform/q/greetings/upload"
+    method: "POST"
+    params:
+      - {name: "image", type: "form"}
+  - url: "/platform/q/greetings/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "message", type: "json"}
+      - {name: "locale", type: "json"}
+  - url: "/platform/q/greetings/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}
+  - url: "/platform/configured-rest/configured"
+    method: "GET"
+  - url: "/platform/index.html"
+    method: "GET"
+  - url: "/platform/"
+    method: "GET"
+  - url: "/platform/assets/app.js"
+    method: "GET"
+  - url: "/platform/admin/index.html"
+    method: "GET"
+  - url: "/platform/admin/"
+    method: "GET"
+  - url: "/platform/reactive/events/:eventId"
+    method: "GET"
+    params:
+      - {name: "eventId", type: "path"}
+      - {name: "X-Trace", type: "header"}
+  - url: "/platform/reactive/commands"
+    method: "POST"
+    params:
+      - {name: "payload", type: "json"}
+      - {name: "dryRun", type: "query"}
+  - url: "/platform/reactive/commands"
+    method: "PUT"
+    params:
+      - {name: "payload", type: "json"}
+      - {name: "dryRun", type: "query"}
+  - url: "/platform/reactive/status"
+    method: "GET"
+  # A comment after or below the annotation must not detach it from its method.
+  - url: "/platform/reactive/health"
+    method: "GET"
+    params:
+      - {name: "verbose", type: "query"}
+  - url: "/platform/reactive/ready"
+    method: "GET"

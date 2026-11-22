@@ -1,0 +1,92 @@
+fixture: fixtures/clojure/compojure/
+counts: {techs: 1, endpoints: 24}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/feed"
+    method: "GET"
+    params:
+      - {name: "cursor", type: "query"}
+  - url: "/tags"
+    method: "GET"
+    params:
+      - {name: "tag", type: "query"}
+  - url: "/notes"
+    method: "POST"
+    params:
+      - {name: "title", type: "query"}
+      - {name: "body", type: "query"}
+  - url: "/comments"
+    method: "POST"
+    params:
+      - {name: "author", type: "query"}
+      - {name: "message", type: "query"}
+  - url: "/profile/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "q", type: "query"}
+  - url: "/orders/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/coerce/:n"
+    method: "GET"
+    params:
+      - {name: "n", type: "path"}
+  - url: "/items/:item-id"
+    method: "GET"
+    params:
+      - {name: "item-id", type: "path"}
+  - url: "/api/users"
+    method: "POST"
+  - url: "/api/admin/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "force", type: "query"}
+  - url: "/health"
+    method: "GET"
+  - url: "/api/ping"
+    method: "ANY"
+  - url: "/widgets"
+    method: "GET"
+  - url: "/widgets"
+    method: "POST"
+  - url: "/widgets/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/health-check"
+    method: "GET"
+  - url: "/metered"
+    method: "GET"
+  - url: "/calc"
+    method: "GET"
+    params:
+      - {name: "x", type: "query"}
+      - {name: "y", type: "query"}
+  - url: "/echo"
+    method: "POST"
+    params:
+      - {name: "message", type: "json"}
+      - {name: "authorization", type: "header"}
+  - url: "/pair"
+    method: "GET"
+    params:
+      - {name: "a", type: "query"}
+      - {name: "b", type: "query"}
+  - url: "/upload/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "file", type: "form"}

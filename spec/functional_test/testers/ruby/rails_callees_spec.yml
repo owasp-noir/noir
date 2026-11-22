@@ -1,0 +1,87 @@
+fixture: fixtures/ruby/rails_callees/
+counts: {techs: 1, endpoints: 11}
+options:
+  include_callee: true
+endpoints:
+  - url: "/posts"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "PostQuery.list", line: 3}
+      - {name: "AuditLog.write", line: 4}
+      - {name: "render", line: 5}
+      - {name: "serialize_posts", line: 5}
+  - url: "/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "Post.find", line: 9}
+      - {name: "render", line: 10}
+      - {name: "serialize_post", line: 10}
+  - url: "/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+    callees:
+      - {name: "PostCreator.create", line: 14}
+      - {name: "AuditLog.write", line: 15}
+      - {name: "render", line: 16}
+      - {name: "serialize_post", line: 16}
+  - url: "/posts/:id/memory"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "MemoryStore.destroy", line: 37}
+      - {name: "AuditLog.write", line: 38}
+  - url: "/posts/:id/external_ready"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "render", line: 10}
+      - {name: "Ready.check", line: 10}
+  - url: "/posts/preview"
+    method: "GET"
+    params:
+      - {name: "draft", type: "query"}
+    callees:
+      - {name: "PreviewBuilder.build", line: 20}
+      - {name: "render", line: 21}
+      - {name: "serialize_preview", line: 21}
+  - url: "/posts/implicit_preview"
+    method: "POST"
+    params:
+      - {name: "draft", type: "json"}
+    callees:
+      - {name: "PreviewBuilder.build", line: 25}
+      - {name: "AuditLog.write", line: 26}
+      - {name: "render", line: 27}
+      - {name: "serialize_preview", line: 27}
+  - url: "/posts/implicit_preview_legacy"
+    method: "POST"
+    params:
+      - {name: "draft", type: "json"}
+    callees:
+      - {name: "PreviewBuilder.build", line: 31}
+      - {name: "AuditLog.write", line: 32}
+      - {name: "render", line: 33}
+      - {name: "serialize_preview", line: 33}
+  - url: "/status"
+    method: "GET"
+    callees:
+      - {name: "Health.check", line: 3}
+      - {name: "render", line: 4}
+      - {name: "status_payload", line: 4}
+  - url: "/ping"
+    method: "GET"
+    callees:
+      - {name: "render", line: 7}
+      - {name: "Health.check", line: 7}
+  - url: "/ready"
+    method: "GET"
+    callees:
+      - {name: "render", line: 10}
+      - {name: "Ready.check", line: 10}

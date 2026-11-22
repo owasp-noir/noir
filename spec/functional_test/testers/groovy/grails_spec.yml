@@ -1,0 +1,115 @@
+fixture: fixtures/groovy/grails/
+counts: {techs: 1, endpoints: 45}
+endpoints:
+  # BookController — `def name() { ... }` form with allowedMethods.
+  - url: "/book/index"
+    method: "GET"
+  - url: "/book/show"
+    method: "GET"
+  - url: "/book/save"
+    method: "POST"
+  - url: "/book/update"
+    method: "PUT"
+  - url: "/book/update"
+    method: "PATCH"
+  - url: "/book/delete"
+    method: "DELETE"
+  # AuthorController — closure-style and method-style actions.
+  - url: "/author/list"
+    method: "GET"
+  - url: "/author/profile"
+    method: "GET"
+  # TypedController — actions with explicit return types (Grails 3+).
+  - url: "/typed/index"
+    method: "GET"
+  - url: "/typed/list"
+    method: "GET"
+  - url: "/typed/show"
+    method: "GET"
+  # ProductController — `static scaffold = X` synthesizes 7 CRUD actions.
+  - url: "/product/index"
+    method: "GET"
+  - url: "/product/show"
+    method: "GET"
+  - url: "/product/create"
+    method: "GET"
+  - url: "/product/save"
+    method: "POST"
+  - url: "/product/edit"
+    method: "GET"
+  - url: "/product/update"
+    method: "PUT"
+  - url: "/product/delete"
+    method: "DELETE"
+  # UserRestController — `extends RestfulController<T>` inherits 6 REST actions.
+  - url: "/userRest/index"
+    method: "GET"
+  - url: "/userRest/show"
+    method: "GET"
+  - url: "/userRest/save"
+    method: "POST"
+  - url: "/userRest/update"
+    method: "PUT"
+  - url: "/userRest/patch"
+    method: "PATCH"
+  - url: "/userRest/delete"
+    method: "DELETE"
+  # UrlMappings — verb-prefixed and verbless paren-form.
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/login"
+    method: "POST"
+  - url: "/api/users"
+    method: "POST"
+  # `(resources: 'order')` shortcut → six REST endpoints.
+  - url: "/api/orders"
+    method: "GET"
+  - url: "/api/orders"
+    method: "POST"
+  - url: "/api/orders/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/orders/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/orders/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/orders/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # `group "/v2", { ... }` — prefix propagates to inner mappings.
+  - url: "/v2/items"
+    method: "GET"
+  # Closure-form mapping with `method = "POST"` assignment.
+  - url: "/api/legacy"
+    method: "POST"
+  # `name <id>:` prefix on a verb-prefixed mapping is tolerated.
+  - url: "/api/reports"
+    method: "GET"
+  # `uri:` mapping — still an exposed endpoint despite no controller/action.
+  - url: "/api/legacy-alias"
+    method: "GET"
+  # Singular `resource:` shortcut — five REST verbs at the path itself.
+  - url: "/api/profile"
+    method: "GET"
+  - url: "/api/profile"
+    method: "POST"
+  - url: "/api/profile"
+    method: "PUT"
+  - url: "/api/profile"
+    method: "PATCH"
+  - url: "/api/profile"
+    method: "DELETE"
+  # `void`-return actions on `ReportController`.
+  - url: "/report/index"
+    method: "GET"
+  - url: "/report/show"
+    method: "GET"
+  # Plugin-style `<Name>UrlMappings.groovy` is also processed.
+  - url: "/plugin/status"
+    method: "GET"

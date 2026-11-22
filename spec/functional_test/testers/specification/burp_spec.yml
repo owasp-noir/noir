@@ -1,0 +1,27 @@
+fixture: fixtures/specification/burp/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "q", type: "query", value: "alice"}
+      - {name: "role", type: "query", value: "admin"}
+      - {name: "User-Agent", type: "header", value: "Mozilla/5.0"}
+      - {name: "Accept", type: "header", value: "application/json"}
+      - {name: "X-Trace-Id", type: "header", value: "42"}
+      - {name: "session", type: "cookie", value: "abc123"}
+      - {name: "csrf", type: "cookie", value: "xyz789"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "user", type: "form", value: "admin"}
+      - {name: "pass", type: "form", value: "hunter2"}
+  - url: "/health"
+    method: "GET"
+    params:
+      - {name: "X-Plain", type: "header", value: "yes"}

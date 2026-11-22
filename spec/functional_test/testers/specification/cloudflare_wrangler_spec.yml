@@ -1,0 +1,16 @@
+# A wrangler route pattern is host-qualified (`example.com/api/*`). The host is
+# routing context, not part of the request path, so it becomes a
+# `wrangler-host` tag and the endpoint carries the path alone.
+fixture: fixtures/specification/cloudflare_wrangler/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/*"
+    method: "ANY"
+  - url: "/api/*"
+    method: "ANY"
+  # mixed-routes/wrangler.toml: `routes` mixes a bare string with an inline
+  # table, which the bundled TOML shard rejects — recovered by the fallback.
+  - url: "/assets/*"
+    method: "ANY"
+  - url: "/edge/*"
+    method: "ANY"

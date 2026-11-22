@@ -1,0 +1,59 @@
+fixture: fixtures/clojure/pedestal/
+counts: {techs: 1, endpoints: 21}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/files/*path"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}
+  - url: "/api/orders"
+    method: "GET"
+  - url: "/api/orders/:order-id"
+    method: "PATCH"
+    params:
+      - {name: "order-id", type: "path"}
+  - url: "/api/admin/reports"
+    method: "POST"
+  - url: "/api/admin/reports/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/map"
+    method: "GET"
+  - url: "/map/status"
+    method: "GET"
+  - url: "/map/jobs/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/health"
+    method: "GET"
+  - url: "/api/orders"
+    method: "POST"
+  - url: "/custom-query"
+    method: "QUERY"
+  - url: "/expanded"
+    method: "GET"
+  - url: "/verbose-parent/child"
+    method: "GET"
+  - url: "/verbose-parent/health"
+    method: "GET"
+  - url: "/search"
+    method: "GET"

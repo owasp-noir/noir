@@ -1,0 +1,39 @@
+fixture: fixtures/ruby/grape_callees/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "UserService.list", line: 12}
+      - {name: "AuditLog.write", line: 13}
+      - {name: "present", line: 14}
+      - {name: "serialize_users", line: 14}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+    callees:
+      - {name: "BuildUser.call", line: 22}
+      - {name: "UserService.create", line: 23}
+      - {name: "present", line: 24}
+      - {name: "serialize_user", line: 24}
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "Feature.enabled?", line: 28}
+      - {name: "UserService.find", line: 29}
+      - {name: "UserFallback.find", line: 31}
+      - {name: "present", line: 33}
+      - {name: "serialize_user", line: 33}
+  - url: "/api/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "UserService.delete", line: 36}

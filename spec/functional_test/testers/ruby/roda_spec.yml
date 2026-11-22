@@ -1,0 +1,46 @@
+fixture: fixtures/ruby/roda/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/users"
+    method: "POST"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Token", type: "header"}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session", type: "cookie"}
+  - url: "/api/v1/items"
+    method: "GET"
+  - url: "/projects/{project_id}"
+    method: "GET"
+    params:
+      - {name: "project_id", type: "path"}
+  - url: "/teams/{team_id}"
+    method: "GET"
+    params:
+      - {name: "team_id", type: "path"}
+  - url: "/organizations/{org_id}/{project_id}"
+    method: "GET"
+    params:
+      - {name: "org_id", type: "path"}
+      - {name: "project_id", type: "path"}
+  - url: "/dashboard"
+    method: "GET"
+  - url: "/profile"
+    method: "GET"

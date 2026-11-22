@@ -1,0 +1,46 @@
+# Regression test for --include-callee on go-zero (#1366). Gozero
+# handles two route declaration styles, and only one of them gets
+# callees:
+#
+#   - `.go` verb routes (`server.Get("/x", h)`) — picked up by
+#     `extract_routes`, callee extraction wires identically to
+#     Gin/Beego/etc.
+#   - `.api` DSL routes (`get /x (Request)` inside `service` blocks)
+#     — gozero's own templating language, NOT Go. There's no Go
+#     call_expression to extract a 1-hop graph from, so the spec
+#     locks in that `.api`-declared routes emit with an EMPTY callee
+#     list rather than failing or surfacing junk.
+#
+# Coverage:
+#   - POST /users   — named handler `createUser` in sibling
+#                     `handlers.go`.
+#   - GET /healthz  — inline closure in main.go.
+#   - GET /profile  — second named handler in handlers.go.
+#   - GET /legacy   — declared in `legacy.api` (DSL); zero callees.
+fixture: fixtures/go/gozero_callees/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "r.FormValue", line: 10}
+      - {name: "saveUser", path: "./spec/functional_test/fixtures/go/gozero_callees/helpers.go", line: 3}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/gozero_callees/helpers.go", line: 7}
+      - {name: "httpx.OkJson", line: 13}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "httpx.OkJson", line: 19}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/gozero_callees/helpers.go", line: 10}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/gozero_callees/helpers.go", line: 7}
+      - {name: "httpx.OkJson", line: 19}
+  # No callees expected — `.api` files are a non-Go DSL, callees stay empty.
+  - url: "/legacy"
+    method: "GET"

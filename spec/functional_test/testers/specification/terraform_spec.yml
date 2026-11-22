@@ -1,0 +1,22 @@
+fixture: fixtures/specification/terraform/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  # API Gateway v2 (HTTP API) — self-contained route_key
+  - url: "/items"
+    method: "GET"
+  - url: "/items"
+    method: "POST"
+  - url: "/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # API Gateway v1 (REST) — resource graph resolved across files in the module
+  - url: "/users"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # Terraform JSON (.tf.json), routed through the real file-walk .json filter
+  - url: "/health"
+    method: "GET"

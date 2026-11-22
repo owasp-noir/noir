@@ -1,0 +1,38 @@
+fixture: fixtures/rust/gotham/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+  - url: "/api/products/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/items/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/search"
+    method: "GET"
+  - url: "/api/profiles/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/health"
+    method: "HEAD"
+  - url: "/api/config"
+    method: "OPTIONS"
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+  - url: "/auth"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "X-API-Key", type: "header"}

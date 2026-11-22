@@ -1,0 +1,8 @@
+# A throwaway Socket.IO server built inside `test/failover.test.js` is not
+# inbound attack surface.
+fixture: fixtures/javascript/socketio_test_file/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "ws://real event"
+    method: "SEND"
+    protocol: "ws"

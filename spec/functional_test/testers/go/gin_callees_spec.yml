@@ -1,0 +1,48 @@
+# Regression test for --include-callee on Gin (first cross-language
+# wiring of #1366). Covers the three handler-resolution paths:
+#
+#   - POST /users          — named handler `createUser` defined in a
+#                            sibling file (`handlers.go`). Exercises
+#                            the cross-file lookup via
+#                            `GoCalleeExtractor.collect_function_bodies`
+#                            and confirms callee lines/paths point at
+#                            the sibling, not main.go.
+#   - GET /healthz         — inline `func(c *gin.Context) { … }`
+#                            closure handler in main.go. Walks the
+#                            func_literal body in place; no cross-file
+#                            resolution needed.
+#   - GET /profile         — named handler `listProfile` also in
+#                            handlers.go; locks in that multiple named
+#                            handlers in the same sibling file each
+#                            scope to their own body.
+#
+# Line assertions verify that `start_row` arithmetic from the wrapped
+# external parse maps back to the original file's lines. Bare same-package
+# callees (saveUser, auditLog, buildProfile) resolve to their definition in
+# helpers.go; selector calls (c.PostForm, c.JSON) stay at the call-site.
+fixture: fixtures/go/gin_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  # The handler lives in handlers.go; its `c.PostForm("name")` still
+  # reaches the route through the cross-file named-handler lookup.
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "c.PostForm", line: 8}
+      - {name: "saveUser", path: "./spec/functional_test/fixtures/go/gin_callees/helpers.go", line: 3}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/gin_callees/helpers.go", line: 7}
+      - {name: "c.JSON", line: 11}
+  - url: "/healthz"
+    method: "GET"
+    callees:
+      - {name: "c.JSON", line: 11}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/gin_callees/helpers.go", line: 10}
+      - {name: "auditLog", path: "./spec/functional_test/fixtures/go/gin_callees/helpers.go", line: 7}
+      - {name: "c.JSON", line: 17}

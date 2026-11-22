@@ -1,0 +1,24 @@
+# `.nest(prefix, f())` where `f` is brought in with `use` (bare, or renamed
+# with `as`), or lives in a workspace crate whose name is not its directory
+# (`web-api` called as `web_api`, directory `api` named `acme_api`). The
+# mounted fn is resolved through the imports, so its routes take the prefix.
+# The utoipa `OpenApiRouter` nest resolves the same way.
+fixture: fixtures/rust/axum_imported_nest/
+counts: {techs: 1, endpoints: 7}
+options:
+  only_techs: "rust_axum"
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/users/"
+    method: "GET"
+  - url: "/posts/"
+    method: "GET"
+  - url: "/admin/stats"
+    method: "GET"
+  - url: "/web/users"
+    method: "GET"
+  - url: "/acme/orders"
+    method: "GET"
+  - url: "/docs/readme"
+    method: "GET"

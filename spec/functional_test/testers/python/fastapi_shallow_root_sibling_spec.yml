@@ -1,0 +1,9 @@
+fixture: fixtures/python/fastapi_shallow_root_sibling/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/api/health"
+    method: "GET"
+# An unused `FastAPI()` file in a sibling directory (`legacy/`) must not
+# hide `service/app/main.py`'s `/api` prefix. The app also imports a
+# shared library from the repository root (`shared/`), so its imports
+# resolve from two roots at once, as with `PYTHONPATH=.:service`.

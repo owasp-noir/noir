@@ -1,0 +1,11 @@
+# Restify's object route spec accepts `url` as an alias for `path`:
+#   server.get({ url: '/foo/:id', name: 'GetFoo' }, handler)
+fixture: fixtures/javascript/restify_object_url/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/foo/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/bar"
+    method: "POST"

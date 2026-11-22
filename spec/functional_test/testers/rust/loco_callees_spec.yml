@@ -1,0 +1,48 @@
+fixture: fixtures/rust/loco_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+  only_techs: "rust_loco"
+endpoints:
+  - url: "/posts"
+    method: "GET"
+    callees:
+      - {name: "PostService::list", line: 11}
+      - {name: "PostPresenter::render", line: 12}
+      - {name: "Json", line: 13}
+  - url: "/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "PostService::load", line: 17}
+      - {name: "AuditLog::read_post", line: 18}
+      - {name: "PostPresenter::render", line: 19}
+      - {name: "Json", line: 20}
+  - url: "/posts"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "PostService::create", line: 24}
+      - {name: "AuditLog::write", line: 25}
+      - {name: "PostPresenter::render", line: 26}
+      - {name: "Json", line: 27}
+  - url: "/posts/users"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+    callees:
+      - {name: "headers.get", line: 31}
+      - {name: "AuthService::validate", line: 32}
+      - {name: "Json", line: 33}
+      - {name: "UserPresenter::list", line: 33}
+  - url: "/posts/login"
+    method: "POST"
+    params:
+      - {name: "form", type: "form"}
+    callees:
+      - {name: "AuthService::login", line: 37}
+      - {name: "AuditLog::write", line: 38}
+      - {name: "Json", line: 39}
+      - {name: "SessionPresenter::render", line: 39}

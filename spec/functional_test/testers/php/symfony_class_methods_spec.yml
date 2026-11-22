@@ -1,0 +1,11 @@
+# A class-level `#[Route(methods: [...])]` adds its verbs to each method
+# route's: `/inherit` is POST only, `/own` both POST and PUT.
+fixture: fixtures/php/symfony_class_methods/
+counts: {techs: 2, endpoints: 3}
+endpoints:
+  - url: "/v1/inherit"
+    method: "POST"
+  - url: "/v1/own"
+    method: "POST"
+  - url: "/v1/own"
+    method: "PUT"

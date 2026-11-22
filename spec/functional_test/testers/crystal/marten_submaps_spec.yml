@@ -1,0 +1,27 @@
+# Marten splits routing across files: a main `Marten.routes.draw` mounts
+# per-app sub-maps (`path "/auth", Auth::ROUTES`) whose own `path`
+# declarations live elsewhere. The analyzer must compose the mount prefix
+# onto each sub-map route, keep `path ""` mounts (Blog) at the bare path,
+# never emit the mount line itself as a junk endpoint, and never emit a
+# mounted sub-map's routes a second time un-prefixed.
+fixture: fixtures/crystal/marten_submaps/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  # Blog::ROUTES mounted at "" — bare paths.
+  - url: "/"
+    method: "GET"
+  - url: "/posts/<slug:slug>"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+  # Auth::ROUTES mounted at "/auth" — prefix composed.
+  - url: "/auth/signin"
+    method: "GET"
+  - url: "/auth/signup"
+    method: "GET"
+  # Direct leaf routes on the main map, including one guarded by
+  # `if Marten.env.development?`.
+  - url: "/health"
+    method: "GET"
+  - url: "/__debug"
+    method: "GET"

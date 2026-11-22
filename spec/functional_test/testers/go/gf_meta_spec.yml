@@ -1,0 +1,52 @@
+# GoFrame standardized routing (#gf-meta). Request structs embed
+# `g.Meta` with `path:`/`method:` tags that fully define the route;
+# `group.Bind(controller)` wires them up. The tag is the route, exactly
+# as gf's own OpenAPI generator reads it, so the analyzer surfaces it
+# directly from the struct definition.
+#
+# The controller fixture also parks three value-getter `.Get(...)` calls
+# (`genv.Get`, `r.Get`) and a `group.Bind(...)` — none are endpoints, so
+# this spec doubles as a regression test that they don't mint phantom
+# routes.
+fixture: fixtures/go/gf_meta/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  # `cUser.Get` takes `GetUserReq` and `cUser` is bound in `s.Group("/api", ...)`,
+  # so that route is mounted under `/api`; the other request types have no
+  # bound controller method and keep their tag path.
+  - url: "/api/user/get"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+      - {name: "name", type: "query"}
+  - url: "/user/create"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "email", type: "json"}
+  # Multi-verb `method:"put,patch"` fans out to one endpoint per verb.
+  - url: "/user/update"
+    method: "PUT"
+    params:
+      - {name: "id", type: "json"}
+  - url: "/user/update"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "json"}
+  # Method-less meta tag responds to ALL methods -> fans out to the
+  # seven canonical HTTP verbs (so the optimizer doesn't drop a bare
+  # "ALL" verb).
+  - url: "/user/list"
+    method: "GET"
+  - url: "/user/list"
+    method: "POST"
+  - url: "/user/list"
+    method: "PUT"
+  - url: "/user/list"
+    method: "PATCH"
+  - url: "/user/list"
+    method: "DELETE"
+  - url: "/user/list"
+    method: "HEAD"
+  - url: "/user/list"
+    method: "OPTIONS"

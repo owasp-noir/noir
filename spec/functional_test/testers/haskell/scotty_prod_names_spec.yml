@@ -1,0 +1,14 @@
+# A `Spec` / `Test` / `Tests` module name is not a test by itself:
+# `OpenApiSpec.hs` (the OpenAPI document), `SpeedTest.hs` (a speed-test
+# endpoint) and `Handlers/Tests.hs` (a quiz backend) serve real routes. The
+# same suffixes on a file that imports Test.Hspec / Test.Tasty, and anything
+# under test/, still mark test code.
+fixture: fixtures/haskell/scotty_prod_names/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/openapi.json"
+    method: "GET"
+  - url: "/speedtest"
+    method: "GET"
+  - url: "/tests"
+    method: "GET"

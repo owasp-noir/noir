@@ -1,0 +1,18 @@
+# `private` / `protected` end at the class (or `class << self`) that wrote
+# them, and a started Thor::Group is a one-command program; an unstarted
+# Thor::Group (library_generator.rb) reports nothing.
+fixture: fixtures/ruby/cli_thor_scoping/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "cli://thor_scoping/serve"
+    method: "CLI"
+    protocol: "cli"
+  - url: "cli://thor_scoping/build"
+    method: "CLI"
+    protocol: "cli"
+  - url: "cli://gen"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "name", type: "argument"}
+      - {name: "force", type: "flag"}

@@ -1,0 +1,25 @@
+# A router builder handed a group built off another builder's parameter
+# (`orders := rg.Group("/orders"); registerOrders(orders)`, or inline
+# `user.RegisterRoutes(rg.Group("/users"))`) takes the outer builder's
+# call-site prefix as well.
+fixture: fixtures/go/gin_nested_builder/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/api/v1/ping"
+    method: "GET"
+  - url: "/api/v1/misc"
+    method: "GET"
+  - url: "/api/v1/orders"
+    method: "GET"
+  - url: "/api/v1/orders/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/users"
+    method: "GET"
+  - url: "/api/v1/users"
+    method: "POST"
+  - url: "/api/v1/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

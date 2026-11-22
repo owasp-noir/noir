@@ -1,0 +1,32 @@
+# OAS 3.2 additionalOperations inherit path-level parameters.
+fixture: fixtures/specification/oas3/oas32/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/trips/{id}"
+    method: "SUBSCRIBE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "verbose", type: "query"}
+  - url: "/trips/{id}"
+    method: "LINK"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "verbose", type: "query"}
+  - url: "/stations"
+    method: "GET"
+  - url: "/document"
+    method: "PUT"
+    params:
+      - {name: "docType", type: "json"}
+      - {name: "headline", type: "json"}
+  - url: "/pet"
+    method: "PUT"
+    params:
+      - {name: "petType", type: "json"}
+      - {name: "huntingSkill", type: "json"}
+  - url: "/vehicle"
+    method: "PUT"
+    params:
+      - {name: "vehicleType", type: "json"}
+      - {name: "gears", type: "json"}
+      - {name: "doors", type: "json"}

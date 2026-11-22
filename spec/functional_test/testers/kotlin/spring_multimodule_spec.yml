@@ -1,0 +1,17 @@
+fixture: fixtures/kotlin/spring_multimodule/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/cities"
+    method: "POST"
+    params:
+      - {name: "id", type: "json"}
+      - {name: "name", type: "json"}
+      - {name: "description", type: "json"}
+      - {name: "location", type: "json"}
+  - url: "/cities/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "name", type: "json"}
+      - {name: "description", type: "json"}
+      - {name: "location", type: "json"}

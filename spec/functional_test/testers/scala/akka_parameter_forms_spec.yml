@@ -1,0 +1,38 @@
+# `parameter(s)` with typed, optional and defaulted arguments, two
+# directives in one route, and `cookie` / `optionalCookie`. A default value
+# (`withDefault("white")`) and a `setCookie` are not inputs.
+fixture: fixtures/scala/akka_parameter_forms/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/p1-defaults"
+    method: "GET"
+    params:
+      - {name: "color", type: "query"}
+      - {name: "backgroundColor", type: "query"}
+      - {name: "count", type: "query"}
+      - {name: "debug", type: "query"}
+  - url: "/p2-single-typed"
+    method: "GET"
+    params:
+      - {name: "count", type: "query"}
+  - url: "/p3-single-optional"
+    method: "GET"
+    params:
+      - {name: "cursor", type: "query"}
+  - url: "/p4-two-directives"
+    method: "GET"
+    params:
+      - {name: "a", type: "query"}
+      - {name: "b", type: "query"}
+      - {name: "c", type: "query"}
+      - {name: "d", type: "query"}
+  - url: "/p5-cookie"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+      - {name: "theme", type: "cookie"}
+  - url: "/p6-control"
+    method: "GET"
+    params:
+      - {name: "x", type: "query"}
+      - {name: "y", type: "query"}

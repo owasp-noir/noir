@@ -1,0 +1,35 @@
+fixture: fixtures/ruby/sinatra_callees/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "UserService.list", line: 5}
+      - {name: "users.each", line: 6}
+      - {name: "AuditLog.write", line: 6}
+      - {name: "json", line: 8}
+      - {name: "serialize_users", line: 8}
+  - url: "/users"
+    method: "POST"
+    callees:
+      - {name: "JSON.parse", line: 12}
+      - {name: "request.body.read", line: 12}
+      - {name: "UserService.create", line: 13}
+      - {name: "redirect_to", line: 14}
+      - {name: "user_url", line: 14}
+  - url: "/ping"
+    method: "GET"
+    callees:
+      - {name: "head", line: 17}
+  - url: "/ready"
+    method: "GET"
+    callees:
+      - {name: "Health.ready?", line: 20}
+      - {name: "Health.check", line: 21}
+      - {name: "Health.down", line: 23}
+      - {name: "json", line: 25}
+      - {name: "status_payload", line: 25}

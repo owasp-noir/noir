@@ -19,9 +19,9 @@ On Linux the bare alternatives need `--link-flags=-Wl,--no-export-dynamic`, or t
 
 ### Keep compiles cheap (parallel worktrees)
 
-A compile is the expensive step, and it is memory-bound: building the spec suite peaks at ~11GB RSS, `src/noir.cr` at ~6GB, whatever `--threads` says. Running the examples is cheap (~0.3GB).
+A compile is the expensive step, and it is memory-bound: the suite with YAML testers peaked at 10.6 GB RSS on macOS, compared with ~6 GB for `src/noir.cr`. Running the examples is cheap (~0.3GB).
 
-- **Compile the spec binary once, then filter it.** Run `just spec-build` (or `just test`), then iterate with `./bin/noir_spec -e hono`, `--location spec/...:42` or `--tag functional`. Do not run `crystal spec <file>` per change: every invocation is a full ~11GB compile of `src/`, and each one gets its own compiler cache.
+- **Compile the spec binary once, then filter it.** Run `just spec-build` (or `just test`), then iterate with `./bin/noir_spec -e hono`, `--location spec/...:42` or `--tag functional`. The binary reads YAML testers at startup, so edits to their expectations take effect on the next run. Do not run `crystal spec <file>` per change: each invocation compiles `src/` and gets its own compiler cache.
 - **Go through `just`.** Compiling recipes run under `scripts/compile_gate.sh`, which caps concurrent compiles across all worktrees (`NOIR_COMPILE_SLOTS`, default 2, `0` disables). A bare `crystal build` bypasses the cap.
 - **Lint with the built Ameba.** `just check` builds `bin/ameba` once per worktree. Don't add a rule-level `Excluded:` glob that walks `spec/functional_test/fixtures` in `.ameba.yml`: Ameba re-expands those per (rule, file), which once made a full lint take ~10 minutes. Fixtures are excluded at the top level instead.
 
@@ -149,9 +149,27 @@ New catalog entries default to `extended` and are covered by fixtures. Every sco
 ### Analyzers
 1. Create `src/analyzer/analyzers/{language}/{framework}.cr` — framework adapter only. Delegate parsing to the language's route extractor (see **Analyzer Layering** above).
 2. Declare the tech inside the class: `analyzer_for "{language}_{framework}"`. This is the whole registration (`src/models/analyzer.cr`); `initialize_analyzers` reads it off `Analyzer.all_subclasses`. Omitting it is a compile error.
-3. Add functional test: `spec/functional_test/testers/{language}/{framework}_spec.cr`. Declare every param the fixture emits on each expected endpoint: `FunctionalTester` fails an endpoint whose scan carries a param the tester did not list (`UNASSERTED PARAMS`), so an invented param cannot pass. `spec/functional_test/unasserted_params_baseline.txt` exempts the addresses that predate the check; it is a ratchet, so entries may be removed but never added.
+3. Add a YAML tester in `spec/functional_test/testers/{language}/{framework}_spec.yml`. Keep a `_spec.cr` tester for custom assertions, helpers, setup or multiple scans. Declare every param the fixture emits on each expected endpoint. `FunctionalTester` reports `UNASSERTED PARAMS` for an undeclared param. Entries in `spec/functional_test/unasserted_params_baseline.txt` may only be removed.
 4. Add fixtures: `spec/functional_test/fixtures/{language}/{framework}/`
 5. Add technology metadata: create `src/techs/catalog/{language}/{framework}.cr` (mirrors the analyzer's path)
+
+Each YAML file registers one `FunctionalTester`. Its `fixture` is relative to `spec/functional_test/`. Set the counts to check in `counts` (`techs`, `endpoints`, or both), and put scan option overrides in the optional `options` map. List expected endpoints in order, using `endpoints: []` for an empty list. The Pyramid callee tester demonstrates the format.
+
+```yaml
+fixture: fixtures/python/pyramid_callees/
+counts: {techs: 1, endpoints: 1}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/{uid}"
+    method: "GET"
+    params:
+      - {name: "uid", type: "path"}
+    callees:
+      - {name: "fetch_user", path: "./spec/functional_test/fixtures/python/pyramid_callees/db.py", line: 1}
+```
+
+The optional `protocol` defaults to `http`. Each param takes a name and type, plus an optional string `value` for an exact value check. Each callee takes a name and optional `path` and `line`. Callee paths are relative to the repository root.
 
 ### Detectors
 Prefer a YAML rule for a detector expressed by a file gate, dependency helper, or content check. Add an entry to `src/detector/rules/{Language}.yml` with the technology key, file selector, match condition, and positive and negative examples. The file registers the detector and its examples serve as the unit spec. See `src/detector/rules/README.md` for the operators and `spec/unit_test/detector/rule_examples_spec.cr` for the runner. Add the corresponding technology metadata under `src/techs/catalog/{language}/{framework}.cr`.

@@ -1,0 +1,17 @@
+# `@fastify/autoload` mounts each route file under a prefix derived from
+# its directory path relative to the autoload `dir`. A route registered
+# as `app.get('/:id')` inside `routes/api/tasks/index.ts` is served at
+# `/api/tasks/:id`; a route file directly in `routes/` keeps `/`.
+fixture: fixtures/javascript/fastify_autoload/
+counts: {techs: 1}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/api/tasks/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/tasks/"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}

@@ -1,0 +1,12 @@
+# Only the src/api/<name>/routes routers are content-API routes. The plugin
+# router typed `admin` (src/plugins/todo/server/routes/admin.js) is served by
+# the admin API, so it must not surface as `/api` (nor `GET /api` for path `/`).
+fixture: fixtures/specification/strapi_admin_routes/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/articles/featured"
+    method: "GET"
+  # A stray `type: 'admin'` under src/api/<name>/routes is overridden by
+  # Strapi to `content-api`, so it still serves under /api.
+  - url: "/api/stray/ping"
+    method: "GET"

@@ -232,33 +232,28 @@ Fixture에는 현실적인 패턴을 넣으세요. path param, query/form/header
 
 ### 5. Spec
 
-`spec/functional_test/testers/{language}/{framework}_spec.cr`을 만듭니다.
+`spec/functional_test/testers/{language}/{framework}_spec.yml`을 만듭니다. 별도 설정이나 사용자 정의 검증이 필요한 fixture에는 Crystal 테스터를 사용하세요.
 
-```crystal
-require "../../func_spec.cr"
-
-expected_endpoints = [
-  Endpoint.new("/ping", "GET", [
-    Param.new("name", "", "query"),
-    Param.new("age", "", "query"),
-  ]),
-  Endpoint.new("/submit", "POST", [
-    Param.new("username", "", "form"),
-    Param.new("password", "", "form"),
-    Param.new("User-Agent", "", "header"),
-  ]),
-  # ... 등등
-]
-
-FunctionalTester.new("fixtures/go/hertz/", {
-  :techs     => 1,
-  :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+```yaml
+fixture: fixtures/go/hertz/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/ping"
+    method: GET
+    params:
+      - {name: name, type: query}
+      - {name: age, type: query}
+  - url: "/submit"
+    method: POST
+    params:
+      - {name: username, type: form}
+      - {name: password, type: form}
+      - {name: User-Agent, type: header}
 ```
 
 테스터는 다음을 확인합니다.
 - detector가 tech를 정확히 1개(내 프레임워크) 찾는지.
-- analyzer가 엔드포인트를 정확히 N개(`expected_endpoints.size`) 만드는지.
+- analyzer가 `counts.endpoints`에 지정한 수만큼 엔드포인트를 만드는지.
 - 기대한 엔드포인트마다 URL과 method가 같은 엔드포인트가 출력에 있는지.
 - 기대한 파라미터마다 `name`과 `param_type`이 같은 파라미터가 그 엔드포인트에 붙어 있는지.
 

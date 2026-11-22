@@ -1,0 +1,13 @@
+# A `do` inside a response string (`"There is nothing to do"`) must not
+# open a block, or the `r.on "tasks"` prefix stays on every later route.
+fixture: fixtures/ruby/roda_block_strings/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/tasks/next"
+    method: "GET"
+  - url: "/tasks/list"
+    method: "GET"
+  - url: "/users/me"
+    method: "GET"
+  - url: "/health"
+    method: "GET"

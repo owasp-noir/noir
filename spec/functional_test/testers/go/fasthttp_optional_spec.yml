@@ -1,0 +1,27 @@
+# Regression test: fasthttp/router path-parameter dialects must normalize
+# to the canonical `{name}` placeholder. The optional marker (`{name?}`)
+# and the optional+regex form (`{slug?:[a-z]+}`) previously leaked the `?`
+# into the param name and kept the regex body in the URL.
+#
+# Coverage:
+#   - GET /optional/{name}  — `{name?}`        optional
+#   - GET /regex/{id}       — `{id:[0-9]+}`    inline regex
+#   - GET /combo/{slug}     — `{slug?:[a-z]+}` optional + regex
+fixture: fixtures/go/fasthttp_optional/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/optional/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+      - {name: "preview", type: "query"}
+  - url: "/regex/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "preview", type: "query"}
+  - url: "/combo/{slug}"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+      - {name: "preview", type: "query"}

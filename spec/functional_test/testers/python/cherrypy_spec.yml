@@ -1,0 +1,30 @@
+fixture: fixtures/python/cherrypy/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/users/"
+    method: "GET"
+  - url: "/users/profile/<user_id>"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+      - {name: "session_id", type: "cookie"}
+  - url: "/users/search"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "region", type: "query"}
+  - url: "/users/*"
+    method: "GET"
+  - url: "/"
+    method: "GET"
+  - url: "/generate"
+    method: "GET"
+    params:
+      - {name: "length", type: "query"}
+  - url: "/users/reports/"
+    method: "GET"
+  - url: "/users/reports/latest/<report_id>"
+    method: "GET"
+    params:
+      - {name: "report_id", type: "path"}
+      - {name: "X-Api-Token", type: "header"}

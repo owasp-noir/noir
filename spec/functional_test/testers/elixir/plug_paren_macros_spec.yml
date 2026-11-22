@@ -1,0 +1,27 @@
+# `mix format` parenthesises route macros (`get("/health") do`,
+# `get("/ping", do: ...)`, `match("/hook", via: [...])`). Only a module that
+# `use Plug.Router`s is read that way: `get("/api/users")` in lib/client.ex
+# is an HTTP call, not a route.
+fixture: fixtures/elixir/plug_paren_macros/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/plain"
+    method: "GET"
+  - url: "/health"
+    method: "GET"
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/ping"
+    method: "GET"
+  - url: "/items/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/hook"
+    method: "POST"
+  - url: "/hook"
+    method: "PUT"
+  - url: "/admin/users"
+    method: "GET"

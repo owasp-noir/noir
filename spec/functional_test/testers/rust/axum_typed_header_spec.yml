@@ -1,0 +1,30 @@
+# Axum `TypedHeader<T>` extractors name a header through the `headers`
+# crate type: `Authorization<Bearer>` → `Authorization`, `UserAgent` →
+# `User-Agent`, `ContentType` → `Content-Type`.
+fixture: fixtures/rust/axum_typed_header/
+counts: {techs: 1}
+options:
+  only_techs: "rust_axum"
+endpoints:
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/files/{*path}"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}
+  - url: "/api/me"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+  - url: "/api/upload"
+    method: "POST"
+    params:
+      - {name: "User-Agent", type: "header"}
+      - {name: "Content-Type", type: "header"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "user-agent", type: "header"}

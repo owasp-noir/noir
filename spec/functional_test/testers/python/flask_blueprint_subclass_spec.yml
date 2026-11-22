@@ -1,0 +1,14 @@
+# A Blueprint subclass (`class EventBlueprint(Blueprint)`) is built with
+# Flask's constructor, so its url_prefix prefixes every route registered on
+# the instance. Indico's IndicoBlueprint is the real-world case.
+fixture: fixtures/python/flask_blueprint_subclass/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/event/<int:event_id>/manage"
+    method: "GET"
+    params:
+      - {name: "event_id", type: "path"}
+  - url: "/event/<int:event_id>/registration/"
+    method: "GET"
+    params:
+      - {name: "event_id", type: "path"}

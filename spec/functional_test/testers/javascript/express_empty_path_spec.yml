@@ -1,0 +1,17 @@
+# `router.get('', …)` is the mount point itself. The parser used to reject
+# the empty path outright, so the route was lost both unprefixed (`/`) and
+# under a same-file or cross-file mount (`/orders`, `/items`), while
+# `post('/')` under the same mount still came out as `/orders/`. The empty
+# path is only a route on an app/router receiver: `cache.get('', cb)` and
+# `client.post('', body)` must not become `/`.
+fixture: fixtures/javascript/express_empty_path/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/orders"
+    method: "GET"
+  - url: "/orders/"
+    method: "POST"
+  - url: "/items"
+    method: "GET"

@@ -1,0 +1,47 @@
+fixture: fixtures/haskell/servant/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/v1/users"
+    method: "GET"
+  - url: "/v1/users/:userId"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path", value: "Integer"}
+  - url: "/v1/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "body", value: "User"}
+  - url: "/v1/users/:userId"
+    method: "PUT"
+    params:
+      - {name: "userId", type: "path", value: "Integer"}
+      - {name: "body", type: "body", value: "User"}
+  - url: "/v1/users/:userId"
+    method: "DELETE"
+    params:
+      - {name: "userId", type: "path", value: "Integer"}
+  - url: "/v1/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query", value: "Text"}
+  - url: "/v1/files/*path"
+    method: "GET"
+    params:
+      - {name: "path", type: "path", value: "Text"}
+  - url: "/v1/secure"
+    method: "GET"
+    params:
+      - {name: "X-Token", type: "header", value: "Text"}
+  # MultipartForm produces a body param, with the underlying data type.
+  - url: "/v1/upload"
+    method: "POST"
+    params:
+      - {name: "body", type: "body", value: "MultipartData"}
+  # `StreamGet NewlineFraming JSON ...` resolves to a GET endpoint.
+  - url: "/v1/stream"
+    method: "GET"
+  # `UVerb 'PATCH ...` resolves to a PATCH endpoint.
+  - url: "/v1/uverb"
+    method: "PATCH"
+  - url: "/health"
+    method: "GET"

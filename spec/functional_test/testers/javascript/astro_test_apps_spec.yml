@@ -1,0 +1,9 @@
+# Astro's own repo parks sample projects under `test/fixtures/` and `e2e/`.
+# A page named `test` in the real project is still a route.
+fixture: fixtures/javascript/astro_test_apps/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/test"
+    method: "GET"

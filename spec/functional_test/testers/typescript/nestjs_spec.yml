@@ -1,0 +1,101 @@
+fixture: fixtures/typescript/nestjs/
+counts: {techs: 1, endpoints: 26}
+endpoints:
+  # Basic controller endpoints
+  - url: "/users"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "body"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Query parameters
+  - url: "/users/search"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "email", type: "query"}
+  # HTTP QUERY method routes (@QueryMethod)
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "body", type: "body"}
+  - url: "/search/advanced"
+    method: "QUERY"
+    params:
+      - {name: "body", type: "body"}
+  # Header parameters
+  - url: "/protected"
+    method: "GET"
+    params:
+      - {name: "authorization", type: "header"}
+  # `@Controller()` (empty) — method path used as-is.
+  - url: "/health"
+    method: "GET"
+  # `@Controller({ path: 'tasks', version: '1' })` — versioned
+  # controllers route under `/v<version>` per Nest URI versioning.
+  - url: "/v1/tasks"
+    method: "GET"
+  - url: "/v1/tasks"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+  # Multi-line `@Controller({ path: 'webhooks', version: '1' })`.
+  - url: "/v1/webhooks/:provider"
+    method: "POST"
+    params:
+      - {name: "provider", type: "path"}
+      - {name: "body", type: "body"}
+  # Constant / enum / object-member route names and pipe-bearing params.
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "includeInactive", type: "query"}
+      - {name: "x-tenant-id", type: "header"}
+  # Method-level path arrays.
+  - url: "/api/users/bulk"
+    method: "POST"
+    params:
+      - {name: "name", type: "body"}
+  - url: "/api/users/import"
+    method: "POST"
+    params:
+      - {name: "name", type: "body"}
+  # @Body(pipe) still marks the whole request body.
+  - url: "/api/users/profile"
+    method: "PATCH"
+    params:
+      - {name: "body", type: "body"}
+  # Controller-level path arrays and non-exported controller classes.
+  - url: "/public/health"
+    method: "GET"
+  - url: "/internal/health"
+    method: "GET"
+  # export default class plus @All expansion.
+  - url: "/admin/status"
+    method: "GET"
+  - url: "/admin/status"
+    method: "POST"
+  - url: "/admin/status"
+    method: "PUT"
+  - url: "/admin/status"
+    method: "DELETE"
+  - url: "/admin/status"
+    method: "PATCH"
+  - url: "/admin/status"
+    method: "HEAD"
+  - url: "/admin/status"
+    method: "OPTIONS"

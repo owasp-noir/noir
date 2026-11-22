@@ -1,0 +1,64 @@
+fixture: fixtures/go/iris/
+counts: {techs: 1, endpoints: 18}
+endpoints:
+  # main.go
+  - url: "/ping"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "age", type: "query"}
+  - url: "/submit"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "email", type: "form"}
+  # Path param type annotation stripped: {id:uint64} → {id}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/health"
+    method: "OPTIONS"
+  - url: "/health"
+    method: "HEAD"
+  # app.Any("/any", ...) expands to all HTTP methods
+  - url: "/any"
+    method: "GET"
+  - url: "/any"
+    method: "POST"
+  - url: "/any"
+    method: "PUT"
+  - url: "/any"
+    method: "DELETE"
+  - url: "/any"
+    method: "PATCH"
+  - url: "/any"
+    method: "OPTIONS"
+  - url: "/any"
+    method: "HEAD"
+  # routes/api.go (Party-based grouping: /api/v1/...)
+  - url: "/api/v1/users"
+    method: "GET"
+    params:
+      - {name: "search", type: "query"}
+  - url: "/api/v1/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/api/v1/profile"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "session", type: "cookie"}
+  - url: "/api/v1/files/{file}"
+    method: "GET"
+    params:
+      - {name: "file", type: "path"}

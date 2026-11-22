@@ -1,0 +1,18 @@
+# Routes drawn only under `if Rails.env.test?`-style conditions do not exist
+# in production; an `else` branch and conditions production can satisfy
+# keep theirs, and the frames inside balance so `/after` keeps no prefix.
+fixture: fixtures/ruby/rails_nonprod_routes/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/up"
+    method: "GET"
+  - url: "/prod_branch"
+    method: "GET"
+  - url: "/prod_only"
+    method: "GET"
+  - url: "/demo"
+    method: "GET"
+  - url: "/either"
+    method: "GET"
+  - url: "/after"
+    method: "GET"

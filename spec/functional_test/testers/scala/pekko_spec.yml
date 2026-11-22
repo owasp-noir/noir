@@ -1,0 +1,17 @@
+# Apache Pekko HTTP (`org.apache.pekko.http`) shares the Akka HTTP DSL and
+# is detected and analyzed as `scala_akka`.
+fixture: fixtures/scala/pekko/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/hello"
+    method: "GET"
+  - url: "/api/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "sort", type: "query"}
+  - url: "/api/items/{itemId}"
+    method: "DELETE"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "X-API-Key", type: "header"}

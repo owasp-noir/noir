@@ -1,0 +1,87 @@
+fixture: fixtures/elixir/plug/
+counts: {techs: 1, endpoints: 23}
+endpoints:
+  - url: "/hello"
+    method: "GET"
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/users"
+    method: "POST"
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+  - url: "/protected"
+    method: "GET"
+    params:
+      - {name: "authorization", type: "header"}
+      - {name: "x-api-key", type: "header"}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+      - {name: "user_preference", type: "cookie"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id/profile"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/health"
+    method: "HEAD"
+  - url: "/api/*path"
+    method: "OPTIONS"
+    params:
+      - {name: "path", type: "path"}
+  - url: "/webhook"
+    method: "POST"
+  - url: "/webhook"
+    method: "PUT"
+  - url: "/simple"
+    method: "GET"
+  # RFC 10008 HTTP QUERY method: bare `query/2` macro and `via: :query`
+  - url: "/reports"
+    method: "QUERY"
+    params:
+      - {name: "filters", type: "form"}
+  - url: "/webhook-query"
+    method: "QUERY"
+  # ApiRouter endpoints, mounted by `forward "/api", to: ElixirPlug.ApiRouter`
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/data"
+    method: "POST"
+  - url: "/api/data/:type"
+    method: "GET"
+    params:
+      - {name: "type", type: "path"}
+  - url: "/api/search/api"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/api/api/create"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+      - {name: "description", type: "form"}
+  - url: "/api/api/secured"
+    method: "GET"
+    params:
+      - {name: "x-api-token", type: "header"}
+      - {name: "authorization", type: "header"}
+  - url: "/api/api/session"
+    method: "GET"
+    params:
+      - {name: "api_token", type: "cookie"}
+      - {name: "api_user", type: "cookie"}

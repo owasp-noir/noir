@@ -1,0 +1,15 @@
+# Next.js app-router edge cases:
+#   * `export * from "<route>"` re-exports the target route's verb
+#     handlers — resolved cross-file and emitted at the re-exporting
+#     file's own URL (`/api/projects` from `(old)/projects/route.ts`).
+#   * `export const { POST } = serve(...)` destructures handlers from a
+#     factory call.
+fixture: fixtures/javascript/nextjs_reexport/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/analytics"
+    method: "GET"
+  - url: "/api/projects"
+    method: "GET"
+  - url: "/api/workflows"
+    method: "POST"

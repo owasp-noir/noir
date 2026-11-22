@@ -1,0 +1,24 @@
+fixture: fixtures/php/drupal/
+counts: {techs: 2, endpoints: 6}
+endpoints:
+  - url: "/example"
+    method: "GET"
+  - url: "/example/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/example/submit"
+    method: "POST"
+  - url: "/admin/config/example/settings"
+    method: "GET"
+  - url: "/node/{node}/example/{revision}"
+    method: "GET"
+    params:
+      - {name: "node", type: "path"}
+      - {name: "revision", type: "path"}
+  - url: "/node/{node}/example/{revision}"
+    method: "POST"
+    params:
+      - {name: "node", type: "path"}
+      - {name: "revision", type: "path"}
+# php_drupal + php_pure (suppressed in analysis)

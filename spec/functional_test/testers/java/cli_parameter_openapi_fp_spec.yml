@@ -1,0 +1,15 @@
+# Regression (non-CLI annotation read as a CLI marker): `@Parameter` is also
+# swagger/OpenAPI's (JAX-RS resources) and Maven's (Mojos). Only a file that
+# names `com.beust.jcommander` may read it as a JCommander option, so the
+# resource and the Mojo next to one genuine picocli tool must NOT surface as
+# `cli://ItemResource` / `cli://StopMojo`.
+fixture: fixtures/java/cli_parameter_openapi_fp/
+counts: {techs: 1, endpoints: 1}
+options:
+  only_techs: "java_cli"
+endpoints:
+  - url: "cli://tool"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "verbose", type: "flag"}

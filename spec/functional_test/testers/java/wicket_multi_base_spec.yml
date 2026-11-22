@@ -1,0 +1,13 @@
+fixture: fixtures/java/wicket_multi_base/
+counts: {techs: 1, endpoints: 4}
+options:
+  base: ["./spec/functional_test/fixtures/java/wicket_multi_base/service_a", "./spec/functional_test/fixtures/java/wicket_multi_base/service_b"]
+endpoints:
+  - url: "/a-scanned/only-a"
+    method: "GET"
+  - url: "/a-api/only-a"
+    method: "GET"
+  - url: "/b-scanned/only-b"
+    method: "GET"
+  - url: "/b-api/only-b"
+    method: "GET"

@@ -11,8 +11,9 @@ require "../spec_helper"
 # the unit half getting slower for no visible reason.
 #
 # `FunctionalTester` tags what it registers itself. What it cannot reach are the
-# hand-written `describe` and `it` blocks a tester file adds around it, which is
-# what this checks. Only top-level blocks are checked, because Crystal merges a
+# hand-written `describe` and `it` blocks a tester file adds around it. YAML
+# testers all register through the same runner, so check that file once too.
+# Only top-level blocks are checked, because Crystal merges a
 # parent's tags into its children (`Spec::Item#all_tags`), so a nested block
 # inherits from the one that encloses it.
 #
@@ -26,6 +27,7 @@ describe "functional tester tagging" do
   it "tags every top-level block in spec/functional_test/testers" do
     files = Dir.glob("spec/functional_test/testers/**/*.cr").sort
     files.should_not be_empty
+    files << "spec/functional_test/data_testers_spec.cr"
 
     untagged = [] of String
     files.each do |path|

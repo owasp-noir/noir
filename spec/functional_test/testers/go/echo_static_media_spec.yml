@@ -1,0 +1,24 @@
+# `e.Static("/static", "public")` serves every file in the directory,
+# including the images, fonts and SVGs the media filter keeps out of the
+# file index. `root_mount/` serves its own directory (`e.Static("/", ".")`):
+# the walk's pruned subtrees (`node_modules/`) are not served files.
+fixture: fixtures/go/echo_static_media/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/static/site.css"
+    method: "GET"
+  - url: "/static/img/logo.svg"
+    method: "GET"
+  - url: "/static/img/pic.png"
+    method: "GET"
+  - url: "/static/font.woff2"
+    method: "GET"
+  - url: "/static/font.woff2.1"
+    method: "GET"
+  - url: "/static/favicon.ico"
+    method: "GET"
+  - url: "/server.go"
+    method: "GET"
+  - url: "/assets/mark.svg"
+    method: "GET"
+# The count pins `root_mount/node_modules/` (pruned by the walk) as absent.

@@ -1,0 +1,38 @@
+fixture: fixtures/javascript/express_optional_brace_params/
+counts: {techs: 1}
+endpoints:
+  - url: "/user/:id{/:op}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "op", type: "path"}
+  - url: "/user/:id{/:op}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "op", type: "path"}
+  - url: "/user/:id{/:op}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "op", type: "path"}
+  - url: "/user/:id{/:op}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "op", type: "path"}
+  - url: "/user/:id{/:op}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "op", type: "path"}
+  - url: "/user/:id{/:op}"
+    method: "HEAD"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "op", type: "path"}
+  - url: "/user/:id{/:op}"
+    method: "OPTIONS"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "op", type: "path"}

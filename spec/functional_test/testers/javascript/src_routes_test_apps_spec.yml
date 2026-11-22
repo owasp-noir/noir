@@ -1,0 +1,10 @@
+# SolidStart and Qwik City share `src/routes/`. Sample apps under
+# `tests/fixtures/` (with their own manifest, or none beside `src`) are the
+# framework suite's, not served routes.
+fixture: fixtures/javascript/src_routes_test_apps/
+counts: {techs: 2, endpoints: 2}
+endpoints:
+  - url: "/pricing"
+    method: "GET"
+  - url: "/team"
+    method: "GET"

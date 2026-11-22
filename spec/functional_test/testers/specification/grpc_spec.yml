@@ -1,0 +1,127 @@
+fixture: fixtures/specification/grpc/
+counts: {techs: 1, endpoints: 21}
+endpoints:
+  # Pure gRPC endpoint
+  - url: "/example.v1.UserService/ListUsers"
+    method: "POST"
+    params:
+      - {name: "page", type: "json"}
+      - {name: "page_size", type: "json"}
+  # gRPC-Gateway endpoints
+  - url: "/api/v1/users/{user_id}"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+      - {name: "name", type: "query"}
+  - url: "/api/v1/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "age", type: "json"}
+  - url: "/api/v1/users/{user_id}"
+    method: "PUT"
+    params:
+      - {name: "user_id", type: "path"}
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/api/v1/users/{user_id}"
+    method: "DELETE"
+    params:
+      - {name: "user_id", type: "path"}
+  # Stream RPC (server-streaming) - pure gRPC
+  - url: "/example.v1.UserService/StreamUsers"
+    method: "POST"
+    params:
+      - {name: "page", type: "json"}
+      - {name: "page_size", type: "json"}
+  # Search with nested message fields
+  - url: "/api/v1/users/search"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+      - {name: "filter", type: "query"}
+      - {name: "page", type: "query"}
+  # Additional bindings - primary
+  - url: "/api/v1/users/{user_id}/profile"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+      - {name: "name", type: "query"}
+  # Additional bindings - secondary
+  - url: "/api/v2/users/{user_id}"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+      - {name: "name", type: "query"}
+  # No-package service (health.proto)
+  - url: "/HealthService/Check"
+    method: "POST"
+    params:
+      - {name: "service", type: "json"}
+  # Specific body field - remaining fields become query params
+  - url: "/api/v1/users/{user_id}"
+    method: "PATCH"
+    params:
+      - {name: "user_id", type: "path"}
+      - {name: "display_name", type: "json"}
+      - {name: "bio", type: "query"}
+  # Qualified response type (google.protobuf.Empty)
+  - url: "/api/v1/users/{user_id}/ping"
+    method: "POST"
+    params:
+      - {name: "user_id", type: "path"}
+      - {name: "name", type: "json"}
+  # Path parameter with resource pattern {name=projects/*/locations/*}
+  - url: "/api/v1/projects/{wildcard}/locations/{name}/resource"
+    method: "GET"
+    params:
+      - {name: "wildcard", type: "path"}
+      - {name: "name", type: "path"}
+      - {name: "user_id", type: "query"}
+  # Commented-out services/methods must be ignored; only the real rpc remains.
+  - url: "/comments.v1.NoteService/CreateNote"
+    method: "POST"
+    params:
+      - {name: "note_id", type: "json"}
+      - {name: "body", type: "json"}
+  # Colon-form additional_bindings: primary + secondary binding.
+  - url: "/v1/items/{item_id}"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "name", type: "query"}
+  - url: "/v1/items/by-name/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+      - {name: "item_id", type: "query"}
+  # Array-form additional_bindings: primary PUT + two PATCH bindings.
+  - url: "/v1/items/{item_id}"
+    method: "PUT"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "name", type: "json"}
+  - url: "/v1/items/{item_id}"
+    method: "PATCH"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "name", type: "json"}
+  - url: "/v2/items/{item_id}"
+    method: "PATCH"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "name", type: "json"}
+  # custom: { kind, path } maps to a non-standard HTTP method (HEAD).
+  - url: "/v1/items/{item_id}/watch"
+    method: "HEAD"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "name", type: "query"}
+  # Request message imported from another .proto and referenced by its
+  # fully-qualified name: `city` resolves to a query param across files.
+  - url: "/v1/addresses/{street}"
+    method: "GET"
+    params:
+      - {name: "street", type: "path"}
+      - {name: "city", type: "query"}

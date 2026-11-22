@@ -1,0 +1,15 @@
+# #3291: haute-couture hands every `routes/` module's export to
+# `server.route()`; a plain object and a `Helpers.withDefaults({...})` call
+# are both route configs, and `options.handler` is read for params.
+fixture: fixtures/javascript/hapi_haute_couture/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/articles/{slug}"
+    method: "PUT"
+    params:
+      - {name: "slug", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/articles/{slug}"
+    method: "DELETE"
+    params:
+      - {name: "slug", type: "path"}

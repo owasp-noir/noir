@@ -1,0 +1,21 @@
+fixture: fixtures/javascript/hono_on_array/
+counts: {techs: 1}
+endpoints:
+  - url: "/single"
+    method: "GET"
+  - url: "/items/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:userId"
+    method: "PUT"
+    params:
+      - {name: "userId", type: "path"}
+  - url: "/users/:userId"
+    method: "PATCH"
+    params:
+      - {name: "userId", type: "path"}

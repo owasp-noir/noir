@@ -1,0 +1,101 @@
+fixture: fixtures/php/cakephp/
+counts: {techs: 2, endpoints: 30}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/pages/*"
+    method: "GET"
+  - url: "/about"
+    method: "GET"
+  - url: "/articles"
+    method: "GET"
+  - url: "/articles"
+    method: "POST"
+  - url: "/articles/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # resources() honours only (RouteBuilder map keys)
+  - url: "/comments"
+    method: "GET"
+  - url: "/comments/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # legacy _method in the options argument
+  - url: "/legacy-post"
+    method: "POST"
+  - url: "/admin/dashboard"
+    method: "GET"
+  - url: "/admin/users"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+  # connect()->setMethods([...]) is honored instead of defaulting to GET
+  - url: "/logout"
+    method: "POST"
+  - url: "/sessions/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/sessions/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # prefix() opens a prefixed scope like scope()
+  - url: "/groups/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # prefix() with ['path' => '/v1.0'] mounts under the path option, not /v10.
+  # (The sibling `config/routes.php.twig` Bake template's `{{ plugin }}` routes
+  # are ignored entirely — a `.twig` file is not a routes file.)
+  - url: "/v1.0/status"
+    method: "GET"
+  # Static Router facade form
+  - url: "/legacy/ping"
+    method: "GET"
+  # Dasherized prefix/resources names; nested resources() callback
+  - url: "/super-admin/reports"
+    method: "GET"
+  - url: "/api/blog-posts"
+    method: "GET"
+  - url: "/api/blog-posts"
+    method: "POST"
+  - url: "/api/blog-posts/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/blog-posts/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/blog-posts/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/blog-posts/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/blog-posts/{blog_post_id}/replies"
+    method: "GET"
+    params:
+      - {name: "blog_post_id", type: "path"}
+  # Typed closure scope
+  - url: "/typed/ping"
+    method: "GET"
+# Detection still sees php_cakephp and php_pure
+# Analysis suppresses redundant php_pure file endpoints

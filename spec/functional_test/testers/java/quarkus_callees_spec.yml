@@ -1,0 +1,44 @@
+# Regression test for --include-callee on Quarkus's JAX-RS-flavoured
+# analyzer. Quarkus shares the JAX-RS extractor and should receive the
+# same method-body callee coverage.
+fixture: fixtures/java/quarkus_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+endpoints:
+  - url: "/greetings/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "dry_run", type: "query"}
+    callees:
+      - {name: "validate", line: 20}
+      - {name: "service.save", line: 21}
+      - {name: "AuditLog.write", line: 22}
+      - {name: "Response.ok", line: 23}
+  - url: "/greetings/profile"
+    method: "GET"
+    callees:
+      - {name: "this.buildProfile", line: 29}
+      - {name: "AuditLog.write", line: 30}
+      - {name: "Response.ok", line: 31}
+  - url: "/reactive/jobs/:jobId"
+    method: "POST"
+    params:
+      - {name: "jobId", type: "path"}
+      - {name: "payload", type: "json"}
+    callees:
+      - {name: "validate", line: 16}
+      - {name: "this.sanitize", line: 17}
+      - {name: "sanitizer.apply", line: 18}
+      - {name: "service.submit", line: 19}
+      - {name: "AuditLog.write", line: 20}
+  - url: "/reactive/profile"
+    method: "GET"
+    callees:
+      - {name: "this.buildProfile", line: 26}
+      - {name: "AuditLog.write", line: 27}
+  - url: "/reactive/overloaded"
+    method: "POST"
+    callees:
+      - {name: "routeOverload", line: 48}

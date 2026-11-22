@@ -1,0 +1,26 @@
+fixture: fixtures/javascript/fastify_http_query/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "filter", type: "json"}
+  - url: "/advanced-search"
+    method: "QUERY"
+    params:
+      - {name: "term", type: "json"}
+  - url: "/items/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items/:id"
+    method: "QUERY"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/plugin-query"
+    method: "QUERY"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/v1/plugin-route"
+    method: "QUERY"

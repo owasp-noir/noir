@@ -1,0 +1,11 @@
+fixture: fixtures/go/hertz_importless_routes/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/features"
+    method: "GET"
+  - url: "/features"
+    method: "POST"
+  - url: "/features/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}

@@ -1,0 +1,26 @@
+# Regression test for --include-callee on Play Framework. Routes map
+# to controller methods, so the analyzer attaches callees discovered
+# in the referenced controller method body.
+fixture: fixtures/java/play_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Token", type: "header"}
+    callees:
+      - {name: "request", line: 9}
+      - {name: "parseUser", line: 10}
+      - {name: "userService", line: 11}
+      - {name: "AuditLog.write", line: 12}
+      - {name: "ok", line: 13}
+      - {name: "Json.toJson", line: 13}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "this.buildProfile", line: 17}
+      - {name: "AuditLog.write", line: 18}
+      - {name: "ok", line: 19}

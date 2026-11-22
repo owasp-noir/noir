@@ -1,0 +1,10 @@
+fixture: fixtures/swift/hummingbird_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/swift/hummingbird_multi_base/service_a", "./spec/functional_test/fixtures/swift/hummingbird_multi_base/service_b"]
+  only_techs: "swift_hummingbird"
+endpoints:
+  - url: "/a/items"
+    method: "GET"
+  - url: "/b/items"
+    method: "GET"

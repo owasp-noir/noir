@@ -1,0 +1,14 @@
+# `.mts` / `.cts` TypeScript modules are valid sources that both the
+# detector and the JavaScript engine must accept; they used to detect
+# nothing and scan nothing.
+fixture: fixtures/javascript/express_mts/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/hello"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/admin/login"
+    method: "POST"
+    params:
+      - {name: "user", type: "json"}

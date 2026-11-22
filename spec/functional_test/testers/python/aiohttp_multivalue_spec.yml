@@ -1,0 +1,11 @@
+# Regression test: aiohttp MultiDict/CIMultiDict expose `getall`/`getone`
+# for repeated keys. The param extractor previously matched only `.get(`.
+fixture: fixtures/python/aiohttp_multivalue/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/items"
+    method: "GET"
+    params:
+      - {name: "tag", type: "query"}
+      - {name: "kind", type: "query"}
+      - {name: "X-Trace", type: "header"}

@@ -1,0 +1,104 @@
+fixture: fixtures/vb/aspnet_mvc/
+counts: {techs: 1, endpoints: 26}
+endpoints:
+  # RouteConfig.vb: a literal MapRoute; the `{Controller}/{Action}/{id}`
+  # template expands the MVC controllers below instead of being emitted, and
+  # the Admin area's `Admin/{controller}/...` template does not replace it.
+  - url: "/about-us"
+    method: "GET"
+  # MVC 5 conventional routing.
+  - url: "/Home/Index"
+    method: "GET"
+  - url: "/Home/Details/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/Home/Contact"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "message", type: "form"}
+  - url: "/Home/Search"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+  - url: "/Home/Search"
+    method: "POST"
+    params:
+      - {name: "query", type: "form"}
+  - url: "/Home/Delete/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/Home/About"
+    method: "GET"
+  # ASP.NET Core attribute routing with `[controller]` / `[action]` tokens.
+  - url: "/api/Products"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+  - url: "/api/Products/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/Products"
+    method: "POST"
+    params:
+      - {name: "product", type: "json"}
+      - {name: "X-Api-Key", type: "header"}
+  - url: "/api/Products/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/Products/Export"
+    method: "GET"
+  # Web API 2 attribute routing under `<RoutePrefix>`.
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "user", type: "json"}
+  - url: "/api/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "user", type: "json"}
+  - url: "/api/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/users/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/Users"
+    method: "GET"
+  # Web API 2 conventional routing through `MapHttpRoute`.
+  - url: "/api/Values"
+    method: "GET"
+  - url: "/api/Values/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/Values"
+    method: "POST"
+    params:
+      - {name: "value", type: "json"}
+  - url: "/api/Values/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "value", type: "json"}
+  - url: "/api/Values/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

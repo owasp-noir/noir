@@ -1,0 +1,20 @@
+# Methods on the API root (`!GetAtt Api.RootResourceId`, YAML and JSON),
+# `AWS::ApiGatewayV2::Route` keys (`$default` selects no path), and the
+# inline OpenAPI `DefinitionBody` of a SAM API.
+fixture: fixtures/specification/aws_cloudformation_routes/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/"
+    method: "POST"
+  - url: "/users"
+    method: "GET"
+  - url: "/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/inline-openapi"
+    method: "POST"
+  - url: "/inline-any"
+    method: "ANY"

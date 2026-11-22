@@ -1,0 +1,31 @@
+# Endpoints configured with class attributes instead of `Configure()`, the
+# fluent-generic `Ep.Req<T>.Res<U>` / `Ep.NoReq.Res<U>` bases, and a route
+# held in a constant.
+fixture: fixtures/csharp/fastendpoints_attributes/
+counts: {techs: 2, endpoints: 7}
+endpoints:
+  - url: "/f01/address"
+    method: "POST"
+    params:
+      - {name: "Id", type: "json"}
+      - {name: "Street", type: "json"}
+  - url: "/f02/address/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/f03/address"
+    method: "POST"
+    params:
+      - {name: "Id", type: "json"}
+      - {name: "Street", type: "json"}
+  - url: "/f04/addresses"
+    method: "GET"
+  - url: "/f05/address/{Id}"
+    method: "DELETE"
+    params:
+      - {name: "Id", type: "path"}
+      - {name: "Street", type: "query"}
+  - url: "/f06/address/search"
+    method: "GET"
+  - url: "/f07/address/ping"
+    method: "GET"

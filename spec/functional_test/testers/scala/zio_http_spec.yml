@@ -1,0 +1,59 @@
+fixture: fixtures/scala/zio_http/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/"
+    method: "OPTIONS"
+  - url: "/hello"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users/{userId}"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "CreateUser"}
+  - url: "/api/v1/status"
+    method: "GET"
+  - url: "/api/v1/items"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/api/v1/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+  - url: "/api/v1/items/{itemId}"
+    method: "PUT"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "body", type: "json", value: "UpdateItem"}
+      - {name: "Authorization", type: "header"}
+  - url: "/api/v1/items/{itemId}"
+    method: "DELETE"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "X-API-Key", type: "header"}
+  - url: "/search"
+    method: "POST"
+    params:
+      - {name: "q", type: "query"}
+  # Declarative Endpoint(...) DSL: trailing `.out[Int]` must not add a phantom
+  # path param; query comes from the `.query(...)` codec chain.
+  - url: "/v2/users/{userId}"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+  - url: "/v2/users/{userId}/posts"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "name", type: "query"}
+  # Response headers (`Headers(Header.ContentType(...))`) are not request params.
+  - url: "/v2/download"
+    method: "GET"

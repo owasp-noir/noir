@@ -1,0 +1,47 @@
+# Request models resolved the way FastAPI and Pydantic read them:
+#
+#   * `from app.schema import Registration` re-exported by
+#     `from .user import *` in the package `__init__.py`, with a base
+#     model in another module whose `alias_generator` camelizes field
+#     names (an explicit `Field(alias=...)` still wins). `Registration`
+#     is not a `str` query parameter for containing the letters "str".
+#   * `form_data: SigninForm` is a JSON body model: a class name ending
+#     in "Form" is not a `Form()` parameter.
+#   * `form: LoginForm = Depends()` — FastAPI calls the class, so its
+#     `__init__` `Form()` parameters are the request's.
+#   * `q: Annotated[FeedQuery, Query()]` — a query parameter model.
+#   * A class-based view's `Depends(...)` class attributes (its own and a
+#     base class's) contribute their dependency functions' parameters,
+#     and a router prefix's `{group_slug}` binds `Path(...)` as a path
+#     parameter rather than a query one.
+fixture: fixtures/python/fastapi_param_models/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/register"
+    method: "POST"
+    params:
+      - {name: "fullName", type: "json"}
+      - {name: "passwordConfirm", type: "json"}
+      - {name: "mail", type: "json"}
+  - url: "/token"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "remember_me", type: "form", value: "false"}
+  - url: "/signin"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "password", type: "json"}
+  - url: "/feed"
+    method: "GET"
+    params:
+      - {name: "includeNotes", type: "query", value: "true"}
+      - {name: "tz", type: "query"}
+  - url: "/groups/{group_slug}/items/{item_id}"
+    method: "GET"
+    params:
+      - {name: "page", type: "query", value: "1"}
+      - {name: "accept-language", type: "header"}
+      - {name: "group_slug", type: "path"}
+      - {name: "item_id", type: "path"}

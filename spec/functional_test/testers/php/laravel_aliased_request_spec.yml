@@ -1,0 +1,17 @@
+# `use App\Http\Requests\ItemRequest as Request;` is an app FormRequest named
+# `Request`: its rules() keys are the action's params. The framework's own
+# `Request` and an aliased class that is no FormRequest contribute none.
+fixture: fixtures/php/laravel_aliased_request/
+counts: {techs: 2, endpoints: 3}
+endpoints:
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "sale_price", type: "form"}
+  - url: "/plain"
+    method: "POST"
+  - url: "/framework"
+    method: "POST"
+    params:
+      - {name: "plain", type: "form"}

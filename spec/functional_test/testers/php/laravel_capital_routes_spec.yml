@@ -1,0 +1,17 @@
+# Route files under a capitalised `Routes/` directory: nwidart modules up to
+# v10 (`Modules/Blog/Routes/web.php`, wired by the module's
+# RouteServiceProvider through `module_path('Blog', '/Routes/api.php')`) and
+# Bagisto packages (`packages/Webkul/Admin/src/Routes/web.php`).
+fixture: fixtures/php/laravel_capital_routes/
+counts: {techs: 2, endpoints: 5}
+endpoints:
+  - url: "/control"
+    method: "GET"
+  - url: "/blog"
+    method: "GET"
+  - url: "/blog/posts"
+    method: "POST"
+  - url: "/api/blog"
+    method: "GET"
+  - url: "/admin/dashboard"
+    method: "GET"

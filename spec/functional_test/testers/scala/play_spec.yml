@@ -1,0 +1,90 @@
+fixture: fixtures/scala/play/
+counts: {techs: 1, endpoints: 22}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "filter", type: "query"}
+  - url: "/users/:userId/posts/:postId"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "postId", type: "path"}
+  - url: "/items"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/files/$path<.+>"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}
+  - url: "/upload"
+    method: "POST"
+  - url: "/api/protected"
+    method: "GET"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "session_id", type: "cookie"}
+  - url: "/api/data"
+    method: "POST"
+    params:
+      - {name: "Content-Type", type: "header"}
+      - {name: "body", type: "json"}
+  - url: "/assets/*file"
+    method: "GET"
+    params:
+      - {name: "file", type: "path"}
+  - url: "/multipart"
+    method: "POST"
+    params:
+      - {name: "body", type: "form"}
+  - url: "/xml"
+    method: "POST"
+    params:
+      - {name: "body", type: "xml"}
+  - url: "/whitespace"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/admin/stats"
+    method: "GET"
+    params:
+      - {name: "format", type: "query", value: "json"}
+      - {name: "X-Trace-Id", type: "header"}
+  - url: "/admin/jobs/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+  # Included sub-routes file written with absolute paths (lila convention):
+  # the `-> /appeal` prefix must not be doubled into /appeal/appeal/...
+  - url: "/appeal"
+    method: "GET"
+  - url: "/appeal/landing"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/appeal/:username"
+    method: "POST"
+    params:
+      - {name: "username", type: "path"}

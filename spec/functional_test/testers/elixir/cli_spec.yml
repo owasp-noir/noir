@@ -1,0 +1,10 @@
+fixture: fixtures/elixir/cli_optionparser/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "cli://mycli"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "port", type: "flag"}
+      - {name: "verbose", type: "flag"}
+      - {name: "API_TOKEN", type: "env"}

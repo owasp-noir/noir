@@ -1,0 +1,28 @@
+# Regression: full-stack-fastapi-template style `prefix=API_PREFIX` where
+# the local alias points at `settings.API_V1_STR`. The resolver follows the
+# local assignment, then the imported BaseSettings instance, and prefixes
+# routes with the literal value instead of emitting garbage expression URLs.
+fixture: fixtures/python/fastapi_settings_prefix/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/api/v1/login/access-token"
+    method: "POST"
+  - url: "/api/v1/login/test-token"
+    method: "POST"
+  # `APIRouter(prefix="/items")` — the router's own prefix must
+  # be preserved when the parent (api_router) layers `/api/v1`
+  # via `settings.API_V1_STR` on top, yielding `/api/v1/items/`.
+  - url: "/api/v1/items/"
+    method: "GET"
+  - url: "/api/v1/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # Simple f-string prefixes with resolvable constants should keep
+  # their concrete segment instead of being dropped or emitted raw.
+  - url: "/api/v1/dynamic/v1/probe"
+    method: "GET"
+  # fastapi-realworld style local settings factory:
+  # `settings = get_app_settings(); prefix=settings.api_prefix`.
+  - url: "/factory/probe"
+    method: "GET"

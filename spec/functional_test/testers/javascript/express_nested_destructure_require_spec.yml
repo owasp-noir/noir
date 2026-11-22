@@ -1,0 +1,13 @@
+# `const { users, nested: { deep } } = require(...)` and
+# `const { admin, opts = {} } = require(...)`: a destructuring with one
+# level of nested braces (or two: `cfg: { a: { b } }`) still names the
+# routers it imports.
+fixture: fixtures/javascript/express_nested_destructure_require/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/list"
+    method: "GET"
+  - url: "/adm/stats"
+    method: "GET"
+  - url: "/ops/health"
+    method: "GET"

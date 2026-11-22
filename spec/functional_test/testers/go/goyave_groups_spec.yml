@@ -1,0 +1,40 @@
+# Regression test: goyave's fluent router builder chains configuration
+# methods that return the same `*Router` (`subrouter.Group().SetMeta(...)`).
+# The `.SetMeta(...)` tail must be peeled so the assigned subrouter binds
+# to the parent prefix; otherwise every route under it falls back to `/`.
+# Mirrors go-goyave/goyave-blog-example.
+#
+# Coverage:
+#   - GET /articles/                — direct subrouter route (callee
+#                                     resolves through the controller
+#                                     method to `listArticles`).
+#   - GET /articles/{slug}          — path param under the prefix.
+#   - POST /articles/               — `Group().SetMeta(...)` child inherits
+#                                     `/articles`.
+#   - PATCH/DELETE /articles/{articleID}
+#                                   — nested `Group()` child also inherits
+#                                     `/articles`; the `{id:regex}` form is
+#                                     normalized to `{articleID}`.
+fixture: fixtures/go/goyave_groups/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+endpoints:
+  - url: "/articles/"
+    method: "GET"
+    callees:
+      - {name: "listArticles"}
+  - url: "/articles/{slug}"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+  - url: "/articles/"
+    method: "POST"
+  - url: "/articles/{articleID}"
+    method: "PATCH"
+    params:
+      - {name: "articleID", type: "path"}
+  - url: "/articles/{articleID}"
+    method: "DELETE"
+    params:
+      - {name: "articleID", type: "path"}

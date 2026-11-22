@@ -1,0 +1,12 @@
+# The Functions host serves HTTP triggers under a route prefix: `api` unless
+# `host.json` overrides it. `CreateUser`/`ListUsers` have no `host.json` and so
+# take the host default; `custom-prefix` sets `routePrefix: gateway`.
+fixture: fixtures/specification/azure_functions/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+  - url: "/gateway/ping"
+    method: "GET"

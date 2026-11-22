@@ -1,0 +1,17 @@
+# The Fresh 2 starter (`deno run -A jsr:@fresh/init`): deno.json maps
+# `fresh` to `jsr:@fresh/core`, file routes wrap their handler object in
+# `define.handlers({ ... })`, and `main.ts` adds `app.get(...)` beside
+# `app.fsRoutes()`.
+fixture: fixtures/javascript/fresh2/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/api/{name}"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/api2/:name"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}

@@ -1,0 +1,21 @@
+# A `MethodRouter` held in a `let` or returned by a helper fn keeps its
+# verbs, and `trace(h)` is TRACE.
+fixture: fixtures/rust/axum_method_router/
+counts: {techs: 1, endpoints: 7}
+options:
+  only_techs: "rust_axum"
+endpoints:
+  - url: "/trace"
+    method: "TRACE"
+  - url: "/submit"
+    method: "POST"
+  - url: "/both"
+    method: "GET"
+  - url: "/both"
+    method: "PUT"
+  - url: "/login"
+    method: "POST"
+  - url: "/logout"
+    method: "GET"
+  - url: "/logout"
+    method: "DELETE"

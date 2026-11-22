@@ -1,0 +1,15 @@
+# Hono mounts a same-file local sub-app via `app.route('/book', book)`. The
+# sub-app's routes inherit the `/book` prefix, and the mount call itself
+# must NOT leak phantom `/book` routes (the chain scanner used to walk past
+# the two-arg `.route(...)` and mis-attribute later verb calls to it).
+fixture: fixtures/javascript/hono_route_mount/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/book/list"
+    method: "GET"
+  - url: "/book/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/book/"
+    method: "POST"

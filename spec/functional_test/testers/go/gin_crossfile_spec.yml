@@ -1,0 +1,13 @@
+fixture: fixtures/go/gin_crossfile/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/v1/users"
+    method: "GET"
+  - url: "/v1/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/admin/dashboard"
+    method: "GET"
+  - url: "/v1/nested/item"
+    method: "DELETE"

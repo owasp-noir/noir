@@ -1,0 +1,142 @@
+# ColdBox declares routes in config/Router.cfc. Two pieces of context
+# live outside that file and are resolved by the analyzer: a module's
+# routes mount under its ModuleConfig entryPoint, and a verb-agnostic
+# `route()` takes its verbs from the target handler's allowedMethods.
+fixture: fixtures/cfml/coldbox/
+counts: {techs: 2, endpoints: 33}
+endpoints:
+  # `route( "/", "main.index" )` — main has no allowedMethods, so GET.
+  - url: "/"
+    method: "GET"
+  # Explicit verb helpers.
+  - url: "/whoami"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+  # `resources( "photos" )` expands to the standard REST set, with PATCH
+  # registered alongside PUT for the update action.
+  - url: "/photos"
+    method: "GET"
+  - url: "/photos"
+    method: "POST"
+  - url: "/photos/new"
+    method: "GET"
+  - url: "/photos/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/photos/:id/edit"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/photos/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/photos/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/photos/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Named arguments, `#sitePrefix#` resolved from a local, and
+  # `except = "new,edit"` dropping those two actions.
+  - url: "/sites/:site/comments"
+    method: "GET"
+    params:
+      - {name: "site", type: "path"}
+  - url: "/sites/:site/comments"
+    method: "POST"
+    params:
+      - {name: "site", type: "path"}
+  - url: "/sites/:site/comments/:id"
+    method: "GET"
+    params:
+      - {name: "site", type: "path"}
+      - {name: "id", type: "path"}
+  - url: "/sites/:site/comments/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "site", type: "path"}
+  - url: "/sites/:site/comments/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "site", type: "path"}
+  - url: "/sites/:site/comments/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "site", type: "path"}
+  # Fluent `.to()` target.
+  - url: "/render/:format"
+    method: "GET"
+    params:
+      - {name: "format", type: "path"}
+  # Inline placeholder constraints (`:id-numeric{2}`) must not leak into
+  # the URL, and the per-function `allowedMethods` attribute supplies
+  # both verbs.
+  - url: "/legacy/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/legacy/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  # A module's routes mount under its ModuleConfig entryPoint.
+  - url: "/api/v1/status"
+    method: "GET"
+  # `group( { pattern : "/admin" }, ... )` prefixes the routes declared in
+  # its closure, and `withAction` names one action per verb.
+  - url: "/admin/reports"
+    method: "GET"
+  - url: "/admin/reports/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/reports/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # A namespace group mounts where a route puts it. The mount itself
+  # (`route( "/v2" ).toNamespaceRouting( "v2" )`) is not a route.
+  - url: "/v2/ping"
+    method: "GET"
+  # `except = skipped` passes a local by name, so `new` and `edit` are
+  # dropped just as they would be for a literal.
+  - url: "/tags"
+    method: "GET"
+  - url: "/tags"
+    method: "POST"
+  - url: "/tags/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/tags/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/tags/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/tags/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # A CFML framework owns the `.cfm` page surface, but `access="remote"`
+  # methods stay HTTP-callable and no framework analyzer emits them, so
+  # the generic analyzer runs alongside in components-only mode.
+  - url: "/remote/Proxy.cfc?method=ping"
+    method: "GET"
+    params:
+      - {name: "token", type: "query"}
+  - url: "/remote/Proxy.cfc?method=ping"
+    method: "POST"
+    params:
+      - {name: "token", type: "form"}
+# Detection still sees cfml_coldbox and cfml_pure

@@ -1,0 +1,9 @@
+# Two Midway apps, each with its own `globalPrefix`: a prefix applies only to
+# the controllers under its own package.json.
+fixture: fixtures/typescript/midway_monorepo/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/admin-api/admin/status"
+    method: "GET"
+  - url: "/shop-api/shop/status"
+    method: "GET"

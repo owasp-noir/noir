@@ -1,0 +1,12 @@
+# `register(AutoLoad, { dir, options: { prefix: '/api' } })` serves every
+# loaded plugin under `/api` before its directory prefix. The routes file
+# the `users` plugin registers without a prefix stays at `/api/users`.
+fixture: fixtures/javascript/fastify_autoload_options_prefix/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/"
+    method: "GET"
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

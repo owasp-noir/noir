@@ -1,0 +1,12 @@
+# config/blueprints.js turns actions, rest and shortcuts off, so only the
+# config/routes.js routes are served: no action shadow routes and no REST
+# routes for LegacyController or the User model.
+fixture: fixtures/javascript/sails_blueprints_config/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/api/v1/entrance/login"
+    method: "PUT"
+  - url: "/api/v1/account/update-password"
+    method: "POST"

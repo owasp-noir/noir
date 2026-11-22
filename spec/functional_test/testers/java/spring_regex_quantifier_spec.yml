@@ -1,0 +1,13 @@
+# `{id:[0-9]{3}}`: the flat `\{name:[^{}]+\}` strip could not match a
+# constraint containing braces, so the regex reached the report verbatim.
+fixture: fixtures/java/spring_regex_quantifier/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/zip/{code}/x"
+    method: "GET"
+    params:
+      - {name: "code", type: "path"}

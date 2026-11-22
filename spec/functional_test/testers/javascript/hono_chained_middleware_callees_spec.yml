@@ -1,0 +1,21 @@
+fixture: fixtures/javascript/hono_chained_middleware/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/todos"
+    method: "GET"
+    callees:
+      - {name: "auth.session", line: 26}
+      - {name: "todoService().get", line: 27}
+      - {name: "c.json", line: 28}
+  # `const body = await c.req.json(); body.todoText`
+  - url: "/todos"
+    method: "POST"
+    params:
+      - {name: "todoText", type: "json"}
+    callees:
+      - {name: "c.req.json", line: 31}
+      - {name: "auth.session", line: 32}
+      - {name: "todoService().add", line: 33}
+      - {name: "c.json", line: 34}

@@ -1,0 +1,23 @@
+# A router exported by name and mounted from another file keeps its prefix on
+# the sub-routers it mounts itself:
+#
+#   export const router = express.Router();     // app.use('/api/sd', router)
+#   const comfy = express.Router();
+#   comfy.post('/ping', ...);
+#   router.use('/comfy', comfy);                // served at /api/sd/comfy/ping
+#
+# The cross-file prefix is recorded under the exported name only, so routes on
+# `comfy` were reported at the in-file path `/comfy/ping`, a URL nothing serves.
+fixture: fixtures/javascript/express_named_export_nested_router/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/sd/top"
+    method: "GET"
+  - url: "/api/sd/comfy/ping"
+    method: "POST"
+  - url: "/api/sd/comfy/deep/leaf"
+    method: "GET"
+  - url: "/api/speech/health"
+    method: "GET"
+  - url: "/api/speech/elevenlabs/voices"
+    method: "POST"

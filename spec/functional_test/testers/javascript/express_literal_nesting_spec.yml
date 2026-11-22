@@ -1,0 +1,43 @@
+# Lexer-state and handler-scoping failures that each dropped later routes
+# or params:
+#
+#   * a template nested in a `${ … }` substitution ended the outer literal
+#     at the first inner backtick (`<li>`, `it's`), lexing the rest of the
+#     file out of phase;
+#   * `i++ / 2` and a JSX `</div>` opened a regex literal that ran on
+#     past the end of the line;
+#   * a regex inside a substitution (`${v.replace(/'/g, '')}`) opened a
+#     string in the template scanner;
+#   * an arrow inside the handler body (`items.map(i => …)`) was taken as
+#     the handler, so the `req.query` reads above it were never scanned.
+fixture: fixtures/javascript/express_literal_nesting/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/list"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/greet"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/count"
+    method: "GET"
+    params:
+      - {name: "n", type: "query"}
+  - url: "/after"
+    method: "GET"
+    params:
+      - {name: "token", type: "query"}
+  - url: "/page"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/submit"
+    method: "POST"
+    params:
+      - {name: "t", type: "json"}
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

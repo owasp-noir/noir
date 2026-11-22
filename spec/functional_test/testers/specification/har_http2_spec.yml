@@ -1,0 +1,16 @@
+# A browser HAR is recorded over HTTP/2, where the request line is re-encoded
+# as the `:authority` / `:method` / `:path` / `:scheme` pseudo-headers. Those
+# are not parameters any request can set, and neither are `content-length` /
+# `host`. A repeated header or cookie is one parameter, not two.
+fixture: fixtures/specification/har_http2/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "https://shop.example.com/api/cart"
+    method: "POST"
+    params:
+      - {name: "promo", type: "query", value: "summer"}
+      - {name: "content-type", type: "header", value: "application/json"}
+      - {name: "x-request-id", type: "header", value: "8f2c"}
+      - {name: "session", type: "cookie", value: "abc"}
+      - {name: "sku", type: "json"}
+      - {name: "quantity", type: "json"}

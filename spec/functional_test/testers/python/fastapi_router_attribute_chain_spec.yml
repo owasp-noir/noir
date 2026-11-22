@@ -1,0 +1,11 @@
+# `pkg.router` re-exported by `pkg/__init__.py` and a dotted module chain
+# keep the prefix they are included under.
+fixture: fixtures/python/fastapi_router_attribute_chain/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/auth/login"
+    method: "POST"
+  - url: "/billing/invoices"
+    method: "GET"
+  - url: "/api/v1/users"
+    method: "GET"

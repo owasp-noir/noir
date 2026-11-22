@@ -1,0 +1,40 @@
+fixture: fixtures/rust/poem_callees/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+  only_techs: "rust_poem"
+endpoints:
+  - url: "/hello"
+    method: "GET"
+    callees:
+      - {name: "HealthCheck::ready", line: 7}
+      - {name: "render_home", line: 8}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Token", type: "header"}
+      - {name: "session_id", type: "cookie"}
+    callees:
+      - {name: "req.header", line: 13}
+      - {name: "req.cookie", line: 14}
+      - {name: "UserService::load", line: 15}
+      - {name: "AuditLog::read_user", line: 16}
+      - {name: "UserPresenter::render", line: 17}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "UserService::create", line: 22}
+      - {name: "UserPresenter::render", line: 23}
+  - url: "/api/items/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "ItemService::create", line: 9}
+      - {name: "AuditLog::write", line: 10}
+      - {name: "ItemPresenter::render", line: 11}
+      - {name: "Json", line: 12}

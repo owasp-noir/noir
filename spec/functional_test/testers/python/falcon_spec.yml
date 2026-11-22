@@ -1,0 +1,85 @@
+fixture: fixtures/python/falcon/
+counts: {techs: 1, endpoints: 18}
+endpoints:
+  - url: "/things"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/things"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/reports"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/reports"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/things/{thing_id}"
+    method: "GET"
+    params:
+      - {name: "X-API-Key", type: "header"}
+      - {name: "thing_id", type: "path"}
+  - url: "/things/{thing_id}"
+    method: "DELETE"
+    params:
+      - {name: "thing_id", type: "path"}
+  - url: "/things/{thing_id}/items"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+      - {name: "thing_id", type: "path"}
+  - url: "/things/{thing_id}/items"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "thing_id", type: "path"}
+  - url: "/auth"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "auth_token", type: "cookie"}
+  - url: "/uploads/{name}"
+    method: "PUT"
+    params:
+      - {name: "body", type: "form"}
+      - {name: "name", type: "path"}
+  - url: "/profiles"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/sync-media"
+    method: "PATCH"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "state", type: "json"}
+  - url: "/external/reports"
+    method: "GET"
+    params:
+      - {name: "owner", type: "query"}
+  - url: "/external/reports"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/external/widgets/{widget_id}"
+    method: "GET"
+    params:
+      - {name: "X-Trace-ID", type: "header"}
+      - {name: "widget_id", type: "path"}
+  - url: "/external/widgets/{widget_id}"
+    method: "PATCH"
+    params:
+      - {name: "status", type: "json"}
+      - {name: "widget_id", type: "path"}
+  - url: "/external/profiles/{profile_id}"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+      - {name: "profile_id", type: "path"}
+  - url: "/assets/*"
+    method: "GET"

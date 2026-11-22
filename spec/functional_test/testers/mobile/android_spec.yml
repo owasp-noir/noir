@@ -1,0 +1,196 @@
+# Mobile entry points keep method = "GET"; the mobile semantics live in
+# `protocol`. Endpoint is a struct, so `.tap(&.protocol=)` would NOT persist
+# (the block mutates a copy) — build via a Proc that mutates a local and
+# returns it, which does persist. FunctionalTester then asserts protocol
+# (since it differs from "http") and the linker-extracted callees.
+fixture: fixtures/mobile/android/
+counts: {techs: 1, endpoints: 30}
+endpoints:
+  - url: "myapp://complex/:id"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "redirect", type: "query"}
+      - {name: "utm_source", type: "query"}
+      - {name: "userId", type: "extra"}
+      - {name: "verified", type: "extra"}
+    callees:
+      - {name: "renderProfile"}
+      - {name: "webView.loadUrl"}
+  - url: "myapp://router"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "EXTRA_REFERRER", type: "extra"}
+      - {name: "EXTRA_TEXT", type: "extra"}
+      - {name: "EXTRA_STREAM", type: "extra"}
+    callees:
+      - {name: "intent.getStringExtra"}
+      - {name: "getInboundUrl"}
+      - {name: "handleDeepLink"}
+      - {name: "prepareInboundUrl"}
+      - {name: "lookupUrlAndDownload"}
+  - url: "myapp://alias"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "aliasToken", type: "extra"}
+    callees:
+      - {name: "intent.getStringExtra"}
+      - {name: "dispatchAlias"}
+  - url: "myapp://accounts/profile"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "myappstr://settings"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "altscheme://alt"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "@string/missing_scheme://ghost"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "mailto:"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "market://details"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "https://myapp.example.com/complex/:id"
+    method: "GET"
+    protocol: "universal-link"
+    params:
+      - {name: "id", type: "path"}
+  - url: "intent://com.example.myapp/.SyncService"
+    method: "GET"
+    protocol: "android-intent"
+  - url: "intent://com.example.myapp/.ExportedActivity"
+    method: "GET"
+    protocol: "android-intent"
+    params:
+      - {name: "token", type: "extra"}
+    callees:
+      - {name: "intent.getStringExtra"}
+      - {name: "handleExplicitIntent"}
+      - {name: "startActivity"}
+  - url: "intent://com.example.myapp/.ExportedService"
+    method: "GET"
+    protocol: "android-intent"
+  - url: "intent://com.example.myapp/.ExportedReceiver"
+    method: "GET"
+    protocol: "android-intent"
+  - url: "intent://com.example.myapp/.ExportedAlias"
+    method: "GET"
+    protocol: "android-intent"
+    params:
+      - {name: "aliasToken", type: "extra"}
+    callees:
+      - {name: "intent.getStringExtra"}
+      - {name: "dispatchAlias"}
+  - url: "content://com.example.myapp.provider"
+    method: "GET"
+    protocol: "android-provider"
+    callees:
+      - {name: "db.rawQuery"}
+      - {name: "dbHelper.writableDatabase.execSQL"}
+  - url: "content://com.example.myapp.secret"
+    method: "GET"
+    protocol: "android-provider"
+  - url: "content://com.example.myapp.first"
+    method: "GET"
+    protocol: "android-provider"
+  - url: "content://com.example.myapp.second"
+    method: "GET"
+    protocol: "android-provider"
+  - url: "myapp://links.example.com"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "myapp://${missingHost}"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "propapp://prop.example.com"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "myapp://users/:userId"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "ref", type: "query"}
+      - {name: "ref", type: "extra"}
+    callees:
+      - {name: "loadProfile"}
+  - url: "myapp://${missingHost}/profiles/:userId"
+    method: "GET"
+    protocol: "mobile-scheme"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "source", type: "query"}
+      - {name: "ref", type: "query"}
+      - {name: "ref", type: "extra"}
+    callees:
+      - {name: "loadProfile"}
+  - url: "https://nav.example.com/search/"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "myapp://settings/notifications"
+    method: "GET"
+    protocol: "mobile-scheme"
+  - url: "http://split.example.com/wiki/"
+    method: "GET"
+    protocol: "universal-link"
+  - url: "https://split.example.com/wiki/"
+    method: "GET"
+    protocol: "universal-link"
+  - url: "http://split.example.com/zh"
+    method: "GET"
+    protocol: "universal-link"
+  - url: "https://split.example.com/zh"
+    method: "GET"
+    protocol: "universal-link"
+# Custom scheme deep link (mobile-scheme), enriched by the code-linkage
+# pass with callees + input params read from DeepLinkActivity.onCreate:
+# getQueryParameter -> query, get*Extra -> extra.
+# Lifecycle setup before the Intent reads should not consume the bounded
+# callee list; the linker should keep input/delegation calls and extract
+# constant-named extras such as Intent.EXTRA_REFERRER.
+# Scheme resolved from @string/deep_link_scheme
+# Scheme resolved from a second values file (donottranslate.xml)
+# Unresolvable @string scheme: kept verbatim, NOT rooted to /@string/...
+# Opaque scheme: `mailto:` has no // authority. (The sibling file/content/
+# `http://*` wildcard-host filter on ShareActivity yields nothing.)
+# `market://details` keeps its authority (NOT opaque despite the short list).
+# Verified App Link over https (universal-link)
+# Exported, data-less component (android-intent), synthetic intent:// scheme
+# Exported components with NO intent-filter: explicit-intent IPC surfaces.
+# The activity ships handler source, so the linker grafts the intent read +
+# forward and the `token` extra; the service / receiver are config-only here.
+# Filter-less exported activity-alias: addressed by its own name, but `via`
+# resolves to targetActivity, so it links AliasTargetActivity's callees.
+# Exported ContentProvider (android-provider, content://authority). The
+# handler source links the provider methods (query/insert), so the raw-SQL
+# sinks surface as callees for AI context.
+# Permission-guarded provider: config-only here (no handler source), but the
+# read/write permissions + path-permission flag ride in metadata (asserted
+# in the unit spec).
+# Multiple authorities -> one endpoint each.
+# gradle manifestPlaceholders: ${deepLinkScheme} / ${deepLinkHost} resolved
+# from build.gradle defaultConfig (the buildTypes override must not win)
+# Placeholder missing from build.gradle: kept verbatim (tagged unresolved)
+# gradle placeholders declared with the groovy property-assignment form
+# (`manifestPlaceholders.propScheme = "..."`) resolve like map entries.
+# Absent from the expected list, and asserted by the total count:
+#   * myapp://internal-only — declared on android:exported="false", so the
+#     filter can only be matched from inside the app.
+#   * package:// — the PACKAGE_FULLY_REMOVED receiver's `<data scheme="package"/>`
+#     is a protected-system-broadcast qualifier, not an addressable URI.
+# Jetpack Navigation deep link: {userId} -> :userId path param, ?ref={ref}
+# -> query param; linked to ProfileFragment.onViewCreated for callees.
+# Scheme-less Navigation URI: http/https implied, emitted under https;
+# the trailing `.*` wildcard keeps the literal prefix only.
+# Deep link inside a nested <navigation> graph
+# App Link whose scheme and host/path are split across separate <data>
+# elements: Android combines them, so http/https × the two paths all
+# resolve (autoVerify -> universal-link). The scheme-only file/content/
+# https content-handler filter on FileImportActivity produces nothing.

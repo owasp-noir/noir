@@ -1,0 +1,10 @@
+fixture: fixtures/python/sanic_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/python/sanic_multi_base/service_a", "./spec/functional_test/fixtures/python/sanic_multi_base/service_b"]
+  only_techs: "python_sanic"
+endpoints:
+  - url: "/a/items/a-only"
+    method: "GET"
+  - url: "/b/items/b-only"
+    method: "GET"

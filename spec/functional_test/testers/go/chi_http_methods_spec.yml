@@ -1,0 +1,7 @@
+fixture: fixtures/go/chi_http_methods/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/cors"
+    method: "OPTIONS"
+  - url: "/ping"
+    method: "HEAD"

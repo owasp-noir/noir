@@ -1,0 +1,46 @@
+# Routes registered on a `*http.ServeMux` parameter (`RegisterRoutes(mux
+# *http.ServeMux)`) are the program's routes, under the prefix the caller
+# mounts that mux at (`mux.Handle("/api/", http.StripPrefix("/api", apiMux))`);
+# a mount whose pattern does not resolve drops them rather than report them
+# at the wrong path. A helper named for one verb (`httphandler.GET(h, nil)`)
+# serves only that verb, unless it hands the others to a fallback; a
+# pattern built from a package constant in another file resolves.
+fixture: fixtures/go/http_mux_param/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/file/attachments/{uid}"
+    method: "GET"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/file/attachments/{uid}"
+    method: "POST"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/file/attachments/{uid}"
+    method: "PUT"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/file/attachments/{uid}"
+    method: "PATCH"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/file/attachments/{uid}"
+    method: "DELETE"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/file/attachments/{uid}"
+    method: "HEAD"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/file/attachments/{uid}"
+    method: "OPTIONS"
+    params:
+      - {name: "uid", type: "path"}
+  - url: "/file/users/{identifier}/export"
+    method: "GET"
+    params:
+      - {name: "identifier", type: "path"}
+  - url: "/healthz"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"

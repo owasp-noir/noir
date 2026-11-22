@@ -1,0 +1,35 @@
+fixture: fixtures/javascript/qwik_city/
+counts: {techs: 1, endpoints: 13}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/about"
+    method: "GET"
+  # `routeAction$` posts back to the page; `(auth)` is hidden.
+  - url: "/login"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/docs/{rest}"
+    method: "GET"
+    params:
+      - {name: "rest", type: "path"}
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+  # `onRequest` alone answers every verb.
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/health"
+    method: "POST"
+  - url: "/api/health"
+    method: "PUT"
+  - url: "/api/health"
+    method: "DELETE"
+  - url: "/api/health"
+    method: "PATCH"

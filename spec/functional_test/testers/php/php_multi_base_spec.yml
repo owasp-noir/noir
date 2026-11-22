@@ -1,0 +1,13 @@
+fixture: fixtures/php/php_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/php/php_multi_base/service_a", "./spec/functional_test/fixtures/php/php_multi_base/service_b"]
+endpoints:
+  - url: "/index.php"
+    method: "GET"
+    params:
+      - {name: "a", type: "query"}
+  - url: "/admin.php"
+    method: "GET"
+    params:
+      - {name: "b", type: "query"}

@@ -1,0 +1,36 @@
+# Controller-style registration (`web.Router("/path", &Ctrl{}, "get:M")`)
+# is Beego's dominant routing idiom. The mapping-less form fans out to
+# every HTTP-verb method the controller implements; explicit mappings
+# resolve to the listed methods. Callees come from walking the named
+# controller method's body — the registration call doesn't pass the
+# handler as an argument, so it's resolved by method name within the
+# package (here every UserController method calls `c.Ctx.Output.Body`).
+fixture: fixtures/go/beego_controller/
+counts: {techs: 1, endpoints: 6}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "GET"
+    callees:
+      - {name: "c.Ctx.Output.Body", path: "spec/functional_test/fixtures/go/beego_controller/main.go", line: 30}
+  - url: "/users"
+    method: "POST"
+    callees:
+      - {name: "c.Ctx.Output.Body", path: "spec/functional_test/fixtures/go/beego_controller/main.go", line: 34}
+  - url: "/users/profile"
+    method: "GET"
+    callees:
+      - {name: "c.Ctx.Output.Body", path: "spec/functional_test/fixtures/go/beego_controller/main.go", line: 38}
+  - url: "/users/update"
+    method: "POST"
+    callees:
+      - {name: "c.Ctx.Output.Body", path: "spec/functional_test/fixtures/go/beego_controller/main.go", line: 42}
+  - url: "/users/batch"
+    method: "GET"
+    callees:
+      - {name: "c.Ctx.Output.Body", path: "spec/functional_test/fixtures/go/beego_controller/main.go", line: 46}
+  - url: "/users/batch"
+    method: "POST"
+    callees:
+      - {name: "c.Ctx.Output.Body", path: "spec/functional_test/fixtures/go/beego_controller/main.go", line: 46}

@@ -1,0 +1,37 @@
+# Attribute routes under a directory imported by a YAML route config
+# (`resource: ../src/Controller/Api/`, `type: attribute`) take that import's
+# `prefix`.
+fixture: fixtures/php/symfony_route_imports/
+counts: {techs: 2, endpoints: 9}
+endpoints:
+  - url: "/api/v1/products/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/{_locale}"
+    method: "GET"
+    params:
+      - {name: "_locale", type: "path"}
+  # Outside every import: unprefixed.
+  - url: "/status"
+    method: "GET"
+  # Plain YAML route.
+  - url: "/health"
+    method: "GET"
+  # Re-imported by a later import of the same routing file: Symfony replaces
+  # routes by name, so the /{_locale} copy is gone; a `name_prefix` import
+  # keeps its own copy.
+  - url: "/auth/sso/login"
+    method: "GET"
+  - url: "/old/sso/login"
+    method: "GET"
+  # A localized prefix renames routes `name.<locale>`: no collision with a
+  # plain-prefix import.
+  - url: "/en/sso/login"
+    method: "GET"
+  # The later `site` import excludes Admin/, so it never replaces /admin.
+  - url: "/admin/panel"
+    method: "GET"
+  # A YAML routing file imported with a prefix.
+  - url: "/extra/dash"
+    method: "GET"

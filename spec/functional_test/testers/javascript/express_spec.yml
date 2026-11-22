@@ -1,0 +1,143 @@
+fixture: fixtures/javascript/express/
+counts: {techs: 1, endpoints: 34}
+endpoints:
+  # Traditional app-based routes
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "X-API-Key", type: "header"}
+  # Router-based routes
+  - url: "/api"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "Authorization", type: "header"}
+  - url: "/api/submit"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "sessionId", type: "cookie"}
+  # ES6 import style router
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "x-api-key", type: "header"}
+  # Route with path parameter
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # Added endpoints
+  - url: "/products"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/products"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "price", type: "json"}
+      - {name: "Authorization", type: "header"}
+  - url: "/profile/:userId"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "fields", type: "query"}
+  - url: "/v1/status"
+    method: "GET"
+    params:
+      - {name: "format", type: "query"}
+      - {name: "X-Status-Key", type: "header"}
+  - url: "/v1/settings"
+    method: "PUT"
+    params:
+      - {name: "theme", type: "json"}
+      - {name: "notifications", type: "json"}
+      - {name: "userKey", type: "cookie"}
+  - url: "/admin/dashboard"
+    method: "GET"
+    params:
+      - {name: "view", type: "query"}
+  # Dynamic path endpoints (from dynamic_paths.js)
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/login"
+    method: "POST"
+    params:
+      - {name: "password", type: "json"}
+      - {name: "username", type: "json"}
+  # router.all expanded to all HTTP methods
+  - url: "/api/catchall"
+    method: "GET"
+  - url: "/api/catchall"
+    method: "POST"
+  - url: "/api/catchall"
+    method: "PUT"
+  - url: "/api/catchall"
+    method: "DELETE"
+  - url: "/api/catchall"
+    method: "PATCH"
+  - url: "/api/catchall"
+    method: "HEAD"
+  - url: "/api/catchall"
+    method: "OPTIONS"
+  - url: "/api/v2/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "name", type: "json"}
+  - url: "/api/v2/items/:itemId"
+    method: "DELETE"
+    params:
+      - {name: "itemId", type: "path"}
+  # More router.all endpoints
+  - url: "/api/admin"
+    method: "GET"
+    params:
+      - {name: "authorization", type: "header"}
+  - url: "/api/admin"
+    method: "POST"
+    params:
+      - {name: "authorization", type: "header"}
+  - url: "/api/admin"
+    method: "PUT"
+    params:
+      - {name: "authorization", type: "header"}
+  - url: "/api/admin"
+    method: "DELETE"
+    params:
+      - {name: "authorization", type: "header"}
+  - url: "/api/admin"
+    method: "PATCH"
+    params:
+      - {name: "authorization", type: "header"}
+  - url: "/api/admin"
+    method: "HEAD"
+    params:
+      - {name: "authorization", type: "header"}
+  - url: "/api/admin"
+    method: "OPTIONS"
+    params:
+      - {name: "authorization", type: "header"}
+  # Parse Server `this.route('METHOD', '/path', ...)` shape. The
+  # `PromiseRouter` base class is used widely across
+  # parse-community/parse-server's Routers/* tree.
+  - url: "/push_audiences"
+    method: "GET"
+  - url: "/push_audiences/:objectId"
+    method: "GET"
+    params:
+      - {name: "objectId", type: "path"}
+  - url: "/push_audiences"
+    method: "POST"
+  - url: "/push_audiences/:objectId"
+    method: "PUT"
+    params:
+      - {name: "objectId", type: "path"}
+  - url: "/push_audiences/:objectId"
+    method: "DELETE"
+    params:
+      - {name: "objectId", type: "path"}

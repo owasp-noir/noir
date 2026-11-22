@@ -1,0 +1,31 @@
+fixture: fixtures/go/http/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/hello"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "User-Agent", type: "header"}
+  - url: "/api/health"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/query-manual"
+    method: "QUERY"
+    params:
+      - {name: "filter", type: "query"}
+  # server.go: a sub-mux route; `http.Handle("/v2/", api)` is its mount, not a route
+  - url: "/v2/ping"
+    method: "GET"

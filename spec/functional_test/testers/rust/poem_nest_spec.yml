@@ -1,0 +1,19 @@
+# poem-openapi `#[oai(path, method)]` handlers nested under `/api` via
+# `Route::new().nest("/api", api_service)` where
+# `api_service = OpenApiService::new(Api, ...)`. The analyzer composes the
+# nest prefix with each handler's local path, resolving the service variable
+# back to its `impl Api` block. The `swagger_ui()` mounted at `/` does not
+# map to the API impl, so the handlers don't double up at the root.
+fixture: fixtures/rust/poem_nest/
+counts: {techs: 1, endpoints: 3}
+options:
+  only_techs: "rust_poem"
+endpoints:
+  - url: "/api/hello"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

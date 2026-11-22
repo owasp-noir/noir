@@ -1,0 +1,32 @@
+# MVC 5 `[AcceptVerbs]` (enum flags and strings) and `[ActionName]`.
+fixture: fixtures/csharp/aspnet_mvc_accept_verbs/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/Account/Login"
+    method: "GET"
+    params:
+      - {name: "returnUrl", type: "query"}
+  - url: "/Account/Save"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/Account/Both"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/Account/Both"
+    method: "POST"
+    params:
+      - {name: "id", type: "form"}
+  - url: "/Account/Replace"
+    method: "PUT"
+    params:
+      - {name: "id", type: "form"}
+  - url: "/Account/Delete"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/Account/Delete"
+    method: "POST"
+    params:
+      - {name: "id", type: "form"}

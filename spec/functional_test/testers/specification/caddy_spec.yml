@@ -1,0 +1,17 @@
+# The fixture also carries `respond "Hello, world!"`, `redir
+# https://www.example.com{uri} permanent`, `handle {` and `route {`. None of
+# those has a matcher token, so none may produce an endpoint — they used to
+# surface as `/"Hello,`, `https://www.example.com{uri}` and `/{`.
+fixture: fixtures/specification/caddy/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/v1/*"
+    method: "ANY"
+  - url: "/admin/*"
+    method: "ANY"
+  - url: "/api/*"
+    method: "GET"
+  - url: "/api/*"
+    method: "POST"
+  - url: "/old"
+    method: "ANY"

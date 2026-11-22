@@ -1,0 +1,18 @@
+# Nest prefixes reach a `let`-bound sub-router, a sub-router fn of another
+# module, every API struct of an `OpenApiService::new((A, B), ..)` tuple,
+# and compose with `#[OpenApi(prefix_path = "..")]`.
+fixture: fixtures/rust/poem_nest_forms/
+counts: {techs: 1, endpoints: 5}
+options:
+  only_techs: "rust_poem"
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/admin/panel"
+    method: "GET"
+  - url: "/api/pets"
+    method: "GET"
+  - url: "/api/store/orders"
+    method: "POST"

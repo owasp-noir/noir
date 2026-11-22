@@ -1,0 +1,36 @@
+fixture: fixtures/javascript/express_mount_edge_patterns/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/api/bracket-literal"
+    method: "GET"
+    params:
+      - {name: "mode", type: "query"}
+      - {name: "X-Request-Id", type: "header"}
+  - url: "/public-api/status"
+    method: "GET"
+    params:
+      - {name: "traceId", type: "cookie"}
+  - url: "/api/v1/things/:thingId"
+    method: "POST"
+    params:
+      - {name: "thingId", type: "path"}
+      - {name: "display_name", type: "json"}
+      - {name: "enabled", type: "json"}
+  - url: "/admin-api/things/:thingId"
+    method: "POST"
+    params:
+      - {name: "thingId", type: "path"}
+      - {name: "display_name", type: "json"}
+      - {name: "enabled", type: "json"}
+  - url: "/public-api/imported"
+    method: "GET"
+    params:
+      - {name: "source", type: "query"}
+  - url: "/api/v1/imported"
+    method: "GET"
+    params:
+      - {name: "source", type: "query"}
+  - url: "/admin-api/imported"
+    method: "GET"
+    params:
+      - {name: "source", type: "query"}

@@ -1,0 +1,74 @@
+fixture: fixtures/scala/akka/
+counts: {techs: 1, endpoints: 18}
+endpoints:
+  - url: "/hello"
+    method: "GET"
+  - url: "/users/{userId}"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "filter", type: "query"}
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "User"}
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/v1/items"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/api/v1/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+  - url: "/api/v1/items/{itemId}"
+    method: "PUT"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "body", type: "json", value: "Item"}
+      - {name: "Authorization", type: "header"}
+  - url: "/api/v1/items/{itemId}"
+    method: "DELETE"
+    params:
+      - {name: "itemId", type: "path"}
+      - {name: "X-API-Key", type: "header"}
+  - url: "/search"
+    method: "POST"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/orders"
+    method: "GET"
+  - url: "/orders"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "Item"}
+  - url: "/orders/{orderId}"
+    method: "DELETE"
+    params:
+      - {name: "orderId", type: "path"}
+  - url: "/orders/{orderId}/price"
+    method: "GET"
+    params:
+      - {name: "orderId", type: "path"}
+      - {name: "currency", type: "query"}
+  # Leaf method directly under a pathPrefix with no inner path()/pathEnd.
+  - url: "/ip/{ip}"
+    method: "GET"
+    params:
+      - {name: "ip", type: "path"}
+  - url: "/ip"
+    method: "POST"
+    params:
+      - {name: "body", type: "json", value: "Item"}
+  # `pathEnd*` redundant inside path()/on a path() line must not emit a
+  # prefix-only route (no bare `/things` GET / or `/widgets` GET).
+  - url: "/things"
+    method: "GET"
+  - url: "/widgets/{widgetId}"
+    method: "GET"
+    params:
+      - {name: "widgetId", type: "path"}

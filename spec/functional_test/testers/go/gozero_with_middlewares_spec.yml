@@ -1,0 +1,12 @@
+# goctl wraps a `middleware:` group's routes in `rest.WithMiddlewares(...)`.
+fixture: fixtures/go/gozero_with_middlewares/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/v1/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}

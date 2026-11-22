@@ -1,0 +1,34 @@
+# Router chains assembled inside a `vec![ ... ]` macro (the `impl
+# Routers` shape). Verifies that routes hidden in a macro body are
+# recovered, middleware (`.hoop`) and verb chaining between the path and
+# the verb don't break detection, brace path params are captured, a
+# scoped handler path still yields a route, and handler params/callees
+# are enriched through the re-parsed macro path.
+fixture: fixtures/rust/salvo_builder/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+  only_techs: "rust_salvo"
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+    callees:
+      - {name: "UserService::all", line: 11}
+      - {name: "UserPresenter::render", line: 12}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "UserService::create", line: 18}
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Token", type: "header"}
+  - url: "/assets/{**path}"
+    method: "GET"
+    params:
+      - {name: "path", type: "path"}

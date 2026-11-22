@@ -1,0 +1,11 @@
+# convex/messages.ts holds a route-shaped object but no httpRouter import;
+# tests/http.test.ts is a test file.
+fixture: fixtures/javascript/convex/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/postMessage"
+    method: "POST"
+  - url: "/getAuthorMessages/*"
+    method: "GET"
+  - url: "/stripe"
+    method: "POST"

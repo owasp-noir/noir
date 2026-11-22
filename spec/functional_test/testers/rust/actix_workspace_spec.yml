@@ -1,0 +1,9 @@
+# A Cargo workspace is one mount scope: `server` mounts a handler that lives
+# in the sibling `api` crate, so per-crate scoping must not drop its prefix.
+fixture: fixtures/rust/actix_workspace/
+counts: {techs: 1, endpoints: 1}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/api/list"
+    method: "GET"

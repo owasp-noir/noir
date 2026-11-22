@@ -1,0 +1,16 @@
+# restify-router routers defined in their own files and mounted from the
+# server (`usersRouter.applyRoutes(server, '/users')`,
+# `require('./routes/api').applyRoutes(server, '/api')`) or nested
+# (`router.add('/v1', require('./v1'))`). Only same-file applyRoutes was
+# resolved, so these routes were reported at their bare paths.
+fixture: fixtures/javascript/restify_router_crossfile/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/users/list"
+    method: "GET"
+  - url: "/admin/stats"
+    method: "GET"
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/v1/ping"
+    method: "GET"

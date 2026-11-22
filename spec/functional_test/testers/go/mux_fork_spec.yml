@@ -1,0 +1,17 @@
+# Regression: the analyzer gated every file on the literal import path
+# `github.com/gorilla/mux`, so a project using the API-compatible
+# `github.com/minio/mux` fork reported zero routes. MinIO's own scan lost
+# its whole S3 data plane this way.
+fixture: fixtures/go/mux_fork/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/objects/{object}"
+    method: "GET"
+    params:
+      - {name: "object", type: "path"}
+  - url: "/objects/{object}"
+    method: "PUT"
+    params:
+      - {name: "object", type: "path"}
+  - url: "/admin/heal"
+    method: "DELETE"

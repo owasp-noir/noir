@@ -1,0 +1,24 @@
+# Groups handed out wrapped in a project type (`type Admin struct {
+# fiber.Router }`) and registered on by type (`func RegisterAdmin(admin
+# *svr.Admin)`), uber/fx style: the prefix comes from the one group the type
+# is built from. `Legacy` is built twice and `Partner` from a group handed
+# in, so their routes keep no prefix.
+fixture: fixtures/go/fiber_typed_group/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/api/admin/bonjour"
+    method: "GET"
+  - url: "/api/admin/purge"
+    method: "POST"
+  - url: "/api/_/health"
+    method: "GET"
+  - url: "/api/v2/items"
+    method: "GET"
+  - url: "/api/v2/items/:itemId"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+  - url: "/old"
+    method: "GET"
+  - url: "/feed"
+    method: "GET"

@@ -1,0 +1,183 @@
+fixture: fixtures/specification/payload_cms/
+counts: {techs: 1, endpoints: 29}
+endpoints:
+  # Payload filters through the operator form, not a bare field name.
+  - url: "/api/posts"
+    method: "GET"
+    params:
+      - {name: "locale", type: "query"}
+      - {name: "depth", type: "query"}
+      - {name: "where", type: "query"}
+      - {name: "where[title][equals]", type: "query"}
+      - {name: "draft", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "populate", type: "query"}
+      - {name: "select", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "where[featured][equals]", type: "query"}
+      - {name: "where[meta.description][equals]", type: "query"}
+      - {name: "where[publishedAt][equals]", type: "query"}
+      - {name: "where[views][equals]", type: "query"}
+  # `views` and `featured` sit inside a `row` wrapper, which is layout
+  # only - they belong at the top level of the document.
+  # A `group` is named, so its children nest under it.
+  - url: "/api/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "json", value: "string"}
+      - {name: "views", type: "json", value: "number"}
+      - {name: "featured", type: "json", value: "boolean"}
+      - {name: "meta.description", type: "json", value: "string"}
+      - {name: "publishedAt", type: "json", value: "datetime"}
+      - {name: "meta", type: "json"}
+  - url: "/api/posts"
+    method: "PATCH"
+    params:
+      - {name: "title", type: "json", value: "string"}
+      - {name: "where", type: "query"}
+      - {name: "featured", type: "json"}
+      - {name: "meta", type: "json"}
+      - {name: "meta.description", type: "json"}
+      - {name: "publishedAt", type: "json"}
+      - {name: "views", type: "json"}
+  - url: "/api/posts"
+    method: "DELETE"
+    params:
+      - {name: "where", type: "query"}
+  - url: "/api/posts/count"
+    method: "GET"
+    params:
+      - {name: "where", type: "query"}
+  - url: "/api/posts/{id}"
+    method: "GET"
+    params:
+      - {name: "locale", type: "query"}
+      - {name: "id", type: "path"}
+      - {name: "depth", type: "query"}
+      - {name: "draft", type: "query"}
+      - {name: "populate", type: "query"}
+      - {name: "select", type: "query"}
+  - url: "/api/posts/{id}"
+    method: "PATCH"
+    params:
+      - {name: "title", type: "json", value: "string"}
+      - {name: "featured", type: "json"}
+      - {name: "meta", type: "json"}
+      - {name: "meta.description", type: "json"}
+      - {name: "publishedAt", type: "json"}
+      - {name: "views", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/api/posts/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # versions: { drafts: true }
+  - url: "/api/posts/versions"
+    method: "GET"
+    params:
+      - {name: "locale", type: "query"}
+      - {name: "depth", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "populate", type: "query"}
+      - {name: "select", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "where", type: "query"}
+  - url: "/api/posts/versions/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/versions/{id}"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  # endpoints: [{ path: '/:id/tracking', method: 'get' }]
+  - url: "/api/posts/{id}/tracking"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "locale", type: "query"}
+      - {name: "depth", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "populate", type: "query"}
+      - {name: "select", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "where", type: "query"}
+      - {name: "where[name][equals]", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json", value: "string"}
+  - url: "/api/users"
+    method: "PATCH"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "where", type: "query"}
+  - url: "/api/users"
+    method: "DELETE"
+    params:
+      - {name: "where", type: "query"}
+  - url: "/api/users/count"
+    method: "GET"
+    params:
+      - {name: "where", type: "query"}
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "locale", type: "query"}
+      - {name: "id", type: "path"}
+      - {name: "depth", type: "query"}
+      - {name: "populate", type: "query"}
+      - {name: "select", type: "query"}
+  - url: "/api/users/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "name", type: "json"}
+  - url: "/api/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # auth: true unlocks the whole credential surface.
+  - url: "/api/users/login"
+    method: "POST"
+    params:
+      - {name: "email", type: "json", value: "string"}
+      - {name: "password", type: "json", value: "string"}
+  - url: "/api/users/logout"
+    method: "POST"
+  - url: "/api/users/refresh-token"
+    method: "POST"
+  - url: "/api/users/me"
+    method: "GET"
+  - url: "/api/users/forgot-password"
+    method: "POST"
+    params:
+      - {name: "email", type: "json", value: "string"}
+  - url: "/api/users/reset-password"
+    method: "POST"
+    params:
+      - {name: "token", type: "json", value: "string"}
+      - {name: "password", type: "json", value: "string"}
+  - url: "/api/users/unlock"
+    method: "POST"
+    params:
+      - {name: "email", type: "json"}
+  # Globals are read with GET and written with POST.
+  - url: "/api/globals/site-settings"
+    method: "GET"
+    params:
+      - {name: "locale", type: "query"}
+      - {name: "depth", type: "query"}
+      - {name: "populate", type: "query"}
+      - {name: "select", type: "query"}
+  - url: "/api/globals/site-settings"
+    method: "POST"
+    params:
+      - {name: "siteName", type: "json", value: "string"}
+      - {name: "maintenance", type: "json", value: "boolean"}

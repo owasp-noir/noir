@@ -1,0 +1,16 @@
+# `register(plugin, { prefix })` with a prefix held in a constant, an
+# imported constant, a template or a concatenation: the plugin file's
+# routes were reported without the prefix.
+fixture: fixtures/javascript/fastify_register_const_prefix/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/literal/literal-leaf"
+    method: "GET"
+  - url: "/api/template/template-leaf"
+    method: "GET"
+  - url: "/api/concat/concat-leaf"
+    method: "GET"
+  - url: "/local/v1/local-leaf"
+    method: "GET"
+  - url: "/api/const-leaf"
+    method: "GET"

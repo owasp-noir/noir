@@ -1,0 +1,15 @@
+# Absolute imports in each issue table layout must resolve from the project
+# root, even when the FastAPI app module is nested several packages deep.
+fixture: fixtures/python/fastapi_nested_app_import/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/v1/root/me"
+    method: "GET"
+  - url: "/api/v1/shallow/me"
+    method: "GET"
+  - url: "/api/v1/shallow-deep/me"
+    method: "GET"
+  - url: "/api/v1/auth/me"
+    method: "GET"
+  - url: "/api/v1/three/me"
+    method: "GET"

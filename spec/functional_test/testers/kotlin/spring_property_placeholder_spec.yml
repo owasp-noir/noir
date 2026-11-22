@@ -1,0 +1,15 @@
+# `"\${prop:default}"` mappings resolve against application.yml, falling back
+# to the default; an unknown property without one is an empty segment.
+fixture: fixtures/kotlin/spring_property_placeholder/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/v2/pet/{petId}"
+    method: "GET"
+    params:
+      - {name: "petId", type: "path"}
+  - url: "/v9/orders/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v9/orders/raw"
+    method: "GET"

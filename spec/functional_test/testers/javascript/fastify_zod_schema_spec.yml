@@ -1,0 +1,31 @@
+# Route `schema` given as zod (`fastify-type-provider-zod`) or imported
+# from another module.
+fixture: fixtures/javascript/fastify_zod_schema/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/s00-same-file"
+    method: "POST"
+    params:
+      - {name: "localSku", type: "json"}
+  - url: "/s01-imported-parts"
+    method: "POST"
+    params:
+      - {name: "sku", type: "json"}
+      - {name: "qty", type: "json"}
+      - {name: "cursor", type: "query"}
+  - url: "/s02-imported-whole"
+    method: "POST"
+    params:
+      - {name: "sku", type: "json"}
+      - {name: "qty", type: "json"}
+      - {name: "cursor", type: "query"}
+  - url: "/s03-zod-shorthand"
+    method: "POST"
+    params:
+      - {name: "zname", type: "json"}
+      - {name: "zage", type: "json"}
+      - {name: "zq", type: "query"}
+  - url: "/s04-zod-route"
+    method: "POST"
+    params:
+      - {name: "zref", type: "json"}

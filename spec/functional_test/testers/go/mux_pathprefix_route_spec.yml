@@ -1,0 +1,34 @@
+# `PathPrefix(...).Handler/HandlerFunc` routes, a subrouter's `.Methods(...)`
+# matcher and an inline `.Subrouter()` receiver. The `http.Dir` file server
+# under `/assets/` stays a static mount (no files, so no endpoint).
+fixture: fixtures/go/mux_pathprefix_route/
+counts: {techs: 1, endpoints: 13}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/webhooks/"
+    method: "POST"
+    params:
+      - {name: "X-Signature", type: "header"}
+  - url: "/readonly/items"
+    method: "GET"
+  - url: "/readonly/items"
+    method: "HEAD"
+  - url: "/readonly/purge"
+    method: "POST"
+  - url: "/inline/ping"
+    method: "GET"
+  - url: "/proxy/"
+    method: "GET"
+  - url: "/proxy/"
+    method: "POST"
+  - url: "/proxy/"
+    method: "PUT"
+  - url: "/proxy/"
+    method: "DELETE"
+  - url: "/proxy/"
+    method: "PATCH"
+  - url: "/proxy/"
+    method: "HEAD"
+  - url: "/proxy/"
+    method: "OPTIONS"

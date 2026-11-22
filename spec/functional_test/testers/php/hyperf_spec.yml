@@ -1,0 +1,41 @@
+fixture: fixtures/php/hyperf/
+counts: {techs: 2, endpoints: 10}
+endpoints:
+  # Annotation routes from UserController
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Auth-Token", type: "header"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Auth-Token", type: "header"}
+  # Procedural routes from config/routes.php
+  - url: "/items"
+    method: "GET"
+  - url: "/items"
+    method: "POST"
+  - url: "/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+  - url: "/api/v1/me"
+    method: "GET"
+  - url: "/api/v1/login"
+    method: "POST"
+  - url: "/api/v1/admin/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+# Detection still sees php_hyperf and php_pure
+# Analysis suppresses redundant php_pure entries

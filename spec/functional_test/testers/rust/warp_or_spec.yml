@@ -1,0 +1,35 @@
+# `a.or(b)` written inline in one binding or fn tail is two routes. Each
+# alternative keeps its own path and verb, including nested `.or` chains
+# and alternatives followed by a trailing `.recover(..)`. Verbs, bodies and
+# segments chained after the `.or` (path aliases) apply to every alternative.
+fixture: fixtures/rust/warp_or/
+counts: {techs: 1, endpoints: 9}
+options:
+  only_techs: "rust_warp"
+endpoints:
+  - url: "/hello"
+    method: "GET"
+  - url: "/bye"
+    method: "POST"
+  - url: "/a"
+    method: "PUT"
+  - url: "/b"
+    method: "DELETE"
+  - url: "/c"
+    method: "GET"
+  - url: "/x"
+    method: "POST"
+    params:
+      - {name: "Item", type: "json"}
+  - url: "/y"
+    method: "POST"
+    params:
+      - {name: "Item", type: "json"}
+  - url: "/v1/items/:param"
+    method: "DELETE"
+    params:
+      - {name: "param", type: "path"}
+  - url: "/v2/items/:param"
+    method: "DELETE"
+    params:
+      - {name: "param", type: "path"}

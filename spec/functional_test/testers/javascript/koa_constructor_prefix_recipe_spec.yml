@@ -1,0 +1,15 @@
+fixture: fixtures/javascript/koa_constructor_prefix_recipe/
+counts: {techs: 1}
+endpoints:
+  - url: "/api/v1/users"
+    method: "GET"
+  - url: "/api/v1/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v2/users"
+    method: "GET"
+  - url: "/api/v2/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

@@ -1,0 +1,30 @@
+# Regression test for --include-callee on Express. Express consumes
+# JSRouteExtractor after its router-mount pre-scan, so parser-covered
+# handlers can reuse the shared JS callee extractor.
+#
+# Bare identifier callees that match a same-file top-level function or
+# const-arrow declaration are resolved to the declaration line; member
+# expressions and unknown identifiers stay at the call site.
+fixture: fixtures/javascript/express_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "include", type: "query"}
+    callees:
+      - {name: "parseUser", line: 25}
+      - {name: "serviceFactory().save", line: 10}
+      - {name: "AuditLog.write", line: 11}
+      - {name: "res.json", line: 13}
+      - {name: "serializeUser", line: 33}
+  - url: "/api/profile"
+    method: "GET"
+    params:
+      - {name: "sessionId", type: "cookie"}
+    callees:
+      - {name: "loadProfile", line: 37}
+      - {name: "res.send", line: 20}

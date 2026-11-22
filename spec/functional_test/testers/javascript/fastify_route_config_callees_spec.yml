@@ -1,0 +1,40 @@
+fixture: fixtures/javascript/fastify_route_config/
+counts: {techs: 1}
+options:
+  include_callee: true
+endpoints:
+  - url: "/single"
+    method: "GET"
+    callees:
+      - {name: "reply.send", line: 8}
+      - {name: "statusService.single", line: 8}
+  - url: "/items/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "reply.send", line: 17}
+      - {name: "buildItem", line: 17}
+  - url: "/items/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "reply.send", line: 17}
+      - {name: "buildItem", line: 17}
+  - url: "/users/:userId"
+    method: "PUT"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "userId", type: "path"}
+    callees:
+      - {name: "reply.send", line: 28}
+      - {name: "UserService.update", line: 28}
+  - url: "/users/:userId"
+    method: "PATCH"
+    params:
+      - {name: "email", type: "json"}
+      - {name: "userId", type: "path"}
+    callees:
+      - {name: "reply.send", line: 28}
+      - {name: "UserService.update", line: 28}

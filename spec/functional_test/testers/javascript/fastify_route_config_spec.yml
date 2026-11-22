@@ -1,0 +1,31 @@
+fixture: fixtures/javascript/fastify_route_config/
+counts: {techs: 1}
+endpoints:
+  - url: "/single"
+    method: "GET"
+  - url: "/items/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/items/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:userId"
+    method: "PUT"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "email", type: "json"}
+  - url: "/users/:userId"
+    method: "PATCH"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "email", type: "json"}
+  - url: "/regression"
+    method: "GET"
+  - url: "/complex"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+  - url: "/"
+    method: "GET"

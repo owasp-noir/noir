@@ -1,0 +1,24 @@
+# A controller on a local base class (`this.get('/tags', this.getTags)`) and an
+# app handed to a function as `http` are served routes; the API-client class,
+# Node/k6/sails.io/Angular client calls beside them are not.
+fixture: fixtures/javascript/express_this_http_params/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/ping"
+    method: "GET"
+  - url: "/echo"
+    method: "POST"
+  - url: "/tags"
+    method: "GET"
+  - url: "/tags"
+    method: "POST"
+  - url: "/tags/:name"
+    method: "PUT"
+    params:
+      - {name: "name", type: "path"}
+  - url: "/tags/:name"
+    method: "DELETE"
+    params:
+      - {name: "name", type: "path"}

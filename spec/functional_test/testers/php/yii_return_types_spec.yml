@@ -1,0 +1,13 @@
+# Actions declaring a return type (`: string`, `: string|Response`,
+# `: ?array`) are actions like any other; the protected one is not.
+fixture: fixtures/php/yii_return_types/
+counts: {techs: 2, endpoints: 3}
+endpoints:
+  - url: "/shop/index"
+    method: "GET"
+  - url: "/shop/view"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/shop/cart"
+    method: "GET"

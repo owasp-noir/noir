@@ -1,0 +1,10 @@
+fixture: fixtures/java/armeria_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/java/armeria_multi_base/service_a", "./spec/functional_test/fixtures/java/armeria_multi_base/service_b"]
+  only_techs: "java_armeria"
+endpoints:
+  - url: "/a/a-only"
+    method: "GET"
+  - url: "/b/b-only"
+    method: "GET"

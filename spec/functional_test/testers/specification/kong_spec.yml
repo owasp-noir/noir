@@ -1,0 +1,15 @@
+fixture: fixtures/specification/kong/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/v1/users"
+    method: "GET"
+  - url: "/v1/users"
+    method: "POST"
+  # `~` selects Kong 3.x regex mode; it is a marker, not a path segment, so the
+  # URL is `/admin/.*` and the mode is carried by the `kong-path-type` tag.
+  - url: "/admin/.*"
+    method: "ANY"
+  - url: "/v1/orders"
+    method: "GET"
+  - url: "/v1/orders"
+    method: "POST"

@@ -1,0 +1,92 @@
+fixture: fixtures/go/gin/
+counts: {techs: 1, endpoints: 22}
+endpoints:
+  - url: "/ping"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "age", type: "query"}
+  - url: "/admin"
+    method: "GET"
+    params:
+      - {name: "abcd_token", type: "cookie"}
+  - url: "/submit"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+      - {name: "User-Agent", type: "header"}
+  - url: "/public/secret.html"
+    method: "GET"
+  - url: "/group/users"
+    method: "GET"
+  - url: "/group/v1/migration"
+    method: "GET"
+  # Route path without leading "/" under a Group("/"). Regression guard
+  # for the gin-gonic/examples/basic pattern.
+  - url: "/admin"
+    method: "POST"
+  - url: "/mixed-get"
+    method: "GET"
+  - url: "/mixed-post"
+    method: "POST"
+    params:
+      - {name: "field1", type: "form"}
+  - url: "/mixed-put"
+    method: "PUT"
+  - url: "/mixed-delete"
+    method: "DELETE"
+  - url: "/multiline"
+    method: "GET"
+    params:
+      - {name: "ml_param", type: "query"}
+  # handlers.go: PATCH method with path param
+  - url: "/items/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  # handlers.go: multiple query params with DefaultQuery
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+  # handlers.go: handler reference (non-inline)
+  - url: "/healthz"
+    method: "GET"
+  # handlers.go: deeply nested groups with form param
+  - url: "/api/v2/data"
+    method: "POST"
+    params:
+      - {name: "payload", type: "form"}
+  # handlers.go: POST with header and form
+  - url: "/webhook"
+    method: "POST"
+    params:
+      - {name: "X-Webhook-Secret", type: "header"}
+      - {name: "event", type: "form"}
+  # handlers.go: cookie and query param combined
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+      - {name: "tab", type: "query"}
+  # handlers.go: JSON body binding via c.ShouldBindJSON
+  - url: "/inventory"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  # handlers.go: ShouldBindWith(&q, binding.Query) reads the query string
+  - url: "/filter"
+    method: "GET"
+    params:
+      - {name: "Page", type: "query"}
+  # server.go: root route registered with an empty path directly on the
+  # engine (unresolved/empty base_prefix) must surface as "/" instead of
+  # vanishing.
+  - url: "/"
+    method: "GET"
+  # server.go: StaticFile single-file registration
+  - url: "/favicon.ico"
+    method: "GET"

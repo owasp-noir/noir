@@ -1,0 +1,19 @@
+fixture: fixtures/crystal/marten/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users/<int:id>"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/auth/login"
+    method: "GET"
+  - url: "/products"
+    method: "GET"
+  - url: "/products/<slug:slug>"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}

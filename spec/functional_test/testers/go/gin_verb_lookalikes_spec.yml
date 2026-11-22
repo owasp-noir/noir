@@ -1,0 +1,10 @@
+# Regression: `env.Get(key, default)`, `store.Put(key, value)`,
+# `mlog.Any(key, value)` and `cache.Get(key, &out)` share a verb name with
+# the router API and used to be decoded as routes.
+fixture: fixtures/go/gin_verb_lookalikes/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"

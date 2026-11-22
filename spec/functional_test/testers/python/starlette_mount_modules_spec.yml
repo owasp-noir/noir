@@ -1,0 +1,21 @@
+# `Mount('/x', routes=users.routes)`, `routes=<imported list>` and
+# `app=<imported app>` serve the other module's routes under the mount path.
+fixture: fixtures/python/starlette_mount_modules/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/w01-users/"
+    method: "GET"
+  - url: "/w01-users/"
+    method: "POST"
+  - url: "/w01-users/{username}"
+    method: "GET"
+    params:
+      - {name: "username", type: "path"}
+  - url: "/w02-auth/login"
+    method: "POST"
+  - url: "/w03-billing/invoices"
+    method: "GET"
+  - url: "/w04-billing-app/pay"
+    method: "POST"

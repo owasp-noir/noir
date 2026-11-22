@@ -1,0 +1,76 @@
+# lib/fake-gateway.js has gateway-shaped `routes[].aliases` without the
+# moleculer-web mixin, so `/nope/leak` is not reported; test/api.spec.js
+# is a test, so `/test-only/secret` is not either.
+fixture: fixtures/javascript/moleculer/
+counts: {techs: 1, endpoints: 17}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/health"
+    method: "ANY"
+  - url: "/api/hi"
+    method: "GET"
+  # `REST posts` expands to the six CRUD routes.
+  - url: "/api/posts"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "body", type: "json"}
+  - url: "/api/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # `autoAliases` maps every action's `rest:` under the service name.
+  - url: "/auto/users"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/auto/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/auto/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/auto/v2/orders/find"
+    method: "ANY"
+  # `settings.rest` as an array mounts the service under each base path.
+  - url: "/auto/items/:sku"
+    method: "GET"
+    params:
+      - {name: "sku", type: "path"}
+      - {name: "s", type: "query"}
+  - url: "/auto/things/:sku"
+    method: "GET"
+    params:
+      - {name: "sku", type: "path"}
+      - {name: "s", type: "query"}

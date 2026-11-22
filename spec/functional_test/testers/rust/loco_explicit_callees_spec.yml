@@ -1,0 +1,25 @@
+# Callee/ai-context wiring for the explicit `Routes::new().add(...)`
+# path: handlers are looked up by name in the file's function index, so
+# their bodies' calls surface as callees even though the route is
+# registered separately from the `async fn` definition.
+fixture: fixtures/rust/loco/
+counts: {techs: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/posts"
+    method: "GET"
+    params:
+      - {name: "query", type: "query"}
+    callees:
+      - {name: "PostService::list", line: 32}
+      - {name: "PostPresenter::render", line: 33}
+      - {name: "format::json", line: 34}
+  - url: "/api/posts"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "PostService::create", line: 38}
+      - {name: "AuditLog::write", line: 39}
+      - {name: "format::json", line: 40}

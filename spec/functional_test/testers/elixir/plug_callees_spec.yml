@@ -1,0 +1,36 @@
+fixture: fixtures/elixir/plug_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+  only_techs: "elixir_plug"
+endpoints:
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "UserService.list", line: 9}
+      - {name: "AuditLog.write", line: 10}
+      - {name: "JsonPresenter.render", line: 11}
+      - {name: "send_resp", line: 11}
+  - url: "/users"
+    method: "POST"
+    callees:
+      - {name: "UserPayload.from_conn", line: 15}
+      - {name: "UserService.create", line: 16}
+      - {name: "send_resp", line: 17}
+      - {name: "render_user", line: 17}
+  - url: "/health"
+    method: "GET"
+    callees:
+      - {name: "Health.ready?", line: 21}
+  - url: "/webhook"
+    method: "POST"
+    callees:
+      - {name: "WebhookHandler.dispatch", line: 29}
+      - {name: "send_resp", line: 30}
+  - url: "/webhook"
+    method: "PUT"
+    callees:
+      - {name: "WebhookHandler.dispatch", line: 29}
+      - {name: "send_resp", line: 30}

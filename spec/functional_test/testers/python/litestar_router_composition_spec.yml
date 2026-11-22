@@ -1,0 +1,22 @@
+# Routers nested in routers (`nested.py`, the Litestar docs example) and
+# controllers, routers and handlers imported by name from domain modules
+# (`app/asgi.py`) are served under every enclosing `Router(path=)`.
+fixture: fixtures/python/litestar_router_composition/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/v01-base/orders/{order_id}"
+    method: "GET"
+    params:
+      - {name: "order_id", type: "path"}
+  - url: "/v01-base/catalog/items"
+    method: "GET"
+  - url: "/u01-api/login"
+    method: "POST"
+  - url: "/u01-api/users/"
+    method: "GET"
+  - url: "/u02-v2/teams"
+    method: "GET"
+  - url: "/u02-v2/team-router/members"
+    method: "GET"
+  - url: "/u02-v2/ping"
+    method: "GET"

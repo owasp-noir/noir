@@ -1,0 +1,72 @@
+# #3266: mount prefixes that used to be dropped.
+#   err/ - a router imported as `error` is still a router argument.
+#   fac/ - a router factory called with arguments, inline or bound first.
+#   tpl/ - a template-literal mount path, `process.env.X || 'shop'` read as
+#          its literal fallback; the path-mounted handler is reported too.
+#   imp/ - a route path built from a constant imported from another module.
+#   wrap/ - `withAuth(apiRouter)` is a wrapper around the router, not a factory.
+fixture: fixtures/javascript/express_mount_prefix_shapes/
+counts: {techs: 1, endpoints: 22}
+endpoints:
+  - url: "/error/404"
+    method: "GET"
+  - url: "/common/layout/404"
+    method: "GET"
+  - url: "/shop/:version/list"
+    method: "GET"
+    params:
+      - {name: "version", type: "path"}
+  - url: "/shop/items"
+    method: "GET"
+  - url: "/shop/concat"
+    method: "GET"
+  - url: "/local/items"
+    method: "GET"
+  - url: "/secure/vault"
+    method: "GET"
+  - url: "/a/list"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/a/detail"
+    method: "GET"
+    params:
+      - {name: "sid", type: "cookie"}
+  - url: "/b/list"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/b/detail"
+    method: "GET"
+    params:
+      - {name: "sid", type: "cookie"}
+  - url: "/c/list"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/c/detail"
+    method: "GET"
+    params:
+      - {name: "sid", type: "cookie"}
+  - url: "/shop/list"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/shop/detail"
+    method: "GET"
+    params:
+      - {name: "sid", type: "cookie"}
+  - url: "/shop/health_check"
+    method: "GET"
+  - url: "/shop/health_check"
+    method: "POST"
+  - url: "/shop/health_check"
+    method: "PUT"
+  - url: "/shop/health_check"
+    method: "DELETE"
+  - url: "/shop/health_check"
+    method: "PATCH"
+  - url: "/shop/health_check"
+    method: "HEAD"
+  - url: "/shop/health_check"
+    method: "OPTIONS"

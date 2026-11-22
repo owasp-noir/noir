@@ -1,0 +1,27 @@
+fixture: fixtures/specification/apisix/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/v1/users"
+    method: "GET"
+  - url: "/v1/users"
+    method: "POST"
+  - url: "/admin"
+    method: "GET"
+    params:
+      - {name: "Host", type: "header", value: "admin.example.com"}
+  - url: "/admin/*"
+    method: "GET"
+    params:
+      - {name: "Host", type: "header", value: "admin.example.com"}
+  - url: "/api/*"
+    method: "ANY"
+  - url: "/internal"
+    method: "DELETE"
+    params:
+      - {name: "Host", type: "header", value: "api.example.com"}
+  - url: "/json/users"
+    method: "GET"
+  - url: "/json/admin"
+    method: "ANY"
+  - url: "/json/admin/*"
+    method: "ANY"

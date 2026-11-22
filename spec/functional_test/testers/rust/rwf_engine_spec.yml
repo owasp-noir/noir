@@ -1,0 +1,14 @@
+# RWF sub-engine mounting: `engine!("/admin" => engine)` mounts an engine
+# and is NOT itself an endpoint; the engine's child routes inherit the
+# `/admin` prefix.
+fixture: fixtures/rust/rwf_engine/
+counts: {techs: 1, endpoints: 3}
+options:
+  only_techs: "rust_rwf"
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/admin/index"
+    method: "GET"
+  - url: "/admin/about"
+    method: "GET"

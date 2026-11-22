@@ -1,0 +1,27 @@
+# #3319. Each module is its own base so a module `pom.xml` resolves to the
+# module root, as it does when the module is scanned on its own.
+# - metrics: `io.dropwizard.metrics` (the Metrics library) in pom.xml is not
+#   the Dropwizard framework and must not hide the JAX-RS routes.
+# - programmatic: Jersey mounted with `context.addServlet(holder, "/api/*")`.
+# - webxml_packages: web.xml servlet with `jersey.config.server.provider.packages`.
+# - webxml_appclass: web.xml naming an Application class (`demo.App`) that
+#   carries no `@ApplicationPath`.
+fixture: fixtures/java/jaxrs_servlet_prefix/
+counts: {techs: 1, endpoints: 6}
+options:
+  base: ["./spec/functional_test/fixtures/java/jaxrs_servlet_prefix/metrics", "./spec/functional_test/fixtures/java/jaxrs_servlet_prefix/programmatic", "./spec/functional_test/fixtures/java/jaxrs_servlet_prefix/programmatic_multi", "./spec/functional_test/fixtures/java/jaxrs_servlet_prefix/webxml_packages", "./spec/functional_test/fixtures/java/jaxrs_servlet_prefix/webxml_appclass"]
+endpoints:
+  - url: "/items/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/version"
+    method: "GET"
+  - url: "/api/a"
+    method: "GET"
+  - url: "/admin/b"
+    method: "GET"
+  - url: "/api/v2/version"
+    method: "GET"
+  - url: "/api/v3/version"
+    method: "GET"

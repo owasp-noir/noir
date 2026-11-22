@@ -1,0 +1,57 @@
+# finale-rest / epilogue `resource({ endpoints: [plural, singular] })`
+# registers list + create on the plural path and read + update + delete on
+# the singular one. The juice-shop shape (a template over a destructured
+# for-of over a same-file array literal) expands per entry; the guard-only
+# `app.put('/api/Hints/:id', …)` merges into the generated row. A
+# commented-out call and an unresolvable `${prefix}` emit nothing.
+fixture: fixtures/javascript/express_finale/
+counts: {techs: 1, endpoints: 15}
+endpoints:
+  - url: "/api/Users"
+    method: "GET"
+  - url: "/api/Users"
+    method: "POST"
+  - url: "/api/Users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/Users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/Users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/Hints"
+    method: "GET"
+  - url: "/api/Hints"
+    method: "POST"
+  - url: "/api/Hints/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/Hints/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/Hints/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/tags"
+    method: "GET"
+  - url: "/tags"
+    method: "POST"
+  - url: "/tags/:tagId"
+    method: "GET"
+    params:
+      - {name: "tagId", type: "path"}
+  - url: "/tags/:tagId"
+    method: "PUT"
+    params:
+      - {name: "tagId", type: "path"}
+  - url: "/tags/:tagId"
+    method: "DELETE"
+    params:
+      - {name: "tagId", type: "path"}

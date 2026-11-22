@@ -1,0 +1,20 @@
+fixture: fixtures/python/django/
+counts: {techs: 1}
+options:
+  include_callee: true
+endpoints:
+  - url: "/api/articles/"
+    method: "GET"
+    params:
+      - {name: "status", type: "query"}
+    callees:
+      - {name: "request.query_params.get", line: 36}
+      - {name: "HttpResponse", line: 37}
+  - url: "/api/articles/{article_id}/publish/"
+    method: "POST"
+    params:
+      - {name: "reason", type: "form"}
+      - {name: "article_id", type: "path"}
+    callees:
+      - {name: "request.data.get", line: 45}
+      - {name: "HttpResponse", line: 46}

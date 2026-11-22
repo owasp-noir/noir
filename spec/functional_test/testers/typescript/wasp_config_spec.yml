@@ -1,0 +1,30 @@
+# The preview TS config (`wasp-config`, Wasp 0.15–0.23).
+fixture: fixtures/typescript/wasp_config/
+counts: {techs: 1, endpoints: 7}
+endpoints:
+  - url: "/dashboard"
+    method: "GET"
+  - url: "/operations/get-reports"
+    method: "POST"
+    params:
+      - {name: "year", type: "json"}
+      - {name: "quarter", type: "json"}
+  - url: "/reports/:reportId/csv"
+    method: "GET"
+    params:
+      - {name: "reportId", type: "path"}
+      - {name: "columns", type: "query"}
+  - url: "/auth/me"
+    method: "GET"
+  - url: "/auth/logout"
+    method: "POST"
+  - url: "/auth/username/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "password", type: "json"}
+  - url: "/auth/username/signup"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "password", type: "json"}

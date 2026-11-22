@@ -1,0 +1,20 @@
+fixture: fixtures/specification/tyk/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  # No white_list: the whole listen path is proxied.
+  - url: "/users-api/"
+    method: "ANY"
+  - url: "/users-api/admin"
+    method: "DELETE"
+  - url: "/users-api/health"
+    method: "GET"
+  - url: "/users-api/v1/profile"
+    method: "PUT"
+  # `cache` lists bare path strings.
+  - url: "/users-api/v1/catalog"
+    method: "ANY"
+  # Tyk Operator `ApiDefinition`; the white_list hides the bare listen path.
+  - url: "/orders/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

@@ -1,0 +1,37 @@
+fixture: fixtures/javascript/nestjs_versioning/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/v1/cats"
+    method: "GET"
+  - url: "/v1/cats/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v2/cats"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+  - url: "/v3/cats"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+  - url: "/health"
+    method: "GET"
+  - url: "/v2/dogs/override"
+    method: "GET"
+  # Compact one-line members keep their own `@Version` only.
+  - url: "/v2/items/a"
+    method: "GET"
+  - url: "/items/b"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/items/c"
+    method: "GET"
+  - url: "/v4/items/d"
+    method: "GET"
+  # Route decorators stacked on one member share its decorator block.
+  - url: "/items/e"
+    method: "GET"
+  - url: "/items/f"
+    method: "GET"

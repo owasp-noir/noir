@@ -1,0 +1,11 @@
+# Legacy `https://deno.land/x/oak@vX.Y.Z/mod.ts` import style, plus the
+# `new Router({ prefix: '/x' })` constructor recipe.
+fixture: fixtures/javascript/oak_url_import/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/v1/status"
+    method: "GET"
+  - url: "/api/v1/items/:itemId"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}

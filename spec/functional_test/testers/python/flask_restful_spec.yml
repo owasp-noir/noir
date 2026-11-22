@@ -1,0 +1,34 @@
+# flask_restful / flask-restx register class-based `Resource`s via
+# `api.add_resource(ResourceClass, "/url"[, "/url2"], ...)`. Each Resource
+# exposes one endpoint per HTTP-verb method it defines, the class is often
+# imported from another module, and apps frequently wrap add_resource in an
+# Api subclass method (e.g. redash's add_org_resource). This fixture covers
+# all three: same-file resolution, cross-file resolution, the wrapper alias,
+# multi-URL registration and `<int:item_id>` path params.
+fixture: fixtures/python/flask_restful/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/ping"
+    method: "GET"
+  - url: "/items/<int:item_id>"
+    method: "GET"
+    params:
+      - {name: "item_id", type: "path"}
+  - url: "/items/<int:item_id>"
+    method: "PUT"
+    params:
+      - {name: "item_id", type: "path"}
+  - url: "/items/<int:item_id>"
+    method: "DELETE"
+    params:
+      - {name: "item_id", type: "path"}
+  - url: "/items"
+    method: "GET"
+  - url: "/items"
+    method: "POST"
+  - url: "/items/all"
+    method: "GET"
+  - url: "/items/all"
+    method: "POST"
+  - url: "/api/v2/health"
+    method: "GET"

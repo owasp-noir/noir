@@ -1,0 +1,5 @@
+fixture: fixtures/javascript/sveltekit_monorepo/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/api/real"
+    method: "GET"

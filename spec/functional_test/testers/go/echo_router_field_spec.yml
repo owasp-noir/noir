@@ -1,0 +1,15 @@
+# Routes registered on struct fields typed `*echo.Echo` / `*echo.Group`
+# (#3591), an embedded `*echo.Echo` included; an `*http.Client` field's
+# `Get` is not one.
+fixture: fixtures/go/echo_router_field/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/embedded"
+    method: "POST"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "fields", type: "query"}

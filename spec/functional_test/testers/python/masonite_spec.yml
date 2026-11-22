@@ -1,0 +1,149 @@
+fixture: fixtures/python/masonite/
+counts: {techs: 1, endpoints: 35}
+endpoints:
+  # String controller binding, no `@method` -> defaults to `__call__`.
+  - url: "/"
+    method: "GET"
+  # Class/method controller binding.
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "email", type: "query"}
+  # Required + typed (`:integer`) path parameters — both map to the same
+  # `show` handler.
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/typed/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # Optional path parameter (`?term`) alongside an unrelated query input
+  # read inside the handler.
+  - url: "/search/{term}"
+    method: "GET"
+    params:
+      - {name: "term", type: "path"}
+      - {name: "sort", type: "query"}
+  # Nested Route.group: prefixes compose outer -> inner.
+  - url: "/account/settings"
+    method: "GET"
+    params:
+      - {name: "theme", type: "query"}
+  - url: "/account/security/profile"
+    method: "PUT"
+    params:
+      - {name: "bio", type: "query"}
+  # Group whose inner route is bare "/" must not leave a trailing slash.
+  - url: "/admin/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/admin/users"
+    method: "POST"
+    params:
+      - {name: "username", type: "query"}
+  # Route.resource("posts", "PostController") -> 7 REST routes.
+  - url: "/posts"
+    method: "GET"
+  - url: "/posts/create"
+    method: "GET"
+  - url: "/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "query"}
+  - url: "/posts/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/{id}/edit"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "title", type: "query"}
+  - url: "/posts/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "title", type: "query"}
+  - url: "/posts/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Route.api("api/posts", "PostController") -> 5 REST-API routes.
+  - url: "/api/posts"
+    method: "GET"
+  - url: "/api/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "query"}
+  - url: "/api/posts/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/posts/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "title", type: "query"}
+  - url: "/api/posts/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "title", type: "query"}
+  - url: "/api/posts/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Specialized helpers.
+  - url: "/about"
+    method: "GET"
+  - url: "/old-home"
+    method: "GET"
+  - url: "/legacy"
+    method: "GET"
+  # Route.any -> all six verbs.
+  - url: "/webhook"
+    method: "GET"
+    params:
+      - {name: "X-Webhook-Token", type: "header"}
+  - url: "/webhook"
+    method: "POST"
+    params:
+      - {name: "X-Webhook-Token", type: "header"}
+  - url: "/webhook"
+    method: "PUT"
+    params:
+      - {name: "X-Webhook-Token", type: "header"}
+  - url: "/webhook"
+    method: "PATCH"
+    params:
+      - {name: "X-Webhook-Token", type: "header"}
+  - url: "/webhook"
+    method: "DELETE"
+    params:
+      - {name: "X-Webhook-Token", type: "header"}
+  - url: "/webhook"
+    method: "OPTIONS"
+    params:
+      - {name: "X-Webhook-Token", type: "header"}
+  # Route.match(["put", "patch"], ...).
+  - url: "/users/{id}/touch"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session_id", type: "cookie"}
+  - url: "/users/{id}/touch"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "session_id", type: "cookie"}
+  # Unresolvable controller reference — still surfaces a bare endpoint.
+  - url: "/health"
+    method: "GET"

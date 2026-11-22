@@ -1,0 +1,36 @@
+# Input read through the `request()` helper (`request('x')`, `request([...])`,
+# `request()->x`), the `Request` facade imported under an alias, and the
+# accessors `str`, `collect`, `hasAny`, `whenHas`, `hasHeader`, `json` and
+# `bearerToken` (the `Authorization` header).
+fixture: fixtures/php/laravel_request_helper/
+counts: {techs: 2, endpoints: 4}
+endpoints:
+  - url: "/control"
+    method: "GET"
+    params:
+      - {name: "control-in", type: "query"}
+  - url: "/posts"
+    method: "GET"
+    params:
+      - {name: "search", type: "query"}
+      - {name: "category", type: "query"}
+      - {name: "sort", type: "query"}
+      - {name: "page_size", type: "query"}
+      - {name: "tag", type: "query"}
+  - url: "/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+      - {name: "body", type: "form"}
+      - {name: "slug", type: "form"}
+  - url: "/token"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "tags", type: "form"}
+      - {name: "x1", type: "form"}
+      - {name: "x2", type: "form"}
+      - {name: "promo", type: "form"}
+      - {name: "meta.id", type: "form"}
+      - {name: "X-Tenant", type: "header"}
+      - {name: "Authorization", type: "header"}

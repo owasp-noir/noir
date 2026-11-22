@@ -1,0 +1,63 @@
+fixture: fixtures/python/aws_lambda_powertools/
+counts: {techs: 1, endpoints: 13}
+endpoints:
+  - url: "/todos"
+    method: "GET"
+    params:
+      - {name: "status", type: "query"}
+  - url: "/todos/{todo_id}"
+    method: "POST"
+    params:
+      - {name: "todo_id", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "term", type: "query"}
+      - {name: "X-Trace-Id", type: "header"}
+  - url: "/search"
+    method: "POST"
+    params:
+      - {name: "term", type: "query"}
+      - {name: "X-Trace-Id", type: "header"}
+  # Same-file `Router()` mounted with `include_router(router, prefix="/v1")`.
+  - url: "/v1/admin/users/{uid}"
+    method: "DELETE"
+    params:
+      - {name: "uid", type: "path"}
+  # `from routes import orders` + `include_router(orders.router, prefix=...)`.
+  - url: "/orders/{order_id}"
+    method: "PUT"
+    params:
+      - {name: "order_id", type: "path"}
+      - {name: "note", type: "json"}
+      - {name: "sku", type: "json"}
+  # Aliased import mounted without a usable prefix (an env lookup).
+  - url: "/health"
+    method: "GET"
+  # Positional `route(rule, method)`; positional `include_router(r, prefix)`
+  # serving its "/" at the bare prefix.
+  - url: "/legacy"
+    method: "POST"
+  - url: "/bulk"
+    method: "PUT"
+  - url: "/bulk"
+    method: "PATCH"
+  - url: "/v2"
+    method: "GET"
+  # `enable_validation=True` handler arguments (src/validation.py).
+  - url: "/validated/{todo_id}"
+    method: "GET"
+    params:
+      - {name: "todo_id", type: "path"}
+      - {name: "limit", type: "query"}
+      - {name: "X-Tok", type: "header"}
+      - {name: "x-request-id", type: "header"}
+      - {name: "completed", type: "query"}
+  - url: "/validated"
+    method: "POST"
+    params:
+      - {name: "item", type: "json"}
+# The app lives in src/ below the scan root, so `from routes import orders`
+# resolves only from the file's own directory. The commented-out
+# `include_router(..., prefix="/old")` mounts nothing.

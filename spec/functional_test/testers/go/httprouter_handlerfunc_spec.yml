@@ -1,0 +1,25 @@
+# httprouter's stdlib-handler adapters `router.HandlerFunc(method, path, h)`
+# and `router.Handler(method, path, h)` register routes like `Handle`.
+fixture: fixtures/go/httprouter_handlerfunc/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/v1/healthcheck"
+    method: "GET"
+  - url: "/v1/movies"
+    method: "GET"
+    params:
+      - {name: "title", type: "query"}
+  - url: "/v1/movies/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v1/movies/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/debug/vars"
+    method: "GET"
+  - url: "/v1/native/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

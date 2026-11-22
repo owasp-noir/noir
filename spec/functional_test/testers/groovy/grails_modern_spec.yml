@@ -1,0 +1,50 @@
+fixture: fixtures/groovy/grails_modern/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  # ApiController — public actions only. The private/protected/static helpers
+  # (`buildModel`, `formatBody`, `counter`) and the JavaBean getter
+  # (`getDisplayName`) must not surface as endpoints.
+  - url: "/api/index"
+    method: "GET"
+  - url: "/api/save"
+    method: "POST"
+  - url: "/api/list"
+    method: "GET"
+  # UrlMappings under `grails-app/controllers/` (Grails 3+ layout) is now
+  # scanned. `${imageId}` GString translated to `:imageId`; the `(.${format})`
+  # content-format suffix is stripped.
+  - url: "/image/:imageId"
+    method: "GET"
+    params:
+      - {name: "imageId", type: "path"}
+  # `action = [GET: 'show', PUT: 'update']` → one endpoint per verb.
+  - url: "/api/v1/widget/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/widget/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  # `(resources: 'book')` shortcut → six REST endpoints.
+  - url: "/api/v1/books"
+    method: "GET"
+  - url: "/api/v1/books"
+    method: "POST"
+  - url: "/api/v1/books/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/books/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/books/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/books/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+# `"404"`/`"500"` response-code mappings are error pages, not endpoints.

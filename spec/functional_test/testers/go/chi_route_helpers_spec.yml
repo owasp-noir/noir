@@ -1,0 +1,48 @@
+# A same-file function (or closure variable) that takes the router as a
+# parameter registers its routes wherever it is called, under the
+# caller's prefix. Before this fixture gitea's `addProjectRoutes(m, ...)`
+# — called from the user, org and repo groups — was reported once, at
+# the prefix-less `/{id}/columns`, which is a path nothing serves.
+# A helper nobody calls keeps its historical prefix-less routes.
+fixture: fixtures/go/chi_route_helpers/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/orgs/{org}/projects"
+    method: "GET"
+    params:
+      - {name: "org", type: "path"}
+  - url: "/orgs/{org}/projects/{id}/"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "org", type: "path"}
+  - url: "/orgs/{org}/projects/{id}/"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "org", type: "path"}
+  - url: "/orgs/{org}/secrets"
+    method: "GET"
+    params:
+      - {name: "org", type: "path"}
+  - url: "/repos/{owner}/{repo}/projects"
+    method: "GET"
+    params:
+      - {name: "owner", type: "path"}
+      - {name: "repo", type: "path"}
+  - url: "/repos/{owner}/{repo}/projects/{id}/"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "owner", type: "path"}
+      - {name: "repo", type: "path"}
+  - url: "/repos/{owner}/{repo}/projects/{id}/"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "owner", type: "path"}
+      - {name: "repo", type: "path"}
+  - url: "/orphan"
+    method: "GET"

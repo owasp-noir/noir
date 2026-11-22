@@ -1,0 +1,113 @@
+fixture: fixtures/javascript/hono/
+counts: {techs: 1, endpoints: 19}
+endpoints:
+  # Basic GET route
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+      - {name: "x-api-key", type: "header"}
+  # POST route with JSON body
+  - url: "/register"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "email", type: "json"}
+      - {name: "password", type: "json"}
+      - {name: "client-id", type: "header"}
+  # Route with path parameter
+  - url: "/users/:userId"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "fields", type: "query"}
+  # GET products
+  - url: "/products"
+    method: "GET"
+    params:
+      - {name: "category", type: "query"}
+      - {name: "limit", type: "query"}
+  # POST products
+  - url: "/products"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "price", type: "json"}
+      - {name: "category", type: "json"}
+      - {name: "store-id", type: "header"}
+  # Dashboard with cookie
+  - url: "/dashboard"
+    method: "GET"
+    params:
+      - {name: "view", type: "query"}
+      - {name: "sessionId", type: "cookie"}
+  # PUT settings
+  - url: "/settings"
+    method: "PUT"
+    params:
+      - {name: "theme", type: "json"}
+      - {name: "notifications", type: "json"}
+      - {name: "authorization", type: "header"}
+  # DELETE with path param
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "x-admin-key", type: "header"}
+  # PATCH with path param and body
+  - url: "/users/:id/profile"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "bio", type: "json"}
+  # Form body with parseBody
+  - url: "/upload"
+    method: "POST"
+    params:
+      - {name: "file", type: "form"}
+      - {name: "description", type: "form"}
+      - {name: "x-upload-token", type: "header"}
+  # app.on() with specific method
+  - url: "/health"
+    method: "GET"
+    params:
+      - {name: "format", type: "query"}
+  # app.query() route (RFC 10008) with JSON body
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "query", type: "json"}
+      - {name: "filter", type: "json"}
+      - {name: "x-api-key", type: "header"}
+  # app.on('QUERY') generic route
+  - url: "/query-handler"
+    method: "QUERY"
+    params:
+      - {name: "keyword", type: "json"}
+  # app.on(['GET', 'QUERY']) multi-verb array route
+  - url: "/items/search"
+    method: "GET"
+    params:
+      - {name: "filter", type: "query"}
+  - url: "/items/search"
+    method: "QUERY"
+    params:
+      - {name: "filter", type: "query"}
+  # Sub-app / chained QUERY route
+  - url: "/nested-search"
+    method: "QUERY"
+    params:
+      - {name: "term", type: "json"}
+  # jsx.tsx: routes after JSX text holding an apostrophe
+  - url: "/about"
+    method: "GET"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/docs"
+    method: "GET"
+    params:
+      - {name: "lang", type: "query"}
+  - url: "/submit"
+    method: "POST"
+    params:
+      - {name: "X-Token", type: "header"}

@@ -1,0 +1,47 @@
+# #3309: params come from the controller action a route names
+# (`[NotesController, 'store']` behind a lazy `import()`).
+fixture: fixtures/javascript/adonisjs_controller_params/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/api/notes"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "body", type: "json"}
+  - url: "/api/notes/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/custom-parser"
+    method: "GET"
+    params:
+      - {name: "message", type: "json"}
+  - url: "/notes/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # Inline `[() => import('#controllers/...'), 'store']`, same action body.
+  - url: "/notes/inline"
+    method: "PUT"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "body", type: "json"}
+  - url: "/notes/compact"
+    method: "GET"
+    params:
+      - {name: "compact", type: "query"}
+  - url: "/notes/preview"
+    method: "GET"
+    params:
+      - {name: "title", type: "query"}
+      - {name: "body", type: "query"}
+  - url: "/inline-params"
+    method: "GET"
+    params:
+      - {name: "real-inline", type: "query"}
+  - url: "/inline-params"
+    method: "POST"
+    params:
+      - {name: "real-inline", type: "json"}
+      - {name: "assigned", type: "json"}

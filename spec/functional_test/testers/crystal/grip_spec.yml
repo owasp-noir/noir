@@ -1,0 +1,19 @@
+fixture: fixtures/crystal/grip/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/api/v1/"
+    method: "GET"
+  - url: "/api/v1/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/items"
+    method: "POST"
+  - url: "/api/v1/users/:user_id"
+    method: "GET"
+    params:
+      - {name: "user_id", type: "path"}
+  - url: "/health"
+    method: "GET"
+  - url: "/chat"
+    method: "GET"

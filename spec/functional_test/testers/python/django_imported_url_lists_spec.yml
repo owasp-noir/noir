@@ -1,0 +1,36 @@
+# pretix's root urlconf: `urlpatterns = common_patterns + ...` names a list
+# imported from another urlconf, `include((shop.control.urls, "control"))`
+# mounts a module bound by `import shop.control.urls`, and an include()
+# concatenates imported lists with an inline one. A list nobody imports
+# (`unused_patterns`) is not served.
+fixture: fixtures/python/django_imported_url_lists/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/healthcheck/"
+    method: "GET"
+  - url: "/api/v1/orders/"
+    method: "GET"
+  - url: "/legacy/old/"
+    method: "GET"
+  - url: "/one/p/"
+    method: "GET"
+  - url: "/two/p/"
+    method: "GET"
+  # `ev = None`: the include() entry stays, as on a list never followed.
+  - url: "/none/"
+    method: "GET"
+  - url: "/control/event/{organizer}/"
+    method: "GET"
+    params:
+      - {name: "organizer", type: "path"}
+  - url: "/locale/set"
+    method: "GET"
+  - url: "/{organizer}/"
+    method: "GET"
+    params:
+      - {name: "organizer", type: "path"}
+  - url: "/{organizer}/{event}/"
+    method: "GET"
+    params:
+      - {name: "event", type: "path"}
+      - {name: "organizer", type: "path"}

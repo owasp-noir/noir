@@ -1,0 +1,16 @@
+# ApiController is mounted at "/api/users" in ScalatraBootstrap, so each route is
+# served under that prefix. The `get(...)`/`post(...)` calls in the test spec are
+# HTTP client requests, not route definitions, and must be excluded.
+fixture: fixtures/scala/scalatra_mount/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "query"}

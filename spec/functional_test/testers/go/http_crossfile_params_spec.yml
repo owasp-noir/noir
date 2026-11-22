@@ -1,0 +1,21 @@
+fixture: fixtures/go/http_crossfile_params/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "next", type: "query"}
+  # The handler's `r.PathValue("entryID")` is not a path param here: the
+  # pattern `GET /v1/entries` has no `{entryID}` wildcard (#3307).
+  - url: "/v1/entries"
+    method: "GET"
+    params:
+      - {name: "status", type: "query"}
+      - {name: "starred", type: "query"}
+      - {name: "before", type: "query"}
+  - url: "/v1/entries"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "X-Trace-ID", type: "header"}
+      - {name: "title", type: "form"}

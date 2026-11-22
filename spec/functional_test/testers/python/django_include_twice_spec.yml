@@ -1,0 +1,21 @@
+# One urlconf `include()`d under two prefixes (the Django docs' URL
+# namespaces example, API versions) is served under both.
+fixture: fixtures/python/django_include_twice/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/author-polls/"
+    method: "GET"
+  - url: "/author-polls/<int:pk>/"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/publisher-polls/"
+    method: "GET"
+  - url: "/publisher-polls/<int:pk>/"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}
+  - url: "/api/v1/ping/"
+    method: "GET"
+  - url: "/api/v2/ping/"
+    method: "GET"

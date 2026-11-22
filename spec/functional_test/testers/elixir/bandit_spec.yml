@@ -1,0 +1,60 @@
+fixture: fixtures/elixir/bandit/
+counts: {techs: 2, endpoints: 15}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "email", type: "form"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id/profile"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/protected"
+    method: "GET"
+    params:
+      - {name: "authorization", type: "header"}
+  - url: "/session"
+    method: "GET"
+    params:
+      - {name: "session_id", type: "cookie"}
+  - url: "/ping"
+    method: "HEAD"
+  - url: "/_/*path"
+    method: "OPTIONS"
+    params:
+      - {name: "path", type: "path"}
+  - url: "/webhook"
+    method: "POST"
+  - url: "/webhook"
+    method: "PUT"
+  # ApiRouter endpoints, mounted by `forward "/api", to: ElixirBandit.ApiRouter`
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/items"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/api/items/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+# Bandit always hosts a `Plug.Router`, so the project genuinely uses
+# both technologies and both detectors fire. The analyzer-level
+# redundancy filter drops `elixir_plug` so endpoints aren't extracted
+# twice, but the detection count remains 2.

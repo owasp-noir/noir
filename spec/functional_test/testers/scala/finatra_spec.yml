@@ -1,0 +1,38 @@
+fixture: fixtures/scala/finatra/
+counts: {techs: 1, endpoints: 11}
+endpoints:
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "fields", type: "query"}
+  - url: "/users"
+    method: "POST"
+  - url: "/admin/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/v2/settings"
+    method: "PUT"
+    params:
+      - {name: "mode", type: "query"}
+  - url: "/admin/raw"
+    method: "GET"
+  - url: "/files/:*"
+    method: "GET"
+    params:
+      - {name: "*", type: "path"}
+  - url: "/ping"
+    method: "ANY"
+  - url: "/secured"
+    method: "GET"
+    params:
+      - {name: "token", type: "query"}
+  - url: "/audited"
+    method: "POST"
+  - url: "/me/profile"
+    method: "GET"
+  - url: "/orders/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

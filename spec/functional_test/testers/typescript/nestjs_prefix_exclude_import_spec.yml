@@ -1,0 +1,16 @@
+# `app.setGlobalPrefix('api', { exclude: excludePaths })` where the array is
+# exported from another file through a tsconfig path alias (`src/constants.js`
+# for `src/constants.ts`), as immich does. Excluded routes stay at the root;
+# a `{ path, method }` entry excludes only that verb, and a commented-out
+# entry excludes nothing.
+fixture: fixtures/typescript/nestjs_prefix_exclude_import/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/.well-known/app"
+    method: "GET"
+  - url: "/custom.css"
+    method: "GET"
+  - url: "/api/custom.css"
+    method: "POST"
+  - url: "/api/version"
+    method: "GET"

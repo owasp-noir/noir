@@ -1,0 +1,9 @@
+# `test/fixture/` is a mini Nitro project the framework's suite spins up,
+# for both `routes/` and `api/`. The real project's routes stay.
+fixture: fixtures/javascript/nitro_test_apps/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/hello"
+    method: "GET"
+  - url: "/api/e2e"
+    method: "GET"

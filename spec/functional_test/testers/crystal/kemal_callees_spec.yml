@@ -1,0 +1,35 @@
+fixture: fixtures/crystal/kemal_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+  only_techs: "crystal_kemal"
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "HomeService.build", line: 4}
+      - {name: "env.redirect", line: 5}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "user", type: "json"}
+    callees:
+      - {name: "env.params.json", line: 9}
+      - {name: "UserService.create", line: 10}
+  - url: "/inline"
+    method: "GET"
+    callees:
+      - {name: "InlineService.call", line: 14}
+  - url: "/socket"
+    method: "GET"
+    callees:
+      - {name: "SocketTracker.connected", line: 18}
+      - {name: "socket.send", line: 19}
+  - url: "/v1/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "env.params.url", line: 25}
+      - {name: "UserLookup.find", line: 26}
+      - {name: "UserPresenter.render", line: 27}

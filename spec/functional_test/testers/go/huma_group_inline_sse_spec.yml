@@ -1,0 +1,28 @@
+# Huma: `huma.NewGroup` prefixes (nested too), `sse.Register` operations,
+# and inline `*struct {...}` input types (query, header and JSON body fields).
+fixture: fixtures/go/huma_group_inline_sse/
+counts: {techs: 2, endpoints: 6}
+endpoints:
+  - url: "/count/{count}"
+    method: "PUT"
+    params:
+      - {name: "count", type: "path"}
+      - {name: "q", type: "query"}
+      - {name: "X-Count", type: "header"}
+      - {name: "name", type: "json"}
+  - url: "/v1/items"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/v1/admin/items/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # `huma.NewGroup(api, "/v2", "/api/v2")` serves under both prefixes.
+  - url: "/v2/ping"
+    method: "GET"
+  - url: "/api/v2/ping"
+    method: "GET"
+  - url: "/sse"
+    method: "GET"
+# humago serves on a net/http mux, so go_http is detected alongside go_huma.

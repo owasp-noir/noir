@@ -1,0 +1,18 @@
+# Routers bound under a prefix by name (`"/users" bind userRoutes`) or by
+# call (`"/orders" bind orderRoutes()`), declared in this file or another,
+# serve their routes under that prefix and nowhere else.
+fixture: fixtures/kotlin/http4k_mounts/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/internal/ping"
+    method: "GET"
+  - url: "/inline/x"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/orders"
+    method: "POST"

@@ -1,0 +1,9 @@
+# The Next.js app beside the Astro one also keeps `src/pages/`; its
+# `api/hello.ts` and `about.md` are not Astro routes.
+fixture: fixtures/javascript/astro_monorepo/
+counts: {endpoints: 1}
+options:
+  only_techs: "js_astro"
+endpoints:
+  - url: "/"
+    method: "GET"

@@ -1,0 +1,16 @@
+# Workspace test crates (`app-tests`, `tests-fuzz`, `playwright-tests`,
+# `e2e_test`) are harnesses, not the app. `contests`, `latest` and the
+# singular `test-app` merely look similar and stay.
+fixture: fixtures/rust/axum_test_crates/
+counts: {techs: 1, endpoints: 4}
+options:
+  only_techs: "rust_axum"
+endpoints:
+  - url: "/real"
+    method: "GET"
+  - url: "/contests"
+    method: "GET"
+  - url: "/latest"
+    method: "GET"
+  - url: "/test-app"
+    method: "GET"

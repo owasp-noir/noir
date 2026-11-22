@@ -1,0 +1,7 @@
+fixture: fixtures/go/hertz_nested_static/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/ping"
+    method: "GET"
+  - url: "/static/ok.txt"
+    method: "GET"

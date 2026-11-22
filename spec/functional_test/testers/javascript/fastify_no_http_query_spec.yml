@@ -1,0 +1,7 @@
+fixture: fixtures/javascript/fastify_no_http_query/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/direct-query"
+    method: "QUERY"

@@ -1,0 +1,53 @@
+fixture: fixtures/crystal/lucky_callees/
+counts: {techs: 1, endpoints: 7}
+options:
+  include_callee: true
+  only_techs: "crystal_lucky"
+endpoints:
+  - url: "/lucky/home"
+    method: "GET"
+    callees:
+      - {name: "HomeService.build", line: 3}
+  - url: "/lucky/users"
+    method: "POST"
+    params:
+      - {name: "user", type: "json"}
+    callees:
+      - {name: "params.from_json", line: 8}
+      - {name: "SaveUser.run", line: 9}
+      - {name: "AuditTrail.record", line: 10}
+      - {name: "UserPresenter.id", line: 11}
+  - url: "/lucky/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "query"}
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "params.get", line: 16}
+      - {name: "UserUpdater.call", line: 17}
+  - url: "/lucky/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "reason", type: "query"}
+    callees:
+      - {name: "UserDestroyer.call", line: 22}
+  - url: "/lucky/users/:id"
+    method: "PATCH"
+    params:
+      - {name: "mode", type: "query"}
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "UserPatch.apply", line: 27}
+  - url: "/lucky/trace"
+    method: "TRACE"
+    params:
+      - {name: "X-Trace", type: "header"}
+    callees:
+      - {name: "TraceReporter.capture", line: 32}
+      - {name: "request.headers", line: 32}
+  - url: "/lucky/socket"
+    method: "GET"
+    callees:
+      - {name: "SocketTracker.connected", line: 3}
+      - {name: "socket.send", line: 4}

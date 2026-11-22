@@ -1,0 +1,17 @@
+# `readBody` / `getQuery` with a TypeScript type argument.
+fixture: fixtures/javascript/nuxtjs_generics/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/login"
+    method: "POST"
+    params:
+      - {name: "email", type: "body"}
+      - {name: "password", type: "body"}
+  - url: "/api/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/api/profile"
+    method: "PATCH"
+    params:
+      - {name: "nickname", type: "body"}

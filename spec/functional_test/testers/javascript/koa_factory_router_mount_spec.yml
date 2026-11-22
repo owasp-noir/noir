@@ -1,0 +1,9 @@
+# #3266: a router returned by an imported factory (`const items =
+# initItemsRouter()`, named or default export) keeps its mount prefix.
+fixture: fixtures/javascript/koa_factory_router_mount/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/items/list"
+    method: "GET"
+  - url: "/api/users/me"
+    method: "GET"

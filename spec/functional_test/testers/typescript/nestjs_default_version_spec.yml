@@ -1,0 +1,18 @@
+# `enableVersioning({ type: URI, prefix: `${CONTEXT_PATH}v`, defaultVersion: '1' })`
+# in apps/api: a controller with no version of its own serves `/v1`, one
+# with `version: '2'` serves `/v2`, VERSION_NEUTRAL none. The context path
+# is the deployment's (empty unless configured). apps/webhook has its own
+# bootstrap with no versioning, so its hard-coded `v1/` is not doubled.
+fixture: fixtures/typescript/nestjs_default_version/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/v1/auth/login"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+  - url: "/v2/topics"
+    method: "GET"
+  - url: "/.well-known/resource"
+    method: "GET"
+  - url: "/v1/health-check"
+    method: "GET"

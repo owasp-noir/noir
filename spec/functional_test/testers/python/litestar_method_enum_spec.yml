@@ -1,0 +1,24 @@
+# `http_method=` given as `HttpMethod.X` (list or scalar) or as a tuple sets
+# the verb, and `Parameter(header=/cookie=/query=...)` sets the location and
+# wire name, even after an argument holding parentheses in a string.
+fixture: fixtures/python/litestar_method_enum/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/b"
+    method: "POST"
+  - url: "/b"
+    method: "PUT"
+  - url: "/one"
+    method: "DELETE"
+  - url: "/f"
+    method: "PATCH"
+  - url: "/f"
+    method: "HEAD"
+  - url: "/d"
+    method: "GET"
+    params:
+      - {name: "X-Token", type: "header"}
+      - {name: "sid", type: "cookie"}
+      - {name: "p", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "X-Y", type: "header"}

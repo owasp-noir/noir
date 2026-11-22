@@ -1,0 +1,16 @@
+# Regression test: Litestar defaults an omitted path to "" (joined with any
+# controller prefix). Previously `@get()` / `@get(sync_to_thread=False)` and
+# controller methods without a path were dropped entirely (0 endpoints).
+fixture: fixtures/python/litestar_empty_path/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/"
+    method: "POST"
+  - url: "/items"
+    method: "GET"
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}

@@ -1,0 +1,9 @@
+fixture: fixtures/dart/dart_frog_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/dart/dart_frog_multi_base/service_a", "./spec/functional_test/fixtures/dart/dart_frog_multi_base/service_b"]
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/about"
+    method: "GET"

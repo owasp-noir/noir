@@ -1,0 +1,31 @@
+fixture: fixtures/clojure/pedestal_callees/
+counts: {techs: 1, endpoints: 5}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "GET"
+    callees:
+      - {name: "response/ok"}
+      - {name: "user.service/list"}
+  - url: "/users"
+    method: "POST"
+    callees:
+      - {name: "audit.log/write!"}
+      - {name: "response/created"}
+      - {name: "user.service/create!"}
+  - url: "/health"
+    method: "GET"
+    callees:
+      - {name: "response/ok"}
+      - {name: "health.service/check"}
+  - url: "/api/inline"
+    method: "GET"
+    callees:
+      - {name: "response/ok"}
+      - {name: "inline.service/run"}
+  # Syntax-quoted handler in a conj-built interceptor vector.
+  - url: "/dashboard"
+    method: "GET"
+    callees:
+      - {name: "dashboard-page"}

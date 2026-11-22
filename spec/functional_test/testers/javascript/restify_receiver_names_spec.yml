@@ -1,0 +1,13 @@
+fixture: fixtures/javascript/restify_receiver_names/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/a"
+    method: "GET"
+  - url: "/b"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/d"
+    method: "OPTIONS"
+    params:
+      - {name: "origin", type: "query"}

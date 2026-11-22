@@ -1,0 +1,21 @@
+# Character literals (`\(`, `\"`, `\;`, `\\`, `\newline`, `\tab`, `\uXXXX`,
+# `\oNNN`) sit above and inside the routes. Reading them as raw characters
+# collapses the reader's depth accounting, which used to drop every route in
+# the file — so the whole point of this fixture is that both routes, with
+# their callees, still come out.
+fixture: fixtures/clojure/compojure_char_literals/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/rows"
+    method: "GET"
+    callees:
+      - {name: "response/ok", line: 15}
+      - {name: "render-row", line: 15}
+      - {name: "row.service/list", line: 15}
+  - url: "/rows"
+    method: "POST"
+    callees:
+      - {name: "response/created", line: 19}
+      - {name: "row.service/create!", line: 19}

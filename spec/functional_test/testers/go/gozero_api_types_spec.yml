@@ -1,0 +1,23 @@
+# `.api` request types expand into params: `form` from the query on a GET
+# (the form body otherwise), `header`, and `json` from the body.
+fixture: fixtures/go/gozero_api_types/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/api/v1/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "fields", type: "query"}
+      - {name: "X-Token", type: "header"}
+  - url: "/api/v1/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "nickname", type: "json"}
+  - url: "/api/v1/search"
+    method: "POST"
+    params:
+      - {name: "q", type: "form"}
+      - {name: "page", type: "form"}
+  - url: "/api/v1/ping"
+    method: "GET"

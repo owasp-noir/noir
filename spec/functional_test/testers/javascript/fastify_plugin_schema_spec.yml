@@ -1,0 +1,37 @@
+# #3291:
+#   named/  - a named inline plugin function keeps its register `prefix`.
+#   schema/ - route `schema` (querystring, body, headers; JSON Schema,
+#             a same-file constant or TypeBox) declares the route's params.
+fixture: fixtures/javascript/fastify_plugin_schema/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/api/tasks"
+    method: "GET"
+  - url: "/tasks"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "status", type: "query"}
+  - url: "/tasks"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "assignee", type: "json"}
+      - {name: "x-tenant", type: "header"}
+  - url: "/tasks/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "title", type: "json"}
+  # A TypeBox schema bound to a constant.
+  - url: "/tasks/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "done", type: "json"}
+  # `{ schema, handler }` as the only options argument.
+  - url: "/tasks/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "x-reason", type: "header"}

@@ -1,0 +1,32 @@
+# Test cases for Express router detection with neutral/generic names
+#
+# These tests verify that router detection works correctly even when:
+# - Variable names don't contain "route" or "router"
+# - Folder paths don't contain "/routes/" or "/middleware/"
+# - Middleware appears before router in .use() calls
+# - inline require() is not at the end of arguments
+#
+# The fix uses content-based detection: files with route definitions
+# (.get, .post, etc.) are identified as routers, not middleware.
+fixture: fixtures/javascript/express_neutral_names/
+counts: {techs: 1}
+endpoints:
+  # Test Case 1: Neutral names - middleware first, router after
+  # app.use('/x', check, api) - api is the router (has routes)
+  - url: "/x/a"
+    method: "GET"
+  # Test Case 2: Inline require() NOT at end of args
+  # app.use('/y', require('./handlers/data'), mw)
+  - url: "/y/b"
+    method: "GET"
+  # Test Case 3: Multiple neutral identifiers
+  # app.use('/z', filter, processor, handler) - processor and handler both
+  # have routes, and Express mounts every callback of the call at /z
+  - url: "/z/c"
+    method: "GET"
+  - url: "/z/d"
+    method: "GET"
+  # Test Case 4: Same-file with neutral names
+  # parent.use('/child', guard, child) - child is the router
+  - url: "/parent/child/endpoint"
+    method: "GET"

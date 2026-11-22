@@ -1,0 +1,8 @@
+# Performance regression: every router here is reachable through 2**24
+# include paths. Configuring a router once per path never finishes; it is
+# configured once per inherited prefix instead.
+fixture: fixtures/python/fastapi_router_diamond/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/api/leaf"
+    method: "GET"

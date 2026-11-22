@@ -1,0 +1,53 @@
+fixture: fixtures/csharp/wolverine/
+counts: {techs: 2, endpoints: 9}
+options:
+  include_callee: true
+endpoints:
+  - url: "/orders"
+    method: "POST"
+    params:
+      - {name: "Customer", type: "json"}
+      - {name: "Total", type: "json"}
+      - {name: "Items", type: "json"}
+  - url: "/orders/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/orders"
+    method: "GET"
+    params:
+      - {name: "customer", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "X-Tenant", type: "header"}
+  - url: "/orders/{id}/ship"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "Carrier", type: "json"}
+      - {name: "ShipBy", type: "json"}
+    callees:
+      - {name: "bus.PublishAsync", line: 25}
+  - url: "/orders/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/orders/{id}/note"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "reason", type: "query"}
+      - {name: "patch", type: "json"}
+  - url: "/orders/{id}/refund"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "Amount", type: "json"}
+      - {name: "Reason", type: "json"}
+  - url: "/orders/{id}/receipt"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/status"
+    method: "HEAD"
+# The csproj also trips cs_aspnet_core_mvc (Web SDK); it must add nothing.
+# The commented-out route and the tests/ file are not endpoints.

@@ -1,0 +1,57 @@
+fixture: fixtures/javascript/koa/
+counts: {techs: 1, endpoints: 20}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  # Cross-file koa-router `.routes()` mounts carry their app.js prefix:
+  #   app.use('/app_prefix', appRouter.routes())  -> /app_prefix/info
+  #   app.use('/api/v1', apiV1Routes.routes())    -> /api/v1/status
+  - url: "/app_prefix/info"
+    method: "GET"
+  - url: "/admin/settings"
+    method: "GET"
+  - url: "/api/v1/status"
+    method: "GET"
+  - url: "/simple"
+    method: "GET"
+  - url: "/items/:itemId"
+    method: "DELETE"
+    params:
+      - {name: "itemId", type: "path"}
+  - url: "/named/status"
+    method: "GET"
+  - url: "/everything"
+    method: "GET"
+  - url: "/everything"
+    method: "POST"
+  - url: "/everything"
+    method: "PUT"
+  - url: "/everything"
+    method: "DELETE"
+  - url: "/everything"
+    method: "PATCH"
+  - url: "/everything"
+    method: "HEAD"
+  - url: "/everything"
+    method: "OPTIONS"
+  # Strapi-style declarative `{method, path, handler}` route
+  # entries. Plugins under `@strapi/plugin-*` export these from
+  # `server/routes/**/*.js` and the standard verb DSL never fires.
+  - url: "/strapi/items"
+    method: "GET"
+  - url: "/strapi/items"
+    method: "POST"
+  - url: "/strapi/items/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/strapi/items/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

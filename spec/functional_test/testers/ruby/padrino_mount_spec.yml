@@ -1,0 +1,24 @@
+# `config/apps.rb` mounts `core` at `/` (a no-op prefix) and `admin` at
+# `/admin` — every route declared inside `app/admin/**` (both the plain
+# `class Admin < Padrino::Application` routes and the `Admin.controllers
+# :users do ... end` named routes, `map:` included) must inherit the
+# `/admin` prefix, while `app/core/**` stays unprefixed.
+fixture: fixtures/ruby/padrino_mount/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/health"
+    method: "GET"
+  - url: "/admin/dashboard"
+    method: "GET"
+    params:
+      - {name: "range", type: "query"}
+  - url: "/admin/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/admin/users/:id/profile"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

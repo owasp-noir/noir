@@ -1,0 +1,9 @@
+fixture: fixtures/specification/kamal/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/"
+    method: "ANY"
+    protocol: "https"
+  - url: "/healthz"
+    method: "GET"
+    protocol: "https"

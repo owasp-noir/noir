@@ -1,0 +1,29 @@
+# A dependency's own parameters are request parameters wherever FastAPI
+# resolves it: a `Depends(...)` handler parameter, a decorator's
+# `dependencies=[...]` (literal or a name bound to one), and a dependency
+# defined inside the app factory (#3263).
+fixture: fixtures/python/fastapi_factory_deps/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - url: "/nested"
+    method: "GET"
+    params:
+      - {name: "x-token", type: "header"}
+  - url: "/aliased"
+    method: "GET"
+    params:
+      - {name: "x-token", type: "header"}
+  - url: "/direct"
+    method: "GET"
+    params:
+      - {name: "x-token", type: "header"}
+  - url: "/literal"
+    method: "GET"
+    params:
+      - {name: "x-token", type: "header"}
+  - url: "/open"
+    method: "GET"
+  # `limiter = RateLimiter()` is no dependency; a later `Depends(...)` in
+  # the file is not its value.
+  - url: "/limited"
+    method: "GET"

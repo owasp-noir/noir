@@ -1,0 +1,16 @@
+# api-platform/laravel mounts resources under its packaged `/api` route prefix
+# when config/api-platform.php has not been published; an explicit
+# `routePrefix` replaces it.
+fixture: fixtures/php/api_platform_laravel/
+counts: {techs: 1, endpoints: 3}
+options:
+  only_techs: "php_api_platform"
+endpoints:
+  - url: "/api/authors"
+    method: "GET"
+  - url: "/api/authors/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/billing/calculate"
+    method: "POST"

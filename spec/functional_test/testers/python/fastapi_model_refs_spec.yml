@@ -1,0 +1,56 @@
+# Pydantic body models named the ways real projects name them:
+#
+#   * `class ItemCreate(ItemBase): pass` inherits every field.
+#   * A base imported under an alias (`Owned as OwnedBase`), through its
+#     module (`base.Owned`), or as a generic (`Paged[int]`) still
+#     contributes its fields; a base cycle stops instead of looping.
+#   * A handler annotated `base.Owned` or with an import alias reads the
+#     model's fields.
+#   * Body model fields are JSON; `Annotated[Model, Form()]` is a form
+#     model whose fields are form fields, and `File()` / `Form()`
+#     parameters stay form.
+fixture: fixtures/python/fastapi_model_refs/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  - url: "/items"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+  - url: "/notes"
+    method: "POST"
+    params:
+      - {name: "owner_id", type: "json"}
+      - {name: "body", type: "json"}
+  - url: "/tags"
+    method: "POST"
+    params:
+      - {name: "owner_id", type: "json"}
+      - {name: "tag", type: "json"}
+  - url: "/listings"
+    method: "POST"
+    params:
+      - {name: "page", type: "json", value: "1"}
+      - {name: "query", type: "json"}
+  - url: "/loops"
+    method: "POST"
+    params:
+      - {name: "pool_size", type: "json"}
+      - {name: "loop_note", type: "json"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "otp", type: "form"}
+  - url: "/upload"
+    method: "POST"
+    params:
+      - {name: "file", type: "form"}
+      - {name: "caption", type: "form"}
+  - url: "/owners"
+    method: "POST"
+    params:
+      - {name: "owner_id", type: "json"}
+  - url: "/owners/alias"
+    method: "POST"
+    params:
+      - {name: "owner_id", type: "json"}

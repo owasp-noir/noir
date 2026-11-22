@@ -1,0 +1,26 @@
+# Regression test for --include-callee on TypeScript LoopBack. LB4 handler
+# bodies read from injected repository/service properties (`this.xRepository`)
+# the same shape NestJS providers do, so callee extraction is scoped to the
+# JavaScript-compatible method body the same way.
+fixture: fixtures/typescript/loopback_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "body"}
+    callees:
+      - {name: "this.validationService.validate", line: 6}
+      - {name: "this.userRepository.create", line: 7}
+      - {name: "AuditLog.write", line: 8}
+      - {name: "this.presenter.user", line: 9}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "include", type: "query"}
+    callees:
+      - {name: "this.userRepository.findById", line: 17}
+      - {name: "buildProfile", line: 18}

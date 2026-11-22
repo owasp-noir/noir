@@ -1,0 +1,32 @@
+fixture: fixtures/python/flask_appbuilder/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  # `resource_name` fills the last segment of the /api/<version>/ default.
+  - url: "/api/v1/database/{pk}/connection"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}
+  # `@expose("/")` keeps the trailing slash the blueprint prefix produces.
+  - url: "/api/v1/database/"
+    method: "POST"
+  # `resource_name` inherited from a base class in another file.
+  - url: "/api/v1/database/{pk}/data"
+    method: "POST"
+    params:
+      - {name: "pk", type: "path"}
+  # `route_base` wins outright and is not prefixed with /api/<version>/.
+  - url: "/annotationlayer/list/"
+    method: "GET"
+  - url: "/annotationlayer/{pk}/annotation"
+    method: "GET"
+    params:
+      - {name: "pk", type: "path"}
+  # No resource_name: the class name is the resource, and `version` moves it.
+  - url: "/api/v2/reportapi/summary"
+    method: "GET"
+  # No route_base on a BaseView subclass: /<class name lowercased>.
+  - url: "/healthview/status"
+    method: "GET"
+  # Flask-AppBuilder's own IndexView pins route_base = "".
+  - url: "/welcome"
+    method: "GET"

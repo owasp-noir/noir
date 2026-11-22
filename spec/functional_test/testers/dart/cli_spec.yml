@@ -1,0 +1,15 @@
+fixture: fixtures/dart/cli_args/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "cli://tool"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "verbose", type: "flag"}
+      - {name: "name", type: "flag"}
+      - {name: "API_TOKEN", type: "env"}
+  - url: "cli://tool/serve"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "port", type: "flag"}

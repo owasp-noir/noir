@@ -1,0 +1,53 @@
+fixture: fixtures/ruby/grape/
+counts: {techs: 1, endpoints: 18}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "query"}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/orders"
+    method: "GET"
+  - url: "/orders"
+    method: "POST"
+  - url: "/accounts/{account_id}/profile"
+    method: "GET"
+    params:
+      - {name: "account_id", type: "path"}
+      - {name: "expand", type: "query"}
+  # `requires :title` -> json (NOT duplicated as query by the later
+  # `params[:title]` read); `headers["X-Request-Id"]` literal -> header;
+  # the bare-variable `headers[token_header]` subscript is NOT captured.
+  - url: "/articles"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}
+      - {name: "X-Request-Id", type: "header"}
+  - url: "/v2/status"
+    method: "GET"
+  # Symbol verb path (`get :ping`) is a literal segment, not a `{ping}` param.
+  - url: "/v2/status/ping"
+    method: "GET"
+  - url: "/v2/dollar$"
+    method: "POST"
+  - url: "/v2/users.json"
+    method: "GET"
+  - url: "/v2/~me"
+    method: "GET"
+  - url: "/v2/@me"
+    method: "GET"
+  - url: "/v2/a+b"
+    method: "GET"

@@ -1,0 +1,32 @@
+# Tide README shape: `let Animal { name, legs } = req.body_json().await?;`
+# names the body type in the destructuring pattern, not an annotation.
+fixture: fixtures/rust/tide_destructure/
+counts: {techs: 1, endpoints: 6}
+options:
+  only_techs: "rust_tide"
+endpoints:
+  - url: "/orders/shoes"
+    method: "POST"
+    params:
+      - {name: "Animal", type: "json"}
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Token", type: "header"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Token", type: "header"}
+  - url: "/api/items"
+    method: "GET"
+    params:
+      - {name: "Page", type: "query"}
+  - url: "/api/items/:item_id"
+    method: "PUT"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "X-Token", type: "header"}
+  - url: "/static"
+    method: "GET"

@@ -1,0 +1,15 @@
+# A helper taking an `iris.Party` takes the prefix of the party it is
+# handed (`registerUsers(v1.Party("/users"))`).
+fixture: fixtures/go/iris_party_builder/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/v1/users/"
+    method: "GET"
+  - url: "/api/v1/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/v1/orders"
+    method: "POST"
+    params:
+      - {name: "dry_run", type: "query"}

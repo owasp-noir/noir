@@ -1,0 +1,19 @@
+# Both functions bind `r` to a different `app.route()` base; each call
+# resolves against the nearest preceding binding.
+fixture: fixtures/dart/alfred_scoped_route/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/users/list"
+    method: "GET"
+  - url: "/users/create"
+    method: "POST"
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/list"
+    method: "GET"
+  - url: "/posts/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

@@ -1,0 +1,39 @@
+# invidious-style Kemal routing: routes dispatch to `Controller, :action`
+# handlers defined in other files (no inline `do … end` block). The callees
+# must be resolved cross-file through the action index, including routes
+# whose controller is named via a compile-time macro variable.
+fixture: fixtures/crystal/kemal_controller_callees/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+  only_techs: "crystal_kemal"
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "HomeService.build", line: 3}
+      - {name: "env.redirect", line: 4}
+  - url: "/users"
+    method: "POST"
+    callees:
+      - {name: "env.params.json", line: 8}
+      - {name: "UserService.create", line: 9}
+  # HTTP QUERY (RFC 10008, kemalcr/kemal#769) controller-reference form —
+  # the same `query "/path", Controller, :action` dispatch Noir already
+  # resolves for `get`. Cross-file dispatch (like `users_create` above)
+  # carries callees but not params — the handler body lives in another
+  # file, outside this route line's per-line param scan.
+  - url: "/search"
+    method: "QUERY"
+    callees:
+      - {name: "env.params.json", line: 13}
+      - {name: "SearchService.run", line: 14}
+  # `{{namespace = Routes::API}}` + `{{namespace}}::Items` resolves to
+  # `Routes::API::Items`, so this route still carries its handler's callees.
+  - url: "/api/items/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+    callees:
+      - {name: "env.params.url", line: 3}
+      - {name: "ItemLookup.find", line: 4}

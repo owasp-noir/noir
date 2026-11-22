@@ -1,0 +1,57 @@
+fixture: fixtures/rust/axum_callees/
+counts: {techs: 1, endpoints: 9}
+options:
+  include_callee: true
+  only_techs: "rust_axum"
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "HealthCheck::ready", line: 20}
+      - {name: "Html", line: 21}
+      - {name: "render_home", line: 21}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "ProfileService::load", line: 25}
+      - {name: "FeatureFlags::enabled", line: 26}
+      - {name: "Metrics::record_profile", line: 27}
+      - {name: "Json", line: 29}
+      - {name: "ProfilePresenter::render", line: 29}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "UserService::create", line: 33}
+      - {name: "AuditLog::write", line: 34}
+      - {name: "Json", line: 35}
+  - url: "/external"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "ExternalService::create", line: 4}
+      - {name: "Json", line: 5}
+  - url: "/account"
+    method: "GET"
+    callees:
+      - {name: "AccountService::read", line: 51}
+      - {name: "Json", line: 52}
+  - url: "/account"
+    method: "PUT"
+    callees:
+      - {name: "AccountService::update", line: 57}
+      - {name: "AuditLog::write_update", line: 58}
+  - url: "/builder"
+    method: "GET"
+    callees:
+      - {name: "BuilderService::read", line: 63}
+  - url: "/builder-public"
+    method: "POST"
+    callees:
+      - {name: "BuilderService::create", line: 67}
+  - url: "/scoped"
+    method: "GET"
+    callees:
+      - {name: "RightService::hit", line: 88}

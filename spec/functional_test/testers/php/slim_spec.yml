@@ -1,0 +1,62 @@
+fixture: fixtures/php/slim/
+counts: {techs: 2, endpoints: 19}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "X-Auth-Token", type: "header"}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/login"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "session", type: "cookie"}
+  - url: "/api/items"
+    method: "GET"
+  - url: "/api/items"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/api/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+  - url: "/api/admin/stats"
+    method: "GET"
+  - url: "/accounts"
+    method: "GET"
+  - url: "/hook"
+    method: "GET"
+  - url: "/hook"
+    method: "POST"
+  - url: "/hook"
+    method: "PUT"
+  - url: "/hook"
+    method: "PATCH"
+  - url: "/hook"
+    method: "DELETE"
+  - url: "/hook"
+    method: "OPTIONS"
+# Detection still sees php_slim and php_pure
+# Analysis suppresses the redundant php_pure file endpoint

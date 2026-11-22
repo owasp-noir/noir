@@ -1,0 +1,57 @@
+fixture: fixtures/python/robyn/
+counts: {techs: 1, endpoints: 13}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+      - {name: "email", type: "json"}
+  - url: "/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "bio", type: "json"}
+  - url: "/users/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/{id}/profile"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "User-Agent", type: "header"}
+  - url: "/ws"
+    method: "GET"
+  - url: "/live/{room_id}"
+    method: "GET"
+    params:
+      - {name: "room_id", type: "path"}
+  - url: "/api/items"
+    method: "GET"
+  - url: "/api/items/{item_id}/tags"
+    method: "POST"
+    params:
+      - {name: "item_id", type: "path"}
+      - {name: "tag", type: "json"}
+      - {name: "priority", type: "json"}
+  - url: "/api/admin/metrics/{metric_id}"
+    method: "GET"
+    params:
+      - {name: "metric_id", type: "path"}
+      - {name: "window", type: "query"}
+  - url: "/v2/reports/{report_id}"
+    method: "GET"
+    params:
+      - {name: "report_id", type: "path"}
+      - {name: "include", type: "query"}

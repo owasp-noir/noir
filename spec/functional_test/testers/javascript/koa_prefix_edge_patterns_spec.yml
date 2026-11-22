@@ -1,0 +1,13 @@
+fixture: fixtures/javascript/koa_prefix_edge_patterns/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/accounts/list"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/accounts/create"
+    method: "POST"
+    params:
+      - {name: "account_id", type: "json"}
+      - {name: "name", type: "json"}
+      - {name: "X-Request-Id", type: "header"}

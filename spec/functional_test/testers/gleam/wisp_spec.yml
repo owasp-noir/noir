@@ -1,0 +1,57 @@
+fixture: fixtures/gleam/wisp/
+counts: {techs: 1, endpoints: 14}
+endpoints:
+  # Verb resolved from `use <- wisp.require_method(req, Get)`.
+  - url: "/"
+    method: "GET"
+  # `["about"] | ["info"]` — one arm, two paths.
+  - url: "/about"
+    method: "GET"
+  - url: "/info"
+    method: "GET"
+  # Verbs resolved by following the arm into another module's
+  # `case req.method`.
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "body"}
+      - {name: "email", type: "body"}
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "x-api-token", type: "header"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "x-api-token", type: "header"}
+  - url: "/search"
+    method: "GET"
+  # `wisp.serve_static` only serves GET.
+  - url: "/static/*"
+    method: "GET"
+  # The `case path, method` subject order, from the mounted sub-router.
+  # The parent's `["posts", ..]` arm emits nothing, because the
+  # sub-router matches these same absolute paths itself.
+  - url: "/posts"
+    method: "GET"
+  - url: "/posts"
+    method: "POST"
+    params:
+      - {name: "title", type: "body"}
+      - {name: "content", type: "body"}
+  - url: "/posts/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/posts/:post_id/comments"
+    method: "GET"
+    params:
+      - {name: "post_id", type: "path"}

@@ -1,0 +1,15 @@
+# The `cac` evidence marker is word-bounded (so cache/cacheName no longer pass
+# the gate); a real `import cac from 'cac'` CLI must still be detected.
+fixture: fixtures/javascript/cli_cac/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "cli://cacdemo"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "verbose", type: "flag"}
+  - url: "cli://cacdemo/serve"
+    method: "CLI"
+    protocol: "cli"
+    params:
+      - {name: "port", type: "flag"}

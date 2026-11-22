@@ -1,0 +1,13 @@
+# `"$CONST/x"` and `"${Obj.CONST}/x"` templates resolve like `CONST + "/x"`,
+# and `Paths.API` from another file is a route path.
+fixture: fixtures/kotlin/http4k_const_paths/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/v1/a-short"
+    method: "GET"
+  - url: "/v1/b-concat"
+    method: "GET"
+  - url: "/api"
+    method: "GET"
+  - url: "/api/c-object"
+    method: "PATCH"

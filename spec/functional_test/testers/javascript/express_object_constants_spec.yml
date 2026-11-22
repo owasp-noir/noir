@@ -1,0 +1,24 @@
+# Route paths built from constants the extractor used to leave as a
+# placeholder, inventing a path parameter from a constant's name:
+#
+#   router.post(`${experienceRoutes.verification}/password`, …)  // Object.freeze({ verification: `${prefix}/verification` })
+#   const pathname = `${accountApiPrefix}/tokens`                // accountApiPrefix imported
+#
+# A placeholder nothing in the scan defines (`${settings.base}`) stays.
+fixture: fixtures/javascript/express_object_constants/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/experience/verification/password"
+    method: "POST"
+  - url: "/experience/profile/mfa"
+    method: "POST"
+  - url: "/my-account/tokens"
+    method: "GET"
+  - url: "/my-account/tokens/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/{base}/status"
+    method: "GET"
+    params:
+      - {name: "base", type: "path"}

@@ -1,0 +1,111 @@
+fixture: fixtures/go/chi/
+counts: {techs: 1, endpoints: 30}
+endpoints:
+  - url: "/"
+    method: "GET"
+  # GET /articles/ and GET /articles/{month}-{day}-{year} come from
+  # `r.With(paginate).Get(...)` — the tree-sitter extractor walks the
+  # middleware chain so these no longer go missing.
+  - url: "/articles/"
+    method: "GET"
+  - url: "/articles/{month}-{day}-{year}"
+    method: "GET"
+    params:
+      - {name: "day", type: "path"}
+      - {name: "month", type: "path"}
+      - {name: "year", type: "path"}
+  - url: "/articles/"
+    method: "POST"
+  - url: "/articles/search"
+    method: "GET"
+  - url: "/articles/{articleSlug:[a-z-]+}"
+    method: "GET"
+    params:
+      - {name: "articleSlug", type: "path"}
+  - url: "/articles/{articleID}/"
+    method: "GET"
+    params:
+      - {name: "articleID", type: "path"}
+  - url: "/articles/{articleID}/"
+    method: "PUT"
+    params:
+      - {name: "articleID", type: "path"}
+  - url: "/articles/{articleID}/"
+    method: "DELETE"
+    params:
+      - {name: "articleID", type: "path"}
+  - url: "/admin/"
+    method: "GET"
+  - url: "/admin/accounts"
+    method: "GET"
+  - url: "/search-test"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+  - url: "/login-test"
+    method: "POST"
+    params:
+      - {name: "username", type: "form"}
+      - {name: "password", type: "form"}
+  - url: "/register-test"
+    method: "POST"
+    params:
+      - {name: "email", type: "form"}
+      - {name: "name", type: "form"}
+  - url: "/api-test"
+    method: "GET"
+    params:
+      - {name: "X-API-Key", type: "header"}
+      - {name: "User-Agent", type: "header"}
+  - url: "/profile-test"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+      - {name: "auth_token", type: "cookie"}
+  - url: "/multiline"
+    method: "GET"
+  - url: "/uppercase"
+    method: "GET"
+  - url: "/uppercase-post"
+    method: "POST"
+  - url: "/grouped"
+    method: "GET"
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/health"
+    method: "GET"
+  - url: "/admin/settings/"
+    method: "GET"
+  - url: "/admin/settings/"
+    method: "PUT"
+  - url: "/admin/webhook"
+    method: "POST"
+    params:
+      - {name: "payload", type: "form"}
+  # routes.go: PATCH method with path param
+  - url: "/items/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  # routes.go: nested Route with GET
+  - url: "/v2/status"
+    method: "GET"
+  # routes.go: nested Route with POST and form param
+  - url: "/v2/data"
+    method: "POST"
+    params:
+      - {name: "payload", type: "form"}
+  # routes.go: multiple query and header params
+  - url: "/analytics"
+    method: "GET"
+    params:
+      - {name: "from", type: "query"}
+      - {name: "to", type: "query"}
+      - {name: "X-Analytics-Key", type: "header"}
+  # routes.go: cookie extraction
+  - url: "/dashboard"
+    method: "GET"
+    params:
+      - {name: "session_token", type: "cookie"}

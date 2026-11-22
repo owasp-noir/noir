@@ -1,0 +1,16 @@
+# `test/` and `spec/` trees, `FooSpec.hs` files and files importing
+# `Test.Hspec.Wai` hold hspec-wai client requests and throwaway test apps,
+# not routes the application serves. `src/Test/` is a production namespace.
+fixture: fixtures/haskell/scotty_tests/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "body", value: "JSON"}
+  - url: "/health"
+    method: "GET"

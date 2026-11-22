@@ -1,0 +1,13 @@
+# `new Router({ prefix: '/api' })` then `router.get(...).post(...).del(...)`:
+# every link of the chain is served under the prefix, not just the first.
+fixture: fixtures/javascript/koa_chain_prefix/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+  - url: "/api/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

@@ -1,0 +1,43 @@
+fixture: fixtures/r/plumber/
+counts: {techs: 1, endpoints: 9}
+endpoints:
+  # roxygen `@param <name> <description>` — the trailing text is the
+  # parameter's description, not a default value.
+  - url: "/echo"
+    method: "GET"
+    params:
+      - {name: "msg", type: "query"}
+  - url: "/submit"
+    method: "POST"
+    params:
+      - {name: "username", type: "body"}
+      - {name: "password", type: "body"}
+  - url: "/users/:id/posts/:post_id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "post_id", type: "path"}
+      - {name: "limit", type: "query"}
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "name", type: "body"}
+  - url: "/hello"
+    method: "GET"
+  - url: "/save/:key"
+    method: "POST"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/direct"
+    method: "GET"
+  - url: "/resource/:resource_id"
+    method: "DELETE"
+    params:
+      - {name: "resource_id", type: "path"}
+  # `req`/`res` are handed to the handler by plumber and `...` is R's
+  # variadic marker, so `term` is the only thing a client actually sends.
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "term", type: "query"}

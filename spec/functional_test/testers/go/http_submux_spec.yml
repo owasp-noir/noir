@@ -1,0 +1,16 @@
+# `mux.Handle("/v1/", http.StripPrefix("/v1", v1))` mounts the ServeMux `v1`:
+# its routes take the stripped prefix (nested mounts compose) and the mount
+# registration itself is not a route.
+fixture: fixtures/go/http_submux/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/v1/users/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/v1/users"
+    method: "POST"
+  - url: "/v1/admin/stats"
+    method: "GET"
+  - url: "/healthz"
+    method: "GET"

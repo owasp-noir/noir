@@ -1,0 +1,19 @@
+fixture: fixtures/javascript/elysia_source_extensions/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/js"
+    method: "GET"
+  - url: "/mjs"
+    method: "GET"
+  - url: "/cjs"
+    method: "GET"
+  - url: "/jsx"
+    method: "GET"
+  - url: "/ts"
+    method: "GET"
+  - url: "/mts"
+    method: "GET"
+  - url: "/cts"
+    method: "GET"
+  - url: "/tsx"
+    method: "GET"

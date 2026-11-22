@@ -1,0 +1,33 @@
+# Loco: `cargo loco generate scaffold` registers member routes without a
+# leading slash (`.add("{id}", get(h))`, older `":id"`) under a
+# `.prefix("api/notes/")`. A slash-less `.add` off a non-`Routes` chain
+# is still ignored.
+fixture: fixtures/rust/loco_scaffold/
+counts: {techs: 1, endpoints: 6}
+options:
+  only_techs: "rust_loco"
+endpoints:
+  - url: "/api/notes"
+    method: "GET"
+  - url: "/api/notes"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/api/notes/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/notes/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/notes/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/api/notes/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}

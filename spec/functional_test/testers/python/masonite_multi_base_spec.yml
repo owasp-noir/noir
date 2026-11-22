@@ -1,0 +1,18 @@
+# Two independent services, each defining its own `ItemController` with
+# an `index` action reading a different query input. Confirms controller
+# resolution is scoped to the route file's own base path rather than a
+# blind project-wide class-name search — without that scoping,
+# service_b's route would resolve to service_a's same-named controller.
+fixture: fixtures/python/masonite_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/python/masonite_multi_base/service_a", "./spec/functional_test/fixtures/python/masonite_multi_base/service_b"]
+endpoints:
+  - url: "/a-items"
+    method: "GET"
+    params:
+      - {name: "region", type: "query"}
+  - url: "/b-items"
+    method: "GET"
+    params:
+      - {name: "zone", type: "query"}

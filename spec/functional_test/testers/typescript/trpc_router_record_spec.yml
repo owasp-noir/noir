@@ -1,0 +1,35 @@
+# tRPC v11 sub-routers that are not `router(...)` calls:
+#   * a plain object (`export const postRouter = { ... } satisfies
+#     TRPCRouterRecord`) mounted with `post: postRouter`;
+#   * `export default createTRPCRouter({...})` reached through a default
+#     import;
+#   * a record spread into the root (`...searchProcs`) at the root level.
+# `orphanProcs` is a record nothing mounts, so it serves nothing.
+fixture: fixtures/typescript/trpc_router_record/
+counts: {techs: 1, endpoints: 8}
+endpoints:
+  - url: "/api/trpc/auth.getSession"
+    method: "GET"
+  - url: "/api/trpc/auth.getSecretMessage"
+    method: "GET"
+  - url: "/api/trpc/post.all"
+    method: "GET"
+  - url: "/api/trpc/post.byId"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+  - url: "/api/trpc/post.create"
+    method: "POST"
+    params:
+      - {name: "title", type: "body"}
+      - {name: "content", type: "body"}
+  - url: "/api/trpc/post.delete"
+    method: "POST"
+    params:
+      - {name: "input", type: "body"}
+  - url: "/api/trpc/health"
+    method: "GET"
+  - url: "/api/trpc/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}

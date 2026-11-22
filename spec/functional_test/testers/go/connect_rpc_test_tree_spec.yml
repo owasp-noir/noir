@@ -1,0 +1,10 @@
+# A proto under testdata/, src/test/ or fixtures/ is test input, not a service
+# this project serves. The gRPC analyzer already drops it; go_connect_rpc used
+# to read the same locator key directly and kept all three.
+fixture: fixtures/go/connect_rpc_test_tree/
+counts: {techs: 3, endpoints: 1}
+endpoints:
+  - url: "/greet.v1.GreetService/Greet"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}

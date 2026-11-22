@@ -1,0 +1,19 @@
+# poem: verb-less `.at(path, handler)` registers a GET endpoint;
+# single-arg `req.header("X")` is a request header param; a two-arg
+# response-builder `.header(name, value)` is NOT; `#[cfg(test)]` routes
+# are excluded.
+fixture: fixtures/rust/poem_extras/
+counts: {techs: 1, endpoints: 4}
+options:
+  only_techs: "rust_poem"
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/hello"
+    method: "GET"
+  - url: "/whoami"
+    method: "GET"
+    params:
+      - {name: "X-Request-Id", type: "header"}
+  - url: "/redirect"
+    method: "GET"

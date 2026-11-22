@@ -1,0 +1,19 @@
+# Regression (#3578): a gorilla/mux route whose path goes through a
+# one-string wrapper (`s.prefixedPath("/version")`, podinfo's shape) was
+# dropped, because the mux chain decoder read only string literals. The
+# wrapper's runtime prefix is not readable, so the literal is the route.
+# `lookupPath("hidden")` returns nothing readable and stays dropped, and
+# `http.Get(apiPath("/remote"))` is a client call, not a route.
+fixture: fixtures/go/mux_path_helper/
+counts: {techs: 1, endpoints: 4}
+endpoints:
+  - url: "/version"
+    method: "GET"
+  - url: "/store"
+    method: "POST"
+  - url: "/store/{hash}"
+    method: "GET"
+    params:
+      - {name: "hash", type: "path"}
+  - url: "/api/health"
+    method: "GET"

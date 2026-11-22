@@ -1,0 +1,32 @@
+fixture: fixtures/swift/hummingbird_callees/
+counts: {techs: 1, endpoints: 4}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "body", type: "json"}
+    callees:
+      - {name: "context.parameters.require", line: 5}
+      - {name: "request.decode", line: 6}
+      - {name: "UserService.build", line: 7}
+      - {name: "AuditLog.write", line: 8}
+      - {name: "user.save", line: 9}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+    callees:
+      - {name: "request.uri.queryParameters.get", line: 17}
+      - {name: "SearchMetrics.record", line: 18}
+      - {name: "SearchService.render", line: 19}
+  - url: "/ping"
+    method: "GET"
+    callees:
+      - {name: "PingService.pong", line: 22}
+  - url: "/delayed"
+    method: "GET"
+    callees:
+      - {name: "DelayService.wait", line: 26}

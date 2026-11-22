@@ -1,0 +1,68 @@
+# Regression tests for false positives in the Express/JS route extractor.
+#
+# Four patterns previously produced spurious routes:
+#
+# 1. Promise.all([pool.query(SQL), ...])
+#    `all` is an HTTP-method token, so fast_scan matched Promise.all([...]).
+#    extract_array_paths lacked depth-tracking, so it pulled out bare variable
+#    names ("pool", "query") and SQL strings from inside the nested pool.query()
+#    arguments, producing routes like GET /pool, GET /query, GET /SELECT COUNT(*)...
+#
+# 2. axios.get('https://...')
+#    Any identifier.http_method('string') matches the fast-scan pattern, so
+#    axios.get('https://jsonplaceholder.typicode.com/posts/1') was turned into
+#    GET /https://jsonplaceholder.typicode.com/posts/1.
+#
+# 3. axios.post(`http://.../${var}/...`)
+#    Same pattern with a template-literal external URL.
+#
+# 4. Promise.all(Object.values(...).map(...))
+#    `all` matches, the first argument is `Object` (a bare identifier, not a
+#    string). resolve_dynamic_path returned the identifier name as-is,
+#    producing a /Object route across all seven HTTP methods.
+#    Surfaced while running noir on hagopj13/node-express-boilerplate.
+#
+# The fixture exercises all four patterns. Only the six real routes should appear.
+fixture: fixtures/javascript/express_false_positives/
+counts: {techs: 1, endpoints: 13}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  # pool.query() inside handler — SQL string must not become a route path
+  - url: "/api/users"
+    method: "GET"
+  # Promise.all([pool.query(SQL), pool.query(multiline SQL)])
+  # Must NOT produce: GET /pool, GET /query, GET /SELECT COUNT(*)..., etc.
+  - url: "/api/stats"
+    method: "GET"
+  # axios.get('https://...')
+  # Must NOT produce a route for the external URL
+  - url: "/api/external"
+    method: "GET"
+  # axios.post(`http://airflow/...`)
+  # Must NOT produce a route for the external URL template
+  - url: "/trigger"
+    method: "POST"
+    params:
+      - {name: "dag_id", type: "json"}
+  # Promise.all(Object.values(...).map(...))
+  # Must NOT produce /Object (or any other bare identifier) as a route
+  - url: "/api/stats-nested"
+    method: "GET"
+  # `app.all('*', …)` is a legitimate Express catch-all (404 handler). "*"
+  # contains no "/" but must still survive valid_route_path? — and `.all`
+  # expands to seven HTTP methods.
+  - url: "/*"
+    method: "GET"
+  - url: "/*"
+    method: "POST"
+  - url: "/*"
+    method: "PUT"
+  - url: "/*"
+    method: "DELETE"
+  - url: "/*"
+    method: "PATCH"
+  - url: "/*"
+    method: "HEAD"
+  - url: "/*"
+    method: "OPTIONS"

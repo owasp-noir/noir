@@ -1,0 +1,74 @@
+fixture: fixtures/javascript/sails/
+counts: {techs: 1, endpoints: 21}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/users"
+    method: "GET"
+  - url: "/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users"
+    method: "POST"
+  - url: "/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "section", type: "query"}
+      - {name: "x-profile-token", type: "header"}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+      - {name: "password", type: "json"}
+      - {name: "sessionId", type: "cookie"}
+  - url: "/about"
+    method: "GET"
+  # Method-less address -- matches every HTTP verb.
+  - url: "/webhook"
+    method: "GET"
+  - url: "/webhook"
+    method: "POST"
+  - url: "/webhook"
+    method: "PUT"
+  - url: "/webhook"
+    method: "DELETE"
+  - url: "/webhook"
+    method: "PATCH"
+  - url: "/webhook"
+    method: "HEAD"
+  - url: "/webhook"
+    method: "OPTIONS"
+  # Note: the `r|^/\d+/(\w+)/(\w+)$|foo,bar` regex-address entry in the
+  # fixture is intentionally not modeled and must not appear above.
+  # Blueprint routes for `api/controllers/admin/ReportController.js`. A
+  # classic controller keeps its blueprint identity in a subdirectory --
+  # `admin/report`, not the literal filename -- so these are the five REST
+  # bindings Sails generates, at `/admin/report`.
+  - url: "/admin/report"
+    method: "GET"
+  - url: "/admin/report"
+    method: "POST"
+  - url: "/admin/report/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/report/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/admin/report/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+# `api/controllers/user/find-one.js` is an actions2 action, but there is
+# no `config/blueprints.js`: Sails 1.x leaves action shadow routes off
+# by default, so it publishes nothing.

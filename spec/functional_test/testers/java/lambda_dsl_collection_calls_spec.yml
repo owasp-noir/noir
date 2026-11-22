@@ -1,0 +1,23 @@
+# `Map#put`, `ResultSet#get` and `Config#get` share the verb names of Helidon
+# SE, Spark and Javalin. A first argument that is not path-shaped (no leading
+# `/` or `*`) only counts as a route when a lambda or method-reference
+# handler comes with it, so the collection calls in the fixture must not
+# surface as `PUT /br`, `GET /ID`, `GET /db.url`, `PUT /csrf`, ... while the
+# slash-less lambda and method-reference routes are kept.
+fixture: fixtures/java/lambda_dsl_collection_calls/
+counts: {techs: 3, endpoints: 7}
+endpoints:
+  - url: "/helidon/health"
+    method: "GET"
+  - url: "/helidon/slashless"
+    method: "GET"
+  - url: "/helidon/by-ref"
+    method: "POST"
+  - url: "/spark/hello"
+    method: "GET"
+  - url: "/spark/slashless"
+    method: "GET"
+  - url: "/javalin/users"
+    method: "GET"
+  - url: "/javalin/ping"
+    method: "GET"

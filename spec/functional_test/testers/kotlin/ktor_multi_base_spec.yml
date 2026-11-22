@@ -1,0 +1,9 @@
+fixture: fixtures/kotlin/ktor_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/kotlin/ktor_multi_base/service_a", "./spec/functional_test/fixtures/kotlin/ktor_multi_base/service_b"]
+endpoints:
+  - url: "/ktor-a"
+    method: "GET"
+  - url: "/ktor-b"
+    method: "GET"

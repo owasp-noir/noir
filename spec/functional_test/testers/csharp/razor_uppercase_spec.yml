@@ -1,0 +1,27 @@
+# Upper-case extensions (`INDEX.CSHTML`, `RazorApp.CSPROJ`) as checked out
+# from a case-insensitive Windows filesystem. The page still routes without
+# its extension and still pairs with its lower-case `Index.cshtml.cs` model.
+fixture: fixtures/csharp/razor_uppercase/
+counts: {techs: 2, endpoints: 4}
+endpoints:
+  - url: "/Users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "Search", type: "query"}
+  - url: "/Users"
+    method: "POST"
+    params:
+      - {name: "user_name", type: "form"}
+      - {name: "handler", type: "query", value: "Delete"}
+      - {name: "id", type: "form"}
+      - {name: "Search", type: "form"}
+  - url: "/Users/EDIT/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/Users/EDIT/{id}"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "Input", type: "form"}

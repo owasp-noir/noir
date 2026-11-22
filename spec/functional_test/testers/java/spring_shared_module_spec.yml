@@ -1,0 +1,29 @@
+# #3087: DTOs in a shared module that is not a direct sibling of the
+# controller's module; #3089: a constant inherited from an implemented interface.
+fixture: fixtures/java/spring_shared_module/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/orders"
+    method: "POST"
+    params:
+      - {name: "sku", type: "json"}
+      - {name: "qty", type: "json"}
+  - url: "/api/orders/search"
+    method: "GET"
+    params:
+      - {name: "sku", type: "query"}
+      - {name: "qty", type: "query"}
+  - url: "/api/notes"
+    method: "POST"
+    params:
+      - {name: "memo", type: "json"}
+  - url: "/api/hop"
+    method: "GET"
+    params:
+      - {name: "X-Relay-Origin", type: "header"}
+  # An unresolvable constant keeps the argument name, not its identifier text.
+  - url: "/api/unresolved"
+    method: "GET"
+    params:
+      - {name: "m", type: "header"}
+      - {name: "n", type: "query"}

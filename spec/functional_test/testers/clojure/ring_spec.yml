@@ -1,0 +1,29 @@
+fixture: fixtures/clojure/ring/
+counts: {techs: 1, endpoints: 12}
+endpoints:
+  - url: "/users"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+  - url: "/health"
+    method: "GET"
+  - url: "/ping"
+    method: "ANY"
+  - url: "/metrics"
+    method: "GET"
+  - url: "/sessions"
+    method: "DELETE"
+  - url: "/version"
+    method: "GET"
+  - url: "/about"
+    method: "GET"
+  - url: "/contact/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/status"
+    method: "GET"
+  - url: "/up"
+    method: "GET"
+  - url: "/readiness"
+    method: "GET"

@@ -1,0 +1,80 @@
+fixture: fixtures/perl/catalyst/
+counts: {techs: 1, endpoints: 20}
+endpoints:
+  - url: "/"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/about"
+    method: "GET"
+  - url: "/health"
+    method: "GET"
+  - url: "/users/list"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/users/profile/:arg"
+    method: "GET"
+    params:
+      - {name: "arg", type: "path"}
+      - {name: "X-User", type: "header"}
+  - url: "/users/:user_capture/edit"
+    method: "GET"
+    params:
+      - {name: "user_capture", type: "path"}
+      - {name: "display_name", type: "form"}
+  - url: "/users/:user_capture"
+    method: "PUT"
+    params:
+      - {name: "user_capture", type: "path"}
+      - {name: "display_name", type: "form"}
+  - url: "/api/status"
+    method: "GET"
+  - url: "/api/item/:arg"
+    method: "GET"
+    params:
+      - {name: "arg", type: "path"}
+      - {name: "verbose", type: "query"}
+  - url: "/api/item/:arg"
+    method: "POST"
+    params:
+      - {name: "arg", type: "path"}
+      - {name: "name", type: "form"}
+      - {name: "metadata", type: "json"}
+  - url: "/explicit-get"
+    method: "GET"
+  - url: "/blog/:root_capture"
+    method: "GET"
+    params:
+      - {name: "root_capture", type: "path"}
+  - url: "/blog/:root_capture/comments"
+    method: "GET"
+    params:
+      - {name: "root_capture", type: "path"}
+  - url: "/blog/:root_capture/archive"
+    method: "GET"
+    params:
+      - {name: "root_capture", type: "path"}
+  - url: "/ops"
+    method: "GET"
+  - url: "/ops/dashboard"
+    method: "GET"
+  - url: "/ops/item/:arg"
+    method: "POST"
+    params:
+      - {name: "arg", type: "path"}
+  - url: "/preflight"
+    method: "OPTIONS"
+  # Moose-role composition: Controller::Widget composes Role::Resource (which
+  # itself composes Role::Chain for the setup/base/object skeleton) and sets
+  # `setup`'s PathPart to `widgets` via config. The role-carried CRUD actions
+  # resolve to their real paths once flattened into the controller.
+  - url: "/widgets"
+    method: "GET"
+  - url: "/widgets/:object_capture/delete"
+    method: "GET"
+    params:
+      - {name: "object_capture", type: "path"}
+# NB: lib/MyApp/Role/Crud.pm carries a `purge : Chained('object')` action
+# that NO controller composes, so it must NOT surface as a phantom `/purge`
+# route — asserting unresolvable fragments are still dropped, not emitted.

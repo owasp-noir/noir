@@ -1,0 +1,9 @@
+# `package = "actix-web"` under a target-specific table is still the dependency:
+# the detector reads what the crate gate reads.
+fixture: fixtures/rust/actix_renamed_dep/
+counts: {techs: 1, endpoints: 1}
+options:
+  only_techs: "rust_actix_web"
+endpoints:
+  - url: "/hello"
+    method: "GET"

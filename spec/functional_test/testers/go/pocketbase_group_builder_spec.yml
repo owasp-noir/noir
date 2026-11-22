@@ -1,0 +1,18 @@
+# PocketBase bind functions receive the `/api` group as an argument (the
+# second one in `BindBackupApi(app, api)`), typed with a generic
+# `*router.RouterGroup[*core.RequestEvent]`.
+fixture: fixtures/go/pocketbase_group_builder/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/backups"
+    method: "GET"
+  - url: "/api/backups/{key}"
+    method: "DELETE"
+    params:
+      - {name: "key", type: "path"}
+  - url: "/api/first"
+    method: "GET"
+  - url: "/api/sql"
+    method: "POST"
+  - url: "/api/direct"
+    method: "GET"

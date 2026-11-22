@@ -1,0 +1,38 @@
+# Regression test for --include-callee on Spark Java (#1366). Spark
+# shares the JVM lambda-DSL extractor with Javalin — the handler
+# body is a Java `lambda_expression`'s body, parsed once and walked
+# for both parameters and callees.
+#
+# Coverage:
+#   - POST /users    — selector-on-identifier (`req.queryParams`,
+#                      `res.status`) and bare-static
+#                      (`UserService.save`, `AuditLog.write`)
+#                      receivers.
+#   - GET  /profile  — bare unqualified call (`buildProfile`).
+#   - GET  /legacy   — chained-on-call (`getLegacy().toString()`)
+#                      drops the outer `toString` and keeps only
+#                      the inner `getLegacy`.
+fixture: fixtures/java/spark_callees/
+counts: {techs: 1, endpoints: 3}
+options:
+  include_callee: true
+endpoints:
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "query"}
+    callees:
+      - {name: "req.queryParams", line: 8}
+      - {name: "UserService.save", line: 9}
+      - {name: "AuditLog.write", line: 10}
+      - {name: "res.status", line: 11}
+  - url: "/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", line: 16}
+      - {name: "AuditLog.write", line: 17}
+  - url: "/legacy"
+    method: "GET"
+    callees:
+      - {name: "AuditLog.write", line: 22}
+      - {name: "getLegacy", line: 23}

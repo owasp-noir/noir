@@ -1,0 +1,9 @@
+fixture: fixtures/java/quarkus_multi_base/
+counts: {techs: 1, endpoints: 2}
+options:
+  base: ["./spec/functional_test/fixtures/java/quarkus_multi_base/service_a", "./spec/functional_test/fixtures/java/quarkus_multi_base/service_b"]
+endpoints:
+  - url: "/qa/items"
+    method: "GET"
+  - url: "/qb/items"
+    method: "GET"

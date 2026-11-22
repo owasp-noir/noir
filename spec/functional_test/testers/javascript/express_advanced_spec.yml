@@ -1,0 +1,101 @@
+# Test cases for advanced Express patterns
+# These test multi-line definitions and modern patterns that ARE currently detected
+# TODO: Add support for case-insensitive methods (.Get, .Post, etc.) - currently not detected
+# TODO: Add support for arrow function definitions - currently not detected
+# TODO: Add support for router.use() with nested routers - currently not detected
+fixture: fixtures/javascript/express_advanced/
+counts: {techs: 1}
+endpoints:
+  # Multi-line route definitions (WORKING)
+  - url: "/multiline-simple"
+    method: "GET"
+    params:
+      - {name: "ml_param", type: "query"}
+  # Method chaining on routes: each link reads its own handler
+  - url: "/chained"
+    method: "GET"
+    params:
+      - {name: "getParam", type: "query"}
+  - url: "/chained"
+    method: "POST"
+    params:
+      - {name: "postData", type: "json"}
+  - url: "/chained"
+    method: "PUT"
+    params:
+      - {name: "putData", type: "json"}
+  # Nested path parameters (WORKING)
+  - url: "/users/:userId/posts/:postId"
+    method: "GET"
+    params:
+      - {name: "userId", type: "path"}
+      - {name: "postId", type: "path"}
+      - {name: "includeComments", type: "query"}
+  # Optional parameters (WORKING)
+  - url: "/posts/:id?"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+      - {name: "filter", type: "query"}
+  # Regex routes: the RegExp literal's pattern, delimiters and anchors gone
+  - url: "/regex-(\\d+)"
+    method: "GET"
+  # Array of paths (NOW WORKING)
+  - url: "/array-a"
+    method: "GET"
+  - url: "/array-b"
+    method: "GET"
+  # Different parameter extraction patterns (WORKING)
+  - url: "/extract-variations"
+    method: "POST"
+    params:
+      - {name: "field1", type: "json"}
+      - {name: "field2", type: "json"}
+      - {name: "field3", type: "json"}
+      - {name: "directField", type: "json"}
+      - {name: "bracketField", type: "json"}
+      - {name: "query1", type: "query"}
+      - {name: "x-custom-header", type: "header"}
+      - {name: "X-Another-Header", type: "header"}
+      - {name: "sessionId", type: "cookie"}
+      - {name: "X-Third-Header", type: "header"}
+      - {name: "query2", type: "query"}
+      - {name: "trackingId", type: "cookie"}
+  # Template literal paths (WORKING)
+  - url: "/api/v2/template"
+    method: "GET"
+    params:
+      - {name: "templateParam", type: "query"}
+  # Concatenated paths (WORKING)
+  - url: "/api/v2/concat"
+    method: "POST"
+    params:
+      - {name: "concatData", type: "json"}
+  # Multiple middleware (WORKING)
+  - url: "/multiple-middleware"
+    method: "PUT"
+    params:
+      - {name: "Authorization", type: "header"}
+      - {name: "updateData", type: "json"}
+  # Nested router with prefix (NOW WORKING)
+  - url: "/user/profile"
+    method: "GET"
+    params:
+      - {name: "fields", type: "query"}
+      - {name: "X-User-Id", type: "header"}
+  - url: "/user/settings"
+    method: "POST"
+    params:
+      - {name: "theme", type: "json"}
+      - {name: "language", type: "json"}
+      - {name: "notifications", type: "json"}
+      - {name: "sessionToken", type: "cookie"}
+  # Cross-file router mount (NOW WORKING)
+  - url: "/api/users"
+    method: "GET"
+    params:
+      - {name: "limit", type: "query"}
+  - url: "/api/users"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}

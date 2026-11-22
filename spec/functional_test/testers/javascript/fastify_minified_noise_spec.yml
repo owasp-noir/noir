@@ -1,0 +1,14 @@
+# Coverage for the minified guard added to Fastify's auxiliary
+# `extract_route_configs` pass (issue #1903 review). The sibling
+# src/lib/vendor-bundle.js is a minified single line (not under any
+# test-stub path, so `test_stub_only?` is false) that packs a
+# `fastify.route({ method:'GET', url:'/leak' })` config. Without the
+# `|| minified_content?(content)` clause on the aux-pass gate, `/leak`
+# would leak. Only the two real routes from app.js may survive.
+fixture: fixtures/javascript/fastify_minified_noise/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/ping"
+    method: "GET"
+  - url: "/api/health"
+    method: "GET"

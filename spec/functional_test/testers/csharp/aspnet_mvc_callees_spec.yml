@@ -1,0 +1,23 @@
+fixture: fixtures/csharp/aspnet_mvc_callees/
+counts: {techs: 1, endpoints: 2}
+options:
+  include_callee: true
+endpoints:
+  - url: "/Shop/Details"
+    method: "GET"
+    params:
+      - {name: "id", type: "query"}
+    callees:
+      - {name: "shopService.Load", line: 9}
+      - {name: "AuditLog.Write", line: 10}
+      - {name: "View", line: 11}
+      - {name: "SerializeItem", line: 11}
+  - url: "/Shop/Create"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+      - {name: "email", type: "form"}
+    callees:
+      - {name: "shopService.Create", line: 17}
+      - {name: "Json", line: 18}
+      - {name: "SerializeItem", line: 18}

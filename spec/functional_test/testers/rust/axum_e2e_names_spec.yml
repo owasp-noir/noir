@@ -1,0 +1,15 @@
+# `e2e` is also "end-to-end encryption" (Matrix-style servers), so
+# `src/api/e2e_keys/` and `crates/e2e-encryption/` serve real routes. Only
+# the whole `e2e` / `playwright` segment (optionally `-test(s)` / `_test(s)`)
+# is a test harness.
+fixture: fixtures/rust/axum_e2e_names/
+counts: {techs: 1, endpoints: 3}
+options:
+  only_techs: "rust_axum"
+endpoints:
+  - url: "/real"
+    method: "GET"
+  - url: "/e2e/keys/upload"
+    method: "GET"
+  - url: "/e2e/encrypt"
+    method: "GET"

@@ -1,0 +1,47 @@
+fixture: fixtures/php/slim_callees/
+counts: {techs: 2, endpoints: 6}
+options:
+  include_callee: true
+endpoints:
+  - url: "/"
+    method: "GET"
+    callees:
+      - {name: "$response->getBody()->write", line: 11}
+  - url: "/users"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+    callees:
+      - {name: "$request->getQueryParams", line: 16}
+      - {name: "UserService::list", line: 17}
+      - {name: "AuditLog::write", line: 18}
+      - {name: "$response->getBody()->write", line: 19}
+      - {name: "json_encode", line: 19}
+  - url: "/users"
+    method: "POST"
+    callees:
+      - {name: "BuildUser::fromArray", line: 24}
+      - {name: "$request->getParsedBody", line: 24}
+      - {name: "UserService::create", line: 25}
+      - {name: "JsonResponder::created", line: 26}
+  - url: "/login"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+    callees:
+      - {name: "$request->getCookieParams", line: 30}
+      - {name: "AuthService::login", line: 31}
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "session", type: "cookie"}
+    callees:
+      - {name: "$request->getCookieParams", line: 30}
+      - {name: "AuthService::login", line: 31}
+  - url: "/api/items/{itemId}"
+    method: "GET"
+    params:
+      - {name: "itemId", type: "path"}
+    callees:
+      - {name: "ItemService::find", line: 37}
+      - {name: "JsonResponder::ok", line: 38}

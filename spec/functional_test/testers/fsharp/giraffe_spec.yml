@@ -1,0 +1,204 @@
+# Routes without an explicit method filter fall back to GET/POST/PUT/DELETE/PATCH.
+fixture: fixtures/fsharp/giraffe/
+counts: {techs: 1, endpoints: 57}
+endpoints:
+  # `route "/" >=> text "home"` — no method filter on the line.
+  - url: "/"
+    method: "GET"
+  - url: "/"
+    method: "POST"
+  - url: "/"
+    method: "PUT"
+  - url: "/"
+    method: "DELETE"
+  - url: "/"
+    method: "PATCH"
+  # Verb-prefixed simple routes covering all major HTTP methods.
+  - url: "/users"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+  - url: "/profile"
+    method: "PUT"
+  - url: "/items"
+    method: "DELETE"
+  - url: "/notes"
+    method: "PATCH"
+  # `routef` typed parameters — no method filter, so fallback verbs.
+  - url: "/users/:int"
+    method: "GET"
+    params:
+      - {name: "int", type: "path", value: "int"}
+  - url: "/users/:int"
+    method: "POST"
+    params:
+      - {name: "int", type: "path", value: "int"}
+  - url: "/users/:int"
+    method: "PUT"
+    params:
+      - {name: "int", type: "path", value: "int"}
+  - url: "/users/:int"
+    method: "DELETE"
+    params:
+      - {name: "int", type: "path", value: "int"}
+  - url: "/users/:int"
+    method: "PATCH"
+    params:
+      - {name: "int", type: "path", value: "int"}
+  - url: "/items/:int/notes/:string"
+    method: "GET"
+    params:
+      - {name: "int", type: "path", value: "int"}
+      - {name: "string", type: "path", value: "string"}
+  - url: "/items/:int/notes/:string"
+    method: "POST"
+    params:
+      - {name: "int", type: "path", value: "int"}
+      - {name: "string", type: "path", value: "string"}
+  - url: "/items/:int/notes/:string"
+    method: "PUT"
+    params:
+      - {name: "int", type: "path", value: "int"}
+      - {name: "string", type: "path", value: "string"}
+  - url: "/items/:int/notes/:string"
+    method: "DELETE"
+    params:
+      - {name: "int", type: "path", value: "int"}
+      - {name: "string", type: "path", value: "string"}
+  - url: "/items/:int/notes/:string"
+    method: "PATCH"
+    params:
+      - {name: "int", type: "path", value: "int"}
+      - {name: "string", type: "path", value: "string"}
+  - url: "/big/:int64"
+    method: "GET"
+    params:
+      - {name: "int64", type: "path", value: "int64"}
+  - url: "/big/:int64"
+    method: "POST"
+    params:
+      - {name: "int64", type: "path", value: "int64"}
+  - url: "/big/:int64"
+    method: "PUT"
+    params:
+      - {name: "int64", type: "path", value: "int64"}
+  - url: "/big/:int64"
+    method: "DELETE"
+    params:
+      - {name: "int64", type: "path", value: "int64"}
+  - url: "/big/:int64"
+    method: "PATCH"
+    params:
+      - {name: "int64", type: "path", value: "int64"}
+  - url: "/flag/:bool"
+    method: "GET"
+    params:
+      - {name: "bool", type: "path", value: "bool"}
+  - url: "/flag/:bool"
+    method: "POST"
+    params:
+      - {name: "bool", type: "path", value: "bool"}
+  - url: "/flag/:bool"
+    method: "PUT"
+    params:
+      - {name: "bool", type: "path", value: "bool"}
+  - url: "/flag/:bool"
+    method: "DELETE"
+    params:
+      - {name: "bool", type: "path", value: "bool"}
+  - url: "/flag/:bool"
+    method: "PATCH"
+    params:
+      - {name: "bool", type: "path", value: "bool"}
+  # subRoute "/api" prefix applied to nested routes.
+  - url: "/api/health"
+    method: "GET"
+  - url: "/api/version"
+    method: "GET"
+  # Nested subRoute "/v2" inside "/api".
+  - url: "/api/v2/echo"
+    method: "POST"
+  # subRoutef "/users/%i" propagates a typed path param to nested routes.
+  - url: "/users/:int/profile"
+    method: "GET"
+    params:
+      - {name: "int", type: "path", value: "int"}
+  # Method filter on the preceding line, joined via leading `>=>`.
+  - url: "/multiline"
+    method: "GET"
+  # routex (regex) reported verbatim.
+  - url: "/foo(/?)"
+    method: "GET"
+  # routeCi without explicit method filter.
+  - url: "/case"
+    method: "GET"
+  - url: "/case"
+    method: "POST"
+  - url: "/case"
+    method: "PUT"
+  - url: "/case"
+    method: "DELETE"
+  - url: "/case"
+    method: "PATCH"
+  # Giraffe Endpoint Routing — `GET [...]` wraps routes that inherit the verb.
+  - url: "/ping"
+    method: "GET"
+  - url: "/status"
+    method: "GET"
+  - url: "/submit"
+    method: "POST"
+  # `subRoute "/admin" [...]` with bracket-style children.
+  - url: "/admin/dashboard"
+    method: "GET"
+  - url: "/admin/sessions/:int"
+    method: "DELETE"
+    params:
+      - {name: "int", type: "path", value: "int"}
+  # `GET_HEAD [...]` is Giraffe's own combinator for `[ GET; HEAD ]`. Without
+  # it the wrapped routes fell through to the five fallback verbs.
+  - url: "/healthz"
+    method: "GET"
+  - url: "/healthz"
+    method: "HEAD"
+  # Endpoint Routing's named format specifier `%<type>:<name>`: the name comes
+  # from the pattern, and the `:petId` suffix must not survive in the URL
+  # (it used to produce `/pet/:int:petId`).
+  - url: "/pet/:petId"
+    method: "GET"
+    params:
+      - {name: "petId", type: "path", value: "int"}
+  - url: "/pet/:petId"
+    method: "HEAD"
+    params:
+      - {name: "petId", type: "path", value: "int"}
+  # --- Api.fs ---------------------------------------------------------------
+  # `VERB >=> choose [...]` — verb scopes the whole block, so each nested
+  # route reports only that method (no fallback-method explosion).
+  - url: "/products"
+    method: "GET"
+  # `route Urls.home` resolves against the `let home = "/home"` binding.
+  - url: "/home"
+    method: "GET"
+  # `routef "/products/%i"` typed param, scoped to GET.
+  - url: "/products/:int"
+    method: "GET"
+    params:
+      - {name: "int", type: "path", value: "int"}
+  # `routeCif "/search/%s"` — case-insensitive typed route.
+  - url: "/search/:string"
+    method: "GET"
+    params:
+      - {name: "string", type: "path", value: "string"}
+  # `routeCix "/legacy(/?)"` — case-insensitive regex route, verbatim path.
+  - url: "/legacy(/?)"
+    method: "GET"
+  # Inline `POST >=> choose [...]`.
+  - url: "/products"
+    method: "POST"
+  # `routeBind<Customer> "/customers/{customerId}/orders/{orderId}"` — named
+  # params become `:customerId` / `:orderId` string path params.
+  - url: "/customers/:customerId/orders/:orderId"
+    method: "POST"
+    params:
+      - {name: "customerId", type: "path", value: "string"}
+      - {name: "orderId", type: "path", value: "string"}

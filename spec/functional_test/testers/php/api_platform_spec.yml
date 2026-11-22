@@ -1,0 +1,83 @@
+# API Platform resources are class attributes. Operations without their own
+# `uriTemplate` inherit the resource's or get the generated `/{plural}` /
+# `/{plural}/{id}` path, under `routePrefix` and the `type: api_platform`
+# route import's `/api` prefix.
+fixture: fixtures/php/api_platform/
+counts: {techs: 1, endpoints: 20}
+options:
+  only_techs: "php_api_platform"
+endpoints:
+  # #[ApiResource] defaults
+  - url: "/api/books/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/books"
+    method: "GET"
+  - url: "/api/books"
+    method: "POST"
+  - url: "/api/books/{id}"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/books/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  # shortName + routePrefix + parameters
+  - url: "/api/admin/admin_reviews"
+    method: "GET"
+    params:
+      - {name: "rating", type: "query"}
+      - {name: "q", type: "query"}
+      - {name: "X-Tenant", type: "header"}
+  - url: "/api/admin/admin_reviews/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/admin/reviews/{id}/moderate"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/admin/reviews/cache"
+    method: "OPTIONS"
+  # resource-level uriTemplate, NotExposed skipped
+  - url: "/api/books/{bookId}/reviews"
+    method: "GET"
+    params:
+      - {name: "bookId", type: "path"}
+  - url: "/api/books/{bookId}/reviews"
+    method: "POST"
+    params:
+      - {name: "bookId", type: "path"}
+  - url: "/api/books/{bookId}/reviews/{id}"
+    method: "DELETE"
+    params:
+      - {name: "bookId", type: "path"}
+      - {name: "id", type: "path"}
+  # standalone operation attributes behind a namespace alias
+  - url: "/api/categories/{slug}"
+    method: "GET"
+    params:
+      - {name: "slug", type: "path"}
+  - url: "/api/categories"
+    method: "GET"
+  - url: "/api/categories/import"
+    method: "POST"
+  # a standalone operation joins the preceding #[ApiResource]
+  - url: "/api/catalog/publishers"
+    method: "GET"
+  # identifier property name
+  - url: "/api/shops"
+    method: "GET"
+  - url: "/api/shops/{code}"
+    method: "GET"
+    params:
+      - {name: "code", type: "path"}
+  # enum resources only get GetCollection + Get
+  - url: "/api/book_conditions"
+    method: "GET"
+  - url: "/api/book_conditions/{id}"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}

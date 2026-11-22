@@ -1,0 +1,23 @@
+# `router.get(...).post(...)`: Express returns the router from each verb,
+# so every link registers a route. Only the first link was read.
+fixture: fixtures/javascript/express_chained_verbs/
+counts: {techs: 1, endpoints: 5}
+endpoints:
+  - url: "/api/items"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+  - url: "/api/items"
+    method: "POST"
+    params:
+      - {name: "name", type: "json"}
+  - url: "/api/items/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/one"
+    method: "GET"
+  - url: "/api/two"
+    method: "POST"
+    params:
+      - {name: "title", type: "json"}

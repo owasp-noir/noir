@@ -1,0 +1,17 @@
+# Routes decorated on an app or router imported from the module that
+# declares it are served under that instance's mounts.
+fixture: fixtures/python/fastapi_imported_instance/
+counts: {techs: 1, endpoints: 3}
+endpoints:
+  - url: "/health"
+    method: "GET"
+  - url: "/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "query"}
+      - {name: "password", type: "query"}
+  - url: "/api/items/{item_id}"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "item_id", type: "path"}

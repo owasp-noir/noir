@@ -1,0 +1,7 @@
+# A routes glob loads files only when it names config/routes and its block
+# loads them: a listing loop and app/ or lib/ routes dirs add nothing.
+fixture: fixtures/ruby/rails_route_loader_unloaded/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/home"
+    method: "GET"

@@ -1,0 +1,42 @@
+fixture: fixtures/swift/kitura/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/hello"
+    method: "GET"
+  - url: "/users"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+  - url: "/users/:userID"
+    method: "GET"
+    params:
+      - {name: "userID", type: "path"}
+  - url: "/users/:userID/posts/:postID"
+    method: "PUT"
+    params:
+      - {name: "postID", type: "path"}
+      - {name: "userID", type: "path"}
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+      - {name: "sort", type: "query"}
+  - url: "/api/login"
+    method: "POST"
+    params:
+      - {name: "Authorization", type: "header"}
+  - url: "/profile"
+    method: "GET"
+    params:
+      - {name: "session", type: "cookie"}
+  - url: "/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/articles/:articleID"
+    method: "PATCH"
+    params:
+      - {name: "articleID", type: "path"}
+      - {name: "body", type: "json"}
+  - url: "/status"
+    method: "GET"

@@ -1,0 +1,24 @@
+# Tide: several verbs chained on one `.at()` binding (PUT + GET on the
+# same path), `serve_dir`/`serve_file` static mounts (GET), `.nest("/api",
+# subapp)` prefix composition, and `#[cfg(test)]` gating.
+fixture: fixtures/rust/tide_extras/
+counts: {techs: 1, endpoints: 6}
+options:
+  only_techs: "rust_tide"
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/:file"
+    method: "PUT"
+    params:
+      - {name: "file", type: "path"}
+  - url: "/:file"
+    method: "GET"
+    params:
+      - {name: "file", type: "path"}
+  - url: "/assets/*"
+    method: "GET"
+  - url: "/favicon.ico"
+    method: "GET"
+  - url: "/api/hello"
+    method: "GET"

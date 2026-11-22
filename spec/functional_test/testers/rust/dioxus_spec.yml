@@ -1,0 +1,44 @@
+fixture: fixtures/rust/dioxus/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - url: "/api/get_dogs"
+    method: "POST"
+    params:
+      - {name: "breed", type: "json"}
+  - url: "/api/custom/my_anonymous"
+    method: "POST"
+  - url: "/api/users/{id}"
+    method: "GET"
+    params:
+      - {name: "page", type: "query"}
+      - {name: "limit", type: "query"}
+      - {name: "id", type: "path"}
+  - url: "/api/{user_id}/chat"
+    method: "POST"
+    params:
+      - {name: "room_id", type: "query"}
+      - {name: "message", type: "json"}
+      - {name: "user_id", type: "path"}
+  - url: "/api/items/:id"
+    method: "PUT"
+    params:
+      - {name: "item", type: "json"}
+      - {name: "id", type: "path"}
+  - url: "/api/items/{id}"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/profile"
+    method: "PATCH"
+    params:
+      - {name: "nickname", type: "json"}
+  - url: "/api/search"
+    method: "GET"
+  - url: "/api/login"
+    method: "POST"
+    params:
+      - {name: "username", type: "json"}
+  - url: "/files/{name}.json"
+    method: "GET"
+    params:
+      - {name: "name", type: "path"}

@@ -1,0 +1,113 @@
+fixture: fixtures/java/vertx/
+counts: {techs: 1, endpoints: 33}
+endpoints:
+  - url: "/"
+    method: "GET"
+  - url: "/health"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+  - url: "/api/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/status"
+    method: "HEAD"
+  - url: "/api/options"
+    method: "OPTIONS"
+  - url: "/api/products/:category"
+    method: "GET"
+    params:
+      - {name: "category", type: "path"}
+  - url: "/orders/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/orders"
+    method: "POST"
+  - url: "/orders/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/imports/:importId"
+    method: "POST"
+    params:
+      - {name: "importId", type: "path"}
+  - url: "/api/reports/:reportId"
+    method: "GET"
+    params:
+      - {name: "reportId", type: "path"}
+  - url: "/api/exports/:exportId"
+    method: "GET"
+    params:
+      - {name: "exportId", type: "path"}
+  - url: "/api/imports/:importId"
+    method: "DELETE"
+    params:
+      - {name: "importId", type: "path"}
+  - url: "/api/tasks/:taskId"
+    method: "GET"
+    params:
+      - {name: "taskId", type: "path"}
+  - url: "/jobs/:jobId"
+    method: "POST"
+    params:
+      - {name: "jobId", type: "path"}
+  - url: "/api/any/:anyId"
+    method: "ANY"
+    params:
+      - {name: "anyId", type: "path"}
+  - url: "/eventbus/*"
+    method: "ANY"
+  - url: "/static/*"
+    method: "GET"
+  - url: "/api/v1/items"
+    method: "GET"
+  - url: "/api/v1/items"
+    method: "POST"
+  - url: "/admin/metrics/:metricId"
+    method: "GET"
+    params:
+      - {name: "metricId", type: "path"}
+  - url: "/search"
+    method: "QUERY"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/search/items"
+    method: "QUERY"
+    params:
+      - {name: "filter", type: "query"}
+  - url: "/advanced-search"
+    method: "QUERY"
+    params:
+      - {name: "query", type: "query"}
+  - url: "/multi-search"
+    method: "GET"
+    params:
+      - {name: "term", type: "query"}
+  - url: "/multi-search"
+    method: "QUERY"
+    params:
+      - {name: "term", type: "query"}
+  - url: "/api/v1/search"
+    method: "QUERY"
+    params:
+      - {name: "keyword", type: "query"}
+  # CommentedRoutes.java: only the live route, despite `// don't` in its body.
+  - url: "/apostrophe"
+    method: "ANY"
+  # SubRouterVerticle.java: `route("/backoffice/*").subRouter(child)`.
+  - url: "/backoffice/status"
+    method: "GET"
+  - url: "/backoffice/sessions/:sessionId"
+    method: "DELETE"
+    params:
+      - {name: "sessionId", type: "path"}

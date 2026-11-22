@@ -1,0 +1,131 @@
+# Covers the sub-application route shapes real Lapis projects use:
+#   * `app.path` mount prefixes prepended to every route
+#   * empty patterns that resolve to the bare prefix
+#   * Lua-pattern param constraints (`:id[%d]`) stripped to the name
+#   * optional groups (`(/page/:page)`) peeled to the required base
+#   * inline `respond_to({ GET = ..., PUT = ... })` verb narrowing
+#   * MoonScript `respond_to`/wrapped-arrow class actions
+fixture: fixtures/lua/lapis_subapp/
+counts: {techs: 1, endpoints: 38}
+endpoints:
+  # users.lua — mounted at `/api/users`.
+  - url: "/api/users"
+    method: "GET"
+  - url: "/api/users"
+    method: "POST"
+  - url: "/api/users"
+    method: "PUT"
+  - url: "/api/users"
+    method: "DELETE"
+  - url: "/api/users"
+    method: "PATCH"
+  - url: "/api/users/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id/posts"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id/posts"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id/posts"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id/posts"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id/posts"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id/settings"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/api/users/:id/settings"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  # admin.lua — mounted at `/admin`, custom application variable.
+  - url: "/admin/dashboard"
+    method: "GET"
+  - url: "/admin/stats/:metric"
+    method: "GET"
+    params:
+      - {name: "metric", type: "path"}
+  # app.moon — MoonScript class actions.
+  - url: "/profile"
+    method: "GET"
+  - url: "/profile"
+    method: "POST"
+  - url: "/account/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/account/:id"
+    method: "POST"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/account/:id"
+    method: "PUT"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/account/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/account/:id"
+    method: "PATCH"
+    params:
+      - {name: "id", type: "path"}
+  # Bare key with a handler-expression value (`require(...).make!`).
+  - url: "/console"
+    method: "GET"
+  - url: "/console"
+    method: "POST"
+  - url: "/console"
+    method: "PUT"
+  - url: "/console"
+    method: "DELETE"
+  - url: "/console"
+    method: "PATCH"
+  # dashboard.moon — MoonScript controller with a `@path: "/dashboard"` prefix.
+  - url: "/dashboard/overview"
+    method: "GET"
+  - url: "/dashboard/overview"
+    method: "POST"
+  - url: "/dashboard/overview"
+    method: "PUT"
+  - url: "/dashboard/overview"
+    method: "DELETE"
+  - url: "/dashboard/overview"
+    method: "PATCH"
+  - url: "/dashboard/stats/:id"
+    method: "GET"
+    params:
+      - {name: "id", type: "path"}
+  - url: "/dashboard/stats/:id"
+    method: "DELETE"
+    params:
+      - {name: "id", type: "path"}

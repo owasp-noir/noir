@@ -1,0 +1,10 @@
+# Regression test: Quart/Werkzeug MultiDicts expose `getlist("key")` for
+# repeated keys. The param extractor previously matched only `.get(`.
+fixture: fixtures/python/quart_multivalue/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/search"
+    method: "GET"
+    params:
+      - {name: "ids", type: "query"}
+      - {name: "category", type: "query"}

@@ -1,0 +1,13 @@
+# `app.at("/api").nest(api)` prefixes the routes registered on the
+# `let mut api = tide::new()` server, and only those.
+fixture: fixtures/rust/tide_nest_let/
+counts: {techs: 1, endpoints: 3}
+options:
+  only_techs: "rust_tide"
+endpoints:
+  - url: "/api/hello"
+    method: "GET"
+  - url: "/api/goodbye"
+    method: "POST"
+  - url: "/health"
+    method: "GET"

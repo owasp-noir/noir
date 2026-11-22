@@ -1,0 +1,13 @@
+# A class literally named `Test` / `Tests` is not a JUnit class: the tutorial
+# servlet `Test.java` and `Tests.kt` still serve their routes. The same
+# `*Test` suffix rule covers Kotlin, so `FormBindingTest.kt` (a test-kit
+# controller published from `src/main/kotlin`) stays suppressed.
+fixture: fixtures/java/test_class_names/
+counts: {techs: 2, endpoints: 2}
+endpoints:
+  - url: "/test"
+    method: "GET"
+    params:
+      - {name: "q", type: "query"}
+  - url: "/tests-kt/real"
+    method: "GET"

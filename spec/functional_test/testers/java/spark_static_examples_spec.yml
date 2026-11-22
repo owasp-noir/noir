@@ -1,0 +1,5 @@
+fixture: fixtures/java/spark_static_examples/
+counts: {techs: 1, endpoints: 1}
+endpoints:
+  - url: "/real"
+    method: "GET"
