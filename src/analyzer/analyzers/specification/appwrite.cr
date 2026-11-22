@@ -88,10 +88,9 @@ module Analyzer::Specification
       attribute_key = table_style ? "columns" : "attributes"
       body_params = data_body_params(resource[attribute_key]?)
 
-      list_params = [
-        Param.new("queries", "", "query"),
-        Param.new("search", "", "query"),
-      ] + auth_headers(project_id)
+      list_params = [Param.new("queries", "", "query")]
+      list_params << Param.new("search", "", "query") unless table_style
+      list_params.concat(auth_headers(project_id))
 
       create_params = [Param.new(item_key, "", "json")] +
                       body_params +

@@ -55,8 +55,19 @@ expected_endpoints = [
     Param.new("id", "", "path"),
   ]),
   # A singleton has one implicit row: no listing, no id segment.
-  Endpoint.new("/items/site_settings/singleton", "GET"),
-  Endpoint.new("/items/site_settings/singleton", "PATCH", [
+  Endpoint.new("/items/site_settings", "GET", [
+    Param.new("fields", "", "query"),
+    Param.new("filter", "", "query"),
+    Param.new("search", "", "query"),
+    Param.new("sort", "", "query"),
+    Param.new("limit", "", "query"),
+    Param.new("offset", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("deep", "", "query"),
+    Param.new("aggregate", "", "query"),
+    Param.new("meta", "", "query"),
+  ]),
+  Endpoint.new("/items/site_settings", "PATCH", [
     Param.new("site_name", "string", "json"),
   ]),
 ]

@@ -42,7 +42,7 @@ describe "Directus Analyzer" do
     endpoints.size.should eq(7)
   end
 
-  it "emits a singleton at /singleton with no listing or id segment" do
+  it "reads and updates a singleton on its collection URL" do
     endpoints = analyze_directus <<-YAML
       directus: 10.13.0
       collections:
@@ -58,7 +58,7 @@ describe "Directus Analyzer" do
       YAML
 
     endpoints.size.should eq(2)
-    endpoints.map(&.url).uniq!.should eq(["/items/site_settings/singleton"])
+    endpoints.map(&.url).uniq!.should eq(["/items/site_settings"])
     endpoints.map(&.method).sort!.should eq(["GET", "PATCH"])
     endpoints.find! { |e| e.method == "PATCH" }
       .params.any? { |p| p.name == "site_name" && p.param_type == "json" }.should be_true

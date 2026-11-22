@@ -2,6 +2,7 @@ require "../../func_spec.cr"
 
 expected_endpoints = [
   Endpoint.new("/api/posts", "GET", [
+    Param.new("locale", "", "query"),
     Param.new("depth", "", "query"),
     Param.new("where", "", "query"),
     # Payload filters through the operator form, not a bare field name.
@@ -44,6 +45,7 @@ expected_endpoints = [
     Param.new("where", "", "query"),
   ]),
   Endpoint.new("/api/posts/{id}", "GET", [
+    Param.new("locale", "", "query"),
     Param.new("id", "", "path"),
     Param.new("depth", "", "query"),
     Param.new("draft", "", "query"),
@@ -64,6 +66,7 @@ expected_endpoints = [
   ]),
   # versions: { drafts: true }
   Endpoint.new("/api/posts/versions", "GET", [
+    Param.new("locale", "", "query"),
     Param.new("depth", "", "query"),
     Param.new("limit", "", "query"),
     Param.new("page", "", "query"),
@@ -84,6 +87,7 @@ expected_endpoints = [
   ]),
 
   Endpoint.new("/api/users", "GET", [
+    Param.new("locale", "", "query"),
     Param.new("depth", "", "query"),
     Param.new("limit", "", "query"),
     Param.new("page", "", "query"),
@@ -107,6 +111,7 @@ expected_endpoints = [
     Param.new("where", "", "query"),
   ]),
   Endpoint.new("/api/users/{id}", "GET", [
+    Param.new("locale", "", "query"),
     Param.new("id", "", "path"),
     Param.new("depth", "", "query"),
     Param.new("populate", "", "query"),
@@ -140,6 +145,7 @@ expected_endpoints = [
 
   # Globals are read with GET and written with POST.
   Endpoint.new("/api/globals/site-settings", "GET", [
+    Param.new("locale", "", "query"),
     Param.new("depth", "", "query"),
     Param.new("populate", "", "query"),
     Param.new("select", "", "query"),

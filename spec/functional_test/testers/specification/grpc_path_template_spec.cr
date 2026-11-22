@@ -13,9 +13,12 @@ expected_endpoints = [
     Param.new("parent", "", "path"),
   ]),
   Endpoint.new("/v1/projects/{wildcard}/serviceAccounts/{wildcard2}/keys/{name}:inspect", "GET", [
+    Param.new("wildcard", "", "path"),
+    Param.new("wildcard2", "", "path"),
     Param.new("name", "", "path"),
   ]),
   Endpoint.new("/v1/publishers/{wildcard}/books/{book.name}", "PATCH", [
+    Param.new("wildcard", "", "path"),
     Param.new("book.name", "", "path"),
     Param.new("book", "", "json"),
   ]),

@@ -39,6 +39,7 @@ expected_endpoints = [
     Param.new("data.featured", "", "json"),
     Param.new("data.slug", "", "json"),
     Param.new("data.views", "", "json"),
+    Param.new("data.publishedAt", "", "json"),
     Param.new("documentId", "", "path"),
   ]),
   Endpoint.new("/api/articles/{documentId}", "DELETE", [

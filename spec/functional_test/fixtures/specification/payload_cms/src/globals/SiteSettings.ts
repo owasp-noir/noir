@@ -5,6 +5,7 @@ export const SiteSettings: GlobalConfig = {
   fields: [
     {
       name: 'siteName',
+      localized: true,
       type: 'text',
     },
     {

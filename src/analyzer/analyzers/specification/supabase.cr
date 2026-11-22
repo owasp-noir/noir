@@ -113,7 +113,7 @@ module Analyzer::Specification
       # only the read verb is emitted for one.
       return if table.view?
 
-      emit(@result, url, "POST", body.dup + write_headers, details, "supabase", "table-insert:#{table.name}", TAG_SOURCE)
+      emit(@result, url, "POST", body + [Param.new("on_conflict", "", "query")] + write_headers, details, "supabase", "table-insert:#{table.name}", TAG_SOURCE)
       emit(@result, url, "PATCH", body.dup + filters + write_headers, details, "supabase", "table-update:#{table.name}", TAG_SOURCE)
       emit(@result, url, "DELETE", filters.dup + auth_headers, details, "supabase", "table-delete:#{table.name}", TAG_SOURCE)
     end
@@ -128,7 +128,7 @@ module Analyzer::Specification
 
     # PostgREST's own query vocabulary, valid on every read.
     private def vertical_filtering : Array(Param)
-      ["select", "order", "limit", "offset", "on_conflict"].map do |name|
+      ["select", "order", "limit", "offset"].map do |name|
         Param.new(name, "", "query")
       end
     end

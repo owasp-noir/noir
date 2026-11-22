@@ -81,6 +81,7 @@ describe "Strapi Analyzer" do
     endpoints = analyze_strapi_schema <<-JSON
       {
         "kind": "collectionType",
+        "pluginOptions": { "i18n": { "localized": true } },
         "info": { "singularName": "article", "pluralName": "articles" },
         "attributes": {
           "title": { "type": "string" },
@@ -98,6 +99,11 @@ describe "Strapi Analyzer" do
     create.params.find! { |p| p.name == "data.featured" }.value.should eq("boolean")
     create.params.find! { |p| p.name == "data.publishedAt" }.value.should eq("datetime")
     create.params.find! { |p| p.name == "data.meta" }.value.should eq("object")
+    endpoints.select { |e| e.method == "GET" }.each do |read|
+      read.params.any? { |p| p.name == "locale" && p.param_type == "query" }.should be_true
+    end
+    update = endpoints.find! { |e| e.method == "PUT" }
+    update.params.find! { |p| p.name == "data.publishedAt" }.value.should eq("datetime")
     # The un-enveloped name is not a wire param.
     create.params.none? { |p| p.name == "title" }.should be_true
   end

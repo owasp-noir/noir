@@ -32,6 +32,26 @@ module Noir
     # Guards against pathological nesting in generated configs.
     MAX_VALUE_DEPTH = 12
 
+    # A spread or computed key may override any earlier property. Keep the
+    # explicit values for consumers that use them as evidence, and track
+    # which keys a later literal assignment resolves again.
+    private class ObjectLiteral < Hash(String, ConfigValue)
+      @keys_after_dynamic_key : Set(String)?
+
+      def dynamic_key!
+        @keys_after_dynamic_key = Set(String).new
+      end
+
+      def []=(key : String, value : ConfigValue)
+        @keys_after_dynamic_key.try &.add(key)
+        super
+      end
+
+      def uncertain?(key : String) : Bool
+        @keys_after_dynamic_key.try { |keys| !keys.includes?(key) } || false
+      end
+    end
+
     struct ConfigObject
       getter data : Hash(String, ConfigValue)
       # 1-based, for `PathInfo`.
@@ -62,6 +82,23 @@ module Noir
       def hash(key : String) : Hash(String, ConfigValue)?
         value = @data[key]?
         value.is_a?(Hash(String, ConfigValue)) ? value : nil
+      end
+
+      # For optional boolean-or-object settings, an unresolved expression
+      # or spread may enable the flag at runtime. An absent property in a
+      # fully literal object takes the framework default (disabled).
+      def possibly_enabled?(*path : String) : Bool
+        object = @data
+        path.each_with_index do |key, index|
+          return true if object.is_a?(ObjectLiteral) && object.uncertain?(key)
+          return false unless object.has_key?(key)
+          value = object[key]
+          return true if value.nil? # present, but not statically resolved
+          return value != false if index == path.size - 1
+          return false unless value.is_a?(Hash(String, ConfigValue))
+          object = value
+        end
+        false
       end
 
       def truthy?(key : String) : Bool
@@ -108,10 +145,14 @@ module Noir
     end
 
     private def decode_object(node : LibTreeSitter::TSNode, source : String, depth : Int32) : Hash(String, ConfigValue)
-      data = Hash(String, ConfigValue).new
+      data = ObjectLiteral.new
       return data if depth > MAX_VALUE_DEPTH
 
       Noir::TreeSitter.each_named_child(node) do |pair|
+        if Noir::TreeSitter.node_type(pair) == "spread_element"
+          data.dynamic_key!
+          next
+        end
         # `{ path: "/x", handler }`: the key is present, its value unknown.
         if Noir::TreeSitter.node_type(pair) == "shorthand_property_identifier"
           data[Noir::TreeSitter.node_text(pair, source)] = nil
@@ -126,6 +167,10 @@ module Noir
           next
         end
         next unless Noir::TreeSitter.node_type(pair) == "pair"
+        if Noir::TreeSitter.field(pair, "key").try { |key| Noir::TreeSitter.node_type(key) == "computed_property_name" }
+          data.dynamic_key!
+          next
+        end
         key, value = pair_key_value(pair, source)
         next if key.empty?
         data[key] = value ? decode_value(value, source, depth + 1) : nil
