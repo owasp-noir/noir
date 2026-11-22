@@ -8,10 +8,10 @@
 # $GITHUB_OUTPUT contract (`endpoints` / `passive_results`).
 #
 # Why this exists: the composite action `docker pull`s a *pre-built,
-# published* image, and ci.yml's docker build uses `push: false` and never
-# runs the container — so entrypoint.sh had no CI coverage and changes to it
-# shipped untested. This harness closes that gap and is the local
-# reproduction tool for entrypoint output-contract bugs.
+# published* image, so entrypoint.sh would have no CI coverage and changes to
+# it would ship untested. ci.yml's build-docker job runs this harness against
+# the image each of its legs has just built (amd64 and arm64). It is also the
+# local reproduction tool for entrypoint output-contract bugs.
 #
 # Usage:
 #   docker build -f packaging/docker/Dockerfile -t noir-action:local .
