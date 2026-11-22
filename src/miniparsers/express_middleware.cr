@@ -56,6 +56,12 @@ module Noir
     @bindings = {} of Tuple(String, String) => Array(Range(Int32, Int32))
     @line_starts = {} of String => Array(Int32)
 
+    @indexed_files = Set(String).new
+    @binding_lock = Mutex.new
+
+    def initialize(&@read_source : String -> String)
+    end
+
     def register(site : Use)
       list = (@uses[{site.file, site.receiver}] ||= [] of Use)
       list << site unless list.includes?(site)
@@ -67,9 +73,8 @@ module Noir
 
     # A receiver belongs to its nearest declaration. Two router factories
     # can each declare a variable called router in the same module.
-    def index_bindings(file : String, content : String)
-      file = PathScope.expand(file)
-      return unless @uses.any? { |(path, _), _| path == file }
+    private def index_bindings(file : String)
+      content = JSRouteExtractor.strip_js_comments(@read_source.call(file))
       TreeSitter.parse_js_family(content, file) do |root|
         TreeSitter.walk(root) do |node|
           type = TreeSitter.node_type(node)
@@ -227,8 +232,20 @@ module Noir
 
     private def append_scoped(steps, file, receiver, offset, base, url)
       key = {file, receiver}
+      sites = @uses[key]? || return
+      return if sites.first.offset >= offset
+      # A .use in a client bundle needs no scope tree until a route actually
+      # inherits from that receiver (possibly through a cross-file mount).
+      unless @indexed_files.includes?(file)
+        @binding_lock.synchronize do
+          unless @indexed_files.includes?(file)
+            index_bindings(file)
+            @indexed_files << file
+          end
+        end
+      end
       scope = binding_at(key, offset)
-      @uses[key]?.try &.each do |site|
+      sites.each do |site|
         break if site.offset >= offset
         next unless binding_at(key, site.offset) == scope
         if prefix = site.prefix
