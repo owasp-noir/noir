@@ -8,7 +8,7 @@ weight = 2
 
 <!-- SCOREBOARD -->
 
-Measured: 2026-11-22. Analyzer source: `bd9e6c936808b26689f5b1939676db1876aab621`.
+Measured: 2026-11-22. Analyzer source: `733a55018000278fefdd741e357229a0e6bbe8bb`.
 
 저장소 하나에서 측정한 기술은 단일 데이터 포인트입니다.
 
@@ -18,11 +18,11 @@ Measured: 2026-11-22. Analyzer source: `bd9e6c936808b26689f5b1939676db1876aab621
 | go_chi | 2 | 264 | 41 | 249 | 86.6% | 51.5% | 262 (51.1%) |
 | go_echo | 1 | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
 | go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 230 (81.6%) |
-| go_mux | 1 | 26 | 1 | 88 | 96.3% | 22.8% | 0 (0.0%) |
+| go_mux | 1 | 26 | 1 | 88 | 96.3% | 22.8% | 108 (94.7%) |
 | java_spring | 1 | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
 | js_express | 2 | 303 | 128 | 366 | 70.3% | 45.3% | 9 (1.3%) |
-| python_django | 2 | 235 | 0 | 300 | 100.0% | 43.9% | 0 (0.0%) |
-| python_fastapi | 2 | 348 | 1 | 114 | 99.7% | 75.3% | 0 (0.0%) |
+| python_django | 2 | 235 | 0 | 300 | 100.0% | 43.9% | 1 (0.2%) |
+| python_fastapi | 2 | 348 | 1 | 114 | 99.7% | 75.3% | 21 (4.5%) |
 | ts_nestjs | 1 | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
 
 | Repository | Matched | Spec-only | Code-only | Recall | Agreement | Marked |
@@ -36,11 +36,11 @@ Measured: 2026-11-22. Analyzer source: `bd9e6c936808b26689f5b1939676db1876aab621
 | flowable-engine | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
 | gotify | 42 | 0 | 10 | 100.0% | 80.8% | 2 (3.8%) |
 | immich | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
-| langflow | 84 | 0 | 111 | 100.0% | 43.1% | 0 (0.0%) |
+| langflow | 84 | 0 | 111 | 100.0% | 43.1% | 21 (10.8%) |
 | owncast | 241 | 0 | 189 | 100.0% | 56.0% | 262 (60.9%) |
-| podinfo | 26 | 1 | 88 | 96.3% | 22.8% | 0 (0.0%) |
+| podinfo | 26 | 1 | 88 | 96.3% | 22.8% | 108 (94.7%) |
 | pokeapi | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
-| pretalx | 133 | 0 | 300 | 100.0% | 30.7% | 0 (0.0%) |
+| pretalx | 133 | 0 | 300 | 100.0% | 30.7% | 1 (0.2%) |
 | vikunja | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
 
 | Technology | Detected / repositories | Other technologies detected | Forced-only rows | Automatic-only rows |
@@ -78,30 +78,30 @@ Measured: 2026-11-22. Analyzer source: `bd9e6c936808b26689f5b1939676db1876aab621
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | cs_aspnet_core_minimal_api | Parameters | 28 | 16 | 0 | 63.6% | 100.0% |
 | cs_aspnet_core_minimal_api | Body fields | 38 | 1 | 0 | 97.4% | 100.0% |
-| go_chi | Parameters | 31 | 27 | 88 | 53.4% | 26.1% |
-| go_chi | Body fields | 16 | 162 | 4 | 9.0% | 80.0% |
-| go_echo | Parameters | 128 | 69 | 0 | 65.0% | 100.0% |
-| go_echo | Body fields | 0 | 364 | 0 | 0.0% | n/a |
-| go_gin | Parameters | 35 | 106 | 5 | 24.8% | 87.5% |
-| go_gin | Body fields | 35 | 307 | 1 | 10.2% | 97.2% |
+| go_chi | Parameters | 56 | 2 | 94 | 96.6% | 37.3% |
+| go_chi | Body fields | 43 | 135 | 22 | 24.2% | 66.2% |
+| go_echo | Parameters | 197 | 0 | 52 | 100.0% | 79.1% |
+| go_echo | Body fields | 363 | 1 | 246 | 99.7% | 59.6% |
+| go_gin | Parameters | 130 | 11 | 122 | 92.2% | 51.6% |
+| go_gin | Body fields | 326 | 16 | 467 | 95.3% | 41.1% |
 | go_mux | Parameters | 7 | 0 | 0 | 100.0% | 100.0% |
 | go_mux | Body fields | 0 | 0 | 0 | n/a | n/a |
 | java_spring | Parameters | 544 | 21 | 109 | 96.3% | 83.3% |
 | java_spring | Body fields | 378 | 67 | 90 | 84.9% | 80.8% |
 | js_express | Parameters | 272 | 18 | 65 | 93.8% | 80.7% |
 | js_express | Body fields | 96 | 78 | 19 | 55.2% | 83.5% |
-| python_django | Parameters | 331 | 297 | 73 | 52.7% | 81.9% |
-| python_django | Body fields | 311 | 142 | 10 | 68.7% | 96.9% |
+| python_django | Parameters | 609 | 19 | 381 | 97.0% | 61.5% |
+| python_django | Body fields | 393 | 60 | 21 | 86.8% | 94.9% |
 | python_fastapi | Parameters | 454 | 20 | 9 | 95.8% | 98.1% |
-| python_fastapi | Body fields | 360 | 33 | 42 | 91.6% | 89.6% |
-| ts_nestjs | Parameters | 245 | 102 | 6 | 70.6% | 97.6% |
-| ts_nestjs | Body fields | 221 | 274 | 1 | 44.6% | 99.5% |
+| python_fastapi | Body fields | 363 | 30 | 12 | 92.4% | 96.8% |
+| ts_nestjs | Parameters | 312 | 35 | 2 | 89.9% | 99.4% |
+| ts_nestjs | Body fields | 492 | 3 | 1 | 99.4% | 99.8% |
 
 | Technology | Both guarded | Both open | Document guarded, code open | Document open, code guarded |
 | --- | ---: | ---: | ---: | ---: |
 | cs_aspnet_core_minimal_api | 0 | 16 | 0 | 0 |
 | go_chi | 120 | 3 | 8 | 133 |
-| go_echo | 131 | 11 | 1 | 6 |
+| go_echo | 131 | 9 | 1 | 8 |
 | go_gin | 162 | 56 | 10 | 10 |
 | go_mux | 0 | 26 | 0 | 0 |
 | java_spring | 0 | 0 | 182 | 0 |
@@ -117,7 +117,10 @@ Measured: 2026-11-22. Analyzer source: `bd9e6c936808b26689f5b1939676db1876aab621
 | go_echo | `prefix:unresolved` | 4 | 1.5% |
 | go_gin | `handler:heuristic` | 8 | 2.8% |
 | go_gin | `prefix:unresolved` | 228 | 80.9% |
+| go_mux | `prefix:unresolved` | 108 | 94.7% |
 | js_express | `prefix:unresolved` | 9 | 1.3% |
+| python_django | `prefix:unresolved` | 1 | 0.2% |
+| python_fastapi | `prefix:heuristic` | 21 | 4.5% |
 
 - [InvokeAI](https://github.com/invoke-ai/InvokeAI/tree/9264acf9e542d51a21467013029b755686dee375) · `9264acf9e542d51a21467013029b755686dee375` · `python_fastapi` · scope `invokeai/app` · `invokeai/frontend/api/openapi.json`. openapi-checks.yml regenerates the schema from FastAPI and diffs it. Only invokeai/app is scanned; frontend and other packages are excluded.
 - [NodeBB](https://github.com/NodeBB/NodeBB/tree/5456eac373abbc93136fed7b02ce8f58060f14cc) · `5456eac373abbc93136fed7b02ce8f58060f14cc` · `js_express` · scope `.` · `public/openapi/read.yaml`, `public/openapi/write.yaml`. test/api/routes.js:24-86 compares mounted Express routes against both committed contracts, with explicit exclusions at lines 62-81. Together they cover the forum read and write APIs; UI, federation and plugin routes remain in scope as undocumented routes. The real /api/v3 mount is retained. install/web.js:63-68 starts a separate setup server and is excluded. Outside this service: `./install`.
