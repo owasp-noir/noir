@@ -38,6 +38,12 @@ module Noir
       "RequestMapping" => nil,
     }
 
+    private record MappingPrefixes, paths : Array(String), unresolved : Bool = false, unread_paths : Set(String)? = nil do
+      def unread?(path : String) : Bool
+        unresolved || !!unread_paths.try(&.includes?(path))
+      end
+    end
+
     struct Route
       getter verb : String        # upper-cased HTTP verb
       getter path : String        # full path (class prefix + method path)
@@ -47,11 +53,12 @@ module Noir
       getter handler_reference : String?
       getter inline_callees : Array(NamedTuple(name: String, line: Int32))
       getter messaging_destinations : Array(String)
+      getter? prefix_unresolved : Bool
       getter signature_line : Int32? # 0-based line of the function name (the handler), nil for class-level routes
 
       def initialize(@verb, @path, @class_name, @method_name, @line, @handler_reference = nil,
                      @inline_callees = [] of NamedTuple(name: String, line: Int32),
-                     @messaging_destinations = [] of String, @signature_line = nil)
+                     @messaging_destinations = [] of String, @signature_line = nil, @prefix_unresolved = false)
       end
     end
 
@@ -66,7 +73,9 @@ module Noir
       getter path : String
       getter line : Int32
 
-      def initialize(@class_name, @interface_names, @path, @line)
+      getter? prefix_unresolved : Bool
+
+      def initialize(@class_name, @interface_names, @path, @line, @prefix_unresolved = false)
       end
     end
 
@@ -322,7 +331,7 @@ module Noir
                             meta_mappings : MetaMappings? = nil) : Array(Route)
       routes = [] of Route
       file_constants = local_string_constants || extract_string_constants(source)
-      walk_classes(root, source, [""], routes, string_constants, file_constants, inert_annotations: inert_annotations, meta_mappings: meta_mappings)
+      walk_classes(root, source, MappingPrefixes.new([""]), routes, string_constants, file_constants, inert_annotations: inert_annotations, meta_mappings: meta_mappings)
       collect_gateway_routes(source, string_constants, routes)
       collect_webflux_functional_routes(source, routes)
       routes
@@ -384,7 +393,7 @@ module Noir
 
     private def walk_classes(node : LibTreeSitter::TSNode,
                              source : String,
-                             outer_prefixes : Array(String),
+                             outer_prefixes : MappingPrefixes,
                              routes : Array(Route),
                              string_constants : Hash(String, String),
                              local_string_constants : Hash(String, String),
@@ -407,7 +416,7 @@ module Noir
       # a class_declaration without `modifiers`. Falling through
       # `each_named_child` would lose the class-level mapping prefix.
       pending = [] of LibTreeSitter::TSNode
-      orphan_class : Tuple(String, Array(String))? = nil
+      orphan_class : Tuple(String, MappingPrefixes)? = nil
       # Cursor-backed on wide nodes: indexing `ts_node_named_child(node, i)`
       # is O(i), so a flat ERROR node with tens of thousands of children
       # (a hostile string-template nest) walked quadratically.
@@ -458,10 +467,10 @@ module Noir
 
     private def recoverable_orphan_class(node : LibTreeSitter::TSNode,
                                          source : String,
-                                         outer_prefixes : Array(String),
+                                         outer_prefixes : MappingPrefixes,
                                          pending : Array(LibTreeSitter::TSNode),
                                          string_constants : Hash(String, String),
-                                         local_string_constants : Hash(String, String)) : Tuple(String, Array(String))?
+                                         local_string_constants : Hash(String, String)) : Tuple(String, MappingPrefixes)?
       return if class_body(node)
       return if feign_client?(node, source)
       return if abstract_type?(node, source)
@@ -474,7 +483,7 @@ module Noir
 
     private def recover_split_constructor_prefix(node : LibTreeSitter::TSNode,
                                                  source : String,
-                                                 outer_prefixes : Array(String),
+                                                 outer_prefixes : MappingPrefixes,
                                                  routes : Array(Route),
                                                  string_constants : Hash(String, String),
                                                  local_string_constants : Hash(String, String)) : Bool
@@ -497,7 +506,7 @@ module Noir
     # are not lost.
     private def recover_infix_class_prefix(node : LibTreeSitter::TSNode,
                                            source : String,
-                                           outer_prefixes : Array(String),
+                                           outer_prefixes : MappingPrefixes,
                                            routes : Array(Route),
                                            string_constants : Hash(String, String),
                                            local_string_constants : Hash(String, String)) : Bool
@@ -519,38 +528,44 @@ module Noir
     private def infix_class_mapping_prefixes(node : LibTreeSitter::TSNode,
                                              source : String,
                                              string_constants : Hash(String, String),
-                                             local_string_constants : Hash(String, String)) : Array(String)
+                                             local_string_constants : Hash(String, String)) : MappingPrefixes
+      unresolved = false
+      unread_paths = Set(String).new
       collect_stray_annotations(node, source).each do |entry|
         name, args = entry
         next unless ANNOTATION_VERBS.has_key?(name)
-        paths = annotation_paths(args, source, string_constants, local_string_constants)
-        return paths unless paths.empty?
+        paths = annotation_paths(args, source, string_constants, local_string_constants, unread_paths: unread_paths)
+        return MappingPrefixes.new(paths, unread_paths: unread_paths) unless paths.empty?
+        unresolved ||= unread_mapping_argument?(args, source, string_constants, local_string_constants)
       end
-      [""]
+      MappingPrefixes.new([""], unresolved)
     end
 
     private def split_constructor_prefixes(node : LibTreeSitter::TSNode,
                                            source : String,
                                            string_constants : Hash(String, String),
-                                           local_string_constants : Hash(String, String)) : Array(String)
+                                           local_string_constants : Hash(String, String)) : MappingPrefixes
+      unresolved = false
+      unread_paths = Set(String).new
       collect_stray_annotations(node, source).each do |entry|
         name, args = entry
         next unless ANNOTATION_VERBS.has_key?(name)
         next unless args
         buf = [] of String
-        collect_string_values(args, source, buf, string_constants, local_string_constants)
-        return buf unless buf.empty?
+        collect_string_values(args, source, buf, string_constants, local_string_constants, unread_paths: unread_paths)
+        return MappingPrefixes.new(buf, unread_paths: unread_paths) unless buf.empty?
+        unresolved ||= unread_mapping_argument?(args, source, string_constants, local_string_constants)
       end
       text = Noir::TreeSitter.node_text(node, source)
       if match = text.match(/@(?:[A-Za-z_][A-Za-z0-9_.]*\.)?RequestMapping\s*\(\s*"([^"]*)"/)
-        return [match[1]]
+        return MappingPrefixes.new([match[1]])
       end
-      [""]
+      MappingPrefixes.new([""], unresolved)
     end
 
     private def process_class(node : LibTreeSitter::TSNode,
                               source : String,
-                              outer_prefixes : Array(String),
+                              outer_prefixes : MappingPrefixes,
                               pending : Array(LibTreeSitter::TSNode),
                               routes : Array(Route),
                               string_constants : Hash(String, String),
@@ -648,9 +663,10 @@ module Noir
         interface_names = implemented_interface_names(node, source)
         if !interface_names.empty? && spring_controller_class?(node, source)
           class_name = type_identifier_text(node, source)
-          class_mapping_prefixes(node, source, [] of LibTreeSitter::TSNode, string_constants, local_string_constants).each do |class_prefix|
+          mapping = class_mapping_prefixes(node, source, [] of LibTreeSitter::TSNode, string_constants, local_string_constants)
+          mapping.paths.each do |class_prefix|
             implementations << ControllerInterfaceImplementation.new(
-              class_name, interface_names, class_prefix, Noir::TreeSitter.node_start_row(node)
+              class_name, interface_names, class_prefix, Noir::TreeSitter.node_start_row(node), mapping.unread?(class_prefix)
             )
           end
         end
@@ -702,7 +718,7 @@ module Noir
     private def collect_recovered_function_routes(node : LibTreeSitter::TSNode,
                                                   source : String,
                                                   class_name : String,
-                                                  class_prefixes : Array(String),
+                                                  class_prefixes : MappingPrefixes,
                                                   routes : Array(Route),
                                                   string_constants : Hash(String, String),
                                                   local_string_constants : Hash(String, String),
@@ -742,6 +758,25 @@ module Noir
       false
     end
 
+    # Called when the path reader returned no values. A missing argument,
+    # condition-only mapping or an explicitly empty literal needs no prefix.
+    private def unread_mapping_argument?(args : LibTreeSitter::TSNode?, source : String, constants, local_constants) : Bool
+      return false unless args
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        if Noir::TreeSitter.node_type(arg) == "value_argument"
+          kind, key, node = classify_value_argument(arg, source)
+          next if kind == :keyword && !key.in?("value", "path")
+          next unless node
+          return true if kind == :bare_identifier && !local_constants.has_key?(key)
+        else
+          node = arg
+        end
+        next if Noir::TreeSitter.node_type(node) == "collection_literal" && LibTreeSitter.ts_node_named_child_count(node) == 0
+        return true if resolve_string_value(node, source, constants, local_constants).nil?
+      end
+      false
+    end
+
     # The class body is a `class_body` named child (not exposed as a
     # `body` field by this grammar version).
     private def class_body(decl : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
@@ -760,16 +795,19 @@ module Noir
                                        stray_annotation_nodes : Array(LibTreeSitter::TSNode) = [] of LibTreeSitter::TSNode,
                                        string_constants = Hash(String, String).new,
                                        local_string_constants = Hash(String, String).new,
-                                       meta_mappings : MetaMappings? = nil) : Array(String)
+                                       meta_mappings : MetaMappings? = nil) : MappingPrefixes
+      unresolved = false
+      unread_paths = Set(String).new
       each_annotation(class_decl, source) do |name, args|
         if ANNOTATION_VERBS.has_key?(name)
-          paths = annotation_paths(args, source, string_constants, local_string_constants)
+          paths = annotation_paths(args, source, string_constants, local_string_constants, unread_paths: unread_paths)
         elsif meta = meta_mappings.try &.[name]?
           paths = meta.paths
         else
           next
         end
-        return paths.uniq unless paths.empty?
+        return MappingPrefixes.new(paths.uniq, unread_paths: unread_paths) unless paths.empty?
+        unresolved ||= unread_mapping_argument?(args, source, string_constants, local_string_constants)
       end
 
       # Fall back to stray-annotation chunks (top-level
@@ -784,11 +822,12 @@ module Noir
           next unless ANNOTATION_VERBS.has_key?(name)
           next unless args
           buf = [] of String
-          collect_string_values(args, source, buf, string_constants, local_string_constants)
-          return buf.uniq unless buf.empty?
+          collect_string_values(args, source, buf, string_constants, local_string_constants, unread_paths: unread_paths)
+          return MappingPrefixes.new(buf.uniq, unread_paths: unread_paths) unless buf.empty?
+          unresolved ||= unread_mapping_argument?(args, source, string_constants, local_string_constants)
         end
       end
-      [""]
+      MappingPrefixes.new([""], unresolved)
     end
 
     # ponytail: nested multi-path mappings multiply, so the product is cut
@@ -796,16 +835,18 @@ module Noir
     MAX_CLASS_PREFIXES = 64
 
     # Every outer prefix joined with every class path, deduplicated.
-    private def join_prefixes(outer_prefixes : Array(String), prefixes : Array(String)) : Array(String)
+    private def join_prefixes(outer_prefixes : MappingPrefixes, prefixes : MappingPrefixes) : MappingPrefixes
       joined = [] of String
-      outer_prefixes.each do |outer|
-        prefixes.each do |prefix|
+      unread_paths = Set(String).new
+      outer_prefixes.paths.each do |outer|
+        prefixes.paths.each do |prefix|
           path = Noir::URLPath.join_absorbing(outer, prefix)
+          unread_paths << path if outer_prefixes.unread?(outer) || prefixes.unread?(prefix)
           joined << path unless joined.includes?(path)
-          return joined if joined.size >= MAX_CLASS_PREFIXES
+          return MappingPrefixes.new(joined, unread_paths: unread_paths) if joined.size >= MAX_CLASS_PREFIXES
         end
       end
-      joined
+      MappingPrefixes.new(joined, unread_paths: unread_paths)
     end
 
     # Walk annotations buried under nested `prefix_expression`
@@ -875,7 +916,7 @@ module Noir
     private def collect_function_routes(func : LibTreeSitter::TSNode,
                                         source : String,
                                         class_name : String,
-                                        class_prefixes : Array(String),
+                                        class_prefixes : MappingPrefixes,
                                         routes : Array(Route),
                                         string_constants : Hash(String, String),
                                         local_string_constants : Hash(String, String),
@@ -889,7 +930,9 @@ module Noir
         next unless meta || ANNOTATION_VERBS.has_key?(ann_name)
         verb_default = meta ? meta.verb : ANNOTATION_VERBS[ann_name]?
 
-        paths = meta ? meta.paths : annotation_paths(args, source, string_constants, local_string_constants)
+        unread_paths = Set(String).new
+        paths = meta ? meta.paths : annotation_paths(args, source, string_constants, local_string_constants, unread_paths: unread_paths)
+        missing = paths.empty? && unread_mapping_argument?(args, source, string_constants, local_string_constants)
         paths = [""] if paths.empty?
 
         verbs =
@@ -901,11 +944,12 @@ module Noir
             methods.empty? ? ["ANY"] : methods
           end
 
-        class_prefixes.each do |class_prefix|
+        class_prefixes.paths.each do |class_prefix|
           paths.each do |path|
             full = Noir::URLPath.join_absorbing(class_prefix, path)
+            unread = missing || class_prefixes.unread?(class_prefix) || unread_paths.includes?(path)
             verbs.each do |verb|
-              routes << Route.new(verb, full, class_name, method_name, ann_line, signature_line: signature_line)
+              routes << Route.new(verb, full, class_name, method_name, ann_line, signature_line: signature_line, prefix_unresolved: unread)
             end
           end
         end

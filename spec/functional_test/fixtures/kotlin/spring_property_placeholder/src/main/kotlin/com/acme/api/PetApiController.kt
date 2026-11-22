@@ -27,3 +27,20 @@ class OrderController {
     @GetMapping("\${api.missing}/raw")
     fun raw() = "x"
 }
+
+@RestController
+@RequestMapping(ExternalPaths.BASE)
+class ExternalController {
+    @GetMapping("/external")
+    fun external() = "x"
+}
+
+@RestController
+@RequestMapping("/published")
+class PublishedController {
+    @GetMapping(ExternalPaths.LEAF)
+    fun unknownLeaf(): String { return "x" }
+
+    @GetMapping(path = ["/$tenant/info", "/public/info"])
+    fun info(): String { return "info" }
+}

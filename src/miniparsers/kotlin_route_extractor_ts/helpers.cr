@@ -62,7 +62,7 @@ module Noir
                                  string_constants : Hash(String, String),
                                  local_string_constants : Hash(String, String),
                                  keys : Enumerable(String) = {"value", "path"},
-                                 positional : Bool = true) : Array(String)
+                                 positional : Bool = true, unread_paths : Set(String)? = nil) : Array(String)
       empty = [] of String
       return empty unless args_node
       return empty unless Noir::TreeSitter.node_type(args_node) == "value_arguments"
@@ -77,13 +77,13 @@ module Noir
 
         if kind == :keyword
           next unless keys.includes?(key)
-          collect_string_values(value_node, source, keyword, string_constants, local_string_constants)
+          collect_string_values(value_node, source, keyword, string_constants, local_string_constants, unread_paths: unread_paths)
         elsif kind == :bare_identifier
           if value = local_string_constants[key]?
             positional_values << value unless value.empty?
           end
         else
-          collect_string_values(value_node, source, positional_values, string_constants, local_string_constants)
+          collect_string_values(value_node, source, positional_values, string_constants, local_string_constants, unread_paths: unread_paths)
         end
       end
 
@@ -139,13 +139,13 @@ module Noir
                                       sink : Array(String),
                                       string_constants : Hash(String, String),
                                       local_string_constants : Hash(String, String),
-                                      depth : Int32 = 0)
+                                      depth : Int32 = 0, unread_paths : Set(String)? = nil)
       return if depth > MAX_ANNOTATION_VALUE_DEPTH
       case Noir::TreeSitter.node_type(node)
       when "collection_literal"
         # Kotlin's `[...]` array syntax inside annotations.
         Noir::TreeSitter.each_named_child(node) do |elem|
-          collect_string_values(elem, source, sink, string_constants, local_string_constants, depth + 1)
+          collect_string_values(elem, source, sink, string_constants, local_string_constants, depth + 1, unread_paths)
         end
       when "parenthesized_expression"
         # Stray-annotation case: `@RequestMapping("/x")` gets parsed
@@ -153,7 +153,7 @@ module Noir
         # carrying a bare `string_literal` (no `value_arguments`
         # wrapper).
         Noir::TreeSitter.each_named_child(node) do |elem|
-          collect_string_values(elem, source, sink, string_constants, local_string_constants, depth + 1)
+          collect_string_values(elem, source, sink, string_constants, local_string_constants, depth + 1, unread_paths)
         end
       when "call_expression"
         # `arrayOf("/a", "/b")` — walk the value_arguments.
@@ -164,7 +164,7 @@ module Noir
               Noir::TreeSitter.each_named_child(suf) do |va|
                 next unless Noir::TreeSitter.node_type(va) == "value_argument"
                 Noir::TreeSitter.each_named_child(va) do |v|
-                  collect_string_values(v, source, sink, string_constants, local_string_constants, depth + 1)
+                  collect_string_values(v, source, sink, string_constants, local_string_constants, depth + 1, unread_paths)
                 end
               end
             end
@@ -173,6 +173,13 @@ module Noir
       else
         if value = resolve_string_value(node, source, string_constants, local_string_constants)
           sink << value unless value.empty?
+          if unread_paths && Noir::TreeSitter.node_text(node, source).includes?('$')
+            Noir::TreeSitter.walk(node) do |part|
+              next unless Noir::TreeSitter.node_type(part).in?("interpolated_identifier", "interpolated_expression")
+              name = Noir::TreeSitter.node_text(part, source).strip
+              unread_paths << value unless local_string_constants.has_key?(name) || string_constants.has_key?(name)
+            end
+          end
         end
       end
     end

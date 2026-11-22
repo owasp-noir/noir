@@ -1,6 +1,8 @@
 require "../../func_spec.cr"
 
 expected_endpoints = [
+  Endpoint.new("/public/entry", "GET"),
+  Endpoint.new("/verified/entry", "GET"),
   Endpoint.new("/literal/path", "GET"),
   Endpoint.new("/constant/path", "GET"),
   Endpoint.new("/api/v1/path", "GET"),
@@ -19,6 +21,7 @@ expected_endpoints = [
   Endpoint.new("/nested/mount/child/nested-path", "GET"),
   Endpoint.new("/cross/outer/nested/external/item", "GET"),
   Endpoint.new("/health", "GET"),
+  Endpoint.new("/subapp-health", "GET"),
 ]
 
 tester = FunctionalTester.new("fixtures/python/fastapi_prefix_resolution/", {
@@ -40,18 +43,21 @@ describe "FastAPI prefix resolution", tags: "functional" do
       "GET /include-v1/include",
       "GET /leading-runtime",
       "GET /nested/mount/child/nested-path",
+      "GET /public/entry",
       "GET /relative",
       "GET /router-v1/router",
+      "GET /subapp-health",
       "GET /unread",
       "GET /variable",
     ])
     tester.endpoints.select(&.resolution).each do |endpoint|
-      endpoint.resolution.should eq({"prefix" => Endpoint::RESOLUTION_UNRESOLVED})
+      expected = endpoint.url == "/public/entry" ? Endpoint::RESOLUTION_HEURISTIC : Endpoint::RESOLUTION_UNRESOLVED
+      endpoint.resolution.should eq({"prefix" => expected})
     end
   end
 
   it "leaves literal, imported and resolved settings prefixes unmarked" do
     resolved = tester.endpoints.reject(&.resolution).map(&.url).sort!
-    resolved.should eq(["/api/v1/path", "/constant/path", "/health", "/literal/path", "/nested/health"])
+    resolved.should eq(["/api/v1/path", "/constant/path", "/health", "/literal/path", "/nested/health", "/verified/entry"])
   end
 end

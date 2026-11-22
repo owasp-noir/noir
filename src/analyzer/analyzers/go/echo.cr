@@ -13,7 +13,7 @@ module Analyzer::Go
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
       # Other packages' exported string constants (`e.Group(apiv2.GroupPrefix)`).
-      string_seed = go_string_seed
+      string_seed = go_string_seed(mark_wrappers: true)
       package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER, string_seed: string_seed)
       # Pre-pass for cross-file identifier-handler resolution. Built
       # once per analyze() so each per-file callee pass only does an
@@ -52,8 +52,14 @@ module Analyzer::Go
           router_fields: receivers
         )
         # A helper's routes on a group no call site gave a readable prefix (#3567).
-        unread = unread_builder_routes(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups, "Add", string_seed, literal_join: true)
-        ts_routes.map! { |r| unread.includes?({r.line, r.path}) ? r.unresolve_prefix! : r } unless unread.empty?
+        by_name = Set({Int32, String}).new
+        unread = unread_builder_routes(content, BUILDER_TYPE, builder_prefixes_by_dir[dir]?, cross_file_groups, "Add", string_seed, literal_join: true, by_name: by_name)
+        ts_routes.map! do |route|
+          key = {route.line, route.path}
+          route.unresolve_prefix! if unread.includes?(key)
+          route.prefix_heuristic = true if by_name.includes?(key)
+          route
+        end unless unread.empty? && by_name.empty?
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route

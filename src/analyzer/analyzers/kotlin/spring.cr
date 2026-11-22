@@ -820,7 +820,7 @@ module Analyzer::Kotlin
         file_callees = Noir::KotlinCalleeExtractor::FileCallees.new(root, content, path)
 
         stomp_routes.each do |route|
-          route_path = SpringPropertyPath.resolve(route.verb == "GET" ? Noir::URLPath.join_rooted(webflux_base_path, route.path) : route.path, spring_properties)
+          route_path = route.verb == "GET" ? Noir::URLPath.join_rooted(webflux_base_path, route.path) : route.path
           line = route.line + 1
           method = route_method_node(method_nodes, route.class_name, route.method_name, route.line)
           parameters =
@@ -832,7 +832,7 @@ module Analyzer::Kotlin
             else
               [] of Param
             end
-          endpoint = Endpoint.new(route_path, route.verb, parameters, Details.new(PathInfo.new(path, line)))
+          endpoint = spring_endpoint(spring_properties, route_path, route.verb, parameters, Details.new(PathInfo.new(path, line)))
           endpoint.protocol = "ws"
           route.messaging_destinations.each do |destination|
             endpoint.add_tag(Tag.new("stomp-send-to", destination, "kotlin_spring_stomp_analyzer"))
@@ -861,6 +861,7 @@ module Analyzer::Kotlin
           params = graphql_params(route, dto_index)
           line = route.line + 1
           endpoint = Endpoint.new("#{graphql_path}##{route.root_kind}.#{route.field_name}", "POST", params, Details.new(PathInfo.new(path, line)))
+          endpoint.mark_resolution("prefix") if graphql_path.includes?("${")
           endpoint.protocol = "ws" if route.root_kind == "Subscription"
           endpoint.add_tag(Tag.new("graphql", "#{route.root_kind}.#{route.field_name}", "kotlin_spring_graphql_analyzer"))
           endpoint.add_tag(Tag.new("graphql-root", route.root_kind, "kotlin_spring_graphql_analyzer"))
@@ -936,7 +937,8 @@ module Analyzer::Kotlin
 
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
-          endpoint = Endpoint.new(SpringPropertyPath.resolve(Noir::URLPath.join_rooted(base_path, route.path), spring_properties), route.verb, parameters, details)
+          endpoint = spring_endpoint(spring_properties, Noir::URLPath.join_rooted(base_path, route.path), route.verb, parameters, details)
+          endpoint.mark_resolution("prefix") if route.prefix_unresolved?
           endpoint.handler = jvm_route_handler(route, path)
           if method
             endpoint.route_conditions = Noir::TreeSitterKotlinParameterExtractor.extract_route_conditions_from_method(
@@ -1036,11 +1038,14 @@ module Analyzer::Kotlin
 
               details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
               details.add_path(PathInfo.new(path, implementation.line + 1))
-              endpoint = Endpoint.new(SpringPropertyPath.resolve(Noir::URLPath.join_rooted(base_path, inherited_path), spring_properties), entry_route.verb, parameters, details)
-              impl_function = method_nodes["#{implementation.class_name}##{entry_route.method_name}"]?
+              endpoint = spring_endpoint(spring_properties, Noir::URLPath.join_rooted(base_path, inherited_path), entry_route.verb, parameters, details)
+              endpoint.mark_resolution("prefix") if entry_route.prefix_unresolved? || implementation.prefix_unresolved?
+              method_key = "#{implementation.class_name}##{entry_route.method_name}"
+              impl_function = method_nodes[method_key]?
               attach_method_security_tags(endpoint, impl_function, content)
               # The body lives on the `override fun`, not the interface function.
               if impl_function && (impl_row = Noir::TreeSitterKotlinRouteExtractor.function_name_row(impl_function))
+                endpoint.mark_resolution("handler", Endpoint::RESOLUTION_HEURISTIC) if method_nodes.any? { |key, _| key.starts_with?("#{method_key}@") }
                 endpoint.handler = Handler.new("#{implementation.class_name}.#{entry_route.method_name}", path, impl_row + 1)
               end
 

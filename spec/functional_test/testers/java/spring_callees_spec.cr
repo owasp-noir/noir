@@ -116,3 +116,9 @@ describe "Spring annotation handlers", tags: "functional" do
     legacy_order.callees.map(&.name).should_not contain("service.load")
   end
 end
+
+describe "spring_callees route resolution", tags: "functional" do
+  it "records the evidence for each reported route" do
+    tester.endpoints.find! { |ep| ep.url == "/api/catalog/{id}" }.resolution.should eq({"handler" => "heuristic"})
+  end
+end

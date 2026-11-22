@@ -20,5 +20,6 @@ for _app in mounted_apps():
 urlpatterns = [
     path("", include(_dynamic)),
     path("-/health/", health),
+    path("optional/", include("extension.urls")),
     path("billing/", include("apps.billing.urls")),
 ]

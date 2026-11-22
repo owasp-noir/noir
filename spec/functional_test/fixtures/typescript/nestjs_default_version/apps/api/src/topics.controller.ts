@@ -15,3 +15,9 @@ export class WellKnownController {
     return {};
   }
 }
+
+@Controller({ path: 'both', version: ['1', VERSION_NEUTRAL] })
+export class MixedVersionController {
+  @Get()
+  list() { return []; }
+}

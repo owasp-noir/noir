@@ -17,7 +17,7 @@ module Analyzer::Javascript
 
     private record GlobalPrefixExclude, path : String, method : String? = nil
 
-    private record GlobalPrefixConfig, prefix : String, excludes : Array(GlobalPrefixExclude)
+    private record GlobalPrefixConfig, prefix : String, excludes : Array(GlobalPrefixExclude), unread : Bool = false
 
     # `app.enableVersioning({...})`: whether the version is a URL segment
     # (URI, the default) or read from the request (HEADER, MEDIA_TYPE,
@@ -26,7 +26,7 @@ module Analyzer::Javascript
     # controller with no version of its own serves under URI versioning) and
     # `prefix` the URI segment's lead (`v` unless `prefix:` says otherwise).
     private record VersioningConfig, uri : Bool, default_version : String?, header : String?,
-      defaults : Array(String) = [] of String, prefix : String = "v"
+      defaults : Array(String) = [] of String, prefix : String = "v", options_unread : Bool = false, type_unread : Bool = false, prefix_unread : Bool = false, known_defaults : Set(String)? = nil
 
     # Name of the `route_conditions` entry that carries a route's raw version
     # list from the per-file scan to `separate_header_versions`.
@@ -49,10 +49,22 @@ module Analyzer::Javascript
     @nest_module_decls = {} of String => Hash(String, Array(String))
     @router_prefixed = Set(String).new
 
-    # Project-wide `EnumName.Member` / `Object.prop` -> value map, used to
-    # resolve `@Controller(...)` prefix constants imported from another
-    # file. nil until `analyze_with_extensions` seeds it.
-    @nest_global_literals : Hash(String, Array(String))? = nil
+    # Keep the scalar text the parser retained and whether its declaration
+    # continued beyond the literal or interpolated a runtime expression.
+    class LiteralValues < Hash(String, Array(String))
+      getter unread = Set(String).new
+
+      def store_literal(key : String, quote : String, value : String, continued : Bool)
+        self[key] = [value]
+        if continued || (quote == "`" && value.matches?(/(?<!\\)\$\{/))
+          unread << key
+        else
+          unread.delete(key)
+        end
+      end
+    end
+
+    @nest_global_literals : LiteralValues? = nil
 
     @nest_dtos : Noir::TsDtoResolver?
 
@@ -71,14 +83,17 @@ module Analyzer::Javascript
     # `@Controller`/`@Get` prefix. Bare-identifier consts are file-local
     # and collision-prone, so they stay per-file. Gated on the cheap
     # `enum `/`as const` substrings so most files are skipped outright.
-    private def collect_global_literal_values : Hash(String, Array(String))
-      acc = Hash(String, Array(String)).new
+    private def collect_global_literal_values : LiteralValues
+      acc = LiteralValues.new
       all_files.each do |path|
         next unless GLOBAL_LITERAL_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
         content = read_file_content(path)
         next unless content.includes?("enum ") || content.includes?("as const")
-        extract_literal_values(content).each do |key, value|
-          acc[key] = value if key.includes?(".") && !acc.has_key?(key)
+        local = extract_literal_values(content)
+        local.each do |key, value|
+          next if !key.includes?(".") || acc.has_key?(key)
+          acc[key] = value
+          acc.unread << key if local.unread.includes?(key)
         end
       rescue
         next
@@ -117,27 +132,39 @@ module Analyzer::Javascript
     end
 
     # `extract_literal_values` backed by the cross-file enum/object table.
-    private def file_literal_values(code : String) : Hash(String, Array(String))
+    private def file_literal_values(code : String) : LiteralValues
       values = extract_literal_values(code)
-      @nest_global_literals.try &.each { |key, value| values[key] = value unless values.has_key?(key) }
+      if global = @nest_global_literals
+        global.each do |key, value|
+          next if values.has_key?(key)
+          values[key] = value
+          values.unread << key if global.unread.includes?(key)
+        end
+      end
       values
     end
 
     # `enableVersioning()` defaults to URI. A CUSTOM extractor's header is
     # the `headers[...]` key it reads.
-    private def parse_versioning_options(args : String, literal_values : Hash(String, Array(String))) : VersioningConfig
-      type = args.match(/\btype\s*:\s*VersioningType\.(\w+)/).try(&.[1]) || "URI"
+    private def parse_versioning_options(args : String, literal_values : LiteralValues) : VersioningConfig
+      declared_type = args.match(/\btype\s*:\s*VersioningType\.(\w+)/).try(&.[1])
+      type = declared_type || "URI"
+      options_unread = (!args.strip.empty? && !args.strip.starts_with?('{')) || args.includes?("...")
+      type_unread = declared_type.nil? && args.matches?(/\btype\s*[:,}]/)
+      prefix_expr = args.match(/\bprefix\s*:\s*([^,}]+)/).try(&.[1].strip)
+      prefix_unread = prefix_expr && prefix_expr != "false" && (!prefix_expr.matches?(/\A(['"`])[^'"`]*\1\z/) || prefix_expr.includes?("${"))
       default_version = args.match(/\bdefaultVersion\s*:\s*(\[[^\]]*\]|[^,\n}]+)/).try(&.[1].strip)
       header = args.match(/\bheader\s*:\s*([^,\n}]+)/) || args.match(/\bheaders\s*\[\s*([^\]]+?)\s*\]/)
+      known_defaults = default_version.try { |expr| established_versions(expr, literal_values) }
       VersioningConfig.new(type == "URI", default_version, header.try(&.[1].strip),
-        default_version.try { |expr| literal_versions(expr, literal_values) } || [] of String, versioning_prefix(args))
+        default_version.try { |expr| literal_versions(expr, literal_values) } || [] of String, versioning_prefix(args), options_unread, type_unread, !!prefix_unread, known_defaults)
     end
 
     # `defaultVersion: '1'` / `['1', '2']` / `VERSION_NEUTRAL` /
     # `API_VERSION` (a constant of the bootstrap's file or an imported enum
     # member): the literal versions. An identifier this scan cannot see the
     # value of is dropped rather than rendered as `v<IDENT>`.
-    private def literal_versions(expr : String, literal_values : Hash(String, Array(String))) : Array(String)
+    private def literal_versions(expr : String, literal_values : LiteralValues) : Array(String)
       versions = [] of String
       expr.scan(/(['"`])([^'"`]+)\1|\b(VERSION_NEUTRAL|\d[\w.]*)\b|([A-Za-z_$][\w$.]*)/) do |match|
         values = match[4]? ? (literal_values[match[4]]? || [] of String) : [match[2]? || match[3]]
@@ -327,7 +354,18 @@ module Analyzer::Javascript
 
       # Apply discovered global prefixes (`app.setGlobalPrefix('api')`)
       # — the bootstrap call mounts every controller under that prefix.
-      apply_global_prefixes(result, global_prefix_holder)
+      # Unknown settings must not change how competing literal settings
+      # are selected. Attribute them using the same bootstrap scope.
+      unread, literal = global_prefix_holder.partition { |_, config| config.unread }
+      unless unread.empty?
+        result.map! do |endpoint|
+          file = endpoint.details.code_paths.first?.try(&.path)
+          config = file && app_config_for(file, global_prefix_holder)
+          endpoint.mark_resolution("prefix") if config && config.unread && !global_prefix_excluded?(endpoint, config.excludes)
+          endpoint
+        end
+      end
+      apply_global_prefixes(result, literal + unread.reject { |_, config| config.prefix.empty? })
 
       result
     end
@@ -347,7 +385,7 @@ module Analyzer::Javascript
     private def apply_router_module_prefixes(result : Array(Endpoint))
       files = all_files.select { |path| GLOBAL_LITERAL_EXTENSIONS.any? { |ext| path.ends_with?(ext) } && !ignored_nest_path?(path) }
       # {module file, module name} => full mount path
-      mounts = [] of Tuple(String, String, String)
+      mounts = [] of Tuple(String, String, String?, Bool)
       files.each do |path|
         content = read_file_content(path)
         next unless content.includes?("RouterModule")
@@ -365,17 +403,25 @@ module Analyzer::Javascript
       end
       return if mounts.empty?
 
+      unread_controllers = Set(Tuple(String, String)).new
       mounted = Set(Tuple(String, String)).new
-      mounts.each { |(file, name, _)| mounted << {Noir::PathScope.expand(file), name} }
-
-      paths_by_controller = {} of Tuple(String, String) => Array(String)
-      mounts.each do |(file, name, prefix)|
-        module_controller_keys(file, name).each do |key|
-          list = (paths_by_controller[key] ||= [] of String)
-          list << prefix unless list.includes?(prefix)
+      dynamic_modules = Set(Tuple(String, String)).new
+      paths_by_controller = {} of Tuple(String, String) => Hash(String, Bool)
+      mounts.each do |file, name, prefix, unread|
+        mod = {Noir::PathScope.expand(file), name}
+        keys = module_controller_keys(file, name)
+        if prefix
+          mounted << mod
+          keys.each do |key|
+            paths = (paths_by_controller[key] ||= {} of String => Bool)
+            paths[prefix] = unread && paths.fetch(prefix, true)
+          end
+        else
+          dynamic_modules << mod
+          unread_controllers.concat(keys)
         end
       end
-      return if paths_by_controller.empty?
+      return if paths_by_controller.empty? && unread_controllers.empty?
 
       # Controllers a module that is not mounted also lists: still served
       # at their own path.
@@ -383,8 +429,12 @@ module Analyzer::Javascript
       files.each do |path|
         next unless read_file_content(path).includes?("@Module")
         module_decls(path).each_key do |name|
-          next if mounted.includes?({Noir::PathScope.expand(path), name})
-          module_controller_keys(path, name).each { |key| plain << key }
+          mod = {Noir::PathScope.expand(path), name}
+          next if mounted.includes?(mod)
+          module_controller_keys(path, name).each do |key|
+            plain << key
+            unread_controllers.delete(key) unless dynamic_modules.includes?(mod)
+          end
         end
       end
 
@@ -393,10 +443,14 @@ module Analyzer::Javascript
         handler = endpoint.handler || next
         file = Noir::PathScope.expand(handler.path || next)
         key = {file, handler.name.partition('.')[0]}
-        paths = paths_by_controller[key]? || next
+        unless paths = paths_by_controller[key]?
+          result[idx] = endpoint.mark_resolution("prefix") if unread_controllers.includes?(key)
+          next
+        end
         original = endpoint
-        paths.each_with_index do |prefix, i|
+        paths.each_with_index do |(prefix, unread), i|
           prefixed = original
+          prefixed.mark_resolution("prefix") if unread
           prefixed.url = join_router_prefix_after_version(prefix, original.url, handler.path)
           @router_prefixed << router_prefixed_key(prefixed)
           if i == 0
@@ -405,7 +459,10 @@ module Analyzer::Javascript
             extra << prefixed
           end
         end
-        extra << original if plain.includes?(key)
+        if plain.includes?(key)
+          original.mark_resolution("prefix") if unread_controllers.includes?(key)
+          extra << original
+        end
       end
       result.concat(extra)
     end
@@ -427,9 +484,9 @@ module Analyzer::Javascript
     end
 
     # `[{ path, module, children: [...] }, ...]` into (module, full path).
-    private def collect_router_mounts(text : String, parent : String, file : String,
-                                      literals : Hash(String, Array(String)), code : String,
-                                      mounts : Array(Tuple(String, String, String)), depth : Int32)
+    private def collect_router_mounts(text : String, parent : String?, file : String,
+                                      literals : LiteralValues, code : String,
+                                      mounts : Array(Tuple(String, String, String?, Bool)), depth : Int32, parent_unread : Bool = false)
       return if depth > 6 || !text.starts_with?("[") || !text.ends_with?("]")
       split_top_level(text[1...-1], ',').each do |element|
         element = element.strip
@@ -443,16 +500,16 @@ module Analyzer::Javascript
           when "children" then children = value.strip
           end
         end
-        path = (expr = path_expr) ? router_path_literal(expr, file, literals) : ""
-        next if path.nil?
-        full = join_router_prefix(parent, path)
+        path, unread = (expr = path_expr) ? router_path_literal(expr, file, literals) : {"", false}
+        unread ||= parent_unread
+        full = parent && path && join_router_prefix(parent, path)
         if (name = module_name) && name.matches?(/\A\w+\z/)
           if declared = module_file_for(name, file, code)
-            mounts << {declared[0], declared[1], full}
+            mounts << {declared[0], declared[1], full, unread}
           end
         end
         if kids = children
-          collect_router_mounts(kids, full, file, literals, code, mounts, depth + 1)
+          collect_router_mounts(kids, full, file, literals, code, mounts, depth + 1, unread)
         end
       end
     end
@@ -466,21 +523,22 @@ module Analyzer::Javascript
       code[open..close]
     end
 
-    private def router_path_literal(expr : String, file : String, literals : Hash(String, Array(String))) : String?
+    private def router_path_literal(expr : String, file : String, literals : LiteralValues) : Tuple(String?, Bool)
       if lit = expr.match(/\A(['"`])([^'"`$]*)\1\z/)
-        return lit[2]
+        return {lit[2], false}
       end
-      return unless expr.matches?(/\A[\w$.]+\z/)
+      return {nil, true} unless expr.matches?(/\A[\w$.]+\z/)
       if value = literals[expr]?.try(&.first?)
-        return value
+        return {value, literals.unread.includes?(expr)}
       end
       read_file_content(file).scan(NAMED_IMPORT) do |imp|
         declared = imported_name(imp[1], expr) || next
         next unless imp[2].starts_with?('.')
         target = Noir::ImportGraph.resolve_relative_import(file, imp[2], boundary: import_boundary_for(file)) || next
-        return extract_literal_values(read_file_content(target))[declared]?.try(&.first?)
+        imported = extract_literal_values(read_file_content(target))
+        return {imported[declared]?.try(&.first?), imported.unread.includes?(declared)}
       end
-      nil
+      {nil, true}
     end
 
     private def join_router_prefix(prefix : String, url : String) : String
@@ -839,6 +897,7 @@ module Analyzer::Javascript
     private def extract_global_prefix_config(content : String, path : String) : GlobalPrefixConfig?
       literal_values = extract_literal_values(content)
 
+      unread = nil
       content.scan(/\.setGlobalPrefix\s*\(/) do |match|
         open_paren = (match.end(0) || 0) - 1
         next if open_paren < 0
@@ -849,17 +908,20 @@ module Analyzer::Javascript
         args = split_top_level(content[(open_paren + 1)...close_paren], ',')
         next if args.empty?
 
-        prefixes = literal_paths_from_expression(args[0], literal_values)
-        next if prefixes.nil?
-        next if prefixes.size != 1 || prefixes[0].empty?
-
+        partial = Set(String).new
+        prefixes = literal_paths_from_expression(args[0], literal_values, partial)
         excludes = args.size > 1 ? extract_global_prefix_excludes(args[1], literal_values, content, path) : [] of GlobalPrefixExclude
-        return GlobalPrefixConfig.new(prefixes[0], excludes)
+        unless prefixes && prefixes.size == 1
+          unread = GlobalPrefixConfig.new("", excludes, true)
+          next
+        end
+        next if prefixes[0].empty?
+        return GlobalPrefixConfig.new(prefixes[0], excludes, partial.includes?(prefixes[0]))
       end
-      nil
+      unread
     end
 
-    private def extract_global_prefix_excludes(options : String, literal_values : Hash(String, Array(String)), content : String, path : String) : Array(GlobalPrefixExclude)
+    private def extract_global_prefix_excludes(options : String, literal_values : LiteralValues, content : String, path : String) : Array(GlobalPrefixExclude)
       excludes = [] of GlobalPrefixExclude
       match = options.match(/\bexclude\s*:\s*/)
       return excludes unless match
@@ -926,7 +988,7 @@ module Analyzer::Javascript
       size
     end
 
-    private def parse_global_prefix_exclude_entry(entry : String, literal_values : Hash(String, Array(String))) : Array(GlobalPrefixExclude)
+    private def parse_global_prefix_exclude_entry(entry : String, literal_values : LiteralValues) : Array(GlobalPrefixExclude)
       stripped = entry.strip
       return [] of GlobalPrefixExclude if stripped.empty?
 
@@ -1002,14 +1064,16 @@ module Analyzer::Javascript
         controller = klass.decorators.find { |decorator| decorator.called && controller_decorators.includes?(decorator.name) } || next
         base_paths = controller_base_paths(controller.args.first? || "", literal_values, controller.name)
         versions = controller.name == "Controller" ? controller_versions(controller.args.first?) : [] of String
-        process_http_methods(content, klass, base_paths, versions, uri_versioning, versioning, path, result, include_callee, literal_values, controller.name)
+        controller_version_expr = controller.args.first?.try(&.match(/(?:^|[,{])\s*version\s*:\s*(\[[^\]]*\]|[^,}]+)/)).try(&.[1]) if controller.name == "Controller"
+        known_versions = controller_version_expr.try { |expr| established_versions(expr, literal_values) }
+        process_http_methods(content, klass, base_paths, versions, uri_versioning, versioning, path, result, include_callee, literal_values, controller.name, known_versions)
         # Route metadata is read through the prototype chain: a base class's
         # decorated methods serve under the subclass's paths, and are
         # reported at the subclass so its module, app and versioning apply.
         owner = {klass.name, path, klass.row + 1}
         inherited_classes(klass, classes, content, path).each do |base, base_content, base_path|
           base_literals = base_path == path ? literal_values : file_literal_values(base_content)
-          process_http_methods(base_content, base, base_paths, versions, uri_versioning, versioning, base_path, result, include_callee, base_literals, controller.name, owner)
+          process_http_methods(base_content, base, base_paths, versions, uri_versioning, versioning, base_path, result, include_callee, base_literals, controller.name, known_versions, owner)
         end
       end
     end
@@ -1045,22 +1109,49 @@ module Analyzer::Javascript
     # Combine the controller's base paths with each version into a
     # set of `v<version>/<base>` paths. `'VERSION_NEUTRAL'` (Nest's
     # sentinel) is rendered as no prefix.
-    private def expand_versions(base_paths : Array(String), versions : Array(String), literal_values : Hash(String, Array(String)), version_prefix : String = "v") : Array(String)
-      expanded = [] of String
+    private def expand_versions(base_paths : Array(Tuple(String, Bool)), versions : Array(String), literal_values : LiteralValues, version_prefix : String, known : Set(String)?, dynamic_prefix : Bool) : Array(Tuple(String, Bool))
+      expanded = [] of Tuple(String, Bool)
       versions.each do |v|
         prefix = v == "VERSION_NEUTRAL" ? "" : "#{version_prefix}#{literal_values[v]?.try(&.first?) || v}"
-        base_paths.each do |bp|
-          if prefix.empty?
-            expanded << bp
-          elsif bp.empty?
-            expanded << prefix
-          else
-            normalized = bp.starts_with?("/") ? bp[1..] : bp
-            expanded << "#{prefix}/#{normalized}"
-          end
+        base_paths.each do |bp, unread|
+          path = if prefix.empty?
+                   bp
+                 elsif bp.empty?
+                   prefix
+                 else
+                   normalized = bp.starts_with?("/") ? bp[1..] : bp
+                   "#{prefix}/#{normalized}"
+                 end
+          expanded << {path, unread || !!(known && !known.includes?(v)) || (dynamic_prefix && v != "VERSION_NEUTRAL")}
         end
       end
       expanded.uniq
+    end
+
+    # Nil when every version was established. For a mixed array, retain
+    # the exact alternatives so an unread sibling cannot mark them.
+    private def established_versions(expression : String, literals : LiteralValues) : Set(String)?
+      value = expression.strip
+      parts = value.starts_with?('[') && value.ends_with?(']') ? split_top_level(value[1...-1], ',') : [value]
+      known = Set(String).new
+      missing = false
+      parts.each do |part|
+        part = part.strip
+        next if part.empty?
+        if part == "VERSION_NEUTRAL" || part.matches?(/\A\d+\z/)
+          known << part
+          next
+        end
+        partial = Set(String).new
+        values = literal_paths_from_expression(part, literals, partial)
+        if values && partial.empty?
+          known << part
+          known.concat(values)
+        else
+          missing = true
+        end
+      end
+      known if missing
     end
 
     # The versions in `@Controller({ ..., version: ... })`'s options:
@@ -1113,25 +1204,29 @@ module Analyzer::Javascript
     # Midway takes an options object after the path —
     # `@Controller('/api', { middleware })` — so only the first argument is
     # the path.
-    private def controller_base_paths(arg : String, literal_values : Hash(String, Array(String)), name : String) : Array(String)
-      literal_paths_from_expression(arg, literal_values) || [""]
+    private def controller_base_paths(arg : String, literal_values : LiteralValues, name : String) : Array(Tuple(String, Bool))
+      unread = Set(String).new
+      paths = literal_paths_from_expression(arg, literal_values, unread)
+      return paths.map { |path| {path, unread.includes?(path)} } if paths
+      options_without_path = arg.strip.starts_with?('{') && !arg.matches?(/\bpath\b|\.\.\./)
+      [{"", !options_without_path}]
     end
 
-    private def extract_literal_values(content : String) : Hash(String, Array(String))
-      literal_values = Hash(String, Array(String)).new
+    private def extract_literal_values(content : String) : LiteralValues
+      literal_values = LiteralValues.new
 
-      content.scan(/\b(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(['"`])([^'"`]*?)\2/) do |match|
+      content.scan(/\b(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(['"`])([^'"`]*?)\2(\s*\+)?/) do |match|
         next unless match.size >= 4
-        literal_values[match[1]] = [match[3]]
+        literal_values.store_literal(match[1], match[2], match[3], !!match[4]?)
       end
 
       content.scan(/\benum\s+(\w+)\s*\{([\s\S]*?)\}/m) do |match|
         next unless match.size >= 3
         enum_name = match[1]
         body = match[2]
-        body.scan(/(\w+)\s*=\s*(['"`])([^'"`]*?)\2/) do |member|
+        body.scan(/(\w+)\s*=\s*(['"`])([^'"`]*?)\2(\s*\+)?/) do |member|
           next unless member.size >= 4
-          literal_values["#{enum_name}.#{member[1]}"] = [member[3]]
+          literal_values.store_literal("#{enum_name}.#{member[1]}", member[2], member[3], !!member[4]?)
         end
       end
 
@@ -1139,16 +1234,16 @@ module Analyzer::Javascript
         next unless match.size >= 3
         object_name = match[1]
         body = match[2]
-        body.scan(/(?:['"`]?(\w+)['"`]?)\s*:\s*(['"`])([^'"`]*?)\2/) do |property|
+        body.scan(/(?:['"`]?(\w+)['"`]?)\s*:\s*(['"`])([^'"`]*?)\2(\s*\+)?/) do |property|
           next unless property.size >= 4
-          literal_values["#{object_name}.#{property[1]}"] = [property[3]]
+          literal_values.store_literal("#{object_name}.#{property[1]}", property[2], property[3], !!property[4]?)
         end
       end
 
       literal_values
     end
 
-    private def literal_paths_from_expression(expression : String, literal_values : Hash(String, Array(String))) : Array(String)?
+    private def literal_paths_from_expression(expression : String, literal_values : LiteralValues, unread : Set(String)? = nil) : Array(String)?
       # A last object key keeps its trailing comma: `{ path: "/v2/x", }`.
       expr = expression.strip.chomp(',').strip
       return [""] if expr.empty?
@@ -1156,13 +1251,14 @@ module Analyzer::Javascript
       expr = expr.sub(/\s+as\s+const\s*$/, "").strip
 
       if str = expr.match(/^(['"`])([^'"`]*)\1$/)
+        unread.try &.add(str[2]) if str[1] == "`" && str[2].matches?(/(?<!\\)\$\{/)
         return [str[2]]
       end
 
       if expr.starts_with?("[") && expr.ends_with?("]")
         paths = [] of String
         split_top_level(expr[1...-1], ',').each do |part|
-          resolved = literal_paths_from_expression(part, literal_values)
+          resolved = literal_paths_from_expression(part, literal_values, unread)
           resolved.try { |values| paths.concat(values) }
         end
         return paths unless paths.empty?
@@ -1173,7 +1269,7 @@ module Analyzer::Javascript
         if path_match = expr.match(/(?:^|[,{]\s*)path\s*:\s*([\s\S]*?)(?:,\s*\w+\s*:|\}\s*$)/m)
           path_expr = path_match[1].strip
           path_expr = path_expr[0...-1].strip if path_expr.ends_with?("}")
-          return literal_paths_from_expression(path_expr, literal_values)
+          return literal_paths_from_expression(path_expr, literal_values, unread)
         end
         return
       end
@@ -1181,15 +1277,20 @@ module Analyzer::Javascript
       plus_parts = split_top_level(expr, '+')
       if plus_parts.size > 1
         pieces = [] of String
+        unread_parts = Set(String).new if unread
         plus_parts.each do |part|
-          values = literal_paths_from_expression(part, literal_values)
+          values = literal_paths_from_expression(part, literal_values, unread_parts)
           return unless values && values.size == 1
           pieces << values[0]
         end
-        return [pieces.join]
+        joined = pieces.join
+        unread.try &.add(joined) if unread_parts.try(&.present?)
+        return [joined]
       end
 
-      literal_values[expr]?
+      values = literal_values[expr]?
+      unread.concat(values) if unread && values && literal_values.unread.includes?(expr)
+      values
     end
 
     private def split_top_level(text : String, delimiter : Char) : Array(String)
@@ -1198,7 +1299,7 @@ module Analyzer::Javascript
 
     # `owner` (class name, file, line) is the controller an inherited
     # `klass` serves under; its routes are reported there.
-    private def process_http_methods(content : String, klass : Noir::TsDecoratorExtractor::ClassDecl, base_paths : Array(String), controller_versions : Array(String), uri_versioning : Bool, versioning : VersioningConfig?, file_path : String, result : Array(Endpoint), include_callee : Bool, literal_values : Hash(String, Array(String)), controller_decorator : String, owner : Tuple(String, String, Int32)? = nil)
+    private def process_http_methods(content : String, klass : Noir::TsDecoratorExtractor::ClassDecl, base_paths : Array(Tuple(String, Bool)), controller_versions : Array(String), uri_versioning : Bool, versioning : VersioningConfig?, file_path : String, result : Array(Endpoint), include_callee : Bool, literal_values : LiteralValues, controller_decorator : String, controller_known_versions : Set(String)?, owner : Tuple(String, String, Int32)? = nil)
       method_map = route_decorator_methods
 
       klass.methods.each do |method|
@@ -1214,7 +1315,21 @@ module Analyzer::Javascript
         # `defaultVersion` (`/v1/auth/login` for `@Controller('auth')`).
         effective_versions = versions.empty? && uri_versioning && versioning ? versioning.defaults : versions
         version_prefix = versioning.try(&.prefix) || "v"
-        effective_base_paths = uri_versioning && !effective_versions.empty? ? expand_versions(base_paths, effective_versions, literal_values, version_prefix) : base_paths
+        known = controller_known_versions
+        if explicit = method.decorators.find { |dec| dec.called && dec.name == "Version" }.try(&.args.first?)
+          known = established_versions(explicit, literal_values)
+        end
+        # An omitted declaration can use the bootstrap's exact defaults.
+        # A declaration we failed to read instead makes that fallback uncertain.
+        missing_declaration = versions.empty? && !known.nil?
+        known ||= versioning.try(&.known_defaults) if versions.empty?
+        dynamic_prefix = versioning && (versioning.options_unread || versioning.type_unread || versioning.prefix_unread)
+        effective_base_paths = if uri_versioning && !effective_versions.empty?
+                                 expand_versions(base_paths, effective_versions, literal_values, version_prefix, known, !!dynamic_prefix)
+                               else
+                                 base_paths
+                               end
+        unread = uri_versioning && (missing_declaration || (effective_versions.empty? && (!known.nil? || !!versioning.try(&.options_unread))))
 
         body = method_body(content, method)
         # Once per method: every version × path × verb endpoint shares them.
@@ -1226,7 +1341,8 @@ module Analyzer::Javascript
         report_path = owner.try(&.[1]) || file_path
 
         routes.each do |route|
-          route_paths = literal_paths_from_expression(route.args.first? || "", literal_values) || next
+          partial_routes = Set(String).new
+          route_paths = literal_paths_from_expression(route.args.first? || "", literal_values, partial_routes) || next
           record_version_segments(report_path, effective_versions, literal_values, version_prefix) if uri_versioning
           if include_callee && body && callees.nil?
             callees = Noir::JSCalleeExtractor.callees_for_function_body(body, file_path, method.body_row + 1)
@@ -1234,11 +1350,12 @@ module Analyzer::Javascript
           decorator_line = owner.try(&.[2]) || route.row + 1
           methods = method_map[route.name]
 
-          effective_base_paths.each do |base_path|
+          effective_base_paths.each do |base_path, template_unread|
             route_paths.each do |route_path|
               full_path = combine_paths(base_path, route_path)
               methods.each do |verb|
                 endpoint = Endpoint.new(full_path, verb)
+                endpoint.mark_resolution("prefix") if unread || template_unread || partial_routes.includes?(route_path)
                 endpoint.details = Details.new(PathInfo.new(report_path, decorator_line))
                 endpoint.handler = handler
                 endpoint.route_conditions = [Param.new(VERSION_CONDITION, versions.join(","), "header")] unless uri_versioning || versions.empty?
@@ -1260,7 +1377,7 @@ module Analyzer::Javascript
       end
     end
 
-    private def record_version_segments(file_path : String, versions : Array(String), literal_values : Hash(String, Array(String)), version_prefix : String)
+    private def record_version_segments(file_path : String, versions : Array(String), literal_values : LiteralValues, version_prefix : String)
       segments = versions.compact_map do |version|
         "#{version_prefix}#{literal_values[version]?.try(&.first?) || version}" unless version == "VERSION_NEUTRAL"
       end

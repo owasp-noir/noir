@@ -22,3 +22,18 @@ public class BareController {
         return "ok";
     }
 }
+
+@RestController
+@org.springframework.web.bind.annotation.RequestMapping(ExternalPaths.BASE)
+class ExternalController {
+    @GetMapping("/external")
+    public String external() { return "ok"; }
+}
+
+
+@RestController
+@org.springframework.web.bind.annotation.RequestMapping("/choice")
+class ChoiceController {
+    @GetMapping(ExternalPaths.LEGACY ? "/v1" : "/v2")
+    public String choose() { return "ok"; }
+}

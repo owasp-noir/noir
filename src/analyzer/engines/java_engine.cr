@@ -524,6 +524,13 @@ module Analyzer::Java
       values
     end
 
+    private def spring_endpoint(properties : Hash(String, String), path : String, *args) : Endpoint
+      url, unread = SpringPropertyPath.resolve_with_status(path, properties)
+      endpoint = Endpoint.new(url, *args)
+      endpoint.mark_resolution("prefix") if unread
+      endpoint
+    end
+
     private def spring_path_config(values : Hash(String, String)) : SpringPathConfig
       SpringPathConfig.new(
         normalize_optional_path(values["server.servlet.context-path"]?),
@@ -638,6 +645,7 @@ module Analyzer::Java
         prefix = own_port ? normalize_optional_path(values["management.server.base-path"]? || values["management.server.servlet.context-path"]?) : base_path
         web_base = values["management.endpoints.web.base-path"]? || "/actuator"
         actuator_base = Noir::URLPath.join_rooted(prefix, web_base)
+        unread_base = prefix.includes?("${") || web_base.includes?("${")
         # Boot drops the discovery page when told to, and when the base path
         # is `/` on the main port, where it would shadow the app's own root.
         discovery = values["management.endpoints.web.discovery.enabled"]?.try(&.downcase) != "false" &&
@@ -647,20 +655,23 @@ module Analyzer::Java
         ids = listed.includes?("*") ? (SPRING_ACTUATOR_CORE + listed).uniq : listed
         ids = ids.reject { |id| id.empty? || id == "*" || excluded.includes?(id) || !spring_actuator_enabled?(values, id) }
         unless ids.empty?
-          endpoints << framework_endpoint(actuator_base, "GET", evidence) if discovery
+          endpoints << framework_endpoint(actuator_base, "GET", evidence, unread_prefix: unread_base) if discovery
           ids.each do |id|
-            url = Noir::URLPath.join_rooted(actuator_base, values["management.endpoints.web.path-mapping.#{id}"]? || id)
-            endpoints << framework_endpoint(url, id == "shutdown" ? "POST" : "GET", evidence)
+            leaf = values["management.endpoints.web.path-mapping.#{id}"]? || id
+            url = Noir::URLPath.join_rooted(actuator_base, leaf)
+            endpoints << framework_endpoint(url, id == "shutdown" ? "POST" : "GET", evidence, unread_prefix: unread_base || leaf.includes?("${"))
           end
         end
       end
 
       if evidence = spring_build_dependency(project_root, SPRING_SPRINGDOC_DEP_RE)
         unless values["springdoc.api-docs.enabled"]? == "false"
-          endpoints << framework_endpoint(Noir::URLPath.join_rooted(base_path, values["springdoc.api-docs.path"]? || "/v3/api-docs"), "GET", evidence)
+          docs_path = values["springdoc.api-docs.path"]? || "/v3/api-docs"
+          endpoints << framework_endpoint(Noir::URLPath.join_rooted(base_path, docs_path), "GET", evidence, unread_prefix: base_path.includes?("${") || docs_path.includes?("${"))
         end
         if (ui = spring_build_dependency(project_root, SPRING_SWAGGER_UI_DEP_RE)) && values["springdoc.swagger-ui.enabled"]? != "false"
-          endpoints << framework_endpoint(Noir::URLPath.join_rooted(base_path, values["springdoc.swagger-ui.path"]? || "/swagger-ui.html"), "GET", ui)
+          ui_path = values["springdoc.swagger-ui.path"]? || "/swagger-ui.html"
+          endpoints << framework_endpoint(Noir::URLPath.join_rooted(base_path, ui_path), "GET", ui, unread_prefix: base_path.includes?("${") || ui_path.includes?("${"))
         end
       end
 
@@ -675,8 +686,9 @@ module Analyzer::Java
       enabled != "false" && access != "none"
     end
 
-    private def framework_endpoint(url : String, verb : String, evidence : PathInfo, params = [] of Param, tag = FRAMEWORK_PROVIDED_TAG) : Endpoint
+    private def framework_endpoint(url : String, verb : String, evidence : PathInfo, params = [] of Param, tag = FRAMEWORK_PROVIDED_TAG, *, unread_prefix : Bool) : Endpoint
       endpoint = Endpoint.new(url, verb, params, Details.new(evidence))
+      endpoint.mark_resolution("prefix") if unread_prefix
       endpoint.add_tag(tag)
       endpoint
     end
@@ -1162,7 +1174,8 @@ module Analyzer::Java
       JavaEngine.spring_security_routes(code).map do |verb, url, params, offset, success, served|
         endpoint = framework_endpoint(
           Noir::URLPath.join_rooted(base_path, url), verb, PathInfo.new(path, line_number_for_index(code, offset)),
-          params.map { |name| Param.new(name, "", verb == "POST" ? "form" : "query") }, served ? SECURITY_FILTER_TAG : FRAMEWORK_PROVIDED_TAG
+          params.map { |name| Param.new(name, "", verb == "POST" ? "form" : "query") }, served ? SECURITY_FILTER_TAG : FRAMEWORK_PROVIDED_TAG,
+          unread_prefix: base_path.includes?("${")
         )
         endpoint.handler = logout_success_handler(success, code, offset) if success
         endpoint
@@ -1438,7 +1451,11 @@ module Analyzer::Java
           CodeLocator.instance.static_files_under(dir).sort!.each do |file|
             relative_path = Noir::PathScope.relative_under(file, dir)
             url = Noir::URLPath.absolute_join(base_path, prefix, relative_path)
-            endpoints << Endpoint.new(url, "GET", Details.new(PathInfo.new(file))) if served.add?({url, file})
+            if served.add?({url, file})
+              endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(file)))
+              endpoint.mark_resolution("prefix") if base_path.includes?("${")
+              endpoints << endpoint
+            end
           end
         end
       end

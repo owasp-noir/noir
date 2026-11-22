@@ -41,7 +41,7 @@ module Analyzer::Go
       # chain to read the PathPrefix argument.
       # Paths built through wrappers (`s.prefixedPath("/version")`) and
       # other packages' constants (see Gin).
-      string_seed = go_string_seed
+      string_seed = go_string_seed(mark_wrappers: true)
       package_groups, file_contents = collect_package_groups_ts("Subrouter", import_marker: IMPORT_MARKER, string_seed: string_seed)
       # `InitUser(r.PathPrefix("/api/users").Subrouter())` + `func InitUser(users *mux.Router)`:
       # the prefix lives at the call site (see `resolve_router_builder_prefixes`).

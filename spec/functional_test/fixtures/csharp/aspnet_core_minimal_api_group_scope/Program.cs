@@ -16,4 +16,20 @@ void MapShared()
     shared.MapGet("/ping", () => "pong");
 }
 
+var dynamicGroup = app.MapGroup(builder.Configuration["Group"]);
+dynamicGroup.MapGet("/summary", () => "summary");
+shared.MapGet("/report" + builder.Configuration["Suffix"], () => "report");
+
+app.MapGet("/selection", First.Status);
+
 app.Run();
+
+class First
+{
+    public static string Status() => "first";
+}
+
+class Second
+{
+    public static string Status() => "second";
+}

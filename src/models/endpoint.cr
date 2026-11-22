@@ -117,6 +117,12 @@ struct Endpoint
   RESOLUTION_UNRESOLVED = "unresolved"
   RESOLUTION_VALUES     = [RESOLUTION_HEURISTIC, RESOLUTION_UNRESOLVED]
 
+  # Endpoints are value types, but copies may share their resolution map.
+  def mark_resolution(claim : String, how : String = RESOLUTION_UNRESOLVED) : self
+    @resolution = (@resolution || {} of String => String).merge({claim => how})
+    self
+  end
+
   # Per-endpoint context for AI code reviewers: 1-hop callees from the
   # handler body. Best-effort, intentionally incomplete on dynamic
   # dispatch / middleware / decorators. Populated by analyzers that

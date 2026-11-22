@@ -187,7 +187,7 @@ module Analyzer::Python
       # actually resolved, not a guess about which URLs look alike.
       @settings_file = nil
       extract_endpoints_from_orphan_urlconfs.each do |endpoint|
-        endpoints << endpoint
+        endpoints << endpoint.mark_resolution("prefix")
       end
 
       endpoints.concat(extract_channels_endpoints)
@@ -627,6 +627,7 @@ module Analyzer::Python
           if view.empty?
             endpoints << Endpoint.new(url, "GET", Details.new(entry_path))
           else
+            unfollowed_include = view.matches?(/\A(?:django\.urls\.)?include\s*\(/)
             wrapper = urlconf_auth_wrapper(view)
             view, action_map = drf_as_view_target(view, django_urls.filepath)
             view = extract_wrapped_view_reference(view)
@@ -634,11 +635,13 @@ module Analyzer::Python
               filepath, function_or_class_name = view_target
               with_route_verb(view_endpoints(url, filepath, function_or_class_name, action_map), verb).each do |endpoint|
                 append_code_path(endpoint.details, entry_path)
+                endpoint.mark_resolution("prefix") if unfollowed_include
                 endpoints << tag_urlconf_auth(endpoint, wrapper)
               end
             else
               # By default, Django allows requests with methods other than GET as well
               with_route_verb(unresolved_view_endpoints(url, view, original_content, entry_path), verb).each do |endpoint|
+                endpoint.mark_resolution("prefix") if unfollowed_include
                 endpoints << tag_urlconf_auth(endpoint, wrapper)
               end
             end
@@ -1267,6 +1270,7 @@ module Analyzer::Python
           append_code_path(endpoint.details, parent_route_path)
           endpoints << endpoint
         else
+          unfollowed_include = view.matches?(/\A(?:django\.urls\.)?include\s*\(/)
           wrapper = urlconf_auth_wrapper(view)
           view, action_map = drf_as_view_target(view, current_app_config_path)
           view = extract_wrapped_view_reference(view)
@@ -1278,11 +1282,13 @@ module Analyzer::Python
             with_route_verb(view_endpoints(url, filepath, function_or_class_name, action_map), verb).each do |endpoint|
               append_code_path(endpoint.details, entry_path)
               append_code_path(endpoint.details, parent_route_path)
+              endpoint.mark_resolution("prefix") if unfollowed_include
               endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
           else
             with_route_verb(unresolved_view_endpoints(url, view, read_file_content(current_app_config_path), entry_path), verb).each do |endpoint|
               append_code_path(endpoint.details, parent_route_path)
+              endpoint.mark_resolution("prefix") if unfollowed_include
               endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
           end
@@ -1621,6 +1627,7 @@ module Analyzer::Python
       # Item name -> {root router, own prefix, parent item}.
       nested_items = Hash(::String, Tuple(::String, ::String, ::String?)).new
 
+      unread_items = Set(::String).new
       lines.each_with_index do |line, index|
         next if line.lstrip.starts_with?("#")
         next unless line.includes?(".register(")
@@ -1632,7 +1639,10 @@ module Analyzer::Python
         args = split_python_arguments(register_match[2])
         next if args.empty?
 
-        prefix = Helper.extract_python_string(args[0]) || extract_python_keyword_string(args, "prefix")
+        prefix, unread = Helper.python_string_with_status(args[0])
+        if prefix.nil? && (expression = extract_python_keyword_expression(args, "prefix"))
+          prefix, unread = Helper.python_string_with_status(expression)
+        end
         next unless prefix
 
         view_ref = extract_python_keyword_expression(args, "viewset") || args[1]?.try(&.strip)
@@ -1644,15 +1654,17 @@ module Analyzer::Python
         router = receiver
         route_prefix = prefix
         if item = nested_items[receiver]?
+          unread ||= unread_items.includes?(receiver)
           router = item[0]
           lookups = (extract_python_keyword_expression(args, "parents_query_lookups") || "").scan(/[rf]?['"]([^'"]+)['"]/).map(&.[1])
           route_prefix = nested_drf_prefix(nested_items, receiver, lookups, prefix)
         end
         if (assigned = logical_line.match(DRF_REGISTER_ASSIGN_RE)) && assigned[2] == receiver
+          unread ? unread_items.add(assigned[1]) : unread_items.delete(assigned[1])
           nested_items[assigned[1]] = {router, prefix, nested_items.has_key?(receiver) ? receiver : nil}
         end
 
-        registration = DjangoDrfRegistration.new(route_prefix, view_ref, !slashless.includes?(router))
+        registration = DjangoDrfRegistration.new(route_prefix, view_ref, !slashless.includes?(router), unread)
         registration.extra_routes = drf_router_extra_routes(content, file, router)
         registrations[router] << registration
       end
@@ -1885,6 +1897,7 @@ module Analyzer::Python
           next
         end
 
+        unfollowed_include = view.matches?(/\A(?:django\.urls\.)?include\s*\(/)
         wrapper = urlconf_auth_wrapper(view)
         view, action_map = drf_as_view_target(view, django_urls.filepath)
         view = extract_wrapped_view_reference(view)
@@ -1894,6 +1907,7 @@ module Analyzer::Python
           if /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
             with_route_verb(view_endpoints(url, filepath, function_or_class_name, action_map), verb).each do |endpoint|
               append_code_path(endpoint.details, entry_path)
+              endpoint.mark_resolution("prefix") if unfollowed_include
               endpoints << tag_urlconf_auth(endpoint, wrapper)
             end
             next
@@ -1901,6 +1915,7 @@ module Analyzer::Python
         end
 
         with_route_verb(unresolved_view_endpoints(url, view, read_file_content(django_urls.filepath), entry_path), verb).each do |endpoint|
+          endpoint.mark_resolution("prefix") if unfollowed_include
           endpoints << tag_urlconf_auth(endpoint, wrapper)
         end
       end
@@ -2024,6 +2039,7 @@ module Analyzer::Python
       registrations.each do |registration|
         extract_drf_router_endpoints(django_urls, mount_route, registration, registration_package_map, registration_path).each do |endpoint|
           append_code_path(endpoint.details, route_path)
+          endpoint.mark_resolution("prefix") if registration.prefix_unresolved?
           append_code_path(endpoint.details, router_path_info)
           endpoints << endpoint
         end
@@ -3901,9 +3917,10 @@ module Analyzer::Python
 
     struct DjangoDrfRegistration
       property prefix, view_ref, trailing_slash
+      getter? prefix_unresolved : Bool
       property extra_routes = [] of Tuple(Bool, ::String, ::String)
 
-      def initialize(@prefix : ::String, @view_ref : ::String, @trailing_slash : Bool = true)
+      def initialize(@prefix : ::String, @view_ref : ::String, @trailing_slash : Bool = true, @prefix_unresolved = false)
       end
     end
 
