@@ -13,22 +13,22 @@ require "../../func_spec.cr"
 expected_endpoints = [
   # Root + main-service routes (main.go AddRoute / .api, no prefix).
   Endpoint.new("/", "GET"),
-  Endpoint.new("/users/:id", "GET", [Param.new("id", "", "path")]),
-  Endpoint.new("/users", "POST"),
-  Endpoint.new("/users/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/users/:id", "GET", [Param.new("id", "", "path"), Param.new("name", "", "query")]),
+  Endpoint.new("/users", "POST", [Param.new("email", "", "json"), Param.new("name", "", "json")]),
+  Endpoint.new("/users/:id", "PUT", [Param.new("id", "", "path"), Param.new("email", "", "json"), Param.new("name", "", "json")]),
   Endpoint.new("/users/:id", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/users", "GET"),
   Endpoint.new("/profile", "GET"),
-  Endpoint.new("/profile", "PUT"),
+  Endpoint.new("/profile", "PUT", [Param.new("email", "", "json"), Param.new("name", "", "json")]),
   Endpoint.new("/health", "GET"),
-  Endpoint.new("/login", "POST"),
+  Endpoint.new("/login", "POST", [Param.new("password", "", "form"), Param.new("username", "", "form")]),
   # Group-prefixed routes (`server.Group("/api/v1")`).
-  Endpoint.new("/api/v1/products", "GET"),
+  Endpoint.new("/api/v1/products", "GET", [Param.new("category", "", "query")]),
   Endpoint.new("/api/v1/products", "POST"),
   # `@server(prefix: /admin)` `.api` block.
   Endpoint.new("/admin/users", "GET"),
   Endpoint.new("/admin/users/:id", "DELETE", [Param.new("id", "", "path")]),
-  Endpoint.new("/admin/users", "POST"),
+  Endpoint.new("/admin/users", "POST", [Param.new("email", "", "json"), Param.new("name", "", "json")]),
 ]
 
 FunctionalTester.new("fixtures/go/gozero/", {

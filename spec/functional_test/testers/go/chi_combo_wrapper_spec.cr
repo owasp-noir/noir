@@ -14,9 +14,9 @@ expected_endpoints = [
   Endpoint.new("/user/token", "GET"),
   Endpoint.new("/user/token", "DELETE"),
   Endpoint.new("/user/actions/secrets", "GET"),
-  Endpoint.new("/user/actions/secrets/{secretname}", "GET"),
-  Endpoint.new("/user/actions/secrets/{secretname}", "PUT"),
-  Endpoint.new("/user/actions/secrets/{secretname}", "DELETE"),
+  Endpoint.new("/user/actions/secrets/{secretname}", "GET", [Param.new("secretname", "", "path")]),
+  Endpoint.new("/user/actions/secrets/{secretname}", "PUT", [Param.new("secretname", "", "path")]),
+  Endpoint.new("/user/actions/secrets/{secretname}", "DELETE", [Param.new("secretname", "", "path")]),
 ]
 
 tester = FunctionalTester.new("fixtures/go/chi_combo_wrapper/", {

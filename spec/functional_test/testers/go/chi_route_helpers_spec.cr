@@ -8,13 +8,13 @@ require "../../func_spec.cr"
 # A helper nobody calls keeps its historical prefix-less routes.
 expected_endpoints = [
   Endpoint.new("/", "GET"),
-  Endpoint.new("/orgs/{org}/projects", "GET"),
-  Endpoint.new("/orgs/{org}/projects/{id}/", "GET"),
-  Endpoint.new("/orgs/{org}/projects/{id}/", "DELETE"),
-  Endpoint.new("/orgs/{org}/secrets", "GET"),
-  Endpoint.new("/repos/{owner}/{repo}/projects", "GET"),
-  Endpoint.new("/repos/{owner}/{repo}/projects/{id}/", "GET"),
-  Endpoint.new("/repos/{owner}/{repo}/projects/{id}/", "DELETE"),
+  Endpoint.new("/orgs/{org}/projects", "GET", [Param.new("org", "", "path")]),
+  Endpoint.new("/orgs/{org}/projects/{id}/", "GET", [Param.new("id", "", "path"), Param.new("org", "", "path")]),
+  Endpoint.new("/orgs/{org}/projects/{id}/", "DELETE", [Param.new("id", "", "path"), Param.new("org", "", "path")]),
+  Endpoint.new("/orgs/{org}/secrets", "GET", [Param.new("org", "", "path")]),
+  Endpoint.new("/repos/{owner}/{repo}/projects", "GET", [Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
+  Endpoint.new("/repos/{owner}/{repo}/projects/{id}/", "GET", [Param.new("id", "", "path"), Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
+  Endpoint.new("/repos/{owner}/{repo}/projects/{id}/", "DELETE", [Param.new("id", "", "path"), Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
   Endpoint.new("/orphan", "GET"),
 ]
 

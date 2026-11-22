@@ -7,7 +7,7 @@ expected_endpoints = [
   Endpoint.new("/users/:id", "GET", [Param.new("id", "", "path"), Param.new("X-Token", "", "header")]),
   Endpoint.new("/users/:id", "DELETE", [Param.new("id", "", "path"), Param.new("X-Token", "", "header")]),
   Endpoint.new("/api/items", "GET", [Param.new("Page", "", "query")]),
-  Endpoint.new("/api/items/:item_id", "PUT", [Param.new("item_id", "", "path")]),
+  Endpoint.new("/api/items/:item_id", "PUT", [Param.new("item_id", "", "path"), Param.new("X-Token", "", "header")]),
   Endpoint.new("/static", "GET"),
 ]
 

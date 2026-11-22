@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 expected_endpoints = [
   # A verb prefix narrows the route to that method.
   Endpoint.new("/todo/:id", "GET", [Param.new("id", "", "path")]),
-  Endpoint.new("/todo/:id", "DELETE"),
+  Endpoint.new("/todo/:id", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/todo", "POST"),
 
   # No `$` prefix: the route answers every method.
@@ -28,9 +28,9 @@ expected_endpoints = [
   Endpoint.new("/dogs/new", "GET"),
   Endpoint.new("/dogs", "POST"),
   Endpoint.new("/dogs/:id", "GET", [Param.new("id", "", "path")]),
-  Endpoint.new("/dogs/:id", "PUT"),
-  Endpoint.new("/dogs/:id", "PATCH"),
-  Endpoint.new("/dogs/:id", "DELETE"),
+  Endpoint.new("/dogs/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/dogs/:id", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/dogs/:id", "DELETE", [Param.new("id", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/cfml/fw1/", {

@@ -21,7 +21,7 @@ expected_endpoints = [
     Param.new("client_id", "", "form"),
   ]),
   Endpoint.new("/api/v1/users/", "GET", [Param.new("page", "", "query")]),
-  Endpoint.new("/api/v1/users/:id", "GET"),
+  Endpoint.new("/api/v1/users/:id", "GET", [Param.new("id", "", "path")]),
   # Real route declared after a `<<-MD … MD` doc heredoc — proves the
   # terminator stops the masking instead of blanking the rest of the file.
   # The example `get`/`post` calls inside the heredoc must NOT appear.

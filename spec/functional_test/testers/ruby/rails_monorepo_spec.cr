@@ -9,14 +9,15 @@ expected_endpoints = [
   Endpoint.new("/posts", "GET"),
   Endpoint.new("/posts/:id", "GET", [
     Param.new("X-API-KEY", "", "header"),
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/posts", "POST", [
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
   ]),
-  Endpoint.new("/posts/:id", "PUT"),
-  Endpoint.new("/posts/:id", "PATCH"),
-  Endpoint.new("/posts/:id", "DELETE"),
+  Endpoint.new("/posts/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/posts/:id", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/posts/:id", "DELETE", [Param.new("id", "", "path")]),
   Endpoint.new("/up", "GET"),
 ]
 

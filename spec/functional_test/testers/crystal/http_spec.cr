@@ -3,8 +3,8 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/users", "GET"),
-  Endpoint.new("/api/items", "GET", [Param.new("filter", "", "query")]),
-  Endpoint.new("/api/catalog", "GET", [Param.new("filter", "", "query")]),
+  Endpoint.new("/api/items", "GET", [Param.new("filter", "", "query"), Param.new("sort", "", "query")]),
+  Endpoint.new("/api/catalog", "GET", [Param.new("filter", "", "query"), Param.new("sort", "", "query")]),
   Endpoint.new("/guide", "GET"),
   Endpoint.new("/docs", "GET"),
   Endpoint.new("/after-heredoc", "GET"),

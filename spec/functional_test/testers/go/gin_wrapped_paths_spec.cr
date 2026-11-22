@@ -8,7 +8,7 @@ require "../../func_spec.cr"
 # router builders in another package. Inline closures are their own
 # handlers; a closure bound to a local name is named after it.
 expected_endpoints = [
-  Endpoint.new("/api/v1/photos/:uid", "GET", [Param.new("uid", "", "path")]),
+  Endpoint.new("/api/v1/photos/:uid", "GET", [Param.new("uid", "", "path"), Param.new("Authorization", "", "header")]),
   Endpoint.new("/api/v1/version", "GET"),
   Endpoint.new("/s/:token", "GET", [Param.new("token", "", "path")]),
   Endpoint.new("/livez", "GET"),

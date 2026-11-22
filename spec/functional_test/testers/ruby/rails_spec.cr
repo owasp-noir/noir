@@ -13,6 +13,7 @@ expected_endpoints = [
     # reads the leaf, as `params[:filter][:status]` does.
     Param.new("page", "", "query"),
     Param.new("status", "", "query"),
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/posts", "POST", [
     Param.new("title", "", "json"),
@@ -23,19 +24,22 @@ expected_endpoints = [
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
     Param.new("X-API-KEY", "", "header"),
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/posts/:id", "PATCH", [
     Param.new("title", "", "json"),
     Param.new("context", "", "json"),
     Param.new("X-API-KEY", "", "header"),
+    Param.new("id", "", "path"),
   ]),
-  Endpoint.new("/posts/:id", "DELETE"),
+  Endpoint.new("/posts/:id", "DELETE", [Param.new("id", "", "path")]),
   # `resources` also routes the `new` / `edit` form pages the controller defines.
   Endpoint.new("/posts/new", "GET"),
   Endpoint.new("/posts/:id/edit", "GET", [
     Param.new("X-API-KEY", "", "header"),
+    Param.new("id", "", "path"),
   ]),
-  Endpoint.new("/posts/:id/search", "QUERY"),
+  Endpoint.new("/posts/:id/search", "QUERY", [Param.new("id", "", "path")]),
   Endpoint.new("/search", "QUERY", [
     Param.new("user_name", "", "cookie"),
     Param.new("login", "", "cookie"),
@@ -71,12 +75,14 @@ expected_endpoints = [
     Param.new("tags", "", "form"),
     Param.new("meta", "", "form"),
     Param.new("cat", "", "form"),
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/articles/:id", "PATCH", [
     Param.new("one", "", "form"),
     Param.new("tags", "", "form"),
     Param.new("meta", "", "form"),
     Param.new("cat", "", "form"),
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/up", "GET"),
   Endpoint.new("/service-worker", "GET"),

@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 # `*router.RouterGroup[*core.RequestEvent]`.
 expected_endpoints = [
   Endpoint.new("/api/backups", "GET"),
-  Endpoint.new("/api/backups/{key}", "DELETE"),
+  Endpoint.new("/api/backups/{key}", "DELETE", [Param.new("key", "", "path")]),
   Endpoint.new("/api/first", "GET"),
   Endpoint.new("/api/sql", "POST"),
   Endpoint.new("/api/direct", "GET"),

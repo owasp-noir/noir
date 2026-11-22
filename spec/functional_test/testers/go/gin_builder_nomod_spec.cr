@@ -5,7 +5,7 @@ require "../../func_spec.cr"
 # segment. With a module file the same shape is gin_router_builder_crosspkg.
 expected_endpoints = [
   Endpoint.new("/api/products/", "GET"),
-  Endpoint.new("/api/products/:slug", "GET"),
+  Endpoint.new("/api/products/:slug", "GET", [Param.new("slug", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/go/gin_builder_nomod/", {

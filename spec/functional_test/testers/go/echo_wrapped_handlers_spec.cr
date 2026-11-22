@@ -9,17 +9,20 @@ require "../../func_spec.cr"
 # reads the query string on GET, and a method the handler calls on its own
 # receiver is one hop of the handler.
 expected_endpoints = [
-  Endpoint.new("/admin/notes/:id", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/admin/notes/:id", "GET", [Param.new("id", "", "path"), Param.new("X-User", "", "header")]),
   Endpoint.new("/api/notes/:id", "PUT", [
     Param.new("id", "", "path"),
     Param.new("id", "", "json"),
     Param.new("title", "", "json"),
     Param.new("text", "", "json"),
+    Param.new("X-User", "", "header"),
   ]),
   Endpoint.new("/api/notes", "POST", [
     Param.new("id", "", "json"),
     Param.new("title", "", "form"),
     Param.new("tags", "", "json"),
+    Param.new("X-User", "", "header"),
+    Param.new("title", "", "json"),
   ]),
   Endpoint.new("/admin/forgot", "POST", [Param.new("email", "", "form")]),
   Endpoint.new("/subscribe", "GET", [

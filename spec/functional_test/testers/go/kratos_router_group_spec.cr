@@ -3,8 +3,8 @@ require "../../func_spec.cr"
 # Kratos `Router.Group` joins its prefix onto the parent router's
 # (`srv.Route("/api")` -> `r.Group("/v2")` -> `r2.Group("/admin")`).
 expected_endpoints = [
-  Endpoint.new("/api/hello/{name}", "GET"),
-  Endpoint.new("/api/v2/say/{name}", "GET"),
+  Endpoint.new("/api/hello/{name}", "GET", [Param.new("name", "", "path")]),
+  Endpoint.new("/api/v2/say/{name}", "GET", [Param.new("name", "", "path")]),
   Endpoint.new("/api/v2/admin/reset", "POST"),
 ]
 

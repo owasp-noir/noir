@@ -15,17 +15,19 @@ end
 
 users_update = Endpoint.new("/lucky/users/:id", "PUT", [
   Param.new("id", "", "query"),
+  Param.new("id", "", "path"),
 ]).tap do |ep|
   ep.push_callee(Callee.new("params.get", line: 16))
   ep.push_callee(Callee.new("UserUpdater.call", line: 17))
 end
 
-users_delete = Endpoint.new("/lucky/users/:id", "DELETE").tap do |ep|
+users_delete = Endpoint.new("/lucky/users/:id", "DELETE", [Param.new("id", "", "path")]).tap do |ep|
   ep.push_callee(Callee.new("UserDestroyer.call", line: 22))
 end
 
 users_patch = Endpoint.new("/lucky/users/:id", "PATCH", [
   Param.new("mode", "", "query"),
+  Param.new("id", "", "path"),
 ]).tap do |ep|
   ep.push_callee(Callee.new("UserPatch.apply", line: 27))
 end

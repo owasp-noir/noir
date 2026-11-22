@@ -14,6 +14,7 @@ expected_endpoints = [
     Param.new("preference", "", "cookie"),
     Param.new("layout", "", "cookie"),
     Param.new("id", "", "json"),
+    Param.new("Content-Type", "", "header"),
   ]),
   Endpoint.new("/health", "GET"),
   Endpoint.new("/api/items", "GET", [

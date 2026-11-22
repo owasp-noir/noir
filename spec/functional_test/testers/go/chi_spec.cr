@@ -6,7 +6,7 @@ expected_endpoints = [
   # `r.With(paginate).Get(...)` — the tree-sitter extractor walks the
   # middleware chain so these no longer go missing.
   Endpoint.new("/articles/", "GET"),
-  Endpoint.new("/articles/{month}-{day}-{year}", "GET"),
+  Endpoint.new("/articles/{month}-{day}-{year}", "GET", [Param.new("day", "", "path"), Param.new("month", "", "path"), Param.new("year", "", "path")]),
   Endpoint.new("/articles/", "POST"),
   Endpoint.new("/articles/search", "GET"),
   Endpoint.new("/articles/{articleSlug:[a-z-]+}", "GET", [Param.new("articleSlug", "", "path")]),
@@ -44,7 +44,7 @@ expected_endpoints = [
   Endpoint.new("/api/health", "GET"),
   Endpoint.new("/admin/settings/", "GET"),
   Endpoint.new("/admin/settings/", "PUT"),
-  Endpoint.new("/admin/webhook", "POST"),
+  Endpoint.new("/admin/webhook", "POST", [Param.new("payload", "", "form")]),
   # routes.go: PATCH method with path param
   Endpoint.new("/items/{id}", "PATCH", [
     Param.new("id", "", "path"),

@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-users_index = Endpoint.new("/users", "GET").tap do |ep|
+users_index = Endpoint.new("/users", "GET", [Param.new("page", "", "query")]).tap do |ep|
   ep.push_callee(Callee.new("UserService.list", line: 5))
   ep.push_callee(Callee.new("users.each", line: 6))
   ep.push_callee(Callee.new("AuditLog.write", line: 6))

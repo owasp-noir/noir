@@ -12,9 +12,9 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/health", "GET"),
   Endpoint.new("/admin/stats", "GET"),
-  Endpoint.new("/user", "PUT"),
-  Endpoint.new("/user/signup", "POST"),
-  Endpoint.new("/user/login", "GET"),
+  Endpoint.new("/user", "PUT", [Param.new("body", "", "json")]),
+  Endpoint.new("/user/signup", "POST", [Param.new("body", "", "json")]),
+  Endpoint.new("/user/login", "GET", [Param.new("body", "", "json")]),
   Endpoint.new("/user/mfa/enable", "POST"),
 ]
 

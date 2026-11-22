@@ -48,6 +48,7 @@ expected_endpoints = [
   Endpoint.new("/post/create", "GET", [
     Param.new("title", "", "form"),
     Param.new("body", "", "form"),
+    Param.new("X-CSRF-Token", "", "header"),
   ]),
   # From UserController (ActiveController) REST + action methods
   Endpoint.new("/user/index", "GET"),

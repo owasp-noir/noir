@@ -24,7 +24,7 @@ expected_endpoints = [
   # Resources routes with query and form parameters
   Endpoint.new("/posts", "GET", [Param.new("category", "", "query"), Param.new("sort", "", "query")]),
   Endpoint.new("/posts", "POST", [Param.new("title", "", "form"), Param.new("content", "", "form"), Param.new("tags", "", "form")]),
-  Endpoint.new("/posts/:id", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/posts/:id", "GET", [Param.new("id", "", "path"), Param.new("user_id", "", "query")]),
   Endpoint.new("/posts/:id", "PUT", [Param.new("title", "", "form"), Param.new("content", "", "form"), Param.new("id", "", "path")]),
   Endpoint.new("/posts/:id", "PATCH", [Param.new("title", "", "form"), Param.new("content", "", "form"), Param.new("id", "", "path")]),
   Endpoint.new("/posts/:id", "DELETE", [Param.new("id", "", "path")]),

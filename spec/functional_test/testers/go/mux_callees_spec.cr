@@ -20,7 +20,7 @@ require "../../func_spec.cr"
 helpers_path = "./spec/functional_test/fixtures/go/mux_callees/helpers.go"
 
 expected_endpoints = [
-  Endpoint.new("/users", "POST").tap do |ep|
+  Endpoint.new("/users", "POST", [Param.new("name", "", "form")]).tap do |ep|
     ep.push_callee(Callee.new("r.FormValue", line: 8))
     ep.push_callee(Callee.new("saveUser", helpers_path, 3))
     ep.push_callee(Callee.new("auditLog", helpers_path, 7))
@@ -37,7 +37,7 @@ expected_endpoints = [
     ep.push_callee(Callee.new("w.Write", line: 17))
   end,
 
-  Endpoint.new("/builder-users", "POST").tap do |ep|
+  Endpoint.new("/builder-users", "POST", [Param.new("name", "", "form")]).tap do |ep|
     ep.push_callee(Callee.new("r.FormValue"))
     ep.push_callee(Callee.new("saveUser"))
     ep.push_callee(Callee.new("auditLog"))

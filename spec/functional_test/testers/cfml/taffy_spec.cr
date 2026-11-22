@@ -36,6 +36,8 @@ expected_endpoints = [
   Endpoint.new("/echo/{parentId}/child/{childId}", "POST", [
     Param.new("name", "", "form"),
     Param.new("value", "", "form"),
+    Param.new("childId", "", "path"),
+    Param.new("parentId", "", "path"),
   ]),
 
   # taffy_verb overrides the function name; a function with neither a

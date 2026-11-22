@@ -9,19 +9,19 @@ expected_endpoints = [
   Endpoint.new("/healthz", "GET"),
   Endpoint.new("/metrics", "GET"),
   Endpoint.new("/api/v1/users", "GET", [Param.new("page", "", "query")]),
-  Endpoint.new("/api/v1/repos/{owner}/{repo}", "GET", [Param.new("owner", "", "path")]),
-  Endpoint.new("/api/v1/repos/{owner}/{repo}/issues", "POST", [Param.new("title", "", "form")]),
+  Endpoint.new("/api/v1/repos/{owner}/{repo}", "GET", [Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
+  Endpoint.new("/api/v1/repos/{owner}/{repo}/issues", "POST", [Param.new("title", "", "form"), Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
   Endpoint.new("/api/v1/admin/users/{id}", "DELETE", [Param.new("id", "", "path")]),
   # `{type:issues}` and `{type:pulls}` are two routes: the constraint stays.
-  Endpoint.new("/api/v1/repos/{owner}/{repo}/{type:issues}/{index}", "GET", [Param.new("type", "", "path"), Param.new("index", "", "path")]),
-  Endpoint.new("/api/v1/repos/{owner}/{repo}/{type:pulls}/{index}", "GET", [Param.new("type", "", "path")]),
-  Endpoint.new("/api/v1/repos/{owner}/{repo}/contents/*", "GET"),
+  Endpoint.new("/api/v1/repos/{owner}/{repo}/{type:issues}/{index}", "GET", [Param.new("type", "", "path"), Param.new("index", "", "path"), Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
+  Endpoint.new("/api/v1/repos/{owner}/{repo}/{type:pulls}/{index}", "GET", [Param.new("type", "", "path"), Param.new("index", "", "path"), Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
+  Endpoint.new("/api/v1/repos/{owner}/{repo}/contents/*", "GET", [Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
   # Route helpers declared in a sibling file and in an imported package,
   # called inside `r.Route("/{owner}/{repo}", ...)`: reported once, under
   # the caller's prefix, never again at the helper's own bare path.
-  Endpoint.new("/{owner}/{repo}/info/refs", "GET"),
-  Endpoint.new("/{owner}/{repo}/git-upload-pack", "POST"),
-  Endpoint.new("/{owner}/{repo}/info/lfs/objects/batch", "POST"),
+  Endpoint.new("/{owner}/{repo}/info/refs", "GET", [Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
+  Endpoint.new("/{owner}/{repo}/git-upload-pack", "POST", [Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
+  Endpoint.new("/{owner}/{repo}/info/lfs/objects/batch", "POST", [Param.new("owner", "", "path"), Param.new("repo", "", "path")]),
 ]
 
 tester = FunctionalTester.new("fixtures/go/chi_crosspkg_mount/", {

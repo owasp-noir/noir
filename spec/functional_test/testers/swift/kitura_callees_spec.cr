@@ -22,7 +22,7 @@ health_endpoint.push_callee(Callee.new("HealthService.check", line: 25))
 delayed_endpoint = Endpoint.new("/delayed", "GET")
 delayed_endpoint.push_callee(Callee.new("DelayService.wait", line: 29))
 
-profile_endpoint = Endpoint.new("/profile", "GET")
+profile_endpoint = Endpoint.new("/profile", "GET", [Param.new("session", "", "cookie")])
 profile_endpoint.push_callee(Callee.new("ProfileService.load", line: 41))
 profile_endpoint.push_callee(Callee.new("response.send", line: 42))
 profile_endpoint.push_callee(Callee.new("ProfilePresenter.render", line: 42))
