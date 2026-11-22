@@ -178,7 +178,7 @@ module Analyzer::Ruby
         next if line.size > verb.size && (line[verb.size].alphanumeric? || line[verb.size] == '_')
 
         if m = line.match(verb_pattern)
-          endpoint = Endpoint.new(absolute_segment_join(current_path_prefix(stack), normalize_route_path(m[1])), verb.upcase, details)
+          endpoint = Endpoint.new(absolute_segment_join(current_path_prefix(stack), Noir::URLPath.brace_interpolation(m[1])), verb.upcase, details)
           return RouteEndpoint.new(endpoint, extract_action_target(m[2]))
         end
       end
@@ -373,10 +373,6 @@ module Analyzer::Ruby
 
     private def absolute_segment_join(prefix : String, suffix : String) : String
       absolute_segment_join([prefix, suffix])
-    end
-
-    private def normalize_route_path(path : String) : String
-      path.gsub(/\#\{([^}]+)\}/) { |_| "{#{$~[1].strip}}" }
     end
 
     private def join_action_parts(parts : Array(String)) : String

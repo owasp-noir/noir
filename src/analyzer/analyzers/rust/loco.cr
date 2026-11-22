@@ -12,6 +12,8 @@ module Analyzer::Rust
   class Loco < RustEngine
     analyzer_for "rust_loco"
 
+    PATH_SLOTS = {Noir::URLPath::COLON_WORD, Noir::URLPath::BRACE_REST_WORD}
+
     # Only files inside a crate that depends on `loco-rs`. See
     # `RustEngine#crate_dependencies` — without this every Rust analyzer
     # sees every `.rs` file in the scan.
@@ -121,7 +123,7 @@ module Analyzer::Rust
           details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
           endpoint = Endpoint.new(endpoint_path, http_method, details)
 
-          extract_path_params(endpoint_path, endpoint)
+          Noir::URLPath.add_params(endpoint, endpoint_path, *PATH_SLOTS)
           endpoint.handler = rust_handler(node, source, path)
           extract_function_params(node, source, endpoint)
           attach_handler_callees(node, source, path, endpoint) if include_callee
@@ -178,7 +180,7 @@ module Analyzer::Rust
         verb_handlers.each do |verb, handler_name|
           details = Details.new(PathInfo.new(path, row))
           endpoint = Endpoint.new(full_path, verb.upcase, details)
-          extract_path_params(full_path, endpoint)
+          Noir::URLPath.add_params(endpoint, full_path, *PATH_SLOTS)
 
           if handler_name && (handler_function = function_index[handler_name.split("::").last]?)
             endpoint.handler = local_handler(handler_name, function_index, source, path)
@@ -362,22 +364,6 @@ module Analyzer::Rust
           LibTreeSitter.ts_node_end_byte(params).to_i
         end
       source.byte_slice(start_byte, end_byte - start_byte)
-    end
-
-    # Loco/Axum path params come in two flavours: the legacy colon form
-    # (`/:id`) used by the Rails-convention pass and the brace form
-    # (`/{id}`, `/{*rest}`, `/{**path}`) used by modern explicit routes.
-    # Strip any leading capture markers (`*`) so the param name stays
-    # clean.
-    private def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        name = match[1]
-        endpoint.push_param(Param.new(name, "", "path")) unless endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
-      end
-      route.scan(/\{\**(\w+)\}/) do |match|
-        name = match[1]
-        endpoint.push_param(Param.new(name, "", "path")) unless endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
-      end
     end
 
     # Loco rides on Axum; extractor types appear in the parameter

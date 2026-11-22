@@ -41,12 +41,7 @@ module Analyzer::Javascript
             endpoint.details = Details.new(PathInfo.new(path))
           end
 
-          if endpoint.url.includes?(":")
-            endpoint.url.scan(/:(\w+)/) do |m|
-              param = Param.new(m[1], "", "path")
-              endpoint.push_param(param)
-            end
-          end
+          Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_WORD)
           result << endpoint
         end
 
@@ -267,11 +262,7 @@ module Analyzer::Javascript
 
         details = Details.new(PathInfo.new(path, index + 1))
         endpoint = Endpoint.new(route_path, method, details)
-        if route_path.includes?(":")
-          route_path.scan(/:(\w+)/) do |pm|
-            endpoint.push_param(Param.new(pm[1], "", "path"))
-          end
-        end
+        Noir::URLPath.add_params(endpoint, route_path, Noir::URLPath::COLON_WORD)
         result << endpoint
       end
     end
@@ -333,9 +324,7 @@ module Analyzer::Javascript
         endpoint.details = details
 
         # Extract path parameters from the route_path itself
-        route_path.scan(/:(\w+)/) do |m|
-          endpoint.push_param(Param.new(m[1], "", "path"))
-        end
+        Noir::URLPath.add_params(endpoint, route_path, Noir::URLPath::COLON_WORD)
 
         # Extract parameters from handler body
         extract_koa_params_from_content(file_content, router_var || "app", match[2], route_path, endpoint)

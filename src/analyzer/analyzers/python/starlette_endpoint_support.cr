@@ -5,12 +5,6 @@ module Analyzer::Python
   # body, shared by every adapter whose handlers are Starlette endpoints
   # (Starlette itself, FastMCP's `custom_route`).
   module StarletteEndpointSupport
-    # Path param in a route pattern: {name} or {name:type}. Starlette uses
-    # the :type suffix as a converter hint (int, str, float, uuid, path);
-    # it is stripped before the param is exposed as a path param.
-    PATH_PARAM_REGEX       = /\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}/
-    TYPED_PATH_PARAM_REGEX = /\{([a-zA-Z_][a-zA-Z0-9_]*):[a-zA-Z_][a-zA-Z0-9_]*\}/
-
     # Request-access matchers interpolate a discovered request-var name
     # (`request`, `self.request`, ...) so they can't be class constants,
     # but a handler set only uses a handful of distinct names — memoize
@@ -39,22 +33,14 @@ module Analyzer::Python
     end
 
     private def normalize_route_url(prefix : ::String, route_path : ::String) : ::String
-      full_url = "#{prefix}#{route_path}"
-      full_url = "/#{full_url}".gsub(/\/+/, "/")
-      full_url = full_url.gsub("{{", "{").gsub("}}", "}")
+      full_url = Noir::URLPath.normalize(prefix + route_path, collapse: true)
+      full_url = Noir::URLPath.unescape_braces(full_url)
       # `{p:path}` stays: it spans `/`, so it is not `{p}`.
-      full_url.gsub(TYPED_PATH_PARAM_REGEX) { |typed| typed.ends_with?(":path}") ? typed : "{#{$~[1]}}" }
+      Noir::URLPath.strip_type_converters(full_url)
     end
 
     private def extract_path_params(route_path : ::String) : Array(Param)
-      params = [] of Param
-      unescaped = route_path.gsub("{{", "{").gsub("}}", "}")
-      unescaped.scan(PATH_PARAM_REGEX) do |match|
-        name = match[1]
-        next if params.any? { |p| p.name == name }
-        params << Param.new(name, "", "path")
-      end
-      params
+      Noir::URLPath.params(route_path, Noir::URLPath::BRACE_CONVERTER, unique: true, doubled_braces: true)
     end
 
     private def extract_request_arg_name(args : ::String) : ::String?

@@ -304,7 +304,7 @@ module Analyzer::Javascript
     private def emit_service_endpoints(result : Array(Endpoint), path : String, service_path : String,
                                        methods : Set(String), service : FeathersServiceDef?,
                                        line : Int32)
-      base_url = normalize_service_path(service_path)
+      base_url = Noir::URLPath.normalize(service_path.strip)
 
       CRUD_METHODS.each do |crud_method|
         next unless methods.includes?(crud_method)
@@ -313,9 +313,7 @@ module Analyzer::Javascript
 
         endpoint = Endpoint.new(url, verb, Details.new(PathInfo.new(path, line)))
 
-        url.scan(/:(\w+)/) do |pm|
-          endpoint.push_param(Param.new(pm[1], "", "path")) if pm.size > 0
-        end
+        Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
         endpoint.push_param(Param.new("body", "", "json")) if BODY_METHODS.includes?(crud_method)
 
         if service && (method_info = service.methods[crud_method]?)
@@ -327,12 +325,6 @@ module Analyzer::Javascript
 
         result << endpoint
       end
-    end
-
-    private def normalize_service_path(service_path : String) : String
-      trimmed = service_path.strip
-      return "/" if trimmed.empty? || trimmed == "/"
-      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
     end
 
     private def extract_feathers_facts(path : String, source : String, include_callees : Bool) : FeathersFileFacts

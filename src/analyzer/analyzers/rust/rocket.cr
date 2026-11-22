@@ -79,7 +79,7 @@ module Analyzer::Rust
           handler_leaf = rocket_function_name(function, source)
           prefixes = handler_leaf ? lookup_mount_prefixes(handler_leaf, path, function, source) : nil
           urls = if prefixes && !prefixes.empty?
-                   prefixes.map { |pfx| join_mount_path(pfx, canonical_path) }
+                   prefixes.map { |pfx| Noir::URLPath.join(pfx, canonical_path, :rooted_mount) }
                  else
                    [canonical_path]
                  end
@@ -389,13 +389,6 @@ module Analyzer::Rust
         return Noir::TreeSitter.field(current, "name").try { |n| Noir::TreeSitter.node_text(n, source) }
       end
       nil
-    end
-
-    private def join_mount_path(prefix : String, path : String) : String
-      pfx = (prefix.starts_with?("/") ? prefix : "/#{prefix}").rstrip("/")
-      return path.starts_with?("/") ? path : "/#{path}" if pfx.empty?
-      suffix = path.lstrip("/")
-      suffix.empty? ? pfx : "#{pfx}/#{suffix}"
     end
 
     # `#[get("/x")]` / `#[post("/x", data = "<body>")]` →

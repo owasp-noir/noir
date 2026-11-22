@@ -216,7 +216,7 @@ module Analyzer::Java
       return DropwizardPathConfig.new unless server
 
       server_type = yaml_string(server, "type")
-      application_context_path = normalize_path(yaml_string(server, "applicationContextPath"))
+      application_context_path = normalize_optional_path(yaml_string(server, "applicationContextPath"))
       application_context_path = "/application" if application_context_path.empty? && server_type == "simple"
       root_path = normalize_root_path(yaml_string(server, "rootPath"))
 
@@ -229,18 +229,10 @@ module Analyzer::Java
       node[key]?.try(&.as_s?)
     end
 
-    private def normalize_path(path : String?) : String
-      return "" unless path
-
-      trimmed = path.strip
-      return "" if trimmed.empty? || trimmed == "/"
-      trimmed.starts_with?("/") ? trimmed : "/#{trimmed}"
-    end
-
     private def normalize_root_path(path : String?) : String
       return "" unless path
 
-      normalized = normalize_path(path)
+      normalized = normalize_optional_path(path)
       normalized = normalized.chomp('*').rstrip('/')
       return "" if normalized.empty? || normalized == "/"
       normalized
@@ -276,7 +268,7 @@ module Analyzer::Java
                  end
       return "" unless raw_path
 
-      normalize_path(raw_path)
+      normalize_optional_path(raw_path)
     end
 
     private def asset_bundle_endpoint_path(application_context_path : String, uri_path : String) : String

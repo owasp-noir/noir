@@ -10,9 +10,7 @@ module Analyzer::Python
 
     # Collapse repeated slashes and ensure a single leading slash.
     def normalize_path(path : ::String) : ::String
-      normalized = path.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized
+      Noir::URLPath.normalize(path, collapse: true)
     end
 
     # `line` up to its first `#` outside a single-line quoted string.
@@ -41,10 +39,7 @@ module Analyzer::Python
     end
 
     def normalized_join(prefix : ::String, path : ::String) : ::String
-      return normalize_path(path) if prefix.empty?
-      return normalize_path(prefix) if path.empty?
-
-      normalize_path("#{prefix}/#{path}")
+      Noir::URLPath.join(prefix, path, :collapsed)
     end
 
     # For each line, whether its first character sits inside a

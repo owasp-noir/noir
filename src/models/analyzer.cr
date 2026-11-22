@@ -1,6 +1,7 @@
 require "./file_role"
 require "./logger"
 require "./endpoint"
+require "../utils/url_path/params"
 require "./file_helper"
 require "./code_locator"
 require "./skipped_files"

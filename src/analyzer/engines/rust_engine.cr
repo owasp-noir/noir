@@ -425,9 +425,7 @@ module Analyzer::Rust
     # `:name` segments as path params. Adapters whose router spells
     # params differently (`{name}`, `<name>`) override.
     protected def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
+      Noir::URLPath.add_params(endpoint, route, Noir::URLPath::COLON_WORD)
     end
 
     protected def ensure_leading_slash(route_path : String) : String

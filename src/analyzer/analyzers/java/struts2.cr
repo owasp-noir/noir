@@ -709,8 +709,7 @@ module Analyzer::Java
     private def normalize_path(path : String) : String
       cleaned = path.strip
       return "/" if cleaned.empty? || cleaned == "/"
-      cleaned = "/#{cleaned}" unless cleaned.starts_with?("/")
-      cleaned.gsub(%r{/+}, "/").rstrip('/')
+      Noir::URLPath.normalize(cleaned, collapse: true).rstrip('/')
     end
 
     private def namespace_join(prefix : String, suffix : String) : String

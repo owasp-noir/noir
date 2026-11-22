@@ -84,7 +84,7 @@ module Analyzer::Go
                 if ts_hits = routes_by_line[index]?
                   ts_hits.each do |route|
                     details = go_route_details(route, path, content)
-                    clean_path = normalize_fasthttp_path(route.path)
+                    clean_path = Noir::URLPath.normalize(route.path, Noir::URLPath::BRACE_OPTIONAL_CONSTRAINT, rooted: false)
                     Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                       endpoint = Endpoint.new(clean_path, verb, details)
                       if entries = callees_by_route[route.line]?
@@ -114,18 +114,6 @@ module Analyzer::Go
       end
 
       result
-    end
-
-    # Normalize fasthttp/router path-parameter syntax into the canonical
-    # `{name}` placeholder. fasthttp/router accepts optional params
-    # (`{name?}`), inline regex constraints (`{name:[0-9]+}`), and the
-    # two combined (`{name?:[a-zA-Z]+}`). The optimizer's generic
-    # `{name:regex}` stripper only matches identifier-then-colon, so the
-    # `?` optional marker leaks through as part of the param name
-    # (`name?`) and the URL keeps its regex body. Strip both here so the
-    # surfaced URL and the path-param names are clean.
-    private def normalize_fasthttp_path(path : String) : String
-      path.gsub(/\{([a-zA-Z0-9_]+)\??(?::[^{}]+)?\}/) { "{#{$1}}" }
     end
 
     SIMPLE_ROUTER_PATH = /\A(?:[\/\w.~-]|\{\w+\})*\z/

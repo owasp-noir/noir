@@ -86,7 +86,7 @@ module Analyzer::Scala
             unless method_param_scopes.empty?
               endpoint = create_endpoint(full_path, method.upcase, path, method_line(structural_lines, index, block_end, method))
 
-              extract_path_params(endpoint, full_path)
+              Noir::URLPath.add_params(endpoint, full_path, Noir::URLPath::BRACE_WORD)
 
               # Extract additional parameters from the block
               extract_params_from_block(endpoint, method_param_scopes.join("\n"))
@@ -115,7 +115,7 @@ module Analyzer::Scala
             method_param_scopes = extract_method_param_scopes(route_scope, method)
             unless method_param_scopes.empty?
               endpoint = create_endpoint(full_path, method.upcase, path, method_line(structural_lines, index, block_end, method))
-              extract_path_params(endpoint, full_path)
+              Noir::URLPath.add_params(endpoint, full_path, Noir::URLPath::BRACE_WORD)
               extract_params_from_block(endpoint, method_param_scopes.join("\n"))
               attach_method_callees(endpoint, lines, structural_lines, index, block_end, method, path) if include_callee
               endpoints << endpoint
@@ -143,7 +143,7 @@ module Analyzer::Scala
 
               route_ranges << {index, block_end}
               endpoint = create_endpoint(full_path, method.upcase, path, method_line(structural_lines, index, block_end, method))
-              extract_path_params(endpoint, full_path)
+              Noir::URLPath.add_params(endpoint, full_path, Noir::URLPath::BRACE_WORD)
               extract_params_from_block(endpoint, method_param_scopes.join("\n"))
               attach_method_callees(endpoint, lines, structural_lines, index, block_end, method, path) if include_callee
               endpoints << endpoint
@@ -369,13 +369,6 @@ module Analyzer::Scala
       normalized = parts.join("").gsub(%r{/+}, "/")
       normalized = "/#{normalized}" unless normalized.starts_with?("/")
       normalized
-    end
-
-    private def extract_path_params(endpoint : Endpoint, route_path : String)
-      route_path.scan(/\{(\w+)\}/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
     end
 
     # 1-based line of the first `method` directive in the route block

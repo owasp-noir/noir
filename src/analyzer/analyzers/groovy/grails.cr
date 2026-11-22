@@ -487,7 +487,7 @@ module Analyzer::Groovy
         # reported line up with it.
         line = line_number_for_index(content, base_offset + (match.begin(2) || 0))
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
-          extract_path_params(url_pattern),
+          Noir::URLPath.params(strip_format_suffix(url_pattern), Noir::URLPath::DOLLAR_OPTIONAL_BRACES),
           Details.new(PathInfo.new(path, line)))
       end
 
@@ -514,7 +514,7 @@ module Analyzer::Groovy
           RESOURCES_ENDPOINTS.each do |ep|
             full = url_pattern + ep[:suffix]
             @result << Endpoint.new(translate_pattern(full), ep[:method],
-              extract_path_params(full),
+              Noir::URLPath.params(strip_format_suffix(full), Noir::URLPath::DOLLAR_OPTIONAL_BRACES),
               Details.new(PathInfo.new(path, line)))
           end
           next
@@ -525,7 +525,7 @@ module Analyzer::Groovy
         if body_args.match(/\bresource:\s*['"]/)
           {"GET", "POST", "PUT", "PATCH", "DELETE"}.each do |verb|
             @result << Endpoint.new(translate_pattern(url_pattern), verb,
-              extract_path_params(url_pattern),
+              Noir::URLPath.params(strip_format_suffix(url_pattern), Noir::URLPath::DOLLAR_OPTIONAL_BRACES),
               Details.new(PathInfo.new(path, line)))
           end
           next
@@ -540,7 +540,7 @@ module Analyzer::Groovy
         if verbs
           verbs.each do |verb|
             @result << Endpoint.new(translate_pattern(url_pattern), verb,
-              extract_path_params(url_pattern),
+              Noir::URLPath.params(strip_format_suffix(url_pattern), Noir::URLPath::DOLLAR_OPTIONAL_BRACES),
               Details.new(PathInfo.new(path, line)))
           end
           next
@@ -548,7 +548,7 @@ module Analyzer::Groovy
 
         verb = extract_method_arg(body_args) || "GET"
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
-          extract_path_params(url_pattern),
+          Noir::URLPath.params(strip_format_suffix(url_pattern), Noir::URLPath::DOLLAR_OPTIONAL_BRACES),
           Details.new(PathInfo.new(path, line)))
       end
 
@@ -569,7 +569,7 @@ module Analyzer::Groovy
         verbs = action_map_verbs(body_block) || [extract_method_assignment(body_block) || "GET"]
         verbs.each do |verb|
           @result << Endpoint.new(translate_pattern(url_pattern), verb,
-            extract_path_params(url_pattern),
+            Noir::URLPath.params(strip_format_suffix(url_pattern), Noir::URLPath::DOLLAR_OPTIONAL_BRACES),
             Details.new(PathInfo.new(path, line)))
         end
       end
@@ -690,14 +690,6 @@ module Analyzer::Groovy
       # `$name` and `${name}` path variables both map to `:name`.
       strip_format_suffix(pattern)
         .gsub(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?\??/) { |_, m| ":#{m[1]}" }
-    end
-
-    private def extract_path_params(pattern : String) : Array(Param)
-      params = [] of Param
-      strip_format_suffix(pattern).scan(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/) do |m|
-        params << Param.new(m[1], "", "path")
-      end
-      params
     end
 
     # Drops the optional Grails content-format suffix `(.$format)?` /

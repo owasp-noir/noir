@@ -102,7 +102,7 @@ module Analyzer::Perl
         search_limit = decl_offsets[idx + 1]? || content.size
         body = body_for_route(content, route, search_limit, named_bodies)
 
-        path_params = extract_path_params(route.url)
+        path_params = Noir::URLPath.params(route.url, Noir::URLPath::COLON_ASCII, Noir::URLPath::NAMED_CAPTURE)
 
         route.methods.each do |method|
           endpoint = Endpoint.new(route.url, method)
@@ -254,17 +254,6 @@ module Analyzer::Perl
       path.starts_with?('/') ? path : "/#{path}"
     end
 
-    private def extract_path_params(url : String) : Array(Param)
-      params = [] of Param
-      url.scan(/:([A-Za-z_][A-Za-z0-9_]*)/) do |m|
-        params << Param.new(m[1], "", "path")
-      end
-      url.scan(/\(\?<([A-Za-z_][A-Za-z0-9_]*)>/) do |m|
-        params << Param.new(m[1], "", "path")
-      end
-      params
-    end
-
     private def extract_params_from_body(body : String, method : String) : Array(Param)
       params = [] of Param
       read_method = method == "GET" || method == "HEAD" || method == "OPTIONS"
@@ -332,24 +321,13 @@ module Analyzer::Perl
 
     private def join_url(prefix : String, leaf : String) : String
       cleaned_leaf = strip_type_constraints(leaf)
-      return normalize_url(cleaned_leaf) if prefix.empty?
-      return normalize_url(prefix) if cleaned_leaf.empty?
-
-      base = prefix.size > 1 ? prefix.chomp('/') : prefix
-      tail = cleaned_leaf.starts_with?('/') ? cleaned_leaf : "/#{cleaned_leaf}"
-      normalize_url("#{base}#{tail}")
+      Noir::URLPath.normalize(Noir::URLPath.join(prefix, cleaned_leaf, :preserve_root_prefix), trim: true)
     end
 
     # Drop Dancer2 type constraints (`:id[Int]`) from the displayed URL
     # while leaving the placeholder name intact.
     private def strip_type_constraints(path : String) : String
       path.gsub(/(:[A-Za-z_][A-Za-z0-9_]*)\[[^\]]*\]/, "\\1")
-    end
-
-    private def normalize_url(path : String) : String
-      normalized = path.empty? ? "/" : path
-      normalized = "/#{normalized}" unless normalized.starts_with?('/')
-      normalized.size > 1 && normalized.ends_with?('/') ? normalized.rchop : normalized
     end
 
     private def code_only_lines(pod_blanked : Array(String)) : Array(String)

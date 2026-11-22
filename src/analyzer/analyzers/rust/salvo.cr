@@ -29,6 +29,8 @@ module Analyzer::Rust
   class Salvo < RustEngine
     analyzer_for "rust_salvo"
 
+    PATH_SLOTS = {Noir::URLPath::ANGLE_WORD, Noir::URLPath::BRACE_REST_PIPE}
+
     # Only files inside a crate that depends on `salvo`. See
     # `RustEngine#crate_dependencies` — without this every Rust analyzer
     # sees every `.rs` file in the scan.
@@ -143,7 +145,7 @@ module Analyzer::Rust
 
           details = Details.new(PathInfo.new(path, attr_row))
           endpoint = Endpoint.new(route_path, method, details)
-          extract_path_params(route_path, endpoint)
+          Noir::URLPath.add_params(endpoint, route_path, *PATH_SLOTS)
           endpoint.handler = rust_handler(function, source, path)
           extract_function_params(function, source, endpoint)
           attach_handler_callees(function, source, path, endpoint) if include_callee
@@ -207,7 +209,7 @@ module Analyzer::Rust
           full_path = ext.empty? ? route_path : join_router_path(ext, route_path)
           details = Details.new(PathInfo.new(path, row))
           endpoint = Endpoint.new("/#{canonicalize_salvo_path(full_path).lstrip('/')}", method, details)
-          extract_path_params(full_path, endpoint)
+          Noir::URLPath.add_params(endpoint, full_path, *PATH_SLOTS)
 
           if handler_name
             leaf = handler_name.split("::").last
@@ -452,19 +454,6 @@ module Analyzer::Rust
       {route_path, method, Noir::TreeSitter.node_start_row(attr_item) + 1}
     end
 
-    # Salvo path params come in two flavours: the legacy angle form
-    # (`<id>`) and the modern brace form (`{id}`, `{*rest}`, `{**path}`,
-    # and regex-constrained `{id|[0-9]+}`). Strip capture markers and any
-    # inline regex constraint so the param name stays clean.
-    private def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/<(\w+)>/) do |match|
-        push_path_param(endpoint, match[1])
-      end
-      route.scan(/\{\**(\w+)(?:\|[^}]*)?\}/) do |match|
-        push_path_param(endpoint, match[1])
-      end
-    end
-
     # Strip the constraint from salvo brace params for the emitted URL,
     # keeping the bare name: `{id|[0-9]+}` / `{id:guid}` -> `{id}`,
     # `{**rest}` and `<id>` untouched. Uses balanced-brace matching so a
@@ -505,11 +494,6 @@ module Analyzer::Rust
           end
         end
       end
-    end
-
-    private def push_path_param(endpoint : Endpoint, name : String)
-      return if endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
-      endpoint.push_param(Param.new(name, "", "path"))
     end
 
     # Walk parameters + body looking for QueryParam / JsonBody /

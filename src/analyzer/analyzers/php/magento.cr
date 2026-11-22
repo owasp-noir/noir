@@ -140,14 +140,10 @@ module Analyzer::Php
 
     # `/rest` + webapi url, `:sku` path segments rewritten to `{sku}`.
     private def build_rest_path(url : String) : String
-      normalized = normalize_colon_params(url)
+      normalized = Noir::URLPath.normalize(url, Noir::URLPath::COLON_IDENT, rooted: false)
       combined = "/rest/#{normalized.strip.lstrip('/')}"
       combined = combined.gsub(/\/+/, "/")
       combined.size > 1 ? combined.chomp('/') : combined
-    end
-
-    private def normalize_colon_params(url : String) : String
-      url.gsub(/:([A-Za-z_]\w*)/) { "{#{$1}}" }
     end
 
     # -- MVC controllers ------------------------------------------------

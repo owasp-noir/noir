@@ -382,9 +382,7 @@ module Analyzer::Python
               # skipped because there's no local def to walk.
               details = Details.new(PathInfo.new(path, line_index + 1))
               endpoint = Endpoint.new(route_path, method, details)
-              route_path.scan(/\{(\w+)(?::[^}]+)?\}/) do |path_match|
-                endpoint.push_param(Param.new(path_match[1], "", "path"))
-              end
+              Noir::URLPath.add_params(endpoint, route_path, Noir::URLPath::BRACE_WORD_CONSTRAINT)
               result << endpoint
               next
             end
@@ -489,9 +487,7 @@ module Analyzer::Python
       if class_index.nil?
         details = Details.new(PathInfo.new(path, report_line + 1))
         endpoint = Endpoint.new(route_path, "GET", details)
-        route_path.scan(/\{(\w+)(?::[^}]+)?\}/) do |path_match|
-          endpoint.push_param(Param.new(path_match[1], "", "path"))
-        end
+        Noir::URLPath.add_params(endpoint, route_path, Noir::URLPath::BRACE_WORD_CONSTRAINT)
         result << endpoint
         return
       end

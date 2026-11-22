@@ -7,9 +7,6 @@ module Analyzer::Python
   class FastAPI < PythonEngine
     analyzer_for "python_fastapi"
 
-    PATH_PARAM_REGEX       = /\{(#{PYTHON_VAR_NAME_REGEX})(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}/
-    TYPED_PATH_PARAM_REGEX = /\{(#{PYTHON_VAR_NAME_REGEX}):[a-zA-Z_][a-zA-Z0-9_]*\}/
-
     # Constant-only matchers hoisted out of the per-line analyze loops so
     # they aren't recompiled (Crystal rebuilds an interpolated regex
     # literal on every evaluation). The `.to_s` expansion of the
@@ -244,7 +241,7 @@ module Analyzer::Python
                 # Path parameters come from the whole served path: a router
                 # prefix's `{group_slug}` binds a handler or dependency
                 # parameter of that name just like the route's own.
-                full_path = normalize_fastapi_path_params(router_class.join(http_route_path))
+                full_path = Noir::URLPath.strip_type_converters(router_class.join(http_route_path))
                 params = extract_fastapi_handler_params(codelines, def_line, full_path, source, import_modules, path, import_base_path)
                 (class_view_params(codelines, index, full_path, source, path, import_base_path) +
                   decorator_dependency_params(effective_line, full_path, source, path, import_base_path)).each do |param|
@@ -309,7 +306,7 @@ module Analyzer::Python
                 if prog_methods.empty?
                   prog_methods = prog_websocket_route ? ["GET"] : ["GET"]
                 end
-                prog_full = normalize_fastapi_path_params(router_class.join(prog_path))
+                prog_full = Noir::URLPath.strip_type_converters(router_class.join(prog_path))
                 prog_details = Details.new(PathInfo.new(path, index + 1))
                 prog_params = [] of Param
                 prog_callees = [] of Callee
@@ -1404,7 +1401,7 @@ module Analyzer::Python
       function_definition = parse_function_def(codelines, def_line)
       return params unless function_definition
 
-      path_param_names = fastapi_path_param_names(route_path)
+      path_param_names = Noir::URLPath.names(route_path, Noir::URLPath::BRACE_CONVERTER).uniq!
 
       # Each body occupies one slot. Only a lone, unembedded slot can be
       # replaced with top-level fields once the whole signature is known.
@@ -1591,20 +1588,6 @@ module Analyzer::Python
       Param.new("body", "", "json").tap do |body|
         body.add_tag(Tag.new("unresolved", "Could not resolve body fields for #{model}", "analyzer"))
       end
-    end
-
-    private def fastapi_path_param_names(route_path : ::String) : Array(::String)
-      names = [] of ::String
-      route_path.scan(PATH_PARAM_REGEX) do |match|
-        names << match[1] unless names.includes?(match[1])
-      end
-      names
-    end
-
-    # `{id:int}` → `{id}`. `{p:path}` stays: it spans `/`, so the route
-    # serves more than `{p}` does; the optimizer writes it `{*p}`.
-    private def normalize_fastapi_path_params(route_path : ::String) : ::String
-      route_path.gsub(TYPED_PATH_PARAM_REGEX) { |typed| typed.ends_with?(":path}") ? typed : "{#{$~[1]}}" }
     end
 
     private def fastapi_dependency_param?(param : FunctionParameter) : Bool
@@ -2036,7 +2019,7 @@ module Analyzer::Python
 
     private def dependency_callee_params(callee : ::String, route_path : ::String, source : ::String,
                                          path : ::String, base_path : ::String, depth : Int32) : Array(Param)
-      key = {callee, path, base_path, depth, fastapi_path_param_names(route_path)}
+      key = {callee, path, base_path, depth, Noir::URLPath.names(route_path, Noir::URLPath::BRACE_CONVERTER).uniq!}
       (@dependency_params_memo[key] ||= uncached_dependency_callee_params(callee, route_path, source, path, base_path, depth)).map(&.detached_copy)
     end
 
@@ -2342,10 +2325,7 @@ module Analyzer::Python
     private def compose_router_url(prefix : ::String, url : ::String) : ::String
       return prefix if url.empty? && !prefix.empty?
 
-      url = url[1..] if prefix.ends_with?("/") && url.starts_with?("/")
-      url = "/#{url}" unless prefix.ends_with?("/") || url.starts_with?("/")
-
-      prefix + url
+      Noir::URLPath.join(prefix, url, :require_seam)
     end
   end
 end

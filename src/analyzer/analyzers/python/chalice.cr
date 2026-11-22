@@ -19,7 +19,6 @@ module Analyzer::Python
     # handlers (`@app.lambda_function`, `@app.schedule`, event sources) are
     # not routes.
 
-    PATH_PARAM_RE = /\{([A-Za-z_]\w*)\}/
     ALIAS_RE      = /\b([A-Za-z_]\w*)\s*=\s*(?:\w+\.)*current_request\b(?!\s*\.)/
     REQUEST_ATTRS = {"query_params" => "query", "json_body" => "json", "headers" => "header"}
     TAGGER        = "chalice_analyzer"
@@ -44,7 +43,7 @@ module Analyzer::Python
         next unless deco.attribute_name == "route"
 
         body, callees = handler_body(lines, deco.def_line, path, base_path, source)
-        params = deco.path.scan(PATH_PARAM_RE).map { |m| Param.new(m[1], "", "path") }
+        params = Noir::URLPath.params(deco.path, Noir::URLPath::BRACE_IDENT)
         params.concat(request_params(body, "current_request", ALIAS_RE, REQUEST_ATTRS))
 
         tags = [] of Tag

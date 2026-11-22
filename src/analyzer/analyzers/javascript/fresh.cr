@@ -166,7 +166,7 @@ module Analyzer::Javascript
       content = read_file_content(path)
       return [] of Endpoint unless content.matches?(FRESH_APP_MARKER) && content.matches?(FRESH_APP_IMPORT)
       Noir::JSRouteExtractor.extract_routes(path, content, @is_debug, include_callees: callees_needed?).map do |endpoint|
-        endpoint.url.scan(/:(\w+)/) { |m| endpoint.push_param(Param.new(m[1], "", "path")) }
+        Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_WORD)
         endpoint
       end
     end
@@ -202,23 +202,11 @@ module Analyzer::Javascript
     # `[id]` / `[...slug]` to `{id}` / `{slug}`.
     private def url_for(relative : String) : String
       stripped = strip_extension(relative)
-      segments = stripped.split("/").reject(&.empty?).map { |seg| convert_segment(seg) }
+      segments = stripped.split("/").reject(&.empty?).map { |seg| Noir::URLPath.bracket_segment(seg) }
       url = "/" + segments.join("/")
       url = url.sub(/\/index$/, "")
       url = "/" if url.empty?
       url
-    end
-
-    private def convert_segment(seg : String) : String
-      # Catch-all `[...slug]`.
-      if m = seg.match(/^\[\.{3}(\w+)\]$/)
-        return "{#{m[1]}}"
-      end
-      # Dynamic `[id]`.
-      if m = seg.match(/^\[(\w+)\]$/)
-        return "{#{m[1]}}"
-      end
-      seg
     end
 
     private def detect_verbs(content : String, table : Noir::JSHandlerTable::Table, is_page : Bool) : Array(String)

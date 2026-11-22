@@ -235,10 +235,7 @@ module Analyzer::Php
       # gsub passes when `$` is absent.
       return path unless path.includes?('$')
 
-      path = path.gsub(INTERPOLATION_DOLLAR_BRACE_RE) { |_| "{#{$~[1]}}" }
-      path = path.gsub(INTERPOLATION_BRACE_DOLLAR_RE) { |_| "{#{$~[1]}}" }
-      path = path.gsub(INTERPOLATION_DOLLAR_RE) { |_| "{#{$~[1]}}" }
-      path
+      Noir::URLPath.normalize(path, INTERPOLATION_DOLLAR_BRACE_RE, INTERPOLATION_BRACE_DOLLAR_RE, INTERPOLATION_DOLLAR_RE, rooted: false)
     end
 
     # Naive English singular of a resource name (`photos` -> `photo`,

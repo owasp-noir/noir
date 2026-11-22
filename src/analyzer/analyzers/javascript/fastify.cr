@@ -79,14 +79,7 @@ module Analyzer::Javascript
             end
 
             # Parse path parameters from the URL path itself
-            if endpoint.url.includes?(":")
-              endpoint.url.scan(/:(\w+)/) do |m|
-                if m.size > 0
-                  param = Param.new(m[1], "", "path")
-                  endpoint.push_param(param)
-                end
-              end
-            end
+            Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_WORD)
 
             endpoint.details.code_paths.first?.try(&.line).try { |line| schema_by_line.try(&.[line]?) }.try &.each do |param|
               endpoint.push_param(param)
@@ -726,11 +719,7 @@ module Analyzer::Javascript
           endpoint.details = Details.new(PathInfo.new(path, qc.line))
 
           # Extract path parameters from URL
-          url.scan(/:(\w+)/) do |pm|
-            next unless pm.size > 0
-            param = Param.new(pm[1], "", "path")
-            endpoint.push_param(param)
-          end
+          Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
 
           qc.body_params.each do |p|
             endpoint.push_param(p)
@@ -764,11 +753,7 @@ module Analyzer::Javascript
             endpoint = Endpoint.new(url, method_up)
             endpoint.details = Details.new(PathInfo.new(rc.file || path, rc.line))
 
-            url.scan(/:(\w+)/) do |pm|
-              next unless pm.size > 0
-              param = Param.new(pm[1], "", "path")
-              endpoint.push_param(param)
-            end
+            Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
 
             rc.body_params.each do |bp|
               endpoint.push_param(bp)

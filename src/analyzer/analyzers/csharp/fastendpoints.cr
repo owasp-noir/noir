@@ -323,8 +323,8 @@ module Analyzer::CSharp
     private def build_endpoint(raw_route : String, http_method : String, file : String, line : Int32, request_params : Array(Param)) : Endpoint?
       return if raw_route.empty?
 
-      route = normalize_route(raw_route)
-      path_params = build_path_params(route)
+      route = Noir::URLPath.normalize_prefixed_template(raw_route)
+      path_params = Noir::URLPath.template_names(route, Noir::URLPath::BRACE_SEGMENT_BODY).reject!(&.empty?).map { |name| Param.new(name, "", "path") }
       default_type = default_param_type(http_method)
 
       collected = [] of Param
@@ -344,26 +344,6 @@ module Analyzer::CSharp
       endpoint = Endpoint.new(route, http_method, details)
       collected.each { |param| endpoint.params << param }
       endpoint
-    end
-
-    private def normalize_route(route : String) : String
-      normalized = route.strip
-      normalized = normalized.gsub(/^\//, "").gsub(/\/+/, "/")
-      normalized = "/" + normalized
-      normalized = "/" if normalized == "//"
-      normalized
-    end
-
-    private def build_path_params(route : String) : Array(Param)
-      params = [] of Param
-      route.scan(/\{([^}\/]+)\}/) do |match|
-        raw = match[1]? || ""
-        next if raw.empty?
-        cleaned = Common.route_placeholder_name(raw)
-        next if cleaned.empty?
-        params << Param.new(cleaned, "", "path") unless params.any? { |p| p.name == cleaned }
-      end
-      params
     end
 
     private def default_param_type(http_method : String) : String

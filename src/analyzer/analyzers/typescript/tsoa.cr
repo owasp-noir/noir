@@ -23,6 +23,10 @@ module Analyzer::Typescript
       "UploadedFiles" => {"body", nil},
     } of String => Tuple(String, String?)
 
+    protected def route_placeholder_pattern : Regex
+      Noir::URLPath::BRACE_WORD
+    end
+
     def analyze
       endpoints = analyze_with_extensions([".ts"])
       configs = get_files_by_basename("tsoa.json").compact_map do |path|
@@ -38,12 +42,6 @@ module Analyzer::Typescript
 
     protected def app_root_markers : Array(String)
       ["\"tsoa\"", "\"@tsoa/runtime\""]
-    end
-
-    # `{id}` in the route is a path param even without `@Path()`: tsoa
-    # matches undecorated arguments to the template by name.
-    private def extract_path_parameters(url : String, endpoint : Endpoint)
-      url.scan(/\{(\w+)\}/) { |match| endpoint.push_param(Param.new(match[1], "", "path")) }
     end
 
     private def base_path_config(path : String) : GlobalPrefixConfig?

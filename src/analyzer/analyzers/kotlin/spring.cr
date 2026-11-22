@@ -665,7 +665,7 @@ module Analyzer::Kotlin
         begin
           read_file_content(properties_path).each_line do |line|
             if match = line.match(/^\s*spring\.graphql\.path\s*=\s*(\S+)/)
-              return normalize_graphql_path(match[1])
+              return Noir::URLPath.normalize(match[1].strip, empty: "/graphql")
             end
           end
         rescue
@@ -683,18 +683,12 @@ module Analyzer::Kotlin
           graphql = spring["graphql"]
           next unless graphql
           configured_path = graphql["path"]
-          return normalize_graphql_path(configured_path.as_s) if configured_path
+          return Noir::URLPath.normalize(configured_path.as_s.strip, empty: "/graphql") if configured_path
         rescue
         end
       end
 
       nil
-    end
-
-    private def normalize_graphql_path(path : String) : String
-      value = path.strip
-      value = "/graphql" if value.empty?
-      value.starts_with?("/") ? value : "/#{value}"
     end
 
     private def graphql_params(route : Noir::TreeSitterKotlinRouteExtractor::GraphqlRoute,

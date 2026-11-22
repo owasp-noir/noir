@@ -13,6 +13,8 @@ module Analyzer::Rust
   class Axum < RustEngine
     analyzer_for "rust_axum"
 
+    PATH_SLOTS = {Noir::URLPath::COLON_IDENT, Noir::URLPath::BRACE_REST_IDENT, Noir::URLPath::SLASH_SPLAT_IDENT}
+
     # Only files inside a crate that depends on `axum`. See
     # `RustEngine#crate_dependencies` — without this every Rust analyzer
     # sees every `.rs` file in the scan.
@@ -144,7 +146,7 @@ module Analyzer::Rust
             RustEngine.fan_out_verbs(raw_verb).each do |verb|
               details = Details.new(PathInfo.new(path, call_line(node)))
               endpoint = Endpoint.new(path_str, verb, details)
-              extract_path_params(path_str, endpoint)
+              Noir::URLPath.add_params(endpoint, path_str, *PATH_SLOTS)
 
               if handler_name
                 endpoint.handler = attach_handler_context(endpoint, function_index, source, path, handler_name, include_callee, handler_context_cache)
@@ -189,7 +191,7 @@ module Analyzer::Rust
               RustEngine.fan_out_verbs(raw_verb).each do |verb|
                 details = Details.new(PathInfo.new(path, call_line(node)))
                 endpoint = Endpoint.new(path_str, verb, details)
-                extract_path_params(path_str, endpoint)
+                Noir::URLPath.add_params(endpoint, path_str, *PATH_SLOTS)
 
                 if handler_name
                   endpoint.handler = attach_handler_context(endpoint, function_index, source, path, handler_name, include_callee, handler_context_cache)
@@ -901,24 +903,6 @@ module Analyzer::Rust
       "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
 
-    private def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:([A-Za-z_]\w*)/) do |match|
-        push_path_param(endpoint, match[1])
-      end
-
-      route.scan(/\{\**([A-Za-z_]\w*)\}/) do |match|
-        push_path_param(endpoint, match[1])
-      end
-
-      route.scan(%r{/\*([A-Za-z_]\w*)}) do |match|
-        push_path_param(endpoint, match[1])
-      end
-    end
-
-    private def push_path_param(endpoint : Endpoint, name : String)
-      endpoint.push_param(Param.new(name, "", "path"))
-    end
-
     private def extract_function_params(function : LibTreeSitter::TSNode,
                                         source : String,
                                         endpoint : Endpoint,
@@ -1290,7 +1274,7 @@ module Analyzer::Rust
           urls.each do |url|
             details = Details.new(PathInfo.new(path, attr_row))
             endpoint = Endpoint.new(url, verb, details)
-            extract_path_params(url, endpoint)
+            Noir::URLPath.add_params(endpoint, url, *PATH_SLOTS)
             # The attribute sits on the handler itself: read that fn, not a
             # name lookup that a same-named fn elsewhere could answer.
             context = handler_context_cache["#{path}\0@#{attr_row}\0#{include_callee}"] ||= handler_context_for_function(function, source, path, include_callee)
@@ -1431,7 +1415,7 @@ module Analyzer::Rust
             child = resolve_router_call(args[1], source, let_calls)
             next unless child
             enclosing_nest_prefixes(call, inline_ranges).each do |outer|
-              add_cross_edge(edges, parent, child, join_nest(outer, prefix), source, base, fpath)
+              add_cross_edge(edges, parent, child, Noir::URLPath.join(outer, prefix, :trim_seam), source, base, fpath)
             end
           end
         end
@@ -1478,7 +1462,7 @@ module Analyzer::Rust
       ranges.keys.sort!.each do |range|
         s, e = range
         next unless start_byte >= s && start_byte < e
-        result = result.flat_map { |outer| ranges[range].map { |p| join_nest(outer, p) } }.uniq!
+        result = result.flat_map { |outer| ranges[range].map { |p| Noir::URLPath.join(outer, p, :trim_seam) } }.uniq!
       end
       result
     end
@@ -1815,7 +1799,7 @@ module Analyzer::Rust
         lst.each do |child, prefix|
           next unless child == name
           resolve_nest_external(parent, edges, nested_set, ext, stack).each do |pe|
-            joined = join_nest(pe, prefix)
+            joined = Noir::URLPath.join(pe, prefix, :trim_seam)
             result << joined unless result.includes?(joined)
           end
         end
@@ -1824,12 +1808,6 @@ module Analyzer::Rust
       final = result.empty? ? [""] : result
       ext[name] = final
       final
-    end
-
-    private def join_nest(a : String, b : String) : String
-      return b if a.empty?
-      return a if b.empty?
-      "#{a.rstrip('/')}/#{b.lstrip('/')}"
     end
 
     # Walk `node`'s children pairing each `attribute_item` with the

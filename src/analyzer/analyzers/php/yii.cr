@@ -104,7 +104,7 @@ module Analyzer::Php
         if (key = entry.key) && (route = entry.string)
           next if route.empty?
           methods, pattern = split_rule_key(key)
-          endpoints.concat(rule_endpoints(methods, join_rule_path(prefix, pattern), src.at(entry.pos)))
+          endpoints.concat(rule_endpoints(methods, Noir::URLPath.join(prefix, pattern, :trim_seam), src.at(entry.pos)))
         elsif inner = entry.inner
           # An array value is a rule config whatever its key: UrlManager
           # only reads a string key as the pattern of a string rule.
@@ -125,14 +125,14 @@ module Analyzer::Php
           Noir::SkippedFiles.record(tech, src.path, "GroupUrlRule nesting deeper than #{MAX_RULE_GROUP_DEPTH} levels")
           return [] of Endpoint
         end
-        group_prefix = join_rule_path(prefix, options["prefix"]?.try(&.string) || "")
+        group_prefix = Noir::URLPath.join(prefix, options["prefix"]?.try(&.string) || "", :trim_seam)
         rules_endpoints(lexer, rules, group_prefix, src, depth + 1)
       elsif options.has_key?("controller")
         rest_rule_endpoints(lexer, range, options, src.at(range.begin))
       elsif pattern = options["pattern"]?.try(&.string)
         verbs = option_strings(lexer, options["verb"]?).map(&.upcase)
         verbs = ["GET"] if verbs.empty?
-        rule_endpoints(verbs, join_rule_path(prefix, pattern), src.at(range.begin))
+        rule_endpoints(verbs, Noir::URLPath.join(prefix, pattern, :trim_seam), src.at(range.begin))
       else
         [] of Endpoint
       end
@@ -175,16 +175,16 @@ module Analyzer::Php
       prefix = options["prefix"]?.try(&.string) || ""
       endpoints = [] of Endpoint
       url_names.each do |url_name|
-        base = join_rule_path(prefix, url_name)
+        base = Noir::URLPath.join(prefix, url_name, :trim_seam)
         patterns.each do |key, action|
           next unless resource_action_allowed?(rule_text, action)
           if match = key.match(REST_VERB_RE)
-            endpoints.concat(rule_endpoints(match[1].split(','), join_rule_path(base, match[2]? || ""), details))
+            endpoints.concat(rule_endpoints(match[1].split(','), Noir::URLPath.join(base, match[2]? || "", :trim_seam), details))
           else
             # A verb-less pattern answers any verb: report the defaults'
             # `options` action as OPTIONS, anything else as GET.
             verbs = action == "options" ? ["OPTIONS"] : ["GET"]
-            endpoints.concat(rule_endpoints(verbs, join_rule_path(base, key), details))
+            endpoints.concat(rule_endpoints(verbs, Noir::URLPath.join(base, key, :trim_seam), details))
           end
         end
       end
@@ -271,14 +271,8 @@ module Analyzer::Php
       end
     end
 
-    private def join_rule_path(prefix : String, pattern : String) : String
-      return pattern if prefix.empty?
-      return prefix if pattern.empty?
-      "#{prefix.rstrip('/')}/#{pattern.lstrip('/')}"
-    end
-
     private def rule_endpoints(methods : Array(String), route : String, details : Details) : Array(Endpoint)
-      normalized_path = normalize_route(route)
+      normalized_path = Noir::URLPath.normalize(route, Noir::URLPath::ANGLE_WORD_TYPED)
       params = extract_brace_path_params(normalized_path)
       methods.map { |method| Endpoint.new(normalized_path, method, params, details.dup) }
     end
@@ -299,13 +293,6 @@ module Analyzer::Php
       else
         {["GET"], key.strip}
       end
-    end
-
-    # Convert Yii2 patterns like `<id:\d+>` or `<slug>` into `{id}` / `{slug}`.
-    private def normalize_route(route : String) : String
-      normalized = route.gsub(/<(\w+)(?::[^>]+)?>/) { "{#{$1}}" }
-      normalized = "/" + normalized unless normalized.starts_with?("/")
-      normalized
     end
 
     # A Yii controller is a console (CLI) controller when it extends

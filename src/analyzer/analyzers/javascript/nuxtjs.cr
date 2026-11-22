@@ -211,12 +211,7 @@ module Analyzer::Javascript
           endpoint.details = details
 
           # Extract path parameters from URL
-          url.scan(/:(\w+)/) do |m|
-            if m.size > 0
-              param = Param.new(m[1], "", "path")
-              endpoint.push_param(param)
-            end
-          end
+          Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
 
           h3_params.each { |param| endpoint.push_param(param) }
 

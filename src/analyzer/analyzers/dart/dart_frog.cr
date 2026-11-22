@@ -136,9 +136,7 @@ module Analyzer::Dart
       endpoint = Endpoint.new(url, verb)
       endpoint.protocol = "ws" if websocket
       endpoint.details = Details.new(PathInfo.new(path, 1))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
+      Noir::URLPath.add_params(endpoint, url, Noir::URLPath::BRACE_WORD)
       Noir::DartCalleeExtractor.attach_to(endpoint, callees)
       endpoint
     end
@@ -184,25 +182,11 @@ module Analyzer::Dart
     # to `{id}`.
     private def url_for(relative : String) : String
       stripped = relative.ends_with?(".dart") ? relative[0..-".dart".size - 1] : relative
-      segments = stripped.split("/").reject(&.empty?).map { |seg| convert_segment(seg) }
+      segments = stripped.split("/").reject(&.empty?).map { |seg| Noir::URLPath.bracket_segment(seg) }
       url = "/" + segments.join("/")
       url = url.sub(/\/index$/, "")
       url = "/" if url.empty?
       url
-    end
-
-    private def convert_segment(seg : String) : String
-      # Catch-all segment, e.g. `[...slug]` matches one or more path
-      # segments. Surface as `{slug}` so the dynamic part is at least
-      # captured as a path param even though the framework binds it
-      # to a list.
-      if m = seg.match(/^\[\.\.\.(\w+)\]$/)
-        return "{#{m[1]}}"
-      end
-      if m = seg.match(/^\[(\w+)\]$/)
-        return "{#{m[1]}}"
-      end
-      seg
     end
 
     # Matches `case HttpMethod.<verb>:` clauses inside a method switch.

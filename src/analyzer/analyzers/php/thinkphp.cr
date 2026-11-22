@@ -82,7 +82,7 @@ module Analyzer::Php
         verb = route_match[1].upcase
         route_path = route_match[2]
         full_path = build_full_path(prefix, route_path)
-        normalized_path = normalize_route(full_path)
+        normalized_path = Noir::URLPath.normalize(full_path, *Noir::URLPath::OPTIONAL_THEN_COLON, collapse: true, trim: true)
         route_line = base_line + offsets.line(offsets.begin(route_match)) - 1
 
         methods = verb == "ANY" ? ANY_ROUTE_HTTP_METHODS : [verb]
@@ -90,7 +90,7 @@ module Analyzer::Php
         handler_body, next_pos, body_start_line = extract_inline_closure_body(offsets, offsets.end(route_match), base_line)
         route_handler = handler_body ? nil : extract_route_handler(offsets, offsets.end(route_match))
 
-        path_params = extract_path_params(full_path)
+        path_params = Noir::URLPath.params(full_path, Noir::URLPath::COLON_WORD)
         handler_params = handler_body ? extract_request_params(handler_body) : [] of Param
 
         methods.each do |m|
@@ -121,7 +121,7 @@ module Analyzer::Php
 
         route_path = route_match[1]
         full_path = build_full_path(prefix, route_path)
-        normalized_path = normalize_route(full_path)
+        normalized_path = Noir::URLPath.normalize(full_path, *Noir::URLPath::OPTIONAL_THEN_COLON, collapse: true, trim: true)
         route_line = base_line + offsets.line(offsets.begin(route_match)) - 1
 
         methods = ["GET"]
@@ -129,7 +129,7 @@ module Analyzer::Php
           methods = extract_methods_from_string(method_str)
         end
 
-        path_params = extract_path_params(full_path)
+        path_params = Noir::URLPath.params(full_path, Noir::URLPath::COLON_WORD)
 
         methods.each do |m|
           details = Details.new(PathInfo.new(file_path, route_line))
@@ -218,23 +218,6 @@ module Analyzer::Php
 
     private def inside_group_body?(pos : Int32, groups : Array(RouteGroup)) : Bool
       groups.any? { |group| pos >= group.body_start && pos < group.body_end }
-    end
-
-    private def normalize_route(route : String) : String
-      normalized = route.gsub(/\[:(\w+)\]/) { ":#{$1}" }
-      normalized = normalized.gsub(/:(\w+)/) { "{#{$1}}" }
-      normalized = "/" + normalized unless normalized.starts_with?("/")
-      normalized = normalized.gsub(/\/+/, "/")
-      normalized = normalized.chomp('/') if normalized.size > 1
-      normalized
-    end
-
-    private def extract_path_params(route_path : String) : Array(Param)
-      params = [] of Param
-      route_path.scan(/(?:\[)?:(\w+)(?:\])?/).each do |match|
-        params << Param.new(match[1], "", "path")
-      end
-      params
     end
 
     private def extract_methods_from_string(methods_str : String) : Array(String)
@@ -623,7 +606,7 @@ module Analyzer::Php
         break unless route_match
 
         pattern = route_match[1]
-        normalized_path = normalize_route(pattern)
+        normalized_path = Noir::URLPath.normalize(pattern, *Noir::URLPath::OPTIONAL_THEN_COLON, collapse: true, trim: true)
         route_line = line_number_for_index(content, route_match.begin(0))
 
         methods = ["GET"]
@@ -635,7 +618,7 @@ module Analyzer::Php
         method_body_info = extract_php_method_body_after(content, match_start)
         method_body = method_body_info ? method_body_info[0] : ""
 
-        path_params = extract_path_params(pattern)
+        path_params = Noir::URLPath.params(pattern, Noir::URLPath::COLON_WORD)
         body_params = extract_request_params(method_body)
 
         seen = Set(String).new(path_params.map(&.name))

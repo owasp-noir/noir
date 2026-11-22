@@ -14,6 +14,10 @@ module Analyzer::Rust
   class ActixWeb < RustEngine
     analyzer_for "rust_actix_web"
 
+    def extract_path_params(route : String, endpoint : Endpoint)
+      Noir::URLPath.add_params(endpoint, route, Noir::URLPath::BRACE_FLAT_CONSTRAINT)
+    end
+
     # Only files inside a crate that depends on `actix-web`. See
     # `RustEngine#crate_dependencies` — without this every Rust analyzer
     # sees every `.rs` file in the scan.
@@ -1465,16 +1469,6 @@ module Analyzer::Rust
       block.call(node)
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_calls_all(child, &block)
-      end
-    end
-
-    # Path params like `/users/{id}`, the typed/regex `/users/{id:\d+}`
-    # form, and the tail-match `/files/{path:.*}` form — all normalise
-    # to the bare param name.
-    def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/\{([A-Za-z_]\w*)(?::[^{}]*)?\}/) do |match|
-        name = match[1]
-        endpoint.push_param(Param.new(name, "", "path")) unless endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
       end
     end
 

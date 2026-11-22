@@ -1,6 +1,6 @@
 require "../models/endpoint"
 require "../minilexers/js_lexer"
-require "../utils/url_path"
+require "../utils/url_path/params"
 require "./js_mount_prefix"
 require "../utils/top_level_split"
 require "../utils/js_literal_scanner"
@@ -1630,9 +1630,7 @@ module Noir
               route = JSRoutePattern.new(method, path, raw_path, start_pos)
               route.receiver = router_var
               unless path_entry.is_regex?
-                extract_path_params(path).each do |param|
-                  route.push_param(param)
-                end
+                Noir::URLPath.add_params(route, path, *Noir::URLPath::COLON_THEN_BRACE)
               end
               results << route
             end
@@ -1672,9 +1670,7 @@ module Noir
           # Extract parameters from path
           start_pos = @tokens[idx].position
           route = JSRoutePattern.new(method, path, nil, start_pos)
-          extract_path_params(path).each do |param|
-            route.push_param(param)
-          end
+          Noir::URLPath.add_params(route, path, *Noir::URLPath::COLON_THEN_BRACE)
 
           return route
         end
@@ -1753,9 +1749,7 @@ module Noir
           if path
             start_pos = @tokens[idx].position
             route = JSRoutePattern.new(method, path, nil, start_pos)
-            extract_path_params(path).each do |param|
-              route.push_param(param)
-            end
+            Noir::URLPath.add_params(route, path, *Noir::URLPath::COLON_THEN_BRACE)
             return route
           end
         end
@@ -1833,9 +1827,7 @@ module Noir
               route.receiver = router_var
               route.pathless = !!pathless
               unless path_entry.is_regex?
-                extract_path_params(path).each do |param|
-                  route.push_param(param)
-                end
+                Noir::URLPath.add_params(route, path, *Noir::URLPath::COLON_THEN_BRACE)
               end
               results << route
             end
@@ -1901,9 +1893,7 @@ module Noir
 
           paths.each do |path|
             route = JSRoutePattern.new(method, path, raw_path, @tokens[method_idx + 1].position)
-            extract_path_params(path).each do |param|
-              route.push_param(param)
-            end
+            Noir::URLPath.add_params(route, path, *Noir::URLPath::COLON_THEN_BRACE)
             results << route
           end
 
@@ -1973,9 +1963,7 @@ module Noir
           # Create routes for all prefixed paths
           paths.each do |path|
             route = JSRoutePattern.new(method, path, raw_path, @tokens[method_idx + 1].position)
-            extract_path_params(path).each do |param|
-              route.push_param(param)
-            end
+            Noir::URLPath.add_params(route, path, *Noir::URLPath::COLON_THEN_BRACE)
             results << route
           end
 
@@ -2036,9 +2024,7 @@ module Noir
             # Create route with the prefix
             raw_path = path
             route = JSRoutePattern.new(method, full_path, raw_path, start_pos)
-            extract_path_params(path).each do |param|
-              route.push_param(param)
-            end
+            Noir::URLPath.add_params(route, path, *Noir::URLPath::COLON_THEN_BRACE)
 
             # Resume past this `applyRoutes(` call. Jumping back to the route
             # walked forward onto the same call again, looping until the
@@ -2208,7 +2194,7 @@ module Noir
       route.receiver = receiver
       route.pathless = pathless
       unless is_regex
-        extract_path_params(path).each { |p| route.push_param(p) }
+        Noir::URLPath.add_params(route, path, *Noir::URLPath::COLON_THEN_BRACE)
       end
       route
     end
@@ -2276,26 +2262,6 @@ module Noir
       end
 
       result.to_s
-    end
-
-    private def extract_path_params(path : String) : Array(Param)
-      params = [] of Param
-
-      # Extract path parameters like :id or {id}
-      path.scan(/:(\w+)/) do |match|
-        if match.size > 0
-          params << Param.new(match[1], "", "path")
-        end
-      end
-
-      # Also extract {param} style (Express 4 style)
-      path.scan(/\{(\w+)\}/) do |match|
-        if match.size > 0
-          params << Param.new(match[1], "", "path")
-        end
-      end
-
-      params
     end
   end
 end

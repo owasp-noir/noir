@@ -18,6 +18,10 @@ module Analyzer::Go
   class GoRestful < GoEngine
     analyzer_for "go_restful"
 
+    def normalize_restful_path(path : String) : String
+      Noir::URLPath.normalize(path, Noir::URLPath::BRACE_CONSTRAINT, rooted: false)
+    end
+
     IMPORT_MARKER = "github.com/emicklei/go-restful"
 
     # One precompiled matcher instead of a `String#includes?` scan per
@@ -66,13 +70,6 @@ module Analyzer::Go
       end
 
       result
-    end
-
-    # go-restful path params are `{name}`, with an optional tail/regex
-    # constraint `{name:*}` / `{name:[0-9]+}`; strip the constraint so the
-    # template reads as a clean `{name}` (mirrors the Iris normalizer).
-    def normalize_restful_path(path : String) : String
-      path.gsub(/\{([^{}:]+):[^{}]+\}/) { "{#{$1}}" }
     end
   end
 end

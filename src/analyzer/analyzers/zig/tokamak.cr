@@ -379,16 +379,12 @@ module Analyzer::Zig
     end
 
     private def emit(path, text, offset, url, method, callees : Array(Noir::ZigCalleeExtractor::Entry))
-      params = extract_path_params(url)
+      params = Noir::URLPath.params(url, Noir::URLPath::COLON_IDENT)
       line = Noir::ZigCalleeExtractor.line_at(text, offset)
       details = Details.new(PathInfo.new(path, line))
       endpoint = Endpoint.new(url, method, params, details)
       Noir::ZigCalleeExtractor.attach_to(endpoint, callees) unless callees.empty?
       @result << endpoint
-    end
-
-    private def extract_path_params(url : String) : Array(Param)
-      url.scan(/:([A-Za-z_]\w*)/).map { |m| Param.new(m[1], "", "path") }
     end
 
     # Join a mount/group prefix with a route path. A bare-root route ("/")

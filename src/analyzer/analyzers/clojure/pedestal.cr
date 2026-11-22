@@ -438,7 +438,7 @@ module Analyzer::Clojure
       seen << key
 
       endpoint = Endpoint.new(route_path, method, Details.new(PathInfo.new(path, Noir::ClojureScanner.line_number_for(source, offset))))
-      extract_path_param_names(route_path).each do |name|
+      Noir::URLPath.names(route_path, Noir::URLPath::COLON_OR_STAR_HYPHEN).uniq!.each do |name|
         add_param_once(endpoint, name, "path")
       end
       if include_callee && handler_range
@@ -486,15 +486,6 @@ module Analyzer::Clojure
 
     private def add_param_once(endpoint : Endpoint, name : String, param_type : String)
       endpoint.push_param(Param.new(name, "", param_type))
-    end
-
-    private def extract_path_param_names(route_path : String) : Array(String)
-      names = [] of String
-      route_path.scan(/[:*]([A-Za-z_][\w\-]*)/) do |match|
-        name = match[1]
-        names << name unless names.includes?(name)
-      end
-      names
     end
 
     private def extract_context(source : String, start : Int32, limit : Int32) : String?

@@ -145,12 +145,7 @@ module Analyzer::Javascript
           endpoint.details = details
 
           # Extract path parameters from URL
-          url.scan(/:(\w+)/) do |m|
-            if m.size > 0
-              param = Param.new(m[1], "", "path")
-              endpoint.push_param(param)
-            end
-          end
+          Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
 
           # Same h3 request helpers as Nuxt server routes.
           h3_params.each { |param| endpoint.push_param(param) }

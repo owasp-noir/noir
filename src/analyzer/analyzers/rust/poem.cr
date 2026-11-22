@@ -15,6 +15,10 @@ module Analyzer::Rust
   class Poem < RustEngine
     analyzer_for "rust_poem"
 
+    def normalize_path(route : String) : String
+      Noir::URLPath.normalize(route, Noir::URLPath::COLON_ANGLE_CONSTRAINT)
+    end
+
     # Only files inside a crate that depends on `poem`. See
     # `RustEngine#crate_dependencies` — without this every Rust analyzer
     # sees every `.rs` file in the scan.
@@ -85,7 +89,7 @@ module Analyzer::Rust
             while (top = nest_stack.last?) && top[0] <= s
               nest_stack.pop
             end
-            nest_stack << {e, top ? join_nest_path(top[1], p) : p}
+            nest_stack << {e, top ? Noir::URLPath.join(top[1], p, :rooted_mount) : p}
           end
           while (top = nest_stack.last?) && top[0] <= start
             nest_stack.pop
@@ -96,7 +100,7 @@ module Analyzer::Rust
           at_call = decode_at_call(node, source)
           next unless at_call
           route_path, method_handler_pairs = at_call
-          route_path = join_nest_path(top[1], route_path) if top = nest_stack.last?
+          route_path = Noir::URLPath.join(top[1], route_path, :rooted_mount) if top = nest_stack.last?
 
           method_handler_pairs.each do |method, handler_name|
             details = Details.new(PathInfo.new(path, call_line(node)))
@@ -130,10 +134,10 @@ module Analyzer::Rust
 
           impl = enclosing_impl(attr_item, impl_ranges)
           if impl && (prefix_path = impl[3])
-            route_path = join_nest_path(prefix_path, route_path)
+            route_path = Noir::URLPath.join(prefix_path, route_path, :rooted_mount)
           end
           prefixes = impl ? oai_prefixes[impl[2]]? : nil
-          raw_paths = prefixes && !prefixes.empty? ? prefixes.map { |p| join_nest_path(p, route_path) } : [route_path]
+          raw_paths = prefixes && !prefixes.empty? ? prefixes.map { |p| Noir::URLPath.join(p, route_path, :rooted_mount) } : [route_path]
 
           raw_paths.each do |raw_path|
             details = Details.new(PathInfo.new(path, attr_row))
@@ -270,13 +274,6 @@ module Analyzer::Rust
       mt = method
       return unless rp && mt
       {rp, mt, Noir::TreeSitter.node_start_row(attr_item) + 1}
-    end
-
-    # Convert `:param` syntax to `{param}` and ensure leading slash.
-    def normalize_path(route : String) : String
-      # `:id<\d+>` constrains the segment with a regex; the name is the param.
-      result = route.gsub(/:(\w+)(?:<[^>]*>)?/) { "{#{$~[1]}}" }
-      result.starts_with?("/") ? result : "/#{result}"
     end
 
     OAI_NAME_RE  = /#\[\s*oai\s*\([^\]]*\bname\s*=\s*"([^"]+)"/
@@ -571,13 +568,6 @@ module Analyzer::Rust
         best = r if best.nil? || (r[1] - r[0]) < (best[1] - best[0])
       end
       best
-    end
-
-    private def join_nest_path(prefix : String, path : String) : String
-      pfx = (prefix.starts_with?("/") ? prefix : "/#{prefix}").rstrip("/")
-      return path.starts_with?("/") ? path : "/#{path}" if pfx.empty?
-      suffix = path.lstrip("/")
-      suffix.empty? ? pfx : "#{pfx}/#{suffix}"
     end
   end
 end

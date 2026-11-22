@@ -199,14 +199,14 @@ module Analyzer::Dart
       if literal = Helper.extract_string_literal(stripped)
         # `name: '$TUYA/turn_off'` — an interpolated literal resolves
         # against the collected path constants.
-        return normalize_path(resolve_interpolation(literal, const_map))
+        return Noir::URLPath.normalize(resolve_interpolation(literal, const_map), Noir::URLPath::COLON_IDENT)
       end
       # Reference to a path constant (`Routes.HOME` / `HOME`): resolve by
       # the bare constant name.
       return unless stripped.matches?(/\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\z/)
       key = stripped.split('.').last
       value = const_map[key]?
-      value ? normalize_path(value) : nil
+      value ? Noir::URLPath.normalize(value, Noir::URLPath::COLON_IDENT) : nil
     end
 
     private def resolve_verbs(method_arg : String?) : Array(String)
@@ -228,13 +228,6 @@ module Analyzer::Dart
     private def page_callees(page_arg : String?, path : String, line : Int32) : Array(Noir::DartCalleeExtractor::Entry)
       return [] of Noir::DartCalleeExtractor::Entry unless page_arg
       Noir::DartCalleeExtractor.callees_for_body(page_arg, path, line)
-    end
-
-    # Ensure a leading slash and translate Express-style `:id` captures
-    # into `{id}` path params.
-    private def normalize_path(path : String) : String
-      base = path.starts_with?('/') ? path : "/#{path}"
-      base.gsub(/:([A-Za-z_]\w*)/) { "{#{$~[1]}}" }
     end
 
     # ---------- source-string utilities ----------

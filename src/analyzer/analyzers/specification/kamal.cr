@@ -49,7 +49,7 @@ module Analyzer::Specification
 
     private def emit(path : String, method : String, origin : String, hosts : Array(String),
                      protocol : String, service : String?, app_port : String?, details : Details)
-      endpoint = Endpoint.new(normalize_path(path), method, details)
+      endpoint = Endpoint.new(Noir::URLPath.normalize(path.strip), method, details)
       endpoint.protocol = protocol
       endpoint.add_tag(Tag.new("kamal-source", origin, "kamal_analyzer"))
       # `add_tag` dedupes on (name, tagger), so every host is folded into a
@@ -132,12 +132,6 @@ module Analyzer::Specification
         return i.to_s
       end
       nil
-    end
-
-    private def normalize_path(path : String) : String
-      cleaned = path.strip
-      return "/" if cleaned.empty?
-      cleaned.starts_with?('/') ? cleaned : "/#{cleaned}"
     end
   end
 end

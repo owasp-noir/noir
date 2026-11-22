@@ -111,7 +111,7 @@ module Analyzer::Typescript
         next unless serves_page
 
         endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
-        extract_path_parameters(normalized_path, endpoint)
+        Noir::URLPath.add_params(endpoint, normalized_path, Noir::URLPath::COLON_WORD)
         extract_search_params(content, endpoint)
         attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
         result << endpoint
@@ -151,7 +151,7 @@ module Analyzer::Typescript
     private def server_handler_endpoint(url : String, verb : String, path : String, line : Int32, fn : LibTreeSitter::TSNode, content : String) : Endpoint
       endpoint = Endpoint.new(url, verb)
       endpoint.details = Details.new(PathInfo.new(path, line))
-      extract_path_parameters(url, endpoint)
+      Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
       if {"arrow_function", "function_expression"}.includes?(Noir::TreeSitter.node_type(fn))
         params = Noir::TreeSitter.field(fn, "parameters").try { |node| Noir::TreeSitter.node_text(node, content).lchop('(') } || ""
         body = Noir::TreeSitter.field(fn, "body").try { |node| Noir::TreeSitter.node_text(node, content) } || ""
@@ -192,7 +192,7 @@ module Analyzer::Typescript
         normalized_path = normalize_path(route_path)
 
         endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
-        extract_path_parameters(normalized_path, endpoint)
+        Noir::URLPath.add_params(endpoint, normalized_path, Noir::URLPath::COLON_WORD)
         extract_search_params(content, endpoint)
         attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
         result << endpoint
@@ -212,7 +212,7 @@ module Analyzer::Typescript
           next if resolved_path.empty?
 
           endpoint = create_endpoint(resolved_path, "GET", path, route.byte_start_pos, content)
-          extract_path_parameters(resolved_path, endpoint)
+          Noir::URLPath.add_params(endpoint, resolved_path, Noir::URLPath::COLON_WORD)
           extract_search_params_from_route_block(route.block, endpoint)
           attach_route_block_callees(route.block, path, line_for_byte_pos(content, route.byte_start_pos), endpoint) if callees_needed?
           result << endpoint
@@ -229,7 +229,7 @@ module Analyzer::Typescript
         normalized_path = normalize_path(route_path)
 
         endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
-        extract_path_parameters(normalized_path, endpoint)
+        Noir::URLPath.add_params(endpoint, normalized_path, Noir::URLPath::COLON_WORD)
         attach_route_block_callees(match[0], path, line_for_byte_pos(content, match.byte_begin(0)), endpoint) if callees_needed?
         result << endpoint
       end
@@ -302,19 +302,12 @@ module Analyzer::Typescript
     private def combine_route_paths(parent : String, child : String) : String
       normalized_child = normalize_path(child)
 
-      return normalize_url_path(parent) if normalized_child == "/" || pathless_segment?(child)
-      return normalize_url_path(normalized_child) if parent.empty? || parent == "/"
+      return Noir::URLPath.normalize(parent, collapse: true, trim: true) if normalized_child == "/" || pathless_segment?(child)
+      return Noir::URLPath.normalize(normalized_child, collapse: true, trim: true) if parent.empty? || parent == "/"
 
       parent = parent.chomp("/")
       child_part = normalized_child.starts_with?("/") ? normalized_child[1..-1] : normalized_child
-      normalize_url_path("#{parent}/#{child_part}")
-    end
-
-    private def normalize_url_path(path : String) : String
-      normalized = path.squeeze('/')
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized = normalized.chomp("/") unless normalized == "/"
-      normalized
+      Noir::URLPath.normalize("#{parent}/#{child_part}", collapse: true, trim: true)
     end
 
     private def pathless_segment?(path : String) : Bool
@@ -335,7 +328,7 @@ module Analyzer::Typescript
     private def normalize_path(path : String) : String
       # TanStack Router uses $param for path parameters
       # Convert to standard :param format
-      normalized = path.gsub(/\$(\w+)/, ":\\1")
+      normalized = Noir::URLPath.normalize(path, /\$(\w+)/, rooted: false, replacement: ":\\1")
       remove_pathless_segments(normalized)
     end
 
@@ -441,14 +434,6 @@ module Analyzer::Typescript
 
     private def line_for_byte_pos(content : String, byte_pos : Int32) : Int32
       content.to_slice[0, byte_pos].count('\n'.ord.to_u8) + 1
-    end
-
-    private def extract_path_parameters(url : String, endpoint : Endpoint)
-      # Extract path parameters from URL patterns like :id or $id
-      url.scan(/:(\w+)/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
     end
 
     private def extract_search_params(content : String, endpoint : Endpoint)

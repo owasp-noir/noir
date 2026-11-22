@@ -6,6 +6,8 @@ module Analyzer::Specification
   class Insomnia < SpecificationEngine
     analyzer_for "insomnia"
 
+    PATH_SLOTS = {Noir::URLPath::COLON_ASCII, Noir::URLPath::BRACE_ASCII}
+
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
     # A `{{ var }}` / `{{ _.var }}` placeholder.
@@ -113,7 +115,7 @@ module Analyzer::Specification
       end
 
       # Path variables `:name` placeholders (Insomnia uses `:name` in URLs).
-      extract_path_vars(url_path).each do |name|
+      Noir::URLPath.names(url_path, *PATH_SLOTS).each do |name|
         add_param(params, name, "", "path")
       end
 
@@ -263,7 +265,7 @@ module Analyzer::Specification
         end
       end
 
-      extract_path_vars(url_path).each do |name|
+      Noir::URLPath.names(url_path, *PATH_SLOTS).each do |name|
         add_param(params, name, "", "path")
       end
 
@@ -363,17 +365,6 @@ module Analyzer::Specification
         names << name unless name.empty?
       end
       names
-    end
-
-    private def extract_path_vars(path : String) : Array(String)
-      vars = [] of String
-      path.scan(/:([A-Za-z_][A-Za-z0-9_]*)/) do |m|
-        vars << m[1]
-      end
-      path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)\}/) do |m|
-        vars << m[1]
-      end
-      vars
     end
 
     # First-wins, except that a later declaration carrying a value upgrades a

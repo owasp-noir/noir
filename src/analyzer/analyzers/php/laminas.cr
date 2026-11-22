@@ -308,13 +308,9 @@ module Analyzer::Php
       return "" if hostname
 
       normalized = route.gsub("[", "").gsub("]", "")
-      normalized = normalized.gsub(/\{(\w+):[^}]+\}/) { |_| "{#{$~[1]}}" }
-      normalized = normalized.gsub(/:([A-Za-z_]\w*)/) { |_| "{#{$~[1]}}" }
+      normalized = Noir::URLPath.normalize(normalized, *Noir::URLPath::BRACE_THEN_COLON, rooted: false)
       normalized = normalized.gsub(/\{[^A-Za-z_][^}]*\}/, "")
-      normalized = "/" + normalized unless normalized.starts_with?("/")
-      normalized = normalized.gsub(/\/+/, "/")
-      normalized = normalized.chomp('/') if normalized.size > 1
-      normalize_php_interpolation(normalized)
+      normalize_php_interpolation(Noir::URLPath.normalize(normalized, collapse: true, trim: true))
     end
 
     private def normalize_laminas_regex_spec(spec : String) : String

@@ -390,8 +390,7 @@ module Analyzer::Php
     private def extract_ci_path_params(route_path : String) : Array(Param)
       params = [] of Param
       counts = Hash(String, Int32).new(0)
-      route_path.scan(/\{(\w+)\}/) do |match|
-        name = match[1]
+      Noir::URLPath.each_name(route_path, Noir::URLPath::BRACE_WORD) do |name|
         counts[name] += 1
         param_name = counts[name] > 1 ? "#{name}#{counts[name]}" : name
         params << Param.new(param_name, "", "path")

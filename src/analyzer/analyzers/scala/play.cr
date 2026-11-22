@@ -778,18 +778,10 @@ module Analyzer::Scala
     # Convert a SIRD `p"..."` path pattern to a `:param` URL and collect its
     # path params. Handles `$name`, `${name}` and `$name<regex>` interpolations.
     private def normalize_sird_path(pattern : String) : Tuple(String, Array(String))
-      params = [] of String
-      url = pattern.gsub(/\$\{(\w+)\}|\$(\w+)(?:<[^>]*>)?/) do |_|
-        name = $~[1]? || $~[2]?
-        if name
-          params << name
-          ":#{name}"
-        else
-          $~[0]
-        end
+      path, names = Noir::URLPath.rewrite_names(pattern, /\$\{(\w+)\}|\$(\w+)(?:<[^>]*>)?/, colon: true) do |match|
+        match[1]? || match[2]
       end
-      url = "/#{url}" unless url.starts_with?("/")
-      {url, params}
+      {Noir::URLPath.normalize(path), names}
     end
   end
 end

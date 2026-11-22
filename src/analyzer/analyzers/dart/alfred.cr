@@ -159,7 +159,7 @@ module Analyzer::Dart
           next if args.empty?
           sub = Helper.extract_string_literal(args[0])
           next unless sub
-          bind(bindings, name, pos, alfred_compose(base, sub))
+          bind(bindings, name, pos, Noir::URLPath.join(base, sub, :require_seam))
           resolved << pos
           added = true
         end
@@ -233,7 +233,7 @@ module Analyzer::Dart
         sub = Helper.extract_string_literal(args[0])
         next unless sub
 
-        base_prefix = alfred_compose(base, sub)
+        base_prefix = Noir::URLPath.join(base, sub, :require_seam)
         scan_chain(cleaned, close_paren + 1, base_prefix, content, lines, path, include_callee, endpoints, seen)
       end
     end
@@ -295,7 +295,7 @@ module Analyzer::Dart
           # `.route('/x')` (chained, not a cascade) deepens the base.
           inner = Helper.split_top_level_args(cleaned[(open_paren + 1)...close_paren])
           if sub = (inner.empty? ? nil : Helper.extract_string_literal(inner[0]))
-            prefix = alfred_compose(prefix, sub)
+            prefix = Noir::URLPath.join(prefix, sub, :require_seam)
           end
         end
 
@@ -327,7 +327,8 @@ module Analyzer::Dart
       literal = Helper.extract_string_literal(args[0])
       return unless literal
 
-      url = prefix.empty? ? normalize_path(literal) : normalize_path(alfred_compose(prefix, literal))
+      route_path = prefix.empty? ? literal : Noir::URLPath.join(prefix, literal, :require_seam)
+      url = Noir::URLPath.normalize(route_path, Noir::URLPath::COLON_TYPED)
       line = lines.line_for(open_paren)
 
       callees = [] of Noir::DartCalleeExtractor::Entry
@@ -344,26 +345,6 @@ module Analyzer::Dart
       verbs.each do |verb|
         next unless seen.add?({verb, url})
         endpoints << Helper.build_endpoint(url, verb, path, line, callees)
-      end
-    end
-
-    # Ensure a leading slash and translate Express-style `:id` / `:id:int`
-    # captures into `{id}` path params. The optional `:type` matcher
-    # (`int`, `date`, `uuid`, ...) is dropped.
-    private def normalize_path(path : String) : String
-      base = path.starts_with?('/') ? path : "/#{path}"
-      base.gsub(/:([A-Za-z_]\w*)(?::[A-Za-z_]\w*)?/) { "{#{$~[1]}}" }
-    end
-
-    # Join a `route()` base with a sub-path exactly as Alfred's
-    # `NestedRoute._composePath` does, so composed URLs match the framework.
-    private def alfred_compose(first : String, second : String) : String
-      if first.ends_with?('/') && second.starts_with?('/')
-        first + second[1..]
-      elsif !first.ends_with?('/') && !second.starts_with?('/')
-        "#{first}/#{second}"
-      else
-        first + second
       end
     end
 

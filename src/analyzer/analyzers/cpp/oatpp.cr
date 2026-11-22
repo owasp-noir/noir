@@ -73,10 +73,10 @@ module Analyzer::Cpp
       raw_path = unquote(args[1]?)
       return unless raw_path
 
-      clean_path, path_params = normalize_path(raw_path)
+      path_params = Noir::URLPath.params(raw_path, PATH_PARAM_REGEX)
       line_number = Noir::CppCalleeExtractor.line_number_for(source, call_start)
       details = Details.new(PathInfo.new(path, line_number))
-      endpoint = Endpoint.new(clean_path, verb, path_params.dup, details)
+      endpoint = Endpoint.new(raw_path, verb, path_params.dup, details)
 
       # Sync ENDPOINT: args[3..] are typed parameter declarations. Async
       # endpoints carry no inline declarations.
@@ -123,12 +123,6 @@ module Analyzer::Cpp
       s = raw.strip
       return unless s.size >= 2 && s.starts_with?('"') && s.ends_with?('"')
       s[1...-1]
-    end
-
-    private def normalize_path(raw : String) : Tuple(String, Array(Param))
-      params = [] of Param
-      raw.scan(PATH_PARAM_REGEX) { |m| params << Param.new(m[1], "", "path") }
-      {raw, params}
     end
 
     # Parses a single oatpp parameter macro into a Param:

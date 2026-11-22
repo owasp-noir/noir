@@ -26,12 +26,7 @@ module Analyzer::Javascript
           end
 
           # Parse path parameters from the URL path itself
-          if endpoint.url.includes?(":")
-            endpoint.url.scan(/:(\w+)/) do |m|
-              param = Param.new(m[1], "", "path")
-              endpoint.push_param(param)
-            end
-          end
+          Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_WORD)
 
           result << endpoint
         end
@@ -118,12 +113,7 @@ module Analyzer::Javascript
         endpoint.details = details
 
         # Extract path parameters from the URL
-        if endpoint.url.includes?(":")
-          endpoint.url.scan(/:(\w+)/) do |m|
-            param = Param.new(m[1], "", "path")
-            endpoint.push_param(param)
-          end
-        end
+        Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_WORD)
 
         result << endpoint
       end
@@ -164,10 +154,7 @@ module Analyzer::Javascript
 
         # Extract parameters from the URL path itself
         if !last_endpoint.method.empty? && !last_endpoint.url.empty? && last_endpoint.url.includes?(":")
-          last_endpoint.url.scan(/:(\w+)/) do |m|
-            param = Param.new(m[1], "", "path")
-            last_endpoint.push_param(param)
-          end
+          Noir::URLPath.add_params(last_endpoint, last_endpoint.url, Noir::URLPath::COLON_WORD)
         end
 
         # Get parameters from line
@@ -322,12 +309,7 @@ module Analyzer::Javascript
               endpoint.details = details
 
               # Extract path parameters
-              if full_path.includes?(":")
-                full_path.scan(/:(\w+)/) do |param_m|
-                  param = Param.new(param_m[1], "", "path")
-                  endpoint.push_param(param)
-                end
-              end
+              Noir::URLPath.add_params(endpoint, full_path, Noir::URLPath::COLON_WORD)
 
               # Extract parameters from handler body
               extract_params_from_handler(handler_body, endpoint)
@@ -375,12 +357,7 @@ module Analyzer::Javascript
               endpoint.details = details
 
               # Extract path parameters
-              if full_path.includes?(":")
-                full_path.scan(/:(\w+)/) do |param_m|
-                  param = Param.new(param_m[1], "", "path")
-                  endpoint.push_param(param)
-                end
-              end
+              Noir::URLPath.add_params(endpoint, full_path, Noir::URLPath::COLON_WORD)
 
               # Extract parameters from handler body
               extract_params_from_handler(handler_body, endpoint)

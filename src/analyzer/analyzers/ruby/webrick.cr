@@ -171,7 +171,7 @@ module Analyzer::Ruby
         # Support both mount_proc("..") and mount_proc ".." (no parens, common in examples)
         if m = stripped.match(/\.mount_proc\s*\(?\s*['"]([^'"]+)['"]/)
           raw_path = m[1]
-          mount_path = normalize_webrick_path(raw_path)
+          mount_path = Noir::URLPath.normalize(Noir::URLPath.brace_interpolation(raw_path), trim: true)
           # Try to grab the block body for verbs + params + callees
           handler_body = ""
           handler_start_line = idx + 1
@@ -211,7 +211,7 @@ module Analyzer::Ruby
         # Support mount ".." , Cls   and mount("..", Cls)
         if m = stripped.match(/\.mount\s*\(?\s*['"]([^'"]+)['"]\s*,\s*([A-Z][A-Za-z0-9_:]*)/)
           raw_path = m[1]
-          mount_path = normalize_webrick_path(raw_path)
+          mount_path = Noir::URLPath.normalize(Noir::URLPath.brace_interpolation(raw_path), trim: true)
           cls_ref = m[2]
           cls = cls_ref.to_s.split("::").last
 
@@ -236,14 +236,6 @@ module Analyzer::Ruby
           end
         end
       end
-    end
-
-    private def normalize_webrick_path(p : String) : String
-      # Support "#{VAR}/foo" -> "{VAR}/foo" like other ruby analyzers
-      np = p.gsub(/\#\{([^}]+)\}/) { |_| "{#{$~[1].strip}}" }
-      np = "/" + np unless np.starts_with?("/")
-      np = np[0...-1] if np.ends_with?("/") && np != "/"
-      np.empty? ? "/" : np
     end
 
     private def extract_verbs_from_handler_body(body : String) : Array(String)

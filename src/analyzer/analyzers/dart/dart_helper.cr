@@ -291,9 +291,7 @@ module Analyzer::Dart
                        callees : Array(Noir::DartCalleeExtractor::Entry)) : Endpoint
       endpoint = Endpoint.new(url, verb)
       endpoint.details = Details.new(PathInfo.new(path, line))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
+      Noir::URLPath.add_params(endpoint, url, Noir::URLPath::BRACE_WORD)
       Noir::DartCalleeExtractor.attach_to(endpoint, callees)
       endpoint
     end

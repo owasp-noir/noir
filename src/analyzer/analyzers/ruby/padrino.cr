@@ -203,21 +203,14 @@ module Analyzer::Ruby
 
     private def collect_stack_segments(prefix_stack : Array(NamedTuple(depth: Int32, path: String))) : Array(String)
       segments = [] of String
-      prefix_stack.each { |entry| append_padrino_path(segments, entry[:path]) }
+      prefix_stack.each { |entry| segments.concat(Noir::URLPath.trimmed_segments(entry[:path])) }
       segments
     end
 
     private def padrino_prefixed_path(prefix_stack : Array(NamedTuple(depth: Int32, path: String)), path : String) : String
       segments = collect_stack_segments(prefix_stack)
-      append_padrino_path(segments, path)
+      segments.concat(Noir::URLPath.trimmed_segments(path))
       segments.empty? ? "/" : "/#{segments.join("/")}"
-    end
-
-    private def append_padrino_path(segments : Array(String), raw : String)
-      raw.split("/").each do |piece|
-        trimmed = piece.strip
-        segments << trimmed unless trimmed.empty?
-      end
     end
 
     private def apply_mount_prefix(mount_prefix : String, local_path : String) : String

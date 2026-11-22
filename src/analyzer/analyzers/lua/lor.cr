@@ -300,8 +300,8 @@ module Analyzer::Lua
     private def emit_endpoint(path : String, content : String, offset : Int32,
                               url : String, methods : Array(String),
                               callees : Array(Noir::LuaCalleeExtractor::Entry))
-      url = normalize_url(url)
-      params = extract_path_params(url)
+      url = Noir::URLPath.normalize(url, rooted: false, collapse: true, trim: true, empty: "/")
+      params = Noir::URLPath.params(url, Noir::URLPath::COLON_OR_STAR)
       line = line_number_for_index(content, offset)
       details = Details.new(PathInfo.new(path, line))
       methods.each do |verb|
@@ -316,32 +316,12 @@ module Analyzer::Lua
     # `/`, so an empty pattern collapses to the bare prefix and a slash-prefixed
     # pattern appends cleanly; `normalize_url` collapses any `//` introduced.
     private def join_prefix(prefix : String, relative : String) : String
-      combined = if relative.empty?
-                   prefix
-                 elsif prefix.empty?
-                   relative
-                 elsif relative.starts_with?("/")
-                   "#{prefix}#{relative}"
+      combined = if relative.empty? || prefix.empty?
+                   prefix + relative
                  else
-                   "#{prefix}/#{relative}"
+                   prefix + Noir::URLPath.normalize(relative)
                  end
-      combined = "/#{combined}" unless combined.starts_with?("/")
-      combined
-    end
-
-    private def normalize_url(url : String) : String
-      result = url.gsub(%r{/{2,}}, "/")
-      result = result.rchop('/') if result.size > 1 && result.ends_with?('/')
-      result = "/" if result.empty?
-      result
-    end
-
-    private def extract_path_params(url : String) : Array(Param)
-      params = [] of Param
-      url.scan(/[:*]([A-Za-z_]\w*)/) do |match|
-        params << Param.new(match[1], "", "path")
-      end
-      params
+      Noir::URLPath.normalize(combined)
     end
   end
 end

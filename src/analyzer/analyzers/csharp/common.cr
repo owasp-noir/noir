@@ -127,9 +127,7 @@ module Analyzer::CSharp::Common
   # The `=default` form was previously kept verbatim, so a template like
   # `/items/{id=5}` emitted a parameter literally named `id=5`.
   def self.route_placeholder_name(raw : String) : String
-    name = raw.split(':').first
-    name = name.split('=').first
-    name.strip.lstrip('*').rstrip('?')
+    Noir::URLPath.template_name(raw)
   end
 
   # `IFormFile`/`IFormFileCollection`/`IFormCollection` are interfaces but

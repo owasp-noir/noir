@@ -75,9 +75,7 @@ module Analyzer::Swift
     end
 
     protected def normalize_path(path : String) : String
-      normalized = path.empty? ? "/" : path
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized.gsub(%r{/+}, "/")
+      Noir::URLPath.normalize(path, collapse: true)
     end
 
     protected def scan_accepts?(path : String) : Bool
@@ -94,10 +92,7 @@ module Analyzer::Swift
 
     # Extract path parameters from the route pattern (e.g., :id, :userID)
     def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/:(\w+)/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
+      Noir::URLPath.add_params(endpoint, route, Noir::URLPath::COLON_WORD)
     end
 
     # Params read inside a route's trailing closure. `route_index` is the

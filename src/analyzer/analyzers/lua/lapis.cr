@@ -625,7 +625,7 @@ module Analyzer::Lua
                               url : String, methods : Array(String),
                               callees : Array(Noir::LuaCalleeExtractor::Entry) = [] of Noir::LuaCalleeExtractor::Entry)
       url = normalize_lapis_url(url)
-      params = extract_path_params(url)
+      params = Noir::URLPath.params(url, Noir::URLPath::COLON_OR_STAR)
       line = line_number_for_index(content, offset)
       details = Details.new(PathInfo.new(path, line))
       methods.each do |verb|
@@ -834,10 +834,7 @@ module Analyzer::Lua
     private def normalize_lapis_url(url : String) : String
       result = url.gsub(/([:*][A-Za-z_]\w*)\[[^\]]*\]/, "\\1")
       result = strip_optional_groups(result) if result.includes?('(')
-      result = result.gsub(%r{/{2,}}, "/")
-      result = result.rchop('/') if result.size > 1 && result.ends_with?('/')
-      result = "/" if result.empty?
-      result
+      Noir::URLPath.normalize(result, collapse: true, trim: true, rooted: false, empty: "/")
     end
 
     # Peel Lapis optional groups `(...)` down to their required base in a
@@ -860,14 +857,6 @@ module Analyzer::Lua
         end
       end
       result.to_s
-    end
-
-    private def extract_path_params(url : String) : Array(Param)
-      params = [] of Param
-      url.scan(/[:*]([A-Za-z_]\w*)/) do |match|
-        params << Param.new(match[1], "", "path")
-      end
-      params
     end
 
     private def strip_lua_comments(text : String) : String
