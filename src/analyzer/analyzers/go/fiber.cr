@@ -59,15 +59,14 @@ module Analyzer::Go
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         # Resolve 1-hop callees for every route (see Gin).
-        route_rows = Set(Int32).new
-        routes_by_line.each_key { |row| route_rows << row }
+        route_offsets = ts_routes.map(&.offset).to_set
         external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
         external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(
           callees_needed?,
           content,
           path,
-          route_rows,
+          route_offsets,
           external_fns,
           external_methods,
           imported_functions: import_path_function_bodies,
@@ -82,13 +81,13 @@ module Analyzer::Go
         # The lines credited to `last_endpoint` since its route, read as one
         # body when the next route starts (or the file ends).
         segment = [] of String
-        lines.each_with_index do |line, index|
+        each_route_line(lines, routes_by_line) do |line, index, ts_hits|
           # Expanded router-builder bodies are emitted below with their
           # call-site prefix.
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
-          if ts_hits = routes_by_line[index]?
+          if ts_hits
             add_fiber_body_params(segment, path, [last_endpoint], named_scope.structs)
             segment = [] of String
             ts_hits.each do |route|
@@ -96,7 +95,7 @@ module Analyzer::Go
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
                 new_endpoint = Endpoint.new(route.path, verb, details)
                 new_endpoint.protocol = "ws" if route.handler.includes?("websocket.New(")
-                if entries = callees_by_route[route.line]?
+                if entries = callees_by_route[route.offset]?
                   entries.each do |entry|
                     name, callee_path, callee_line = entry
                     new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
@@ -115,7 +114,7 @@ module Analyzer::Go
         end
         add_fiber_body_params(segment, path, [last_endpoint], named_scope.structs)
 
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Add") do |line, ep|
+        expand_router_builders(content, path, expand_builders, callees_by_route, named, "Add") do |line, ep|
           add_fiber_param_patterns(line, ep)
         end
 

@@ -54,11 +54,10 @@ module Analyzer::Go
         end
 
         # Resolve 1-hop callees for every route (see Gin).
-        route_rows = Set(Int32).new
-        routes_by_line.each_key { |row| route_rows << row }
+        route_offsets = ts_routes.map(&.offset).to_set
         external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
         external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, File.dirname(path))
-        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_offsets, external_fns, external_methods)
 
         # `router.Static(&fs, "/prefix", false)` — the first
         # `/`-prefixed string arg is both URL prefix and (with
@@ -85,7 +84,7 @@ module Analyzer::Go
               raw_verbs.flat_map { |raw_verb| Noir::TreeSitterGoRouteExtractor.fan_out_verbs(raw_verb) }.each do |verb|
                 new_endpoint = Endpoint.new(clean_path, verb, details)
                 new_endpoint.resolution = route.resolution
-                if entries = callees_by_route[route.line]?
+                if entries = callees_by_route[route.offset]?
                   entries.each do |entry|
                     name, callee_path, callee_line = entry
                     new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))

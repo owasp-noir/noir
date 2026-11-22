@@ -2,7 +2,7 @@
 # closure-scoped routing (`r.Route("/prefix", func(r chi.Router){...})`)
 # so a verb call's `route.line` lives inside a nested closure body.
 # `GoCalleeExtractor.callees_for_routes` walks the full file's AST and
-# filters by row, so nested call_expressions resolve normally.
+# filters by registration offset, so nested call_expressions resolve normally.
 #
 # Coverage:
 #   - POST /users    — named handler `createUser` in sibling
@@ -15,12 +15,8 @@
 #                      Chi closure-scoped group. Trailing slash matches
 #                      Chi extractor's path joining.
 #
-# Mount-expanded routes (`r.Mount("/admin", adminRouter())`) do NOT
-# get callees in this first cut — `analyze_router_function` runs its
-# own isolated route walk and would need separate wiring. Tracking
-# that as a follow-up in #1366.
 fixture: fixtures/go/chi_callees/
-counts: {techs: 1, endpoints: 3}
+counts: {techs: 1, endpoints: 5}
 options:
   include_callee: true
 endpoints:
@@ -43,3 +39,13 @@ endpoints:
       - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/chi_callees/helpers.go", line: 10}
       - {name: "auditLog", path: "./spec/functional_test/fixtures/go/chi_callees/helpers.go", line: 7}
       - {name: "w.Write", line: 17}
+  - url: "/staff/create"
+    method: "POST"
+    params:
+      - {name: "name", type: "form"}
+    callees:
+      - {name: "saveUser", path: "./spec/functional_test/fixtures/go/chi_callees/helpers.go", line: 3}
+  - url: "/staff/profile"
+    method: "GET"
+    callees:
+      - {name: "buildProfile", path: "./spec/functional_test/fixtures/go/chi_callees/helpers.go", line: 10}

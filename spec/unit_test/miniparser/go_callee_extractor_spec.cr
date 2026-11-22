@@ -1,6 +1,17 @@
 require "../../spec_helper"
 require "../../../src/miniparsers/go_callee_extractor"
 
+private def go_call_offset(source, prefix)
+  offset = nil
+  Noir::TreeSitter.parse_go(source) do |root|
+    Noir::TreeSitter.walk(root) do |node|
+      next unless Noir::TreeSitter.node_type(node) == "call_expression"
+      offset ||= LibTreeSitter.ts_node_end_byte(node).to_i if Noir::TreeSitter.node_text(node, source).starts_with?(prefix)
+    end
+  end
+  offset.not_nil!
+end
+
 describe Noir::GoCalleeExtractor do
   describe ".collect_function_bodies" do
     it "indexes every top-level function declaration by name" do
@@ -126,14 +137,12 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      # The `app.GET(...)` call sits on the row that has `app.GET`.
-      # Find it dynamically — exact row depends on the heredoc.
-      target_row = source.lines.index!(&.includes?("app.GET("))
+      offset = go_call_offset(source, "app.GET(")
       callees = Noir::GoCalleeExtractor.callees_for_routes(
-        source, "main.go", Set{target_row},
+        source, "main.go", Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("lookupUser")
       # c.JSON is a method on the framework receiver — it's a useful
@@ -155,12 +164,12 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("app.GET("))
+      offset = go_call_offset(source, "app.GET(")
       callees = Noir::GoCalleeExtractor.callees_for_routes(
-        source, "main.go", Set{target_row},
+        source, "main.go", Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
       )
-      names = callees[target_row]?.try(&.map(&.[0])) || [] of String
+      names = callees[offset]?.try(&.map(&.[0])) || [] of String
 
       names.should_not contain("len")
       names.should_not contain("make")
@@ -181,12 +190,12 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("app.GET("))
+      offset = go_call_offset(source, "app.GET(")
       callees = Noir::GoCalleeExtractor.callees_for_routes(
-        source, "main.go", Set{target_row},
+        source, "main.go", Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("lookupUser")
       names.should contain("c.JSON")
@@ -208,12 +217,12 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("r.Methods(\"POST\")"))
+      offset = go_call_offset(source, "r.Methods(\"POST\")")
       callees = Noir::GoCalleeExtractor.callees_for_routes(
-        source, "main.go", Set{target_row},
+        source, "main.go", Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("saveUser")
       names.should contain("w.Write")
@@ -235,12 +244,12 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("r.Path(\"/users\")"))
+      offset = go_call_offset(source, "r.Path(\"/users\")")
       callees = Noir::GoCalleeExtractor.callees_for_routes(
-        source, "main.go", Set{target_row},
+        source, "main.go", Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("saveUser")
       names.should contain("w.Write")
@@ -260,12 +269,12 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("app.GET("))
+      offset = go_call_offset(source, "app.GET(")
       callees = Noir::GoCalleeExtractor.callees_for_routes(
-        source, "main.go", Set{target_row},
+        source, "main.go", Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("saveUser")
       names.should contain("ctx.JSON")
@@ -294,18 +303,18 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("app.GET("))
+      offset = go_call_offset(source, "app.GET(")
       imported_functions = {
         "github.com/acme/app/handlers/feed" => Noir::GoCalleeExtractor.collect_function_bodies(feed_source, "handlers/feed/feed.go"),
       }
       callees = Noir::GoCalleeExtractor.callees_for_routes(
         source,
         "router/feed.go",
-        Set{target_row},
+        Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new,
         imported_functions: imported_functions
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("buildFeed")
       names.should contain("ctx.JSON")
@@ -337,7 +346,7 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("app.Get("))
+      offset = go_call_offset(source, "app.Get(")
       imported_functions = {
         "github.com/acme/app/api" => Noir::GoCalleeExtractor.collect_function_bodies(api_source, "api/handler.go"),
       }
@@ -345,12 +354,12 @@ describe Noir::GoCalleeExtractor do
       callees = Noir::GoCalleeExtractor.callees_for_routes(
         source,
         "router.go",
-        Set{target_row},
+        Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new,
         external_methods,
         imported_functions: imported_functions
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("importedOnly")
       names.should contain("c.JSON")
@@ -377,12 +386,12 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("app.Get("))
+      offset = go_call_offset(source, "app.Get(")
       callees = Noir::GoCalleeExtractor.callees_for_routes(
-        source, "main.go", Set{target_row},
+        source, "main.go", Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("auditRequest")
       names.should contain("c.Next")
@@ -411,18 +420,18 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("app.Get("))
+      offset = go_call_offset(source, "app.Get(")
       imported_functions = {
         "github.com/acme/app/handlers" => Noir::GoCalleeExtractor.collect_function_bodies(handlers_source, "handlers/books.go"),
       }
       callees = Noir::GoCalleeExtractor.callees_for_routes(
         source,
         "router.go",
-        Set{target_row},
+        Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new,
         imported_functions: imported_functions
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("service.List")
       names.should contain("c.JSON")
@@ -456,7 +465,7 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("app.Get("))
+      offset = go_call_offset(source, "app.Get(")
       imported_functions = {
         "github.com/acme/app/api" => Noir::GoCalleeExtractor.collect_function_bodies(api_source, "api/handler.go"),
       }
@@ -466,12 +475,12 @@ describe Noir::GoCalleeExtractor do
       callees = Noir::GoCalleeExtractor.callees_for_routes(
         source,
         "router.go",
-        Set{target_row},
+        Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new,
         imported_functions: imported_functions,
         imported_methods: imported_methods
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("h.service.Get")
       names.should contain("c.Params")
@@ -513,7 +522,7 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      target_row = source.lines.index!(&.includes?("app.Get("))
+      offset = go_call_offset(source, "app.Get(")
       imported_functions = {
         "github.com/acme/app/api" => Noir::GoCalleeExtractor.collect_function_bodies(api_source, "api/controller.go"),
       }
@@ -524,13 +533,13 @@ describe Noir::GoCalleeExtractor do
       callees = Noir::GoCalleeExtractor.callees_for_routes(
         source,
         "router.go",
-        Set{target_row},
+        Set{offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new,
         external_methods,
         imported_functions: imported_functions,
         imported_methods: imported_methods
       )
-      names = callees[target_row].map(&.[0])
+      names = callees[offset].map(&.[0])
 
       names.should contain("importedShow")
       names.should contain("ctx.JSON")
@@ -550,17 +559,17 @@ describe Noir::GoCalleeExtractor do
         }
         GO
 
-      first_row = source.lines.index!(&.includes?("r.HandleFunc("))
-      second_row = source.lines.index!(&.includes?("r.Handle("))
+      first_offset = go_call_offset(source, "r.HandleFunc(")
+      second_offset = go_call_offset(source, "r.Handle(")
       callees = Noir::GoCalleeExtractor.callees_for_routes(
         source,
         "profiler.go",
-        Set{first_row, second_row},
+        Set{first_offset, second_offset},
         Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
       )
 
-      callees[first_row].map(&.[0]).should contain("pprof.Index")
-      callees[second_row].map(&.[0]).should contain("pprof.Handler")
+      callees[first_offset].map(&.[0]).should contain("pprof.Index")
+      callees[second_offset].map(&.[0]).should contain("pprof.Handler")
     end
   end
 

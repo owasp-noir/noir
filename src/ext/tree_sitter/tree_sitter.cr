@@ -20,6 +20,8 @@ class Fiber
   # Descent depth of the tree-sitter walk on this fiber's stack, see
   # `Noir::TreeSitter.each_named_child`.
   property noir_ts_walk_depth = 0
+  # A walk cut short by the depth budget cannot seed a cache for shallower callers.
+  property noir_ts_walk_cutoffs = 0_u64
   property noir_go_tree : Noir::TreeSitter::ParsedSource?
 end
 
@@ -630,7 +632,10 @@ module Noir::TreeSitter
 
     fiber = Fiber.current
     depth = fiber.noir_ts_walk_depth
-    return if depth >= MAX_AST_DEPTH
+    if depth >= MAX_AST_DEPTH
+      fiber.noir_ts_walk_cutoffs &+= 1
+      return
+    end
     fiber.noir_ts_walk_depth = depth + 1
 
     begin
@@ -675,7 +680,10 @@ module Noir::TreeSitter
   def self.descend(&)
     fiber = Fiber.current
     depth = fiber.noir_ts_walk_depth
-    return if depth >= MAX_AST_DEPTH
+    if depth >= MAX_AST_DEPTH
+      fiber.noir_ts_walk_cutoffs &+= 1
+      return
+    end
     fiber.noir_ts_walk_depth = depth + 1
     begin
       yield

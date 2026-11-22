@@ -195,6 +195,7 @@ module Noir
       getter path : String                # route path with group prefix applied
       getter raw_path : String            # path literal as written
       getter handler : String             # text of the handler argument (identifier or lambda snippet)
+      getter offset : Int32               # end byte of the handler-bearing registration
       getter line : Int32                 # 0-based line number of the call expression
       getter query_params : Array(String) # query-param constraints extracted from e.g. mux's `.Queries(...)`
       # The file the route is registered in when that is not the walked
@@ -222,7 +223,7 @@ module Noir
       def initialize(@router_name, @verb, path : String, @raw_path, @handler, @line,
                      @query_params : Array(String) = [] of String,
                      @handler_args : Array(String) = [] of String,
-                     *, @prefix_unresolved : Bool = false)
+                     *, @offset : Int32, @prefix_unresolved : Bool = false)
         if path.includes?(UNREAD_PREFIX)
           path = path.delete(UNREAD_PREFIX)
           @raw_path = @raw_path.delete(UNREAD_PREFIX)
@@ -248,6 +249,7 @@ module Noir
 
       protected def retarget!(element : TableElement, verb : String?)
         @line = element.row
+        @offset = element.offset
         @verb = verb if verb
         @handler = element.texts[@handler]? || @handler
         @handler_args = @handler_args.map { |arg| element.texts[arg]? || arg }
@@ -1432,7 +1434,7 @@ module Noir
     # One element of a route table: its row, and per `v.Field` of the loop
     # variable `v` the value it reads (`values`: a path, or a method as its
     # verb) and the field's text as written (`texts`, for the handler).
-    record TableElement, row : Int32, values : Hash(String, String), texts : Hash(String, String)
+    record TableElement, row : Int32, offset : Int32, values : Hash(String, String), texts : Hash(String, String)
 
     # `for _, v := range routes { r.GET(v.Pattern, v.Handler) }` over a
     # literal table: OpenAPI Generator's go-gin-server and go-server, and
@@ -1701,7 +1703,7 @@ module Noir
           values[key] = decoded
         end
       end
-      TableElement.new(Noir::TreeSitter.node_start_row(value), values, texts) unless values.empty?
+      TableElement.new(Noir::TreeSitter.node_start_row(value), LibTreeSitter.ts_node_end_byte(value).to_i, values, texts) unless values.empty?
     end
 
     # A table value as a route reads it: a string (path or method), an
@@ -2183,6 +2185,7 @@ module Noir
         raw_path,
         handler_text,
         Noir::TreeSitter.node_start_row(call),
+        offset: LibTreeSitter.ts_node_end_byte(call).to_i,
         handler_args: handler_args,
         prefix_unresolved: unread,
       )
@@ -2511,6 +2514,7 @@ module Noir
         path_lit,
         handler_text,
         Noir::TreeSitter.node_start_row(call),
+        offset: LibTreeSitter.ts_node_end_byte(call).to_i,
         handler_args: handler_args,
       )
     end
@@ -2592,7 +2596,7 @@ module Noir
 
       verbs.map do |verb|
         route = Route.new(router_name, verb, resolved, path_lit, handler_text,
-          Noir::TreeSitter.node_start_row(call), handler_args: handler_args)
+          Noir::TreeSitter.node_start_row(call), offset: LibTreeSitter.ts_node_end_byte(call).to_i, handler_args: handler_args)
         route.handler_row = handler_row
         route
       end
@@ -2714,6 +2718,7 @@ module Noir
       saw_methods = false
       build_only = false
       registration_line = Noir::TreeSitter.node_start_row(call)
+      offset = LibTreeSitter.ts_node_end_byte(call).to_i
       router_name = nil
       unread = false
       path_prefix = false
@@ -2746,6 +2751,7 @@ module Noir
         when "HandleFunc", "Handle"
           saw_registration = true
           registration_line = Noir::TreeSitter.node_start_row(current)
+          offset = LibTreeSitter.ts_node_end_byte(current).to_i
           if args = Noir::TreeSitter.field(current, "arguments")
             Noir::TreeSitter.each_named_arg(args) do |arg|
               case Noir::TreeSitter.node_type(arg)
@@ -2766,6 +2772,7 @@ module Noir
         when "HandlerFunc", "Handler"
           saw_registration = true
           registration_line = Noir::TreeSitter.node_start_row(current)
+          offset = LibTreeSitter.ts_node_end_byte(current).to_i
           if args = Noir::TreeSitter.field(current, "arguments")
             registration_args = args
             Noir::TreeSitter.each_named_arg(args) do |arg|
@@ -2848,7 +2855,7 @@ module Noir
                  end
 
       verbs.uniq.map do |verb|
-        Route.new(router_name, verb, resolved, raw_path, handler_text, registration_line, query_params.dup, prefix_unresolved: unread)
+        Route.new(router_name, verb, resolved, raw_path, handler_text, registration_line, query_params.dup, offset: offset, prefix_unresolved: unread)
       end
     end
 

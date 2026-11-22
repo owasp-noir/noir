@@ -1,5 +1,5 @@
 fixture: fixtures/go/chi/
-counts: {techs: 1, endpoints: 30}
+counts: {techs: 1, endpoints: 42}
 endpoints:
   - url: "/"
     method: "GET"
@@ -109,3 +109,53 @@ endpoints:
     method: "GET"
     params:
       - {name: "session_token", type: "cookie"}
+  - url: "/same/search"
+    method: "GET"
+    params:
+      - {name: "term", type: "query"}
+  - url: "/same/save"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/split/search"
+    method: "GET"
+    params:
+      - {name: "term", type: "query"}
+  - url: "/split/save"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/mounted/search"
+    method: "GET"
+    params:
+      - {name: "term", type: "query"}
+  - url: "/mounted/save"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+  - url: "/checked"
+    method: "POST"
+    params:
+      - {name: "title", type: "form"}
+      - {name: "proof", type: "json"}
+  - url: "/choose"
+    method: "POST"
+    params:
+      - {name: "first", type: "form"}
+      - {name: "second", type: "form"}
+      - {name: "X-Mode", type: "header"}
+  - url: "/metrics/write"
+    method: "POST"
+    params:
+      - {name: "body", type: "json"}
+      - {name: "rate", type: "json"}
+  - url: "/metrics/read"
+    method: "GET"
+  - url: "/inbox/messages"
+    method: "GET"
+    params:
+      - {name: "unread", type: "query"}
+  - url: "/archive/messages"
+    method: "GET"
+    params:
+      - {name: "year", type: "query"}

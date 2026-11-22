@@ -209,7 +209,7 @@ module Noir
       return unless Noir::TreeSitter.node_type(handler) == "identifier"
       child = Noir::TreeSitter.node_text(handler, source)
       return unless serve_mux_vars.includes?(child) && child != parent
-      mounts[child] = {parent, strip, Noir::TreeSitter.node_start_row(call)}
+      mounts[child] = {parent, strip, LibTreeSitter.ts_node_end_byte(call).to_i}
     end
 
     # Prefixes each mounted sub-mux's routes with its mount path and drops
@@ -218,12 +218,12 @@ module Noir
     private def apply_serve_mux_mounts(routes : Array(Route), mounts : Hash(String, Tuple(String, String, Int32))) : Array(Route)
       routed = routes.map(&.router_name).to_set
       mounts.select! { |child, _| routed.includes?(child) }
-      mount_rows = mounts.values.map(&.[2]).to_set
+      mount_offsets = mounts.values.map(&.[2]).to_set
       routes.compact_map do |r|
-        next if mount_rows.includes?(r.line)
+        next if mount_offsets.includes?(r.offset)
         prefix = serve_mux_prefix(r.router_name, mounts, 0)
         next r if prefix.empty?
-        Route.new(r.router_name, r.verb, group_join(prefix, r.path), r.raw_path, r.handler, r.line, r.query_params, r.handler_args, prefix_unresolved: r.prefix_unresolved?)
+        Route.new(r.router_name, r.verb, group_join(prefix, r.path), r.raw_path, r.handler, r.line, r.query_params, r.handler_args, offset: r.offset, prefix_unresolved: r.prefix_unresolved?)
       end
     end
 
@@ -456,7 +456,7 @@ module Noir
       verb = verb_wrapper(handler_node, source) || verb if verb == "ANY"
 
       if verb != "ANY"
-        yield Route.new(router_name, verb, path, raw_path, handler_text, row, prefix_unresolved: unread)
+        yield Route.new(router_name, verb, path, raw_path, handler_text, row, offset: LibTreeSitter.ts_node_end_byte(call).to_i, prefix_unresolved: unread)
         return
       end
 
@@ -494,10 +494,10 @@ module Noir
       # otherwise method-agnostic handler — keep the ANY fan-out instead of
       # narrowing the surface to OPTIONS.
       if methods.empty? || methods == ["OPTIONS"]
-        yield Route.new(router_name, "ANY", path, raw_path, handler_text, row, prefix_unresolved: unread)
+        yield Route.new(router_name, "ANY", path, raw_path, handler_text, row, offset: LibTreeSitter.ts_node_end_byte(call).to_i, prefix_unresolved: unread)
       else
         methods.each do |discovered_verb|
-          yield Route.new(router_name, discovered_verb, path, raw_path, handler_text, row, prefix_unresolved: unread)
+          yield Route.new(router_name, discovered_verb, path, raw_path, handler_text, row, offset: LibTreeSitter.ts_node_end_byte(call).to_i, prefix_unresolved: unread)
         end
       end
     end

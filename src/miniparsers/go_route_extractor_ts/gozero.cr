@@ -105,20 +105,23 @@ module Noir
       method = ""
       rpath = ""
       handler = ""
+      offset = LibTreeSitter.ts_node_end_byte(inner).to_i
       Noir::TreeSitter.each_named_child(inner) do |kv|
         next unless Noir::TreeSitter.node_type(kv) == "keyed_element"
         key_node, val_node = gozero_keyed_pair(kv)
         next if key_node.nil? || val_node.nil?
         case Noir::TreeSitter.node_text(key_node, source)
-        when "Method"  then method = decode_method_token(val_node, source)
-        when "Path"    then rpath = gozero_string_value(val_node, source)
-        when "Handler" then handler = Noir::TreeSitter.node_text(val_node, source)
+        when "Method" then method = decode_method_token(val_node, source)
+        when "Path"   then rpath = gozero_string_value(val_node, source)
+        when "Handler"
+          offset = LibTreeSitter.ts_node_end_byte(kv).to_i
+          handler = Noir::TreeSitter.node_text(val_node, source)
         end
       end
       return if method.empty? || rpath.empty?
       return unless rpath.starts_with?("/")
       full = "#{prefix}#{rpath}"
-      Route.new("server", method, full, rpath, handler, Noir::TreeSitter.node_start_row(line_node))
+      Route.new("server", method, full, rpath, handler, Noir::TreeSitter.node_start_row(line_node), offset: offset)
     end
 
     # Collect `groupVar := <recv>.Group("/p")` bindings, resolving nested

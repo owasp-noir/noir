@@ -90,8 +90,27 @@ module Analyzer::Go
       Noir::GoNamedHandler.new(content, path, routes, scope, handler_first, index)
     end
 
+    # Several verb rows may represent one call (Match/Any), or several
+    # independent registrations may start on this line. Only the former
+    # share the line's inline handler. Subsequent lines continue the final
+    # registration in the ordinary framework reader.
+    private def each_route_line(lines, routes_by_line, &)
+      lines.each_with_index do |line, row|
+        hits = routes_by_line[row]?
+        if hits && hits.size > 1 && hits.any? { |route| route.offset != hits.first.offset }
+          hits.group_by(&.offset).each_value do |group|
+            handler_line = group.first.handler_args.join(", ").lines.first? || ""
+            yield GoEngine.strip_comments(handler_line), row, group
+          end
+        else
+          yield line, row, hits
+        end
+      end
+    end
+
     private def go_route_details(route : Noir::TreeSitterGoRouteExtractor::Route, path : String, content : String) : Details
       location = PathInfo.new(path, route.line + 1)
+      location.registration_offset = route.offset
       return Details.new(location) if route.prefix_unresolved? || (route.file && route.file != path)
       if tech == "go_http"
         graph = @middleware_mutex.synchronize do
@@ -969,7 +988,6 @@ module Analyzer::Go
     # patterns. The caller skips the helper bodies in its own line loop.
     # Endpoints go to `into` (default: `result`).
     def expand_router_builders(content : String,
-                               lines : Array(String),
                                path : String,
                                expansions : Array(Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))),
                                callees_by_route : Hash(Int32, Array(Tuple(String, String, Int32))),
@@ -983,7 +1001,6 @@ module Analyzer::Go
                                any_verbs : Array(String) = Noir::TreeSitterGoRouteExtractor::ANY_FAN_OUT_VERBS,
                                & : String, Endpoint ->)
       expansions.each do |fn, rb, pset|
-        emitted = [] of Endpoint
         pset.each do |prefix|
           Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
             content, fn, {rb.param => prefix}, handle_method: handle_method, string_seed: string_seed,
@@ -1005,64 +1022,15 @@ module Analyzer::Go
               route.query_params.each { |qp| ep.params << Param.new(qp, "", "query") }
               ep.handler = named.handler_for(route) if named
               ep.resolution = named ? named.resolution_for(route) : route.resolution
-              callees_by_route[route.line]?.try &.each do |name, callee_path, callee_line|
+              callees_by_route[route.offset]?.try &.each do |name, callee_path, callee_line|
                 ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
               end
               emitted_to << ep
               named.try &.bind(route, ep)
-              emitted << ep
+              route.handler_args.each { |arg| GoEngine.strip_comments(arg).each_line { |line| yield line, ep } }
             end
           end
         end
-        each_router_builder_line(lines, emitted, rb) do |line, eps|
-          eps.each { |ep| yield line, ep }
-        end
-      end
-    end
-
-    # Yields each line of a router-builder body that belongs to one of the
-    # expanded `emitted` endpoints (the registration line and its inline
-    # closure) with the endpoints registered there.
-    private def each_router_builder_line(lines : Array(String),
-                                         emitted : Array(Endpoint),
-                                         builder : Noir::TreeSitterGoRouteExtractor::RouterBuilder,
-                                         & : String, Array(Endpoint) ->)
-      eps_by_line = Hash(Int32, Array(Endpoint)).new { |h, k| h[k] = [] of Endpoint }
-      emitted.each do |ep|
-        ep.details.code_paths.each do |cp|
-          if ln = cp.line
-            eps_by_line[ln.to_i - 1] << ep
-          end
-        end
-      end
-      return if eps_by_line.empty?
-      currents = [] of Endpoint
-      in_inline = false
-      brace_count = 0
-      (builder.start_row..[builder.end_row, lines.size - 1].min).each do |i|
-        line = lines[i]?
-        next unless line
-        apply_now = false
-        if eps = eps_by_line[i]?
-          currents = eps
-          apply_now = true
-          if line.includes?("func(")
-            in_inline = true
-            brace_count = line.count("{") - line.count("}")
-            if brace_count <= 0
-              in_inline = false
-              brace_count = 0
-            end
-          end
-        elsif in_inline
-          brace_count += line.count("{") - line.count("}")
-          if brace_count <= 0
-            in_inline = false
-            brace_count = 0
-          end
-          apply_now = true
-        end
-        yield line, currents if !currents.empty? && apply_now
       end
     end
 
@@ -1404,8 +1372,8 @@ module Analyzer::Go
       endpoints.reject(&.url.empty?).group_by do |ep|
         args = Noir::GoBinding::Arguments.new
         if factory && recv && (handler = ep.handler) && (site = ep.details.code_paths.first?) &&
-           (row = site.line)
-          args = resolver.receiver_factories(site.path, row - 1, handler.name, recv)
+           (offset = site.registration_offset)
+          args = resolver.receiver_factories(site.path, offset, handler.name, recv)
         end
         {ep.method, args}
       end.each do |(method, args), eps|

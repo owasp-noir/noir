@@ -65,17 +65,16 @@ module Analyzer::Go
         named = go_named_handler(content, path, ts_routes, named_scope)
 
         # Resolve 1-hop callees for every route (see Gin).
-        route_rows = Set(Int32).new
-        routes_by_line.each_key { |row| route_rows << row }
+        route_offsets = ts_routes.map(&.offset).to_set
         external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
-        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_offsets, external_fns)
 
-        lines.each_with_index do |line, index|
+        each_route_line(lines, routes_by_line) do |line, index, ts_hits|
           # A builder helper's routes come from the expansion below.
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
-          if ts_hits = routes_by_line[index]?
+          if ts_hits
             ts_hits.each do |route|
               details = go_route_details(route, path, content)
               # `app.Party("admin.")` is an Iris *subdomain*,
@@ -84,7 +83,7 @@ module Analyzer::Go
               # preserve the host on a `subdomain` tag.
               subdomain, clean = split_iris_subdomain(route.path)
               normalized = normalize_iris_path(clean)
-              callee_entries = callees_by_route[route.line]?
+              callee_entries = callees_by_route[route.offset]?
               verbs = route.verb == "ANY" ? HTTP_METHODS : [route.verb]
               verbs.each do |m|
                 new_endpoint = Endpoint.new(normalized, m, details)
@@ -106,7 +105,7 @@ module Analyzer::Go
         end
 
         expanded = [] of Endpoint
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named, "Handle", into: expanded, group_method: "Party") do |line, ep|
+        expand_router_builders(content, path, expand_builders, callees_by_route, named, "Handle", into: expanded, group_method: "Party") do |line, ep|
           add_iris_param_patterns(line, ep)
         end
         expanded.each do |ep|

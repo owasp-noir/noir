@@ -87,14 +87,12 @@ module Analyzer::Go
         suppress_ranges = expand_builders.map { |_, rb, _| rb.start_row..rb.end_row }
 
         # Resolve 1-hop callees for every route (see Gin).
-        route_rows = Set(Int32).new
-        routes_by_line.each_key { |row| route_rows << row }
+        route_offsets = ts_routes.map(&.offset).to_set
         external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
         external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
-        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_offsets, external_fns, external_methods)
         # Every mux handler is a stdlib one: read it as net/http's are.
-        params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows,
-          ts_routes.to_h { |r| {r.line, r.verb} }, named_scope.bodies.functions_for(dir), named_scope.bodies.methods_for(dir),
+        params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, ts_routes, named_scope.bodies.functions_for(dir), named_scope.bodies.methods_for(dir),
           resolver: resolver, path: path)
 
         # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
@@ -102,13 +100,13 @@ module Analyzer::Go
           public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
         end
 
-        lines.each_with_index do |line, index|
+        each_route_line(lines, routes_by_line) do |line, index, ts_hits|
           # Expanded router-builder bodies are emitted below with their
           # call-site prefix.
           next if suppress_ranges.any?(&.includes?(index))
           next if named.claim?(index, line)
 
-          if ts_hits = routes_by_line[index]?
+          if ts_hits
             ts_hits.each do |route|
               details = go_route_details(route, path, content)
               Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
@@ -118,7 +116,7 @@ module Analyzer::Go
                 route.query_params.each do |qp|
                   new_endpoint.params << Param.new(qp, "", "query")
                 end
-                if entries = callees_by_route[route.line]?
+                if entries = callees_by_route[route.offset]?
                   entries.each do |entry|
                     name, callee_path, callee_line = entry
                     new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
@@ -126,7 +124,7 @@ module Analyzer::Go
                 end
                 new_endpoint.handler = named.handler_for(route)
                 new_endpoint.resolution = named.resolution_for(route)
-                params_by_route[route.line]?.try &.each { |param| add_param_to_endpoint(param, new_endpoint) }
+                params_by_route[{route.offset, verb, route.path}]?.try &.each { |param| add_param_to_endpoint(param, new_endpoint) }
                 named.handler_body(route).try do |body|
                   Noir::GoRequestParamExtractor.params_for_body(body, verb, resolver).each { |param| add_param_to_endpoint(param, new_endpoint) }
                 end
@@ -140,7 +138,7 @@ module Analyzer::Go
           add_mux_param_patterns(line, last_endpoint)
         end
 
-        expand_router_builders(content, lines, path, expand_builders, callees_by_route, named,
+        expand_router_builders(content, path, expand_builders, callees_by_route, named,
           group_method: "Subrouter", handlefunc_methods: true, string_seed: string_seed) do |line, ep|
           add_mux_param_patterns(line, ep)
         end

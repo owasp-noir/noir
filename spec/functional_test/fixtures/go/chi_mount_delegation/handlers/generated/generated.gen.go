@@ -12,6 +12,10 @@ type ServerInterface interface {
 	GetChat(w http.ResponseWriter, r *http.Request)
 }
 
+type adapter struct { target ServerInterface }
+
+func (a adapter) chat(w http.ResponseWriter, r *http.Request) { a.target.GetChat(w, r) }
+
 type ChiServerOptions struct {
 	BaseURL    string
 	BaseRouter chi.Router
@@ -31,7 +35,8 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/emoji", si.GetEmoji)
 	})
 	r.Group(func(r chi.Router) {
-		r.Get(options.BaseURL+"/chat", si.GetChat)
+		a := adapter{target: si}
+		r.Get(options.BaseURL+"/chat", a.chat)
 	})
 
 	return r
