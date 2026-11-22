@@ -1,6 +1,6 @@
 {
   "measured_on": "2026-11-22",
-  "analyzer_revision": "733a55018000278fefdd741e357229a0e6bbe8bb",
+  "analyzer_revision": "a80bec92ba7511a2160c35acd9539e372099a6cc",
   "technologies": [
     {
       "matched": 16,
@@ -102,17 +102,17 @@
       "repositories": 2
     },
     {
-      "matched": 149,
-      "spec_only": 23,
+      "matched": 153,
+      "spec_only": 19,
       "code_only": 115,
-      "recall": 0.8662790697674418,
-      "agreement": 0.5643939393939394,
+      "recall": 0.8895348837209303,
+      "agreement": 0.5708955223880597,
       "marked": 4,
-      "marked_share": 0.015151515151515152,
+      "marked_share": 0.014925373134328358,
       "claims": {
         "prefix:unresolved": {
           "count": 4,
-          "share": 0.015151515151515152
+          "share": 0.014925373134328358
         }
       },
       "name": "go_echo",
@@ -128,7 +128,7 @@
         "automatic_only": 0
       },
       "guards": {
-        "both_guarded": 131,
+        "both_guarded": 135,
         "both_open": 9,
         "spec_guarded_code_open": 1,
         "spec_open_code_guarded": 8
@@ -141,11 +141,11 @@
         "agreement": 0.7911646586345381
       },
       "body_fields": {
-        "both": 363,
+        "both": 368,
         "spec_only": 1,
         "code_only": 246,
-        "recall": 0.9972527472527473,
-        "agreement": 0.5960591133004927
+        "recall": 0.997289972899729,
+        "agreement": 0.5993485342019544
       },
       "repositories": 1
     },
@@ -291,17 +291,21 @@
       "repositories": 1
     },
     {
-      "matched": 303,
-      "spec_only": 128,
-      "code_only": 366,
-      "recall": 0.703016241299304,
-      "agreement": 0.452914798206278,
-      "marked": 9,
-      "marked_share": 0.013452914798206279,
+      "matched": 411,
+      "spec_only": 20,
+      "code_only": 264,
+      "recall": 0.9535962877030162,
+      "agreement": 0.6088888888888889,
+      "marked": 228,
+      "marked_share": 0.3377777777777778,
       "claims": {
+        "prefix:heuristic": {
+          "count": 217,
+          "share": 0.3214814814814815
+        },
         "prefix:unresolved": {
-          "count": 9,
-          "share": 0.013452914798206279
+          "count": 11,
+          "share": 0.016296296296296295
         }
       },
       "name": "js_express",
@@ -320,22 +324,22 @@
       },
       "guards": {
         "both_guarded": 8,
-        "both_open": 85,
+        "both_open": 170,
         "spec_guarded_code_open": 0,
-        "spec_open_code_guarded": 210
+        "spec_open_code_guarded": 233
       },
       "params": {
-        "both": 272,
-        "spec_only": 18,
-        "code_only": 65,
-        "recall": 0.9379310344827586,
-        "agreement": 0.8071216617210683
+        "both": 313,
+        "spec_only": 35,
+        "code_only": 80,
+        "recall": 0.8994252873563219,
+        "agreement": 0.7964376590330788
       },
       "body_fields": {
         "both": 96,
-        "spec_only": 78,
+        "spec_only": 88,
         "code_only": 19,
-        "recall": 0.5517241379310345,
+        "recall": 0.5217391304347826,
         "agreement": 0.8347826086956521
       },
       "repositories": 2
@@ -536,17 +540,21 @@
       "technology": "python_fastapi"
     },
     {
-      "matched": 250,
-      "spec_only": 128,
-      "code_only": 355,
-      "recall": 0.6613756613756614,
-      "agreement": 0.4132231404958678,
-      "marked": 9,
-      "marked_share": 0.01487603305785124,
+      "matched": 358,
+      "spec_only": 20,
+      "code_only": 253,
+      "recall": 0.9470899470899471,
+      "agreement": 0.5859247135842881,
+      "marked": 228,
+      "marked_share": 0.37315875613747956,
       "claims": {
+        "prefix:heuristic": {
+          "count": 217,
+          "share": 0.35515548281505727
+        },
         "prefix:unresolved": {
-          "count": 9,
-          "share": 0.01487603305785124
+          "count": 11,
+          "share": 0.01800327332242226
         }
       },
       "name": "NodeBB",
@@ -564,24 +572,24 @@
         "./install"
       ],
       "params": {
-        "both": 253,
-        "spec_only": 16,
-        "code_only": 59,
-        "recall": 0.9405204460966543,
-        "agreement": 0.8108974358974359
+        "both": 294,
+        "spec_only": 33,
+        "code_only": 74,
+        "recall": 0.8990825688073395,
+        "agreement": 0.7989130434782609
       },
       "body_fields": {
         "both": 66,
-        "spec_only": 71,
+        "spec_only": 81,
         "code_only": 18,
-        "recall": 0.48175182481751827,
+        "recall": 0.4489795918367347,
         "agreement": 0.7857142857142857
       },
       "guards": {
         "both_guarded": 0,
-        "both_open": 70,
+        "both_open": 155,
         "spec_guarded_code_open": 0,
-        "spec_open_code_guarded": 180
+        "spec_open_code_guarded": 203
       },
       "detection": {
         "detected": true,
@@ -1276,17 +1284,17 @@
       "technology": "python_django"
     },
     {
-      "matched": 149,
-      "spec_only": 23,
+      "matched": 153,
+      "spec_only": 19,
       "code_only": 115,
-      "recall": 0.8662790697674418,
-      "agreement": 0.5643939393939394,
+      "recall": 0.8895348837209303,
+      "agreement": 0.5708955223880597,
       "marked": 4,
-      "marked_share": 0.015151515151515152,
+      "marked_share": 0.014925373134328358,
       "claims": {
         "prefix:unresolved": {
           "count": 4,
-          "share": 0.015151515151515152
+          "share": 0.014925373134328358
         }
       },
       "name": "vikunja",
@@ -1307,14 +1315,14 @@
         "agreement": 0.7911646586345381
       },
       "body_fields": {
-        "both": 363,
+        "both": 368,
         "spec_only": 1,
         "code_only": 246,
-        "recall": 0.9972527472527473,
-        "agreement": 0.5960591133004927
+        "recall": 0.997289972899729,
+        "agreement": 0.5993485342019544
       },
       "guards": {
-        "both_guarded": 131,
+        "both_guarded": 135,
         "both_open": 9,
         "spec_guarded_code_open": 1,
         "spec_open_code_guarded": 8
