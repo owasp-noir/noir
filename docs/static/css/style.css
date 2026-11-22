@@ -1584,14 +1584,13 @@ a.author-card-inner:hover { border-color: var(--accent-edge); text-decoration: n
   .header-right { gap: 0.35rem; }
 }
 
-@media (max-width: 767px) {
-  /* The wordmark is baked across the full width of the photograph. Cropping
-     it into a 390px viewport would slice it to "WASP NOI". So on narrow
-     screens the poster becomes a band at its native aspect ratio and the
-     copy sits underneath it. */
+/* Tall viewports crop the sides of a full-height poster, including the
+   wordmark. Show the whole poster above the copy. Keep these media queries
+   in sync with the source sizes on both landing pages. */
+@media (max-width: 767px), (max-aspect-ratio: 1/1) {
   .hero { display: block; min-height: 0; }
   .hero-media { position: relative; aspect-ratio: 1168 / 784; }
-  .hero-art { object-position: 50% 50%; }
+  .hero-art { object-fit: contain; object-position: 50% 0; }
   .hero-scrim {
     background: linear-gradient(to top,
       var(--film) 2%,
@@ -1599,6 +1598,9 @@ a.author-card-inner:hover { border-color: var(--accent-edge); text-decoration: n
       color-mix(in srgb, var(--film) 50%, transparent) 100%);
   }
   .hero-inner { padding-top: 0; padding-bottom: 3.5rem; margin-top: -2.5rem; }
+}
+
+@media (max-width: 767px) {
   .hero h1 { font-size: 1.75rem; }
   .hero-actions .btn { flex: 1 1 auto; justify-content: center; }
   .cta-actions .btn { flex: 1 1 auto; justify-content: center; }

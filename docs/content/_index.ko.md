@@ -15,15 +15,19 @@ template = "landing"
   <div class="hero-sentinel" aria-hidden="true"></div>
   <div class="hero-media">
     <picture class="hero-plate hero-plate-dark">
-      <source type="image/webp" sizes="100vw"
-              srcset="../images/noir-wallpaper.webp 1168w, ../images/noir-wallpaper-2x.webp 2336w, ../images/noir-wallpaper-3x.webp 3504w">
+      <source type="image/webp"
+              sizes="(max-width: 767px) 100vw, (max-aspect-ratio: 1/1) 100vw, max(100vw, calc(100dvh * 1168 / 784))"
+              srcset="../images/noir-wallpaper.webp 1168w, ../images/noir-wallpaper-2x.webp 2336w,
+                      ../images/noir-wallpaper-3x.webp 3504w, ../images/noir-wallpaper-4k.webp 4096w">
       <img class="hero-art" src="../images/noir-wallpaper.jpg"
            alt="흑백으로 촬영한 인적 없는 밤거리 위에 OWASP Noir 워드마크가 빛으로 새겨져 있다."
            width="1168" height="784" fetchpriority="high" decoding="async">
     </picture>
     <picture class="hero-plate hero-plate-light">
-      <source type="image/webp" sizes="100vw"
-              srcset="../images/noir-wallpaper-white.webp 1248w, ../images/noir-wallpaper-white-2x.webp 2496w, ../images/noir-wallpaper-white-3x.webp 3744w">
+      <source type="image/webp"
+              sizes="(max-width: 767px) 100vw, (max-aspect-ratio: 1/1) 100vw, max(100vw, calc(100dvh * 1248 / 832))"
+              srcset="../images/noir-wallpaper-white.webp 1248w, ../images/noir-wallpaper-white-2x.webp 2496w,
+                      ../images/noir-wallpaper-white-3x.webp 3744w, ../images/noir-wallpaper-white-4k.webp 4096w">
       <img class="hero-art" src="../images/noir-wallpaper-white.jpg"
            alt="안개 낀 대낮의 인적 없는 거리 위로 OWASP Noir 워드마크가 그림자로 드리워져 있다."
            width="1248" height="832" fetchpriority="high" decoding="async">
