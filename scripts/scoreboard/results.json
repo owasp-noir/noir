@@ -1,6 +1,6 @@
 {
-  "measured_on": "2026-11-15",
-  "analyzer_revision": "830b4cfce775d24812f4b0305df6fc24359dcdcb",
+  "measured_on": "2026-11-22",
+  "analyzer_revision": "bd9e6c936808b26689f5b1939676db1876aab621",
   "technologies": [
     {
       "matched": 16,
@@ -12,6 +12,36 @@
       "marked_share": 0.0,
       "claims": {},
       "name": "cs_aspnet_core_minimal_api",
+      "detection": {
+        "detected_repositories": 1,
+        "other_technologies": [
+          "cs_aspnet_core_mvc",
+          "http_file",
+          "oas3"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 16,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 0
+      },
+      "params": {
+        "both": 28,
+        "spec_only": 16,
+        "code_only": 0,
+        "recall": 0.6363636363636364,
+        "agreement": 1.0
+      },
+      "body_fields": {
+        "both": 38,
+        "spec_only": 1,
+        "code_only": 0,
+        "recall": 0.9743589743589743,
+        "agreement": 1.0
+      },
       "repositories": 1
     },
     {
@@ -33,6 +63,42 @@
         }
       },
       "name": "go_chi",
+      "detection": {
+        "detected_repositories": 2,
+        "other_technologies": [
+          "caddy",
+          "go_cli",
+          "go_http",
+          "js_cli",
+          "js_egg",
+          "js_http",
+          "js_nextjs",
+          "oas3",
+          "supabase"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0
+      },
+      "guards": {
+        "both_guarded": 120,
+        "both_open": 3,
+        "spec_guarded_code_open": 8,
+        "spec_open_code_guarded": 133
+      },
+      "params": {
+        "both": 33,
+        "spec_only": 164,
+        "code_only": 88,
+        "recall": 0.16751269035532995,
+        "agreement": 0.2727272727272727
+      },
+      "body_fields": {
+        "both": 16,
+        "spec_only": 162,
+        "code_only": 4,
+        "recall": 0.0898876404494382,
+        "agreement": 0.8
+      },
       "repositories": 2
     },
     {
@@ -50,6 +116,37 @@
         }
       },
       "name": "go_echo",
+      "detection": {
+        "detected_repositories": 1,
+        "other_technologies": [
+          "go_cli",
+          "go_http",
+          "go_huma",
+          "oas2"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0
+      },
+      "guards": {
+        "both_guarded": 131,
+        "both_open": 11,
+        "spec_guarded_code_open": 1,
+        "spec_open_code_guarded": 6
+      },
+      "params": {
+        "both": 128,
+        "spec_only": 201,
+        "code_only": 0,
+        "recall": 0.3890577507598784,
+        "agreement": 1.0
+      },
+      "body_fields": {
+        "both": 0,
+        "spec_only": 364,
+        "code_only": 0,
+        "recall": 0.0,
+        "agreement": null
+      },
       "repositories": 1
     },
     {
@@ -58,12 +155,12 @@
       "code_only": 44,
       "recall": 0.9875518672199171,
       "agreement": 0.8439716312056738,
-      "marked": 228,
-      "marked_share": 0.8085106382978723,
+      "marked": 230,
+      "marked_share": 0.8156028368794326,
       "claims": {
         "handler:heuristic": {
-          "count": 6,
-          "share": 0.02127659574468085
+          "count": 8,
+          "share": 0.028368794326241134
         },
         "prefix:unresolved": {
           "count": 228,
@@ -71,18 +168,81 @@
         }
       },
       "name": "go_gin",
+      "detection": {
+        "detected_repositories": 2,
+        "other_technologies": [
+          "go_cli",
+          "go_http",
+          "k8s_ingress",
+          "oas2"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0
+      },
+      "guards": {
+        "both_guarded": 162,
+        "both_open": 56,
+        "spec_guarded_code_open": 10,
+        "spec_open_code_guarded": 10
+      },
+      "params": {
+        "both": 36,
+        "spec_only": 343,
+        "code_only": 5,
+        "recall": 0.09498680738786279,
+        "agreement": 0.8780487804878049
+      },
+      "body_fields": {
+        "both": 35,
+        "spec_only": 307,
+        "code_only": 1,
+        "recall": 0.1023391812865497,
+        "agreement": 0.9722222222222222
+      },
       "repositories": 2
     },
     {
       "matched": 26,
       "spec_only": 1,
-      "code_only": 60,
+      "code_only": 88,
       "recall": 0.9629629629629629,
-      "agreement": 0.3023255813953488,
+      "agreement": 0.22807017543859648,
       "marked": 0,
       "marked_share": 0.0,
       "claims": {},
       "name": "go_mux",
+      "detection": {
+        "detected_repositories": 1,
+        "other_technologies": [
+          "go_cli",
+          "grpc",
+          "k8s_gateway_api",
+          "k8s_ingress",
+          "oas2"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 26,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 0
+      },
+      "params": {
+        "both": 7,
+        "spec_only": 0,
+        "code_only": 0,
+        "recall": 1.0,
+        "agreement": 1.0
+      },
+      "body_fields": {
+        "both": 0,
+        "spec_only": 0,
+        "code_only": 0,
+        "recall": null,
+        "agreement": null
+      },
       "repositories": 1
     },
     {
@@ -95,6 +255,34 @@
       "marked_share": 0.0,
       "claims": {},
       "name": "java_spring",
+      "detection": {
+        "detected_repositories": 1,
+        "other_technologies": [
+          "oas2"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 0,
+        "spec_guarded_code_open": 182,
+        "spec_open_code_guarded": 0
+      },
+      "params": {
+        "both": 544,
+        "spec_only": 203,
+        "code_only": 109,
+        "recall": 0.7282463186077643,
+        "agreement": 0.8330781010719756
+      },
+      "body_fields": {
+        "both": 378,
+        "spec_only": 67,
+        "code_only": 90,
+        "recall": 0.849438202247191,
+        "agreement": 0.8076923076923077
+      },
       "repositories": 1
     },
     {
@@ -112,6 +300,39 @@
         }
       },
       "name": "js_express",
+      "detection": {
+        "detected_repositories": 2,
+        "other_technologies": [
+          "js_apollo",
+          "js_cli",
+          "js_socketio",
+          "js_sveltekit",
+          "oas3",
+          "wsdl"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0
+      },
+      "guards": {
+        "both_guarded": 8,
+        "both_open": 85,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 210
+      },
+      "params": {
+        "both": 281,
+        "spec_only": 28,
+        "code_only": 65,
+        "recall": 0.9093851132686084,
+        "agreement": 0.8121387283236994
+      },
+      "body_fields": {
+        "both": 96,
+        "spec_only": 78,
+        "code_only": 19,
+        "recall": 0.5517241379310345,
+        "agreement": 0.8347826086956521
+      },
       "repositories": 2
     },
     {
@@ -124,6 +345,40 @@
       "marked_share": 0.0,
       "claims": {},
       "name": "python_django",
+      "detection": {
+        "detected_repositories": 2,
+        "other_technologies": [
+          "graphql_operation",
+          "hasura",
+          "js_cli",
+          "k8s_ingress",
+          "nginx",
+          "oas3",
+          "python_cli"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 230,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 5
+      },
+      "params": {
+        "both": 331,
+        "spec_only": 297,
+        "code_only": 73,
+        "recall": 0.5270700636942676,
+        "agreement": 0.8193069306930693
+      },
+      "body_fields": {
+        "both": 311,
+        "spec_only": 142,
+        "code_only": 10,
+        "recall": 0.6865342163355408,
+        "agreement": 0.9688473520249221
+      },
       "repositories": 2
     },
     {
@@ -136,6 +391,37 @@
       "marked_share": 0.0,
       "claims": {},
       "name": "python_fastapi",
+      "detection": {
+        "detected_repositories": 2,
+        "other_technologies": [
+          "oas3",
+          "python_cli",
+          "python_fastmcp",
+          "python_starlette"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0
+      },
+      "guards": {
+        "both_guarded": 325,
+        "both_open": 17,
+        "spec_guarded_code_open": 6,
+        "spec_open_code_guarded": 0
+      },
+      "params": {
+        "both": 454,
+        "spec_only": 491,
+        "code_only": 9,
+        "recall": 0.4804232804232804,
+        "agreement": 0.980561555075594
+      },
+      "body_fields": {
+        "both": 360,
+        "spec_only": 33,
+        "code_only": 42,
+        "recall": 0.916030534351145,
+        "agreement": 0.8955223880597015
+      },
       "repositories": 2
     },
     {
@@ -148,6 +434,36 @@
       "marked_share": 0.0,
       "claims": {},
       "name": "ts_nestjs",
+      "detection": {
+        "detected_repositories": 1,
+        "other_technologies": [
+          "js_express",
+          "js_socketio",
+          "oas3"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0
+      },
+      "guards": {
+        "both_guarded": 268,
+        "both_open": 19,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 0
+      },
+      "params": {
+        "both": 245,
+        "spec_only": 906,
+        "code_only": 6,
+        "recall": 0.21285838401390095,
+        "agreement": 0.9760956175298805
+      },
+      "body_fields": {
+        "both": 221,
+        "spec_only": 274,
+        "code_only": 1,
+        "recall": 0.44646464646464645,
+        "agreement": 0.9954954954954955
+      },
       "repositories": 1
     }
   ],
@@ -171,6 +487,37 @@
       "specs": [
         "invokeai/frontend/api/openapi.json"
       ],
+      "params": {
+        "both": 350,
+        "spec_only": 276,
+        "code_only": 8,
+        "recall": 0.5591054313099042,
+        "agreement": 0.9776536312849162
+      },
+      "body_fields": {
+        "both": 264,
+        "spec_only": 18,
+        "code_only": 28,
+        "recall": 0.9361702127659575,
+        "agreement": 0.9041095890410958
+      },
+      "guards": {
+        "both_guarded": 258,
+        "both_open": 6,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "oas3",
+          "python_cli",
+          "python_starlette"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "python_fastapi"
     },
     {
@@ -201,6 +548,37 @@
       "exclude_paths": [
         "./install"
       ],
+      "params": {
+        "both": 253,
+        "spec_only": 16,
+        "code_only": 59,
+        "recall": 0.9405204460966543,
+        "agreement": 0.8108974358974359
+      },
+      "body_fields": {
+        "both": 66,
+        "spec_only": 71,
+        "code_only": 18,
+        "recall": 0.48175182481751827,
+        "agreement": 0.7857142857142857
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 70,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 180
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "js_cli",
+          "js_socketio",
+          "oas3"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "js_express"
     },
     {
@@ -231,6 +609,37 @@
       "specs": [
         "docs/swagger.json"
       ],
+      "params": {
+        "both": 10,
+        "spec_only": 241,
+        "code_only": 5,
+        "recall": 0.0398406374501992,
+        "agreement": 0.6666666666666666
+      },
+      "body_fields": {
+        "both": 1,
+        "spec_only": 307,
+        "code_only": 0,
+        "recall": 0.003246753246753247,
+        "agreement": 1.0
+      },
+      "guards": {
+        "both_guarded": 130,
+        "both_open": 48,
+        "spec_guarded_code_open": 8,
+        "spec_open_code_guarded": 10
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "go_cli",
+          "k8s_ingress",
+          "oas2"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "go_gin"
     },
     {
@@ -253,6 +662,38 @@
         "openapi.yaml"
       ],
       "spec_prefix": "/auth/v1",
+      "params": {
+        "both": 25,
+        "spec_only": 30,
+        "code_only": 88,
+        "recall": 0.45454545454545453,
+        "agreement": 0.22123893805309736
+      },
+      "body_fields": {
+        "both": 16,
+        "spec_only": 49,
+        "code_only": 4,
+        "recall": 0.24615384615384617,
+        "agreement": 0.8
+      },
+      "guards": {
+        "both_guarded": 12,
+        "both_open": 3,
+        "spec_guarded_code_open": 8,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "go_cli",
+          "go_http",
+          "oas3",
+          "supabase"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "go_chi"
     },
     {
@@ -274,6 +715,38 @@
       "specs": [
         "docs/openapi/openapi.json"
       ],
+      "params": {
+        "both": 28,
+        "spec_only": 12,
+        "code_only": 6,
+        "recall": 0.7,
+        "agreement": 0.8235294117647058
+      },
+      "body_fields": {
+        "both": 30,
+        "spec_only": 7,
+        "code_only": 1,
+        "recall": 0.8108108108108109,
+        "agreement": 0.967741935483871
+      },
+      "guards": {
+        "both_guarded": 8,
+        "both_open": 15,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 30
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "js_apollo",
+          "js_sveltekit",
+          "oas3",
+          "wsdl"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "js_express"
     },
     {
@@ -296,6 +769,37 @@
         "src/Catalog.API/Catalog.API.json",
         "src/Catalog.API/Catalog.API_v2.json"
       ],
+      "params": {
+        "both": 28,
+        "spec_only": 16,
+        "code_only": 0,
+        "recall": 0.6363636363636364,
+        "agreement": 1.0
+      },
+      "body_fields": {
+        "both": 38,
+        "spec_only": 1,
+        "code_only": 0,
+        "recall": 0.9743589743589743,
+        "agreement": 1.0
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 16,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "cs_aspnet_core_mvc",
+          "http_file",
+          "oas3"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "cs_aspnet_core_minimal_api"
     },
     {
@@ -318,6 +822,35 @@
         "docs/public-api/references/swagger/process/flowable-swagger-process.yaml"
       ],
       "spec_prefix": "/flowable-rest/service",
+      "params": {
+        "both": 544,
+        "spec_only": 203,
+        "code_only": 109,
+        "recall": 0.7282463186077643,
+        "agreement": 0.8330781010719756
+      },
+      "body_fields": {
+        "both": 378,
+        "spec_only": 67,
+        "code_only": 90,
+        "recall": 0.849438202247191,
+        "agreement": 0.8076923076923077
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 0,
+        "spec_guarded_code_open": 182,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "oas2"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "java_spring"
     },
     {
@@ -326,9 +859,14 @@
       "code_only": 10,
       "recall": 1.0,
       "agreement": 0.8076923076923077,
-      "marked": 0,
-      "marked_share": 0.0,
-      "claims": {},
+      "marked": 2,
+      "marked_share": 0.038461538461538464,
+      "claims": {
+        "handler:heuristic": {
+          "count": 2,
+          "share": 0.038461538461538464
+        }
+      },
       "name": "gotify",
       "url": "https://github.com/gotify/server",
       "commit": "01086b95a8b69ee87383f6e8bcae601d8c33384b",
@@ -342,6 +880,37 @@
       "exclude_paths": [
         "plugin/example"
       ],
+      "params": {
+        "both": 26,
+        "spec_only": 102,
+        "code_only": 0,
+        "recall": 0.203125,
+        "agreement": 1.0
+      },
+      "body_fields": {
+        "both": 34,
+        "spec_only": 0,
+        "code_only": 1,
+        "recall": 1.0,
+        "agreement": 0.9714285714285714
+      },
+      "guards": {
+        "both_guarded": 32,
+        "both_open": 8,
+        "spec_guarded_code_open": 2,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "go_cli",
+          "go_http",
+          "oas2"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "go_gin"
     },
     {
@@ -363,6 +932,37 @@
       "specs": [
         "open-api/immich-openapi-specs.json"
       ],
+      "params": {
+        "both": 245,
+        "spec_only": 906,
+        "code_only": 6,
+        "recall": 0.21285838401390095,
+        "agreement": 0.9760956175298805
+      },
+      "body_fields": {
+        "both": 221,
+        "spec_only": 274,
+        "code_only": 1,
+        "recall": 0.44646464646464645,
+        "agreement": 0.9954954954954955
+      },
+      "guards": {
+        "both_guarded": 268,
+        "both_open": 19,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "js_express",
+          "js_socketio",
+          "oas3"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "ts_nestjs"
     },
     {
@@ -384,6 +984,38 @@
       "specs": [
         "docs/openapi/openapi.json"
       ],
+      "params": {
+        "both": 104,
+        "spec_only": 215,
+        "code_only": 1,
+        "recall": 0.32601880877742945,
+        "agreement": 0.9904761904761905
+      },
+      "body_fields": {
+        "both": 96,
+        "spec_only": 15,
+        "code_only": 14,
+        "recall": 0.8648648648648649,
+        "agreement": 0.8727272727272727
+      },
+      "guards": {
+        "both_guarded": 67,
+        "both_open": 11,
+        "spec_guarded_code_open": 6,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "oas3",
+          "python_cli",
+          "python_fastmcp",
+          "python_starlette"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "python_fastapi"
     },
     {
@@ -414,14 +1046,50 @@
       "specs": [
         "openapi.yaml"
       ],
+      "params": {
+        "both": 8,
+        "spec_only": 134,
+        "code_only": 0,
+        "recall": 0.056338028169014086,
+        "agreement": 1.0
+      },
+      "body_fields": {
+        "both": 0,
+        "spec_only": 113,
+        "code_only": 0,
+        "recall": 0.0,
+        "agreement": null
+      },
+      "guards": {
+        "both_guarded": 108,
+        "both_open": 0,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 133
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "caddy",
+          "go_cli",
+          "go_http",
+          "js_cli",
+          "js_egg",
+          "js_http",
+          "js_nextjs",
+          "oas3"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 1
+      },
       "technology": "go_chi"
     },
     {
       "matched": 26,
       "spec_only": 1,
-      "code_only": 60,
+      "code_only": 88,
       "recall": 0.9629629629629629,
-      "agreement": 0.3023255813953488,
+      "agreement": 0.22807017543859648,
       "marked": 0,
       "marked_share": 0.0,
       "claims": {},
@@ -435,6 +1103,39 @@
       "specs": [
         "pkg/api/http/docs/swagger.json"
       ],
+      "params": {
+        "both": 7,
+        "spec_only": 0,
+        "code_only": 0,
+        "recall": 1.0,
+        "agreement": 1.0
+      },
+      "body_fields": {
+        "both": 0,
+        "spec_only": 0,
+        "code_only": 0,
+        "recall": null,
+        "agreement": null
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 26,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "go_cli",
+          "grpc",
+          "k8s_gateway_api",
+          "k8s_ingress",
+          "oas2"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "go_mux"
     },
     {
@@ -456,6 +1157,41 @@
       "specs": [
         "openapi.yml"
       ],
+      "params": {
+        "both": 95,
+        "spec_only": 100,
+        "code_only": 54,
+        "recall": 0.48717948717948717,
+        "agreement": 0.6375838926174496
+      },
+      "body_fields": {
+        "both": 0,
+        "spec_only": 0,
+        "code_only": 0,
+        "recall": null,
+        "agreement": null
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 102,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "graphql_operation",
+          "hasura",
+          "js_cli",
+          "k8s_ingress",
+          "nginx",
+          "oas3",
+          "python_cli"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "python_django"
     },
     {
@@ -477,6 +1213,36 @@
       "specs": [
         "doc/api/schema.yml"
       ],
+      "params": {
+        "both": 236,
+        "spec_only": 197,
+        "code_only": 19,
+        "recall": 0.5450346420323325,
+        "agreement": 0.9254901960784314
+      },
+      "body_fields": {
+        "both": 311,
+        "spec_only": 142,
+        "code_only": 10,
+        "recall": 0.6865342163355408,
+        "agreement": 0.9688473520249221
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 128,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 5
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "oas3",
+          "python_cli"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "python_django"
     },
     {
@@ -503,6 +1269,38 @@
       "specs": [
         "pkg/swagger/swagger.json"
       ],
+      "params": {
+        "both": 128,
+        "spec_only": 201,
+        "code_only": 0,
+        "recall": 0.3890577507598784,
+        "agreement": 1.0
+      },
+      "body_fields": {
+        "both": 0,
+        "spec_only": 364,
+        "code_only": 0,
+        "recall": 0.0,
+        "agreement": null
+      },
+      "guards": {
+        "both_guarded": 131,
+        "both_open": 11,
+        "spec_guarded_code_open": 1,
+        "spec_open_code_guarded": 6
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "go_cli",
+          "go_http",
+          "go_huma",
+          "oas2"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
       "technology": "go_echo"
     }
   ]

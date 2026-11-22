@@ -61,6 +61,10 @@ module Scoreboard
     dir = File.join(work, repo["name"].as_s)
     commit = repo["commit"].as_s
     raise "Expected a full commit SHA" unless commit.matches?(/\A[0-9a-f]{40}\z/)
+    # The work directory lives under TMPDIR, where periodic cleanup removes
+    # old files and leaves the directories: a checkout without its HEAD is
+    # not a repository any more, so start it over.
+    FileUtils.rm_rf(dir) if Dir.exists?(dir) && !File.exists?(File.join(dir, ".git", "HEAD"))
     unless Dir.exists?(dir)
       Dir.mkdir_p(dir)
       command("git", ["-C", dir, "init", "-q"])
@@ -133,10 +137,16 @@ module Scoreboard
     stage
   end
 
-  def scan(stage, base_args, scan_args, report_path) : JSON::Any
+  # `complete: false` is for the automatic scan. With every detector on, a
+  # file one of them cannot read (a binary blob behind a `.ts` name) is
+  # reported as skipped; that is a fact about the tree, counted in the
+  # detection result, not a failed measurement.
+  def scan(stage, base_args, scan_args, report_path, *, complete : Bool = true) : JSON::Any
     command("./bin/noir", ["scan", stage] + base_args + scan_args + ["-o", report_path], output: :close)
     report = JSON.parse(File.read(report_path))
-    raise "Scanner reported incomplete coverage: #{report["errors"].to_json}" unless report["errors"].as_a.empty?
+    if complete && !report["errors"].as_a.empty?
+      raise "Scanner reported incomplete coverage: #{report["errors"].to_json}"
+    end
     report["endpoints"].as_a.each do |endpoint|
       endpoint["details"]["code_paths"].as_a.each do |location|
         location.as_h["path"] = JSON::Any.new(location["path"].as_s.sub(stage + "/", ""))
@@ -238,7 +248,7 @@ module Scoreboard
       base_args = ["--config-file", config, "--concurrency", "1", "--exclude-path", exclusions.join(','), "--no-log", "--no-color", "-f", "json"]
       path = File.join(work, repo["name"].as_s)
       report = scan(stage, base_args, ["--only-techs", (pins + OAS_TECHS).join(','), "--techs", pins.join(',')], "#{path}.json")
-      automatic = scan(stage, base_args, [] of String, "#{path}-automatic.json")
+      automatic = scan(stage, base_args, [] of String, "#{path}-automatic.json", complete: false)
       document = scan(stage, base_args, ["--only-techs", OAS_TECHS.join(',')], "#{path}-oas.json")
       pins.each do |tech|
         code = scan(stage, base_args, ["--techs", tech, "--only-techs", tech, "--use-all-taggers"], "#{path}-#{tech}.json")

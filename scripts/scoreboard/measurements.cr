@@ -63,7 +63,8 @@ module Scoreboard
   def detection(automatic, pins, technology, delta)
     detected = automatic["scan_technologies"].as_a.map(&.as_s).uniq!.sort!
     JSON.parse({detected: detected.includes?(technology), other_technologies: detected - pins,
-                forced_only: delta[:forced_only].size, automatic_only: delta[:automatic_only].size}.to_json)
+                forced_only: delta[:forced_only].size, automatic_only: delta[:automatic_only].size,
+                skipped: automatic["errors"]?.try(&.as_a.size) || 0}.to_json)
   end
 
   # The optimizer may retain same-shaped siblings (e.g. Spring request

@@ -8,7 +8,7 @@ This source-only measurement compares code analyzers with the OpenAPI contracts 
 
 <!-- SCOREBOARD -->
 
-Measured: 2026-11-15. Analyzer source: `830b4cfce775d24812f4b0305df6fc24359dcdcb`.
+Measured: 2026-11-22. Analyzer source: `bd9e6c936808b26689f5b1939676db1876aab621`.
 
 A technology measured on one repository is a single data point.
 
@@ -17,8 +17,8 @@ A technology measured on one repository is a single data point.
 | cs_aspnet_core_minimal_api | 1 | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | go_chi | 2 | 264 | 41 | 249 | 86.6% | 51.5% | 262 (51.1%) |
 | go_echo | 1 | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
-| go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 228 (80.9%) |
-| go_mux | 1 | 26 | 1 | 60 | 96.3% | 30.2% | 0 (0.0%) |
+| go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 230 (81.6%) |
+| go_mux | 1 | 26 | 1 | 88 | 96.3% | 22.8% | 0 (0.0%) |
 | java_spring | 1 | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
 | js_express | 2 | 303 | 128 | 366 | 70.3% | 45.3% | 9 (1.3%) |
 | python_django | 2 | 235 | 0 | 300 | 100.0% | 43.9% | 0 (0.0%) |
@@ -34,21 +34,88 @@ A technology measured on one repository is a single data point.
 | dvws-node | 53 | 0 | 11 | 100.0% | 82.8% | 0 (0.0%) |
 | eShop | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | flowable-engine | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
-| gotify | 42 | 0 | 10 | 100.0% | 80.8% | 0 (0.0%) |
+| gotify | 42 | 0 | 10 | 100.0% | 80.8% | 2 (3.8%) |
 | immich | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
 | langflow | 84 | 0 | 111 | 100.0% | 43.1% | 0 (0.0%) |
 | owncast | 241 | 0 | 189 | 100.0% | 56.0% | 262 (60.9%) |
-| podinfo | 26 | 1 | 60 | 96.3% | 30.2% | 0 (0.0%) |
+| podinfo | 26 | 1 | 88 | 96.3% | 22.8% | 0 (0.0%) |
 | pokeapi | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | pretalx | 133 | 0 | 300 | 100.0% | 30.7% | 0 (0.0%) |
 | vikunja | 149 | 23 | 115 | 86.6% | 56.4% | 4 (1.5%) |
+
+| Technology | Detected / repositories | Other technologies detected | Forced-only rows | Automatic-only rows |
+| --- | ---: | --- | ---: | ---: |
+| cs_aspnet_core_minimal_api | 1 / 1 | cs_aspnet_core_mvc, http_file, oas3 | 0 | 0 |
+| go_chi | 2 / 2 | caddy, go_cli, go_http, js_cli, js_egg, js_http, js_nextjs, oas3, supabase | 0 | 0 |
+| go_echo | 1 / 1 | go_cli, go_http, go_huma, oas2 | 0 | 0 |
+| go_gin | 2 / 2 | go_cli, go_http, k8s_ingress, oas2 | 0 | 0 |
+| go_mux | 1 / 1 | go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2 | 0 | 0 |
+| java_spring | 1 / 1 | oas2 | 0 | 0 |
+| js_express | 2 / 2 | js_apollo, js_cli, js_socketio, js_sveltekit, oas3, wsdl | 0 | 0 |
+| python_django | 2 / 2 | graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli | 0 | 0 |
+| python_fastapi | 2 / 2 | oas3, python_cli, python_fastmcp, python_starlette | 0 | 0 |
+| ts_nestjs | 1 / 1 | js_express, js_socketio, oas3 | 0 | 0 |
+
+| Repository | Technology | Detected | Other technologies detected | Forced-only rows | Automatic-only rows |
+| --- | --- | --- | --- | ---: | ---: |
+| InvokeAI | python_fastapi | true | oas3, python_cli, python_starlette | 0 | 0 |
+| NodeBB | js_express | true | js_cli, js_socketio, oas3 | 0 | 0 |
+| answer | go_gin | true | go_cli, k8s_ingress, oas2 | 0 | 0 |
+| auth | go_chi | true | go_cli, go_http, oas3, supabase | 0 | 0 |
+| dvws-node | js_express | true | js_apollo, js_sveltekit, oas3, wsdl | 0 | 0 |
+| eShop | cs_aspnet_core_minimal_api | true | cs_aspnet_core_mvc, http_file, oas3 | 0 | 0 |
+| flowable-engine | java_spring | true | oas2 | 0 | 0 |
+| gotify | go_gin | true | go_cli, go_http, oas2 | 0 | 0 |
+| immich | ts_nestjs | true | js_express, js_socketio, oas3 | 0 | 0 |
+| langflow | python_fastapi | true | oas3, python_cli, python_fastmcp, python_starlette | 0 | 0 |
+| owncast | go_chi | true | caddy, go_cli, go_http, js_cli, js_egg, js_http, js_nextjs, oas3 | 0 | 0 |
+| podinfo | go_mux | true | go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2 | 0 | 0 |
+| pokeapi | python_django | true | graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli | 0 | 0 |
+| pretalx | python_django | true | oas3, python_cli | 0 | 0 |
+| vikunja | go_echo | true | go_cli, go_http, go_huma, oas2 | 0 | 0 |
+
+| Technology | Inputs on matched rows | Both | Document only | Code only | Recall | Agreement |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| cs_aspnet_core_minimal_api | Parameters | 28 | 16 | 0 | 63.6% | 100.0% |
+| cs_aspnet_core_minimal_api | Body fields | 38 | 1 | 0 | 97.4% | 100.0% |
+| go_chi | Parameters | 33 | 164 | 88 | 16.8% | 27.3% |
+| go_chi | Body fields | 16 | 162 | 4 | 9.0% | 80.0% |
+| go_echo | Parameters | 128 | 201 | 0 | 38.9% | 100.0% |
+| go_echo | Body fields | 0 | 364 | 0 | 0.0% | n/a |
+| go_gin | Parameters | 36 | 343 | 5 | 9.5% | 87.8% |
+| go_gin | Body fields | 35 | 307 | 1 | 10.2% | 97.2% |
+| go_mux | Parameters | 7 | 0 | 0 | 100.0% | 100.0% |
+| go_mux | Body fields | 0 | 0 | 0 | n/a | n/a |
+| java_spring | Parameters | 544 | 203 | 109 | 72.8% | 83.3% |
+| java_spring | Body fields | 378 | 67 | 90 | 84.9% | 80.8% |
+| js_express | Parameters | 281 | 28 | 65 | 90.9% | 81.2% |
+| js_express | Body fields | 96 | 78 | 19 | 55.2% | 83.5% |
+| python_django | Parameters | 331 | 297 | 73 | 52.7% | 81.9% |
+| python_django | Body fields | 311 | 142 | 10 | 68.7% | 96.9% |
+| python_fastapi | Parameters | 454 | 491 | 9 | 48.0% | 98.1% |
+| python_fastapi | Body fields | 360 | 33 | 42 | 91.6% | 89.6% |
+| ts_nestjs | Parameters | 245 | 906 | 6 | 21.3% | 97.6% |
+| ts_nestjs | Body fields | 221 | 274 | 1 | 44.6% | 99.5% |
+
+| Technology | Both guarded | Both open | Document guarded, code open | Document open, code guarded |
+| --- | ---: | ---: | ---: | ---: |
+| cs_aspnet_core_minimal_api | 0 | 16 | 0 | 0 |
+| go_chi | 120 | 3 | 8 | 133 |
+| go_echo | 131 | 11 | 1 | 6 |
+| go_gin | 162 | 56 | 10 | 10 |
+| go_mux | 0 | 26 | 0 | 0 |
+| java_spring | 0 | 0 | 182 | 0 |
+| js_express | 8 | 85 | 0 | 210 |
+| python_django | 0 | 230 | 0 | 5 |
+| python_fastapi | 325 | 17 | 6 | 0 |
+| ts_nestjs | 268 | 19 | 0 | 0 |
 
 | Technology | Resolution claim | Marked endpoints | Share of code endpoints |
 | --- | --- | ---: | ---: |
 | go_chi | `handler:heuristic` | 21 | 4.1% |
 | go_chi | `prefix:unresolved` | 241 | 47.0% |
 | go_echo | `prefix:unresolved` | 4 | 1.5% |
-| go_gin | `handler:heuristic` | 6 | 2.1% |
+| go_gin | `handler:heuristic` | 8 | 2.8% |
 | go_gin | `prefix:unresolved` | 228 | 80.9% |
 | js_express | `prefix:unresolved` | 9 | 1.3% |
 

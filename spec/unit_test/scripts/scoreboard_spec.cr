@@ -59,7 +59,7 @@ describe Scoreboard do
     delta[:forced_only].map { |r| {r["method"].as_s, r["url"].as_s} }.should eq([{"GET", "/lost"}])
     delta[:automatic_only].map(&.["url"].as_s).should eq(["/new"])
     Scoreboard.detection(automatic, pins, "go_gin", delta).should eq(JSON.parse(
-      %({"detected":true,"other_technologies":["nginx","oas3"],"forced_only":1,"automatic_only":1})))
+      %({"detected":true,"other_technologies":["nginx","oas3"],"forced_only":1,"automatic_only":1,"skipped":0})))
     %w[go_chi ruby_rails].each do |tech|
       empty_delta = Scoreboard.detection_rows(forced, automatic, tech)
       result = Scoreboard.detection(automatic, pins, tech, empty_delta)
@@ -196,5 +196,11 @@ describe Scoreboard do
     repo = JSON.parse(%({"name":"service","exclude_paths":["./install"],"note":"evidence"}))
     Scoreboard.pin(repo).keys.sort!.should eq(%w[exclude_paths name])
     Scoreboard.pin(repo)["exclude_paths"][0].as_s.should eq("./install")
+  end
+
+  it "counts files the automatic scan skipped without failing the measurement" do
+    automatic = JSON.parse(%({"endpoints":[],"scan_technologies":["go_gin"],"errors":[{"tech":"detect","message":"skipped 1 file"}]}))
+    delta = Scoreboard.detection_rows(automatic, automatic, "go_gin")
+    Scoreboard.detection(automatic, ["go_gin"], "go_gin", delta)["skipped"].as_i.should eq(1)
   end
 end
