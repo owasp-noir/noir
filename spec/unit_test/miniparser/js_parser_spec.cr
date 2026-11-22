@@ -2,6 +2,23 @@ require "../../spec_helper"
 require "../../../src/miniparsers/js_parser"
 
 describe Noir::JSParser do
+  it "keeps loop paths after a bare return and inside a typed callback" do
+    code = <<-TS
+      import express from 'express';
+      const app = express();
+      ['/asi'].forEach(p => {
+        if (disabled) return
+        app.get(p, handler);
+      });
+      ['/typed'].forEach(function(p): "try" {
+        app.get(p, handler);
+        return "try";
+      });
+      TS
+    routes = Noir::JSParser.new(code, source_path: "app.ts").parse_routes
+    routes.map(&.path).sort!.should eq(["/asi", "/typed"])
+  end
+
   describe "empty route paths" do
     it "keeps '' on app/router receivers, including an inline Fastify plugin's instance" do
       code = <<-JS

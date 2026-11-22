@@ -73,7 +73,7 @@ module Analyzer::Javascript
         endpoint.resolution = {"registration" => Endpoint::RESOLUTION_UNRESOLVED} if registration.unresolved
         Noir::URLPath.add_params(endpoint, url, Noir::URLPath::BRACE_WORD)
         route.params.each { |name, type| endpoint.push_param(Param.new(name, "", type)) }
-        endpoint
+        Noir::JSMountPrefix.finish(endpoint)
       end
     end
 

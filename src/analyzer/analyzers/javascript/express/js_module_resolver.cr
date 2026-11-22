@@ -23,8 +23,11 @@ module Analyzer::Javascript
       is_relative = require_path.starts_with?(".")
       is_root_alias = require_path.starts_with?("@/") || require_path.starts_with?("~/")
       # `@app/server/routes/v1` through tsconfig `paths`.
-      alias_target = Noir::JSHandlerResolver.tsconfig_alias_target(from_file, require_path, root) unless is_relative || is_root_alias
-      return unless is_relative || is_root_alias || alias_target
+      locator = CodeLocator.instance
+      unless is_relative || is_root_alias
+        return if locator.scan_files_active? && locator.files_by_basename("tsconfig.json").empty?
+        alias_target = Noir::JSHandlerResolver.tsconfig_alias_target(from_file, require_path, root) || return
+      end
 
       resolved = if alias_target
                    alias_target
@@ -35,8 +38,6 @@ module Analyzer::Javascript
                    base_dir = File.dirname(from_file)
                    File.expand_path(require_path, base_dir)
                  end
-
-      locator = CodeLocator.instance
 
       # Case 1: The resolved path is a file that exists
       return resolved if locator.source_file?(resolved)

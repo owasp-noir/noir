@@ -2,6 +2,7 @@ require "../models/endpoint"
 require "../minilexers/js_lexer"
 require "../utils/url_path/params"
 require "./js_mount_prefix"
+require "./js_registrar_defaults"
 require "../utils/top_level_split"
 require "../utils/js_literal_scanner"
 require "set"
@@ -45,7 +46,7 @@ module Noir
     @current_route_raw_path : String? = nil
     getter router_prefixes : Hash(String, Array(String)) = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
     @express_routers = Set(String).new
-    @loop_paths = {} of Int32 => Array(PathEntry)
+    @loop_calls : Hash(Int32, JSRegistrarDefaults::Loop)?
     @named_route_receivers = Set(String).new
     # Slash-less koa-router paths accepted by `route_path_entries_from_args`;
     # the final `valid_route_path?` filter would otherwise drop them.
@@ -111,7 +112,7 @@ module Noir
     # in any other framework's file `.on(` is an event listener.
     def initialize(@source : String, @this_receiver_ok : Bool = true, constants : Hash(String, String)? = nil,
                    @resolve_mount_prefixes : Bool = false, @mount_middleware : Proc(String, Bool)? = nil,
-                   mount_constants : Hash(String, String)? = nil, @on_routes : Bool = false, @record_middleware : Bool = false)
+                   mount_constants : Hash(String, String)? = nil, @source_path : String = "source.tsx", @on_routes : Bool = false, @record_middleware : Bool = false)
       source = @source
       lexer = JSLexer.new(source)
       @tokens = drop_type_arguments(lexer.tokenize)
@@ -274,7 +275,6 @@ module Noir
       # 2. Variables that have route methods called on them (.get, .post, etc.)
       @named_route_receivers.clear
       @explicit_router_vars.clear
-      collect_loop_paths if @source.includes?("for")
       identify_router_variables(router_variables)
       identify_named_route_receivers(router_variables)
       scan_router_constructor_prefixes(router_prefixes, router_variables, router_parents)
@@ -298,7 +298,8 @@ module Noir
            @tokens[idx + 4].type == :lbracket)
           parent_router = @tokens[idx].type == :rparen ? chain_owner(idx + 1).try(&.[0]).to_s : @tokens[idx].value
           prefixes = route_path_entries_from_args(idx + 4).map(&.path)
-          if @resolve_mount_prefixes && @tokens[idx + 2].value == "use" && next_top_level_arg_index(idx + 4)
+          resolve_prefix = (@resolve_mount_prefixes && @tokens[idx + 2].value == "use") || (@on_routes && @tokens[idx + 2].value == "route")
+          if resolve_prefix && next_top_level_arg_index(idx + 4)
             args = JSLiteralScanner.extract_paren_content(@source, @tokens[idx + 3].position + 2)
             first = args.try { |a| TopLevelSplit.split(a.content, ',', TopLevelSplit::Rules::JS_POSITIONAL_ARGS).first? }
             if first && !first.starts_with?('[') && !(@mount_middleware.try(&.call(first)) || JSMountPrefix.middleware?(first, @source))
@@ -317,7 +318,7 @@ module Noir
 
           # Collect all identifiers after the path to find the router
           # Routers can be before or after middleware in .use() calls
-          scan_idx = @resolve_mount_prefixes ? (next_top_level_arg_index(idx + 4) || idx + 5) : idx + 5
+          scan_idx = (@resolve_mount_prefixes || resolve_prefix) ? (next_top_level_arg_index(idx + 4) || idx + 5) : idx + 5
           candidates = [] of String
           paren_depth = 1
 
@@ -435,7 +436,7 @@ module Noir
         # An empty path (`router.get('', …)`) stays empty so a mount or
         # `prefix` resolves it to the prefix itself (`/items`, not
         # `/items/`); `JSRouteExtractor` roots it to `/` when unprefixed.
-        route_item.path = "/#{route_item.path}" unless route_item.path.empty? || route_item.path.delete(JSMountPrefix::UNREAD).starts_with?("/")
+        route_item.path = "/#{route_item.path}" unless route_item.path.empty? || JSMountPrefix.visible(route_item.path).starts_with?("/")
       end
 
       # Dedupe by method + path
@@ -698,46 +699,49 @@ module Noir
       paths
     end
 
-    # Bind the first argument of a direct call in a for-of body to the
-    # literal array elements. Token indices keep same-named loops separate.
-    private def collect_loop_paths
-      @tokens.each_with_index do |token, i|
-        next unless token.value == "for" && @tokens[i + 1]?.try(&.type) == :lparen
-        next unless @tokens[i + 2]?.try(&.value).in?("const", "let")
-        name = @tokens[i + 3]?.try(&.value) || next
-        next unless @tokens[i + 4]?.try(&.value) == "of" && @tokens[i + 5]?.try(&.type) == :lbracket
-        paths = [] of PathEntry
-        pos = i + 6
-        while (item = @tokens[pos]?) && item.type == :string
-          paths << PathEntry.new(item.value, false)
-          pos += 1
-          break unless @tokens[pos]?.try(&.type) == :comma
-          pos += 1
-        end
-        next unless @tokens[pos]?.try(&.type) == :rbracket && @tokens[pos + 1]?.try(&.type) == :rparen
-        pos += 2
-        block = @tokens[pos]?.try(&.type) == :lbrace
-        pos += 1 if block
-        # Walk consecutive call statements only. A new binding, assignment
-        # or nested function can change what the identifier denotes.
-        while @tokens[pos + 1]?.try(&.type) == :dot && @tokens[pos + 3]?.try(&.type) == :lparen
-          if @tokens[pos + 4]?.try(&.value) == name && @tokens[pos + 5]?.try(&.type) == :comma
-            @loop_paths[pos + 4] = paths
-          end
-          break unless block && (close = skip_matching_paren(pos + 3))
-          pos = close + 1
-          pos += 1 if @tokens[pos]?.try(&.type) == :semicolon
-        end
+    # A verb on an unrelated receiver can look like a registration. Wait
+    # until the parser actually needs this path before indexing loop scopes.
+    private def loop_paths(index : Int32, arg : JSToken) : Array(PathEntry)?
+      return unless index >= 3 && @tokens[index - 3].type == :dot && http_method?(@tokens[index - 2])
+      open = @tokens[index - 1]
+      return unless open.type == :lparen && @tokens[index + 1]?.try(&.type) == :comma
+      return if nested_loop_expression?(index - 4)
+      calls = @loop_calls ||= JSRegistrarDefaults.loop_calls(@source, @source_path)
+      binding = calls[open.position + 1]? || return
+      paths = binding.expand(arg.value) || return
+      paths.map do |path|
+        path = path.gsub(CONSTANT_PLACEHOLDER_RE) { |whole, m| @constants[m[1]]? || whole } if arg.type == :template_literal
+        path = "/#{path}" if path.includes?(JSMountPrefix::UNREAD) && !path.includes?('/')
+        PathEntry.new(path, false)
       end
+    end
+
+    # loop_calls binds direct call statements and expression-bodied callbacks.
+    # A returned or assigned call, or one inside a nested control block, cannot
+    # be one of those statements. Leave complex receivers and ASI to the AST.
+    private def nested_loop_expression?(receiver_index : Int32) : Bool
+      return false unless receiver_index > 0
+      if @tokens[receiver_index].type == :rparen
+        open = matching_lparen(receiver_index)
+        return false unless open && open > 1
+        receiver_index = open - 1
+      end
+      receiver = @tokens[receiver_index]
+      return false unless receiver.type == :identifier
+      previous = @tokens[receiver_index - 1]
+      return true if previous.type == :assign
+      if previous.value == "return" && previous.type == :keyword
+        return @source[previous.position + previous.value.size...receiver.position].matches?(/\A[ \t]*\z/)
+      end
+      return false unless previous.type == :lbrace && receiver_index >= 3
+      head = @tokens[receiver_index - 2]
+      head.type == :keyword && head.value.in?("try", "finally", "else", "do") &&
+        @tokens[receiver_index - 3].type.in?(:lbrace, :rbrace, :semicolon)
     end
 
     private def path_entries_from_token(start_idx : Int32) : Array(PathEntry)
       paths = [] of PathEntry
       return paths unless start_idx < @tokens.size
-
-      if scoped = @loop_paths[start_idx]?
-        return scoped
-      end
 
       token = @tokens[start_idx]
       if token.type == :lbracket
@@ -745,6 +749,9 @@ module Noir
       elsif token.type == :string
         paths << PathEntry.new(token.value, false)
       elsif token.type == :template_literal || token.type == :identifier || (token.value == "this" && @tokens[start_idx + 1]?.try(&.type) == :dot)
+        if token.type.in?(:identifier, :template_literal) && (scoped = loop_paths(start_idx, token))
+          return scoped
+        end
         path = resolve_dynamic_path(start_idx)
         paths << PathEntry.new(path, false) if path
       elsif token.type == :regex
