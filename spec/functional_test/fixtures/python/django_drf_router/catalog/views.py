@@ -5,6 +5,8 @@ from rest_framework.response import Response
 
 class WidgetViewSet(viewsets.ModelViewSet):
     lookup_field = 'pk'
+    # Without project settings or a backend, these do not enable search.
+    search_fields = ['name']
 
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
