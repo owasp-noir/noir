@@ -6,6 +6,13 @@ import (
 
 func h(ctx http.Context) error { return nil }
 
+func update(ctx http.Context) error {
+	var payload map[string]string
+	return ctx.Bind(&payload)
+}
+
+func fallback(ctx http.Context) error { return nil }
+
 func main() {
 	httpSrv := http.NewServer(http.Address(":8000"))
 	r := httpSrv.Route("/api")
@@ -14,4 +21,7 @@ func main() {
 	r2.GET("/say/{name}", h)
 	r3 := r2.Group("/admin")
 	r3.POST("/reset", h)
+	r3.PUT("/settings", update)
+	fallback := update
+	r3.PATCH("/settings", fallback)
 }

@@ -38,6 +38,15 @@ async fn submit_form(req: &mut Request) -> &'static str {
     "Submitted"
 }
 
+fn save(_body: JsonBody<serde_json::Value>) {}
+
+#[handler]
+async fn import_users(req: &mut Request) {
+    let _mode: QueryParam<String> = req.extract().await.unwrap();
+    let payload = req.extract().await.unwrap();
+    save(payload);
+}
+
 #[tokio::main]
 async fn main() {
     let router = Router::new()
@@ -45,6 +54,7 @@ async fn main() {
         .push(Router::with_path("users/<id>").get(get_user))
         .push(Router::with_path("users").post(create_user))
         .push(Router::with_path("search").get(search))
+        .push(Router::with_path("import").post(import_users))
         .push(Router::with_path("items/<id>").put(update_item));
 
     let acceptor = TcpListener::new("127.0.0.1:5800").bind().await;

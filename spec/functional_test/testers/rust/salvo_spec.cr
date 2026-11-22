@@ -10,6 +10,10 @@ expected_endpoints = [
   Endpoint.new("/users", "POST", [
     Param.new("body", "", "json"),
   ]),
+  Endpoint.new("/import", "POST", [
+    Param.new("query", "", "query"),
+    Param.new("body", "", "json"),
+  ]),
   Endpoint.new("/search", "GET", [
     Param.new("query", "", "query"),
   ]),

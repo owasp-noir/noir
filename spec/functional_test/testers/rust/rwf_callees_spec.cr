@@ -41,6 +41,8 @@ expected_endpoints = [
   users_post,
   user_show,
   session,
+  Endpoint.new("/preview", "GET", [Param.new("body", "", "json"), Param.new("X-Trace", "", "header"), Param.new("preview", "", "cookie")]),
+  Endpoint.new("/preview", "POST", [Param.new("X-Trace", "", "header"), Param.new("preview", "", "cookie")]),
 ]
 
 FunctionalTester.new("fixtures/rust/rwf_callees/", {

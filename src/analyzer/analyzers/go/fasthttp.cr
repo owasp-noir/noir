@@ -128,10 +128,18 @@ module Analyzer::Go
       path.gsub(/\{([a-zA-Z0-9_]+)\??(?::[^{}]+)?\}/) { "{#{$1}}" }
     end
 
+    SIMPLE_ROUTER_PATH = /\A(?:[\/\w.~-]|\{\w+\})*\z/
+
     private def add_fasthttp_params(line : String, endpoint : Endpoint)
       return if endpoint.method.empty?
       analyze_param_line(line).each do |param|
         next if param.name.empty?
+        # UserValue is a context lookup. On a fully resolved literal path
+        # with ordinary brace captures, only a matching capture is a path input.
+        if param.param_type == "path" && endpoint.handler && endpoint.resolution.nil? &&
+           endpoint.url.matches?(SIMPLE_ROUTER_PATH) && !endpoint.url.includes?("{#{param.name}}")
+          next
+        end
         unless endpoint.params.any? { |p| p.name == param.name && p.param_type == param.param_type }
           endpoint.params << param
         end

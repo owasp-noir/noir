@@ -77,6 +77,7 @@ module Analyzer::Go
           content, group_method: "Route", handle_method: "Handle", extra_group_methods: ["Group"])
         next if ts_routes.empty?
 
+        handlers_ignoring_context = Noir::TreeSitterGoRouteExtractor.functions_ignoring_argument(content, ts_routes)
         route_rows = Set(Int32).new
         ts_routes.each { |r| route_rows << r.line }
         external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, File.dirname(path))
@@ -85,11 +86,14 @@ module Analyzer::Go
         ts_routes.each do |route|
           details = Details.new(PathInfo.new(path, route.line + 1))
 
+          ignores_context = route.handler_args.size == 1 && handlers_ignoring_context.includes?(route.handler)
           Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
             endpoint = Endpoint.new(route.path, verb, details)
             endpoint.resolution = route.resolution
 
-            endpoint.params << Param.new("body", "", "json") if BODY_VERBS.includes?(verb)
+            if BODY_VERBS.includes?(verb) && !ignores_context
+              endpoint.params << Param.new("body", "", "json")
+            end
 
             if entries = callees_by_route[route.line]?
               entries.each do |entry|

@@ -12,12 +12,15 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/optional/{name}", "GET", [
     Param.new("name", "", "path"),
+    Param.new("preview", "", "query"),
   ]),
   Endpoint.new("/regex/{id}", "GET", [
     Param.new("id", "", "path"),
+    Param.new("preview", "", "query"),
   ]),
   Endpoint.new("/combo/{slug}", "GET", [
     Param.new("slug", "", "path"),
+    Param.new("preview", "", "query"),
   ]),
 ]
 

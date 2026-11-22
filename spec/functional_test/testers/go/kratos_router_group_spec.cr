@@ -6,6 +6,8 @@ expected_endpoints = [
   Endpoint.new("/api/hello/{name}", "GET", [Param.new("name", "", "path")]),
   Endpoint.new("/api/v2/say/{name}", "GET", [Param.new("name", "", "path")]),
   Endpoint.new("/api/v2/admin/reset", "POST"),
+  Endpoint.new("/api/v2/admin/settings", "PUT", [Param.new("body", "", "json")]),
+  Endpoint.new("/api/v2/admin/settings", "PATCH", [Param.new("body", "", "json")]),
 ]
 
 FunctionalTester.new("fixtures/go/kratos_router_group/", {

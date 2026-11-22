@@ -1,4 +1,5 @@
 require "../../engines/rust_engine"
+require "../../../miniparsers/rust_expression_context"
 require "../../../ext/tree_sitter/tree_sitter"
 require "../../../miniparsers/rust_callee_extractor_ts"
 
@@ -86,7 +87,10 @@ module Analyzer::Rust
               endpoint = Endpoint.new(reg.path, http_method, details)
               extract_path_params(reg.path, endpoint)
               if body
-                extract_controller_params(body, source, endpoint)
+                excluded = (methods - [http_method]).map { |other| "Method::#{other}" }
+                Noir::RustExpressionContext.each_reachable_branch(body, source, "request", "request.method()", excluded) do |branch|
+                  extract_controller_params(branch, source, endpoint)
+                end
                 if include_callee
                   entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
                   attach_rust_callees(endpoint, entries)
