@@ -38,4 +38,17 @@ describe Noir::CComments do
   it "treats only the given quotes as string openers" do
     Noir::CComments.strip(%(a = '//' "b"), quotes: %(")).should eq "a = '" + " " * 7
   end
+
+  it "masks literals and comments in character coordinates, including escaped newlines" do
+    literal = "\"한\\\")}\"" + " '\\n'"
+    source = "é " + literal + " /*한\nx*/ }"
+    expected = "é " + " " * literal.size + "    \n    }"
+    Noir::CComments.strip(source, mask_literals: true).should eq expected
+    Noir::CComments.strip("\"a\\\nb", mask_literals: true).should eq "   \n "
+  end
+
+  it "keeps raw backtick contents when masking only Go comments" do
+    source = %q(`url // x\` // tail)
+    Noir::CComments.strip(source, raw_quotes: "`").should eq %q(`url // x\` ) + " " * 7
+  end
 end

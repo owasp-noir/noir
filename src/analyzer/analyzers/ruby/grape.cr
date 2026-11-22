@@ -1,8 +1,11 @@
+require "../../../utils/top_level_split"
 require "../../engines/ruby_engine"
 require "../../../utils/ruby_inflector"
 
 module Analyzer::Ruby
   class Grape < RubyEngine
+    GRAPE_ARGS = Noir::TopLevelSplit::Rules.new(empties: Noir::TopLevelSplit::Empties::DropAll)
+
     analyzer_for "ruby_grape"
 
     GRAPE_VERBS = ["get", "post", "put", "delete", "patch", "head", "options"]
@@ -559,7 +562,7 @@ module Analyzer::Ruby
       return unless m = stripped.match(/\Aroute(?:\s+|\s*\()(.+?)\s*\bdo\b/)
       args_text = m[1].strip
       args_text = args_text[0...-1].strip if stripped.starts_with?("route(") && args_text.ends_with?(')')
-      args = split_grape_top_level_args(args_text)
+      args = Noir::TopLevelSplit.split(args_text, ',', GRAPE_ARGS)
       return if args.empty?
 
       methods = parse_grape_route_methods(args[0])
@@ -573,43 +576,6 @@ module Analyzer::Ruby
         end
       end
       {methods, raw_paths}
-    end
-
-    private def split_grape_top_level_args(text : String) : Array(String)
-      parts = [] of String
-      quote : Char? = nil
-      escaped = false
-      depth = 0
-      start = 0
-
-      text.each_char_with_index do |ch, i|
-        if q = quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == q
-            quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '"', '\''     then quote = ch
-        when '(', '[', '{' then depth += 1
-        when ')', ']', '}' then depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            part = text[start...i].strip
-            parts << part unless part.empty?
-            start = i + 1
-          end
-        end
-      end
-
-      tail = text[start..].strip
-      parts << tail unless tail.empty?
-      parts
     end
 
     private def parse_grape_route_methods(expr : String) : Array(String)

@@ -181,36 +181,6 @@ module Analyzer::Python
       kept
     end
 
-    # Quote-aware single-line comment strip. Sufficient for path/parameter lines that
-    # contain literal strings for routes or keys (we control the fixture and real-world
-    # route guards rarely put the path literal inside a comment on the same line).
-    #
-    # Uses Char::Reader + byte positions to ensure UTF-8 safety (String slicing with
-    # char indices from each_char_with_index would be byte-unsafe on non-ASCII input).
-    private def strip_comment(line : ::String) : ::String
-      in_double = false
-      in_single = false
-      escaped = false
-      reader = Char::Reader.new(line)
-      while reader.has_next?
-        ch = reader.current_char
-        pos = reader.pos
-        if escaped
-          escaped = false
-        elsif ch == '\\' && (in_double || in_single)
-          escaped = true
-        elsif ch == '"' && !in_single
-          in_double = !in_double
-        elsif ch == '\'' && !in_double
-          in_single = !in_single
-        elsif ch == '#' && !in_double && !in_single
-          return line.byte_slice(0, pos)
-        end
-        reader.next_char
-      end
-      line
-    end
-
     private def indent_level(line : ::String) : Int32
       line.size - line.lstrip.size
     end
@@ -230,7 +200,7 @@ module Analyzer::Python
       hits = [] of Tuple(::String, Int32)
 
       body_lines.each_with_index do |raw, bidx|
-        line = strip_comment(raw)
+        line = strip_python_comment(raw)
         next if line.strip.empty?
 
         has_path_ref = line.includes?("self.path") || line.includes?("urlparse(self.path)")
@@ -313,7 +283,7 @@ module Analyzer::Python
       branch_indent = indent_level(body_lines[branch_line_idx])
 
       # Check if path param assignment is on the branch line itself
-      line = strip_comment(body_lines[branch_line_idx])
+      line = strip_python_comment(body_lines[branch_line_idx])
       if m = line.match(/\b([A-Za-z_]\w*)\s*=\s*(?:self|\w+)\.path\.(?:rsplit|split)\s*\(\s*[rf]?['"]\/['"]/)
         return m[1]
       elsif m = line.match(/\b([A-Za-z_]\w*)\s*=\s*(?:self|\w+)\.path\.removeprefix\s*\(/)
@@ -323,7 +293,7 @@ module Analyzer::Python
       # Scan following lines that belong to this branch (more indented than the branch line)
       (branch_line_idx + 1...body_lines.size).each do |k|
         raw = body_lines[k]
-        line = strip_comment(raw)
+        line = strip_python_comment(raw)
         stripped = line.strip
         next if stripped.empty?
 

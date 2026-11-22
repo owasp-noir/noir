@@ -128,19 +128,19 @@ module Analyzer::Python
 
         case call.verb
         when "get", "post", "put", "patch", "delete", "options"
-          args = split_masonite_args(call.args)
+          args = split_python_arguments(call.args)
           next if args.size < 2
           url = route_string_arg(args, 0, "url")
           next unless url
           endpoints.concat build_endpoints_for_route(prefix, url, HTTP_VERB_METHODS[call.verb], args[1]?, route_file, call.line)
         when "any"
-          args = split_masonite_args(call.args)
+          args = split_python_arguments(call.args)
           next if args.size < 2
           url = route_string_arg(args, 0, "url")
           next unless url
           endpoints.concat build_endpoints_for_route(prefix, url, ANY_METHODS, args[1]?, route_file, call.line)
         when "match"
-          args = split_masonite_args(call.args)
+          args = split_python_arguments(call.args)
           next if args.size < 3
           methods = args[0].scan(/[rf]?['"]([A-Za-z]+)['"]/).map(&.[1].upcase)
           next if methods.empty?
@@ -148,7 +148,7 @@ module Analyzer::Python
           next unless url
           endpoints.concat build_endpoints_for_route(prefix, url, methods, args[2]?, route_file, call.line)
         when "resource"
-          args = split_masonite_args(call.args)
+          args = split_python_arguments(call.args)
           next if args.size < 2
           base = Helper.extract_python_string(args[0])
           controller = Helper.extract_python_string(args[1])
@@ -157,7 +157,7 @@ module Analyzer::Python
             endpoints.concat build_endpoints_for_route(prefix, "#{base}#{suffix}", methods, "#{controller}@#{action}", route_file, call.line)
           end
         when "api"
-          args = split_masonite_args(call.args)
+          args = split_python_arguments(call.args)
           next if args.size < 2
           base = Helper.extract_python_string(args[0])
           controller = Helper.extract_python_string(args[1])
@@ -166,13 +166,13 @@ module Analyzer::Python
             endpoints.concat build_endpoints_for_route(prefix, "#{base}#{suffix}", methods, "#{controller}@#{action}", route_file, call.line)
           end
         when "view"
-          args = split_masonite_args(call.args)
+          args = split_python_arguments(call.args)
           next if args.empty?
           url = route_string_arg(args, 0, "url")
           next unless url
           endpoints.concat build_endpoints_for_route(prefix, url, ["GET"], nil, route_file, call.line)
         when "redirect", "permanent_redirect"
-          args = split_masonite_args(call.args)
+          args = split_python_arguments(call.args)
           next if args.empty?
           url = route_string_arg(args, 0, "url")
           next unless url
@@ -532,67 +532,6 @@ module Analyzer::Python
       end
 
       nil
-    end
-
-    # Top-level comma split honoring nested `()`/`[]`/`{}` and quotes.
-    private def split_masonite_args(text : ::String) : Array(::String)
-      parts = [] of ::String
-      current = String::Builder.new
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      in_quote : Char? = nil
-      escaped = false
-
-      text.each_char do |ch|
-        if in_quote
-          current << ch
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '\'', '"'
-          in_quote = ch
-          current << ch
-        when '('
-          paren_depth += 1
-          current << ch
-        when ')'
-          paren_depth -= 1 if paren_depth > 0
-          current << ch
-        when '['
-          bracket_depth += 1
-          current << ch
-        when ']'
-          bracket_depth -= 1 if bracket_depth > 0
-          current << ch
-        when '{'
-          brace_depth += 1
-          current << ch
-        when '}'
-          brace_depth -= 1 if brace_depth > 0
-          current << ch
-        when ','
-          if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-            parts << current.to_s
-            current = String::Builder.new
-          else
-            current << ch
-          end
-        else
-          current << ch
-        end
-      end
-
-      parts << current.to_s
-      parts
     end
   end
 end

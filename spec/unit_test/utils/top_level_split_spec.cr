@@ -21,6 +21,11 @@ private def tls_raw_rules(nest : TLSNest, quotes : String)
 end
 
 describe Noir::TopLevelSplit do
+  it "keeps the JVM callers' double quotes, shared depth and interior empty slots" do
+    text = " \"a,b\", f([1,2]),, ',', [x),tail, "
+    TLS.split(text, ',', TLSRules::JVM_STRINGS).should eq ["\"a,b\"", "f([1,2])", "", "'", "'", "[x)", "tail"]
+  end
+
   describe "basic splitting" do
     it "splits a flat list" do
       TLS.split("a,b,c", ',', tls_rules).should eq ["a", "b", "c"]

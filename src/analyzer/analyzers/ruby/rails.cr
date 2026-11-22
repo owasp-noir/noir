@@ -1,3 +1,4 @@
+require "../../../utils/line_comment"
 require "../../engines/ruby_engine"
 require "../../../utils/top_level_split"
 require "../../../utils/call_fold"
@@ -1554,7 +1555,7 @@ module Analyzer::Ruby
         next unless content.includes?("mount")
 
         content.each_line do |raw|
-          line = strip_inline_comment(raw)
+          line = Noir::LineComment.strip(raw, '#')
           next unless line.includes?("mount")
           if m = line.match(/\bmount\b\s*\(?\s*(?:::)?([A-Z][A-Za-z0-9_:]*)\s*(?:,\s*at:\s*|=>\s*)['"]([^'"]+)['"]/)
             const = m[1]
@@ -1603,7 +1604,7 @@ module Analyzer::Ruby
       brace_depth = 0
 
       ruby_source(routes_path).each_line.with_index(1) do |raw_line, line_number|
-        stripped = strip_inline_comment(raw_line).strip
+        stripped = Noir::LineComment.strip(raw_line, '#').strip
         next if stripped.empty?
 
         if buffer.empty?
@@ -1838,31 +1839,6 @@ module Analyzer::Ruby
         verbs << normalized
       end
       verbs.empty? ? default_verbs : verbs.uniq
-    end
-
-    private def strip_inline_comment(line : String) : String
-      in_str = false
-      escaped = false
-      quote = '\0'
-      line.each_char_with_index do |c, i|
-        if in_str
-          if escaped
-            escaped = false
-          elsif c == '\\'
-            escaped = true
-          elsif c == quote
-            in_str = false
-          end
-        else
-          if c == '"' || c == '\''
-            in_str = true
-            quote = c
-          elsif c == '#'
-            return line[0, i]
-          end
-        end
-      end
-      line
     end
 
     private def opens_do_block?(line : String) : Bool
@@ -2162,7 +2138,7 @@ module Analyzer::Ruby
       class_body = own_class_body(controller_lines)
       # Subscript reads wrapped over lines (`request.headers[` / `"X-Key"` /
       # `]`) are read off this folded view; see the `'['` scans below.
-      folded_lines = Noir::CallFold.fold(controller_lines) { |l| strip_inline_comment(l) }
+      folded_lines = Noir::CallFold.fold(controller_lines) { |l| Noir::LineComment.strip(l, '#') }
       # Names that stand for `params` (see `spell_out_params`): helpers
       # returning `params.require(key)`, and the current method's locals
       # bound to `params.require(:x)` / `params[:x]`. A binding's own read of
@@ -2174,7 +2150,7 @@ module Analyzer::Ruby
       local_roots = Set({String, String}).new
 
       controller_lines.each_with_index do |raw_line, index|
-        line = spell_out_params(strip_inline_comment(raw_line), wrappers, locals) { |key| local_roots << {this_method, key} }
+        line = spell_out_params(Noir::LineComment.strip(raw_line, '#'), wrappers, locals) { |key| local_roots << {this_method, key} }
 
         # A setter's `=` is glued to the name (`def name=(v)`); the endless
         # `def index = render(...)` has a space before it.
@@ -2354,7 +2330,7 @@ module Analyzer::Ruby
       return line unless index > 0 && line.matches?(/\A\s*\.\s*(?:permit|expect)\s*\(/)
       joined = line.lstrip
       (index - 1).downto(Math.max(0, index - 4)) do |i|
-        previous = strip_inline_comment(lines[i]).strip
+        previous = Noir::LineComment.strip(lines[i], '#').strip
         joined = "#{previous}#{joined}"
         return joined if previous.matches?(PERMIT_RECEIVER_END)
         break unless previous.starts_with?('.')
@@ -2409,7 +2385,7 @@ module Analyzer::Ruby
       name = nil
       returns = nil
       ruby_source(path).each_line do |raw|
-        line = strip_inline_comment(raw)
+        line = Noir::LineComment.strip(raw, '#')
         if line.includes?("def ")
           m = line.match(WRAPPER_DEF)
           name = m.try(&.[1])
@@ -2606,7 +2582,7 @@ module Analyzer::Ruby
         # the body's own indent to its end.
         indent = scope.file[idx].size - scope.file[idx].lstrip.size
         body = scope.file[(idx + 1)..].take_while { |l| l.strip.empty? || l.size - l.lstrip.size > indent }
-          .map { |l| strip_inline_comment(l) }.reject(&.strip.empty?)
+          .map { |l| Noir::LineComment.strip(l, '#') }.reject(&.strip.empty?)
         unless body.empty?
           base = body.min_of { |l| l.size - l.lstrip.size }
           start = body.rindex { |l| l.size - l.lstrip.size == base && !l.lstrip.matches?(/\A[\])}]/) } || 0
@@ -2626,10 +2602,10 @@ module Analyzer::Ruby
     # The value of the assignment at `lines[idx]`, joined over the lines its
     # brackets stay open on.
     private def statement_from(lines : Array(String), idx : Int32, assign : Regex) : String
-      text = strip_inline_comment(lines[idx]).match(assign).try(&.[1]).to_s
+      text = Noir::LineComment.strip(lines[idx], '#').match(assign).try(&.[1]).to_s
       j = idx + 1
       while text.count("[({") > text.count("])}") && j < lines.size && j - idx < 100
-        text = "#{text} #{strip_inline_comment(lines[j])}"
+        text = "#{text} #{Noir::LineComment.strip(lines[j], '#')}"
         j += 1
       end
       text

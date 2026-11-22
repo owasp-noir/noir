@@ -1,3 +1,4 @@
+require "../../../utils/line_comment"
 require "../../engines/specification_engine"
 require "../../../detector/detectors/specification/apache_httpd"
 
@@ -28,7 +29,7 @@ module Analyzer::Specification
 
       content.each_line do |raw|
         line_no += 1
-        line = strip_comment(raw).strip
+        line = Noir::LineComment.strip(raw, '#').strip
         next if line.empty?
 
         if block_open?(line, "VirtualHost")
@@ -246,37 +247,6 @@ module Analyzer::Specification
         return v[1...-1]
       end
       v
-    end
-
-    private def strip_comment(line : String) : String
-      quote = nil.as(Char?)
-      escaped = false
-
-      line.each_char_with_index do |char, idx|
-        if escaped
-          escaped = false
-          next
-        end
-
-        if quote
-          case char
-          when '\\'
-            escaped = true
-          when quote
-            quote = nil
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          quote = char
-        when '#'
-          return line[0...idx]
-        end
-      end
-
-      line
     end
 
     private def emit_endpoint(path : String, path_type : String, hosts : Array(String), origin : String, source_path : String, line : Int32, target : String? = nil)

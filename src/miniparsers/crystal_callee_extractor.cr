@@ -1,3 +1,4 @@
+require "../utils/line_comment"
 require "../models/endpoint"
 require "./callee_extractor_base"
 
@@ -53,34 +54,6 @@ module Noir::CrystalCalleeExtractor
   end
 
   def strip_comment(line : String) : String
-    # Fast path: the per-char walk only ever diverges from the input when
-    # the line carries a `#` comment. `#` is single-byte ASCII and cannot
-    # appear inside a UTF-8 multibyte sequence, so a raw byte_index
-    # (memchr) is both correct and allocation-free. This is the hot path —
-    # every Crystal analyzer runs strip_comment on every source line.
-    return line unless line.byte_index(0x23_u8) # '#'
-
-    in_string = false
-    escaped = false
-    quote = '\0'
-
-    line.each_char_with_index do |char, index|
-      if in_string
-        if escaped
-          escaped = false
-        elsif char == '\\'
-          escaped = true
-        elsif char == quote
-          in_string = false
-        end
-      elsif char == '"' || char == '\''
-        in_string = true
-        quote = char
-      elsif char == '#'
-        return line[0, index]
-      end
-    end
-
-    line
+    Noir::LineComment.strip(line, '#')
   end
 end

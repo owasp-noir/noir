@@ -223,14 +223,13 @@ module Noir
       # One shared depth is unanimous across the Java splitters, unlike Python
       # and JS.
       #
-      # Three Java sites each disagree with this preset on one or two axes and
+      # Two Java sites each disagree with this preset on one or two axes and
       # so carry a file-local `Rules` constant rather than a preset here — each
       # is used by exactly one splitter, so naming them centrally would put
-      # three single-use constants in this file:
+      # single-use constants in this file:
       #   quarkus.cr `split_top_level_args`   -> nest also includes Angle
       #   wicket.cr  `split_arguments`        -> nest also includes Angle,
       #                                          quotes "\"" only
-      #   spring.cr  `split_top_level_concat` -> quotes "\"", Empties::DropAll
       JAVA = new(
         nest: Nest::Paren | Nest::Bracket | Nest::Brace,
         quotes: "\"'",
@@ -240,6 +239,11 @@ module Noir
         per_kind: false,
         clamp: true,
       )
+
+      # Spring, Spring Cloud Gateway and Kotlin expression lists recognize
+      # double-quoted strings only. Kotlin keeps empty interior slots; the
+      # Java callers discard those after splitting.
+      JVM_STRINGS = new(quotes: "\"")
 
       # JavaScript/TypeScript object-literal and argument lists.
       # Serves analyzer/analyzers/javascript/nestjs.cr and

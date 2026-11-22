@@ -1,3 +1,5 @@
+require "../utils/top_level_split"
+require "../utils/jvm_delimiter"
 require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../utils/c_comments"
@@ -829,7 +831,7 @@ module Noir
                     source.includes?("PredicateSpec") ||
                     source.includes?("org.springframework.cloud.gateway")
 
-      visible_source = visible_java_code(source)
+      visible_source = CComments.strip(source, mask_literals: true)
       # Slices of this are what get parsed, so a comment inside `.path(...)`
       # must not read as an argument. Char-aligned with `visible_source`.
       source = Noir::CComments.strip(source)
@@ -852,7 +854,7 @@ module Noir
       while found = visible_source.index(".route", offset)
         open_idx = visible_source.index('(', found)
         break unless open_idx
-        close_idx = find_matching_delimiter(visible_source, open_idx, '(', ')')
+        close_idx = JvmDelimiter.find_matching_delimiter(visible_source, open_idx, '(', ')')
         if close_idx
           expr = source[open_idx..close_idx]
           # open_idx is a CHAR index; char-slice for the line count too.
@@ -876,7 +878,7 @@ module Noir
         name = match[1]
         open_idx = visible_source.index('{', match.begin(0))
         break unless open_idx
-        close_idx = find_matching_delimiter(visible_source, open_idx, '{', '}')
+        close_idx = JvmDelimiter.find_matching_delimiter(visible_source, open_idx, '{', '}')
         if close_idx
           body = source[open_idx..close_idx]
           if route = gateway_routes_from_expression(body, constants).first?
@@ -925,10 +927,10 @@ module Noir
       while found = expr.index(".path", offset)
         open_idx = expr.index('(', found)
         break unless open_idx
-        close_idx = find_matching_delimiter(expr, open_idx, '(', ')')
+        close_idx = JvmDelimiter.find_matching_delimiter(expr, open_idx, '(', ')')
         if close_idx
           args = expr[(open_idx + 1)...close_idx]
-          split_gateway_args(args).each do |raw|
+          TopLevelSplit.split(args, ',', TopLevelSplit::Rules::JVM_STRINGS).reject(&.empty?).each do |raw|
             path = resolve_gateway_path(raw, constants)
             paths << path unless path.empty?
           end
@@ -938,43 +940,6 @@ module Noir
         end
       end
       paths.uniq
-    end
-
-    private def split_gateway_args(args : String) : Array(String)
-      # Char-indexed: `args` may contain multi-byte path literals, so a byte loop
-      # with char slices (`args[start...i]`) mis-slices and can raise IndexError.
-      parts = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      escape = false
-      args.each_char_with_index do |char, i|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-        else
-          case char
-          when '"'
-            in_string = true
-          when '(', '[', '{'
-            depth += 1
-          when ')', ']', '}'
-            depth -= 1 if depth > 0
-          when ','
-            if depth == 0
-              parts << args[start...i].strip
-              start = i + 1
-            end
-          end
-        end
-      end
-      parts << args[start..].strip
-      parts.reject(&.empty?)
     end
 
     private def resolve_gateway_path(raw : String, constants : Hash(String, String)) : String
@@ -995,125 +960,6 @@ module Noir
       end
 
       ""
-    end
-
-    private def visible_java_code(source : String) : String
-      # Blank out comments and string/char literals (so their contents can't be
-      # mistaken for code), emitting exactly ONE output char per input char so
-      # char positions stay aligned with `source` — the gateway scan derives
-      # char indices here and char-slices `source` with them.
-      chars = source.chars
-      mode = :code
-      quote = '\0'
-      escaped = false
-      i = 0
-
-      String.build(source.bytesize) do |io|
-        while i < chars.size
-          char = chars[i]
-
-          case mode
-          when :line_comment
-            if char == '\n'
-              io << char
-              mode = :code
-            else
-              io << ' '
-            end
-            i += 1
-          when :block_comment
-            if char == '\n'
-              io << char
-              i += 1
-            elsif char == '*' && chars[i + 1]? == '/'
-              io << ' '
-              io << ' '
-              i += 2
-              mode = :code
-            else
-              io << ' '
-              i += 1
-            end
-          when :string
-            if char == quote && !escaped
-              io << ' '
-              i += 1
-              mode = :code
-            else
-              io << (char == '\n' ? '\n' : ' ')
-              if escaped
-                escaped = false
-              else
-                escaped = char == '\\'
-              end
-              i += 1
-            end
-          else
-            if char == '/' && chars[i + 1]? == '/'
-              io << ' '
-              io << ' '
-              i += 2
-              mode = :line_comment
-            elsif char == '/' && chars[i + 1]? == '*'
-              io << ' '
-              io << ' '
-              i += 2
-              mode = :block_comment
-            elsif char == '"' || char == '\''
-              io << ' '
-              quote = char
-              escaped = false
-              i += 1
-              mode = :string
-            else
-              io << char
-              i += 1
-            end
-          end
-        end
-      end
-    end
-
-    private def find_matching_delimiter(code : String,
-                                        open_idx : Int32,
-                                        open_char : Char,
-                                        close_char : Char) : Int32?
-      # Char-indexed (open_idx comes from char-based String#index and the result
-      # is char-sliced by callers). visible_java_code preserves char positions,
-      # so char index N in visible_source == char index N in source. ASCII-identical.
-      depth = 1
-      in_string = false
-      quote = '\0'
-      escape = false
-      result = nil
-
-      code.each_char_with_index do |char, i|
-        next if i <= open_idx
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-        else
-          if char == '"' || char == '\''
-            in_string = true
-            quote = char
-          elsif char == open_char
-            depth += 1
-          elsif char == close_char
-            depth -= 1
-          end
-        end
-        if depth == 0
-          result = i
-          break
-        end
-      end
-
-      result
     end
 
     # Iterate annotations attached to a declaration. Yields

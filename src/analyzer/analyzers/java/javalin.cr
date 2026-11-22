@@ -134,7 +134,7 @@ module Analyzer::Java
         close_idx = if content[open_idx] == '{'
                       JavaEngine.find_matching_delimiter(content, open_idx, '{', '}')
                     else
-                      find_matching_paren(content, open_idx)
+                      JavaEngine.find_matching_paren(content, open_idx)
                     end
         next unless close_idx
 
@@ -247,35 +247,6 @@ module Analyzer::Java
         key.ends_with?(suffix) ? value : nil
       end.uniq!
       matches.size == 1 ? matches.first : nil
-    end
-
-    private def find_matching_paren(code : String, open_idx : Int32) : Int32?
-      # Scan by CHARACTER (not byte): open_idx is a char index and the caller
-      # char-slices with the returned index. ASCII-identical to the byte loop.
-      depth = 1
-      in_string = false
-      escape = false
-      code.each_char_with_index do |char, idx|
-        next if idx <= open_idx
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-        else
-          case char
-          when '"' then in_string = true
-          when '(' then depth += 1
-          when ')'
-            depth -= 1
-            return idx if depth.zero?
-          end
-        end
-      end
-      nil
     end
 
     private def enable_webjars_call?(content : String, marker : Int32) : Bool
