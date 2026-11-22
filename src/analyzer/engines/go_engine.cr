@@ -589,6 +589,7 @@ module Analyzer::Go
       file_contents.each_key { |p| (files_by_dir[File.dirname(p)] ||= [] of String) << p }
 
       builders_by_dir = Hash(String, Set(String)).new
+      receivers = Hash({String, String}, String).new
       file_builders = Hash(String, Hash(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder)).new
       files_by_dir.each do |dir, paths|
         builders = Set(String).new
@@ -596,7 +597,10 @@ module Analyzer::Go
         paths.each do |p|
           content = file_contents[p]?
           next unless content && builder_types.any? { |t| content.includes?(t) }
-          (file_builders[p] = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_names)).each_key do |fn|
+          (file_builders[p] = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content, type_names)).each do |fn, builder|
+            if receiver = builder.receiver
+              receivers[{dir, fn}] = receiver
+            end
             # Only methods can share a name across a package's files; such a
             # name is ambiguous at a `h.Register(g)` call site.
             duplicates << fn unless builders.add?(fn)
@@ -653,19 +657,26 @@ module Analyzer::Go
           names = builders_by_dir[dir]?.try(&.dup) || Set(String).new
           # Quoted, so `"app/routes"` is not matched by `"app/routes/admin"`.
           imported = builder_imports.select { |import_path, _| content.includes?(%("#{import_path}")) }
-          imported.each_value { |d| names.concat(builders_by_dir[d]) }
+          ambiguous_methods = Set(String).new
+          imported.each_value do |d|
+            builders_by_dir[d].each { |name| ambiguous_methods << name unless names.add?(name) }
+          end
           next if names.empty?
           aliases = nil
           own_builders = file_builders[p]?
           slices = slices_by_dir[dir]? || Hash(String, Array(String)).new
           scopes = own_builders.try(&.select { |fn, _| builders_by_dir[dir]?.try(&.includes?(fn)) }) || Hash(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder).new
-          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map, slices, scopes).each do |fn, arg, qualifier, row|
+          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, names, group_map, slices, scopes, ambiguous_methods).each do |fn, arg, qualifier, row, receiver_type|
             local = dir if builders_by_dir[dir]?.try(&.includes?(fn))
             target = if qualifier.empty?
                        local
                      else
                        aliases ||= Noir::GoCalleeExtractor.extract_import_aliases(content)
-                       if import_path = aliases[qualifier]?
+                       if receiver_type
+                         package, _, type = receiver_type.lchop('*').rpartition('.')
+                         d = package.empty? ? dir : aliases[package]?.try { |imp| imported[imp]? }
+                         d if d && builders_by_dir[d]?.try(&.includes?(fn)) && receivers[{d, fn}]? == type
+                       elsif import_path = aliases[qualifier]?
                          d = imported[import_path]?
                          d if d && builders_by_dir[d].includes?(fn)
                        else

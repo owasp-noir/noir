@@ -5,7 +5,7 @@
 # Each parameter is scoped to its helper: the v2 routes, MCP included, are
 # served under `/api/v2`.
 fixture: fixtures/go/echo_builder_param_scope/
-counts: {techs: 1, endpoints: 5}
+counts: {techs: 1, endpoints: 8}
 endpoints:
   - url: "/api/v2/docs"
     method: "GET"
@@ -17,3 +17,11 @@ endpoints:
     method: "GET"
   - url: "/api/v1/user"
     method: "GET"
+  - url: "/api/v1/user/mcp"
+    method: "POST"
+  - url: "/api/v1/user/other"
+    method: "GET"
+  - url: "/api/v1/user/import/{Name}/upload"
+    method: "PUT"
+    params:
+      - {name: "Name", type: "path"}

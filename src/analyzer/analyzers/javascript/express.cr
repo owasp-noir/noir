@@ -32,6 +32,8 @@ module Analyzer::Javascript
       # arguments to `router[verb](path, …)`. Must follow the mount scan:
       # the routes it recovers are prefixed from the same locator table.
       helper_scanner = scan_for_route_helpers
+      template_bodies = Hash(RouteHelperScanner::Site, Array(Endpoint)).new
+      template_calls = Hash(RouteHelperScanner::Site, Array(Endpoint)).new
 
       parallel_file_scan do |path|
         content = read_file_content(path)
@@ -48,6 +50,7 @@ module Analyzer::Javascript
         # generic parser turns it into a phantom `/api{name}` endpoint.
         # The real registrations come from the call sites below.
         helper_forward_lines = helper_scanner.forward_lines(path)
+        template_sites = helper_scanner.template_sites(path)
         parser_endpoints.each do |endpoint|
           unless helper_forward_lines.empty?
             first_line = endpoint.details.code_paths.first?.try(&.line)
@@ -62,7 +65,11 @@ module Analyzer::Javascript
           # Parse path parameters from the URL path itself
           Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_WORD)
 
-          result << endpoint
+          if site = template_sites.find(&.matches?(endpoint))
+            (template_bodies[site] ||= [] of Endpoint) << endpoint
+          else
+            result << endpoint
+          end
         end
 
         collect_express_static_paths(path, content, static_dirs)
@@ -78,7 +85,7 @@ module Analyzer::Javascript
 
         # Routes registered by calling a forwarding helper
         # (`setupApiRoute(router, 'get', '/:cid', …)`).
-        extract_route_helper_calls(helper_scanner, path, content, result, include_callee)
+        extract_route_helper_calls(helper_scanner, path, content, result, include_callee, template_calls)
 
         # `app.use('/ftp/:file', servePublicFiles())`: a path-mounted
         # handler that answers the request is a route for every method.
@@ -101,6 +108,25 @@ module Analyzer::Javascript
         key = ExpressConstants.file_key(Noir::PathScope.expand(file)).name
         location.route_middleware = @middleware.chain(file, dir["receiver"], dir["offset"].to_i, "", "", [key], url, [dir["handler"]])
         location
+      end
+      template_bodies.each do |site, bodies|
+        bodies.each do |body|
+          defaults = helper_scanner.default_bodies(site, body)
+          result.concat(defaults)
+          result << body.mark_resolution("prefix") if defaults.empty? && !template_calls.has_key?(site)
+        end
+      end
+      template_calls.each do |site, calls|
+        calls.each do |endpoint|
+          template_bodies[site]?.try &.each do |body|
+            next unless body.method == endpoint.method
+            endpoint.handler ||= body.handler
+            body.params.each { |param| endpoint.push_param(param) unless site.replaced_param?(param, endpoint.url) }
+            body.callees.each { |callee| endpoint.push_callee(callee) }
+            body.details.code_paths.each { |cp| endpoint.details.add_path(cp) }
+          end
+          result << endpoint
+        end
       end
       result.map! { |endpoint| drop_undeclared_path_params(Noir::JSMountPrefix.finish(endpoint)) }
       clear_ambiguous_template_handlers(result)
@@ -1075,7 +1101,7 @@ module Analyzer::Javascript
 
     # Emit one endpoint per route recovered from a forwarding-helper call.
     private def extract_route_helper_calls(scanner : RouteHelperScanner, path : String, content : String,
-                                           result : Array(Endpoint), include_callee : Bool)
+                                           result : Array(Endpoint), include_callee : Bool, template_calls : Hash(RouteHelperScanner::Site, Array(Endpoint)))
       return unless scanner.any_helpers?
 
       scanner.routes_for(path, content).each do |route|
@@ -1093,7 +1119,15 @@ module Analyzer::Javascript
           Noir::JSRouteExtractor.apply_handler_facts(endpoint, facts)
         end
         attach_js_callees(endpoint, helper_call_callees(route, content, path)) if include_callee
-        result << endpoint
+        endpoint.prefix_template = route.prefix_template
+        if resolution = route.path_resolution
+          endpoint.mark_resolution("prefix", resolution)
+        end
+        if site = route.site
+          (template_calls[site] ||= [] of Endpoint) << endpoint
+        else
+          result << endpoint
+        end
       end
     end
 

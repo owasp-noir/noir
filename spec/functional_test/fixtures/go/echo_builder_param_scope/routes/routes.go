@@ -3,6 +3,7 @@ package routes
 import (
 	"example.com/echoscope/apiv2"
 	"example.com/echoscope/mcp"
+	alt "example.com/echoscope/other"
 
 	"github.com/labstack/echo/v4"
 )
@@ -27,4 +28,12 @@ func registerAPIRoutes(a *echo.Group) {
 	a.GET("/info", h)
 	u := a.Group("/user")
 	u.GET("", h)
+	registerNested(u)
+}
+
+func registerNested(group *echo.Group) {
+	one := &mcp.Module{}
+	one.Register(group)
+	two := alt.Module{Name: func() string { return "partner" }}
+	two.Register(group)
 }

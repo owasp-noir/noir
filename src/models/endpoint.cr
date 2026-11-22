@@ -113,6 +113,20 @@ struct Endpoint
   @[YAML::Field(ignore_serialize: !resolution.try(&.present?))]
   property resolution : Hash(String, String)?
 
+  # Defaults from one registration share this object. Distinct calls can
+  # have the same template URL, even on the same source line.
+  class PrefixTemplate
+    getter url : String
+
+    def initialize(@url)
+    end
+  end
+
+  # Recover this spelling if merging the default loses call-site evidence.
+  @[JSON::Field(ignore: true)]
+  @[YAML::Field(ignore: true)]
+  property prefix_template : PrefixTemplate?
+
   RESOLUTION_HEURISTIC  = "heuristic"
   RESOLUTION_UNRESOLVED = "unresolved"
   RESOLUTION_VALUES     = [RESOLUTION_HEURISTIC, RESOLUTION_UNRESOLVED]
