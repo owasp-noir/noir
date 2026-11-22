@@ -19,3 +19,8 @@ router.get('/inline-params', ({ request }) => {
   ({ assigned } = request.body());
   return request.input('real-inline')
 })
+router.post('/inline-params', ({ request }) => {
+  let assigned;
+  ({ assigned } = request.body());
+  return request.input('real-inline')
+})

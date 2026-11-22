@@ -11,8 +11,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const name = req.body.name
     return res.status(200).json({ itemId, name })
   } else if (req.method === "DELETE" || req.query.force) {
-    // Not a single verb test: read for every verb.
+    // DELETE skips the force read. A PATCH reaches this body only with force.
     const reason = req.body.reason
     return res.status(204).end(reason)
+  } else if (req.method === "PATCH") {
+    return res.status(409).end()
   }
 }

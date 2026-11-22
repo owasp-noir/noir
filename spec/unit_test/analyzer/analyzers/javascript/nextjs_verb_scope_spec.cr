@@ -61,6 +61,40 @@ describe "Next.js Pages Router verb-branch scoping" do
     params_of(endpoints, "GET").should eq(["query:helperq", "query:listq"])
   end
 
+  it "keeps reads shared when the request method is overwritten or a case label is dynamic" do
+    endpoints = scan_pages({"override.ts" => <<-JS})
+      export default function handler(req, res) {
+        req.method = 'PUT'
+        if (req.method === 'GET') { return res.json(req.query.page) }
+        else if (req.method === 'PUT') { return res.json(req.body.name) }
+      }
+      JS
+    params_of(endpoints, "GET").should contain("body:name")
+
+    endpoints = scan_pages({"dynamic.ts" => <<-JS})
+      export default function handler(req, res) {
+        switch (req.method) {
+          case 'GET': return res.json(req.query.page)
+          case dynamicVerb(): return res.json(req.body.name)
+        }
+      }
+      JS
+    params_of(endpoints, "GET").should contain("body:name")
+  end
+
+  it "preserves unresolved key evidence for a shadowed header constant and a computed cookie key" do
+    endpoints = scan_pages({"keys.ts" => <<-JS})
+      const TOKEN = 'outer-token'
+      export default function handler(req, res) {
+        const TOKEN = getTokenKey()
+        const cookie = getCookieKey()
+        res.json([req.headers[TOKEN], req.cookies[cookie]])
+      }
+      JS
+    params_of(endpoints, "GET").should eq(["cookie:cookie", "header:TOKEN"])
+    endpoints.first.params.all? { |p| p.tags.any?(&.name.==("unresolved")) }.should be_true
+  end
+
   # Comments are blanked before this pass, so the non-ASCII text sits in
   # strings, where it survives into the content the heads are matched on.
   it "stays linear on a non-ASCII handler with many verb heads" do

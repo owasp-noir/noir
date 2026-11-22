@@ -42,28 +42,36 @@ expected_endpoints = [
   Endpoint.new("/api/users/{id}", "GET", [
     Param.new("id", "", "path"),
     Param.new("x-token", "", "header"),
-    Param.new("SIGNATURE_HEADER", "", "header"),
     Param.new("session", "", "cookie"),
-    Param.new("SESSION_COOKIE", "", "cookie"),
+    Param.new("session-token", "", "cookie"),
+    Param.new("stripe-signature", "", "header"),
   ]),
   Endpoint.new("/api/users/{id}", "POST", [
     Param.new("id", "", "path"),
     Param.new("session", "", "cookie"),
+    Param.new("session-token", "", "cookie"),
+    Param.new("stripe-signature", "", "header"),
     Param.new("x-token", "", "header"),
   ]),
   Endpoint.new("/api/users/{id}", "PUT", [
     Param.new("id", "", "path"),
     Param.new("session", "", "cookie"),
+    Param.new("session-token", "", "cookie"),
+    Param.new("stripe-signature", "", "header"),
     Param.new("x-token", "", "header"),
   ]),
   Endpoint.new("/api/users/{id}", "DELETE", [
     Param.new("id", "", "path"),
     Param.new("session", "", "cookie"),
+    Param.new("session-token", "", "cookie"),
+    Param.new("stripe-signature", "", "header"),
     Param.new("x-token", "", "header"),
   ]),
   Endpoint.new("/api/users/{id}", "PATCH", [
     Param.new("id", "", "path"),
     Param.new("session", "", "cookie"),
+    Param.new("session-token", "", "cookie"),
+    Param.new("stripe-signature", "", "header"),
     Param.new("x-token", "", "header"),
   ]),
 
@@ -85,10 +93,8 @@ expected_endpoints = [
   # ---- Pages Router: switch(req.method) inference ----
   Endpoint.new("/api/switch", "GET", [
     Param.new("cursor", "", "query"),
-    Param.new("id", "", "body"),
   ]),
   Endpoint.new("/api/switch", "DELETE", [
-    Param.new("cursor", "", "query"),
     Param.new("id", "", "body"),
   ]),
   # ---- Pages Router: negated early-exit guard (`!==` / `!=` chain) ----
@@ -198,7 +204,7 @@ FunctionalTester.new("fixtures/javascript/nextjs/", {
 }, expected_endpoints).perform_tests
 
 describe "Next.js variable header keys", tags: "functional" do
-  it "surfaces identifier names for req.headers[CONST] and request.headers.get(CONST)" do
+  it "resolves literal Pages Router keys and keeps App Router identifier evidence" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs/")])
     options["nolog"] = YAML::Any.new(true)
@@ -208,8 +214,8 @@ describe "Next.js variable header keys", tags: "functional" do
     app.analyze
 
     pages_get = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/users/{id}" }
-    pages_get.params.any? { |p| p.name == "SIGNATURE_HEADER" && p.param_type == "header" }.should be_true
-    pages_get.params.any? { |p| p.name == "SESSION_COOKIE" && p.param_type == "cookie" }.should be_true
+    pages_get.params.any? { |p| p.name == "stripe-signature" && p.param_type == "header" }.should be_true
+    pages_get.params.any? { |p| p.name == "session-token" && p.param_type == "cookie" }.should be_true
 
     app_get = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/products/{id}" }
     app_get.params.any? { |p| p.name == "WEBHOOK_SECRET" && p.param_type == "header" }.should be_true

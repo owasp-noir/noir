@@ -9,11 +9,12 @@ export default function userHandler(req: NextApiRequest, res: NextApiResponse) {
     case "GET":
       res.status(200).json({ id, expand });
       break;
+    case "PATCH": // Shares the update read by falling through.
     case "PUT":
       res.status(200).json({ id, name: body.name });
       break;
     default:
-      res.setHeader("Allow", ["GET", "PUT"]);
+      res.setHeader("Allow", ["GET", "PATCH", "PUT"]);
       res.status(405).end(`Method ${method} Not Allowed`);
   }
 }

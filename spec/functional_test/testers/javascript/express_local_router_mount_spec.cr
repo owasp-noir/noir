@@ -10,7 +10,7 @@ FunctionalTester.new("fixtures/javascript/express_local_router_mount/", {
   Endpoint.new("/api/v1/users/", "GET", [Param.new("page", "", "query"), Param.new("limit", "", "query")]),
   Endpoint.new("/api/v1/users/", "POST", [Param.new("name", "", "json"), Param.new("email", "", "json"), Param.new("X-Api-Token", "", "header")]),
   Endpoint.new("/api/v1/users/:userId", "GET", [Param.new("userId", "", "path")]),
-  Endpoint.new("/api/v1/users/:userId", "PUT", [Param.new("userId", "", "path")]),
+  Endpoint.new("/api/v1/users/:userId", "PUT", [Param.new("userId", "", "path"), Param.new("name", "", "json")]),
   Endpoint.new("/api/v1/users/:userId", "DELETE", [Param.new("userId", "", "path")]),
   Endpoint.new("/api/v1/auth/login", "POST", [Param.new("email", "", "json")]),
   Endpoint.new("/health", "GET"),

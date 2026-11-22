@@ -10,7 +10,7 @@ FunctionalTester.new("fixtures/javascript/fastify_hapi_sibling/", {
   :endpoints => 6,
 }, [
   Endpoint.new("/api/orders/{orderId}", "DELETE", [Param.new("orderId", "", "path")]),
-  Endpoint.new("/api/users", "POST"),
+  Endpoint.new("/api/users", "POST", [Param.new("body", "", "json")]),
   Endpoint.new("/api/users/{userId}", "GET", [Param.new("userId", "", "path")]),
   Endpoint.new("/items/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/example/", "GET"),
