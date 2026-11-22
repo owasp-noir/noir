@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, FastAPI, Response
 
 from routes import books
+from routes.circulation import desk
+from settings import settings
 
 
 def mark_app(response: Response):
@@ -12,6 +14,18 @@ api = APIRouter()
 api.include_router(books, prefix="/catalog")
 app.include_router(api, prefix="/api")
 app.include_router(books, prefix="/archive")
+app.include_router(desk, prefix=settings.member_prefix)
+
+staff = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+staff.include_router(desk, prefix="/v1")
+
+
+@staff.get("/shift", include_in_schema=False)
+def current_shift():
+    return "day"
+
+
+app.mount(settings.staff_mount, staff)
 
 
 def listing():

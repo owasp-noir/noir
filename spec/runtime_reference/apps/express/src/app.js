@@ -1,5 +1,6 @@
 const express = require('express');
 const { books, reply, mark } = require('./routes');
+const { registerCommunity } = require('./routes/community');
 
 const app = express();
 app.use(mark);
@@ -7,6 +8,8 @@ const api = express.Router();
 api.use('/catalog', books);
 app.use('/api', api);
 app.use('/archive', books);
+registerCommunity(app, '/readers');
+registerCommunity(app, process.env.STAFF_MOUNT || '/staff');
 
 for (const path of ['/recent', '/popular', '/featured']) {
   app.get(path, reply);

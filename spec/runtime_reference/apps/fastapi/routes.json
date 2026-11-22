@@ -113,11 +113,119 @@
   },
   {
     "method": "GET",
+    "path": "/members/desk/circulation/loans/active"
+  },
+  {
+    "method": "POST",
+    "path": "/members/desk/circulation/loans/checkout"
+  },
+  {
+    "method": "GET",
+    "path": "/members/desk/circulation/loans/overdue"
+  },
+  {
+    "method": "GET",
+    "path": "/members/desk/circulation/loans/{loan_id}"
+  },
+  {
+    "method": "DELETE",
+    "path": "/members/desk/circulation/loans/{loan_id}/receipt"
+  },
+  {
+    "method": "GET",
+    "path": "/members/desk/circulation/loans/{loan_id}/receipt"
+  },
+  {
+    "method": "HEAD",
+    "path": "/members/desk/circulation/loans/{loan_id}/receipt"
+  },
+  {
+    "method": "PUT",
+    "path": "/members/desk/circulation/loans/{loan_id}/receipt"
+  },
+  {
+    "method": "GET",
+    "path": "/members/desk/circulation/loans/{loan_id}/receipts"
+  },
+  {
+    "method": "POST",
+    "path": "/members/desk/circulation/loans/{loan_id}/renew"
+  },
+  {
+    "method": "GET",
+    "path": "/members/desk/circulation/loans/{loan_id}/renewals"
+  },
+  {
+    "method": "POST",
+    "path": "/members/desk/circulation/loans/{loan_id}/return"
+  },
+  {
+    "method": "GET",
+    "path": "/members/desk/hours"
+  },
+  {
+    "method": "GET",
     "path": "/popular"
   },
   {
     "method": "GET",
     "path": "/recent"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/shift"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/v1/desk/circulation/loans/active"
+  },
+  {
+    "method": "POST",
+    "path": "/staff/v1/desk/circulation/loans/checkout"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/v1/desk/circulation/loans/overdue"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/v1/desk/circulation/loans/{loan_id}"
+  },
+  {
+    "method": "DELETE",
+    "path": "/staff/v1/desk/circulation/loans/{loan_id}/receipt"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/v1/desk/circulation/loans/{loan_id}/receipt"
+  },
+  {
+    "method": "HEAD",
+    "path": "/staff/v1/desk/circulation/loans/{loan_id}/receipt"
+  },
+  {
+    "method": "PUT",
+    "path": "/staff/v1/desk/circulation/loans/{loan_id}/receipt"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/v1/desk/circulation/loans/{loan_id}/receipts"
+  },
+  {
+    "method": "POST",
+    "path": "/staff/v1/desk/circulation/loans/{loan_id}/renew"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/v1/desk/circulation/loans/{loan_id}/renewals"
+  },
+  {
+    "method": "POST",
+    "path": "/staff/v1/desk/circulation/loans/{loan_id}/return"
+  },
+  {
+    "method": "GET",
+    "path": "/staff/v1/desk/hours"
   },
   {
     "method": "GET",

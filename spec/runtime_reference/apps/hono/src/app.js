@@ -1,5 +1,6 @@
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { books, imported, mark, reply } from './routes/index.js';
+import { branches } from './routes/circulation/branches.js';
 
 const app = new OpenAPIHono();
 app.use('*', mark);
@@ -7,6 +8,7 @@ const api = new OpenAPIHono();
 api.route('/catalog', books);
 app.route('/api', api);
 app.route('/archive', books);
+app.route('/branches', branches);
 
 for (const path of ['/recent', '/popular', '/featured']) {
   app.get(path, reply);
