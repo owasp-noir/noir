@@ -1,6 +1,6 @@
 {
   "measured_on": "2026-11-22",
-  "analyzer_revision": "03395ca4ddd53eaa6bc34506ab9f0b4a6e8cc020",
+  "analyzer_revision": "cf17712744df4334c00705d50f8ec7411f7b7820",
   "technologies": [
     {
       "matched": 16,
@@ -199,104 +199,109 @@
       }
     },
     {
-      "matched": 153,
+      "matched": 225,
       "spec_only": 19,
-      "code_only": 115,
-      "recall": 0.8895348837209303,
-      "agreement": 0.5708955223880597,
-      "marked": 5,
-      "marked_matched": 0,
-      "marked_code_only": 5,
-      "marked_share": 0.018656716417910446,
+      "code_only": 233,
+      "recall": 0.9221311475409836,
+      "agreement": 0.4912663755458515,
+      "marked": 156,
+      "marked_matched": 64,
+      "marked_code_only": 92,
+      "marked_share": 0.3406113537117904,
       "claims": {
+        "handler:heuristic": {
+          "count": 151,
+          "share": 0.3296943231441048
+        },
         "prefix:heuristic": {
           "count": 1,
-          "share": 0.0037313432835820895
+          "share": 0.002183406113537118
         },
         "prefix:unresolved": {
           "count": 4,
-          "share": 0.014925373134328358
+          "share": 0.008733624454148471
         }
       },
       "name": "go_echo",
       "detection": {
-        "detected_repositories": 1,
+        "detected_repositories": 2,
         "other_technologies": [
           "go_cli",
           "go_http",
           "go_huma",
-          "oas2"
+          "oas2",
+          "oas3"
         ],
         "forced_only": 0,
         "automatic_only": 0
       },
       "guards": {
         "both_guarded": 135,
-        "both_open": 9,
+        "both_open": 81,
         "spec_guarded_code_open": 1,
         "spec_open_code_guarded": 8
       },
       "params": {
-        "both": 197,
-        "spec_only": 0,
-        "code_only": 52,
-        "recall": 1.0,
-        "agreement": 0.7911646586345381
+        "both": 254,
+        "spec_only": 16,
+        "code_only": 78,
+        "recall": 0.9407407407407408,
+        "agreement": 0.7650602409638554
       },
       "body_fields": {
-        "both": 368,
-        "spec_only": 1,
-        "code_only": 246,
-        "recall": 0.997289972899729,
-        "agreement": 0.5993485342019544
+        "both": 428,
+        "spec_only": 169,
+        "code_only": 295,
+        "recall": 0.7169179229480737,
+        "agreement": 0.5919778699861687
       },
-      "repositories": 1,
+      "repositories": 2,
       "audit": {
-        "matched": 153,
+        "matched": 225,
         "spec_only": 19,
-        "code_only": 115,
-        "marked_matched": 0,
-        "marked_code_only": 5,
+        "code_only": 233,
+        "marked_matched": 64,
+        "marked_code_only": 92,
         "code_sample": {
-          "sampled": 13,
-          "labelled": 13,
+          "sampled": 17,
+          "labelled": 17,
           "unlabelled": 0,
-          "stale": 0,
+          "stale": 12,
           "verdicts": {
-            "real": 5,
+            "real": 17,
             "false_positive": 0,
             "wrong_address": 0,
-            "cannot_tell": 8
+            "cannot_tell": 0
           },
           "marked_by_verdict": {
-            "real": 0,
+            "real": 9,
             "false_positive": 0,
             "wrong_address": 0,
             "cannot_tell": 0
           }
         },
         "spec_sample": {
-          "sampled": 12,
-          "labelled": 12,
+          "sampled": 8,
+          "labelled": 8,
           "unlabelled": 0,
-          "stale": 0,
+          "stale": 6,
           "verdicts": {
             "miss": 0,
-            "not_served": 4,
-            "wrong_address": 8,
+            "not_served": 3,
+            "wrong_address": 5,
             "covered": 0,
             "cannot_tell": 0
           }
         },
         "estimated_precision": {
           "value": 1.0,
-          "sample_size": 5,
+          "sample_size": 17,
           "unlabelled": 0,
-          "cannot_tell": 8
+          "cannot_tell": 0
         },
         "estimated_recall": {
-          "value": 0.9235412474849095,
-          "sample_size": 12,
+          "value": 0.9498680738786279,
+          "sample_size": 8,
           "unlabelled": 0,
           "cannot_tell": 0
         }
@@ -407,87 +412,89 @@
       }
     },
     {
-      "matched": 26,
-      "spec_only": 1,
-      "code_only": 88,
-      "recall": 0.9629629629629629,
-      "agreement": 0.22807017543859648,
+      "matched": 91,
+      "spec_only": 64,
+      "code_only": 286,
+      "recall": 0.5870967741935483,
+      "agreement": 0.2413793103448276,
       "marked": 108,
       "marked_matched": 26,
       "marked_code_only": 82,
-      "marked_share": 0.9473684210526315,
+      "marked_share": 0.2864721485411141,
       "claims": {
         "prefix:heuristic": {
           "count": 108,
-          "share": 0.9473684210526315
+          "share": 0.2864721485411141
         }
       },
       "name": "go_mux",
       "detection": {
-        "detected_repositories": 1,
+        "detected_repositories": 2,
         "other_technologies": [
           "go_cli",
+          "graphql_sdl",
           "grpc",
           "k8s_gateway_api",
           "k8s_ingress",
-          "oas2"
+          "oas2",
+          "oas3"
         ],
         "forced_only": 0,
         "automatic_only": 0
       },
       "guards": {
         "both_guarded": 0,
-        "both_open": 26,
-        "spec_guarded_code_open": 0,
+        "both_open": 90,
+        "spec_guarded_code_open": 1,
         "spec_open_code_guarded": 0
       },
       "params": {
-        "both": 7,
-        "spec_only": 0,
+        "both": 51,
+        "spec_only": 97,
         "code_only": 0,
-        "recall": 1.0,
+        "recall": 0.34459459459459457,
         "agreement": 1.0
       },
       "body_fields": {
         "both": 0,
-        "spec_only": 0,
+        "spec_only": 92,
         "code_only": 0,
-        "recall": null,
+        "recall": 0.0,
         "agreement": null
       },
-      "repositories": 1,
+      "repositories": 2,
       "audit": {
-        "matched": 26,
-        "spec_only": 1,
-        "code_only": 88,
+        "matched": 91,
+        "spec_only": 64,
+        "code_only": 286,
         "marked_matched": 26,
         "marked_code_only": 82,
         "code_sample": {
-          "sampled": 24,
-          "labelled": 24,
+          "sampled": 16,
+          "labelled": 16,
           "unlabelled": 0,
-          "stale": 0,
+          "stale": 16,
           "verdicts": {
-            "real": 21,
+            "real": 16,
             "false_positive": 0,
             "wrong_address": 0,
-            "cannot_tell": 3
+            "cannot_tell": 0
           },
           "marked_by_verdict": {
-            "real": 19,
+            "real": 7,
             "false_positive": 0,
             "wrong_address": 0,
-            "cannot_tell": 3
+            "cannot_tell": 0
           }
         },
         "spec_sample": {
-          "sampled": 1,
-          "labelled": 1,
+          "sampled": 9,
+          "labelled": 9,
           "unlabelled": 0,
           "stale": 0,
           "verdicts": {
-            "miss": 0,
-            "not_served": 1,
+            "miss": 4,
+            "not_served": 5,
             "wrong_address": 0,
             "covered": 0,
             "cannot_tell": 0
@@ -495,13 +502,13 @@
         },
         "estimated_precision": {
           "value": 1.0,
-          "sample_size": 21,
+          "sample_size": 16,
           "unlabelled": 0,
-          "cannot_tell": 3
+          "cannot_tell": 0
         },
         "estimated_recall": {
-          "value": 1.0,
-          "sample_size": 1,
+          "value": 0.7428571428571429,
+          "sample_size": 9,
           "unlabelled": 0,
           "cannot_tell": 0
         }
@@ -2082,6 +2089,218 @@
       }
     },
     {
+      "matched": 72,
+      "spec_only": 0,
+      "code_only": 118,
+      "recall": 1.0,
+      "agreement": 0.37894736842105264,
+      "marked": 151,
+      "marked_matched": 64,
+      "marked_code_only": 87,
+      "marked_share": 0.7947368421052632,
+      "claims": {
+        "handler:heuristic": {
+          "count": 151,
+          "share": 0.7947368421052632
+        }
+      },
+      "name": "listmonk",
+      "url": "https://github.com/knadh/listmonk",
+      "commit": "878b5313d51942b722c33d33f9d1be955578d7e3",
+      "technologies": [
+        "go_echo"
+      ],
+      "scope": "cmd",
+      "specs": [
+        "docs/swagger/collections.yaml"
+      ],
+      "params": {
+        "both": 57,
+        "spec_only": 16,
+        "code_only": 26,
+        "recall": 0.7808219178082192,
+        "agreement": 0.6867469879518072
+      },
+      "body_fields": {
+        "both": 60,
+        "spec_only": 168,
+        "code_only": 49,
+        "recall": 0.2631578947368421,
+        "agreement": 0.5504587155963303
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 72,
+        "spec_guarded_code_open": 0,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "go_cli",
+          "oas3"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
+      "technology": "go_echo",
+      "audit": {
+        "matched": 72,
+        "spec_only": 0,
+        "code_only": 118,
+        "marked_matched": 64,
+        "marked_code_only": 87,
+        "code_sample": {
+          "sampled": 9,
+          "labelled": 9,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 9,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 9,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 0,
+          "labelled": 0,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 0,
+            "not_served": 0,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 9,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 1.0,
+          "sample_size": 0,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
+    },
+    {
+      "matched": 65,
+      "spec_only": 63,
+      "code_only": 198,
+      "recall": 0.5078125,
+      "agreement": 0.24714828897338403,
+      "marked": 0,
+      "marked_matched": 0,
+      "marked_code_only": 0,
+      "marked_share": 0.0,
+      "claims": {},
+      "name": "meshery",
+      "url": "https://github.com/meshery/meshery",
+      "commit": "016b42910216f2072b4f6a1527cf3a90f1191c00",
+      "technologies": [
+        "go_mux"
+      ],
+      "scope": "server",
+      "specs": [
+        "docs/data/openapi.yml"
+      ],
+      "params": {
+        "both": 44,
+        "spec_only": 97,
+        "code_only": 0,
+        "recall": 0.3120567375886525,
+        "agreement": 1.0
+      },
+      "body_fields": {
+        "both": 0,
+        "spec_only": 92,
+        "code_only": 0,
+        "recall": 0.0,
+        "agreement": null
+      },
+      "guards": {
+        "both_guarded": 0,
+        "both_open": 64,
+        "spec_guarded_code_open": 1,
+        "spec_open_code_guarded": 0
+      },
+      "detection": {
+        "detected": true,
+        "other_technologies": [
+          "graphql_sdl",
+          "grpc",
+          "oas3"
+        ],
+        "forced_only": 0,
+        "automatic_only": 0,
+        "skipped": 0
+      },
+      "technology": "go_mux",
+      "audit": {
+        "matched": 65,
+        "spec_only": 63,
+        "code_only": 198,
+        "marked_matched": 0,
+        "marked_code_only": 0,
+        "code_sample": {
+          "sampled": 8,
+          "labelled": 8,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "real": 8,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          },
+          "marked_by_verdict": {
+            "real": 0,
+            "false_positive": 0,
+            "wrong_address": 0,
+            "cannot_tell": 0
+          }
+        },
+        "spec_sample": {
+          "sampled": 8,
+          "labelled": 8,
+          "unlabelled": 0,
+          "stale": 0,
+          "verdicts": {
+            "miss": 4,
+            "not_served": 4,
+            "wrong_address": 0,
+            "covered": 0,
+            "cannot_tell": 0
+          }
+        },
+        "estimated_precision": {
+          "value": 1.0,
+          "sample_size": 8,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        },
+        "estimated_recall": {
+          "value": 0.6735751295336787,
+          "sample_size": 8,
+          "unlabelled": 0,
+          "cannot_tell": 0
+        }
+      }
+    },
+    {
       "matched": 241,
       "spec_only": 0,
       "code_only": 189,
@@ -2261,21 +2480,21 @@
         "marked_matched": 26,
         "marked_code_only": 82,
         "code_sample": {
-          "sampled": 24,
-          "labelled": 24,
+          "sampled": 8,
+          "labelled": 8,
           "unlabelled": 0,
-          "stale": 0,
+          "stale": 16,
           "verdicts": {
-            "real": 21,
+            "real": 8,
             "false_positive": 0,
             "wrong_address": 0,
-            "cannot_tell": 3
+            "cannot_tell": 0
           },
           "marked_by_verdict": {
-            "real": 19,
+            "real": 7,
             "false_positive": 0,
             "wrong_address": 0,
-            "cannot_tell": 3
+            "cannot_tell": 0
           }
         },
         "spec_sample": {
@@ -2293,9 +2512,9 @@
         },
         "estimated_precision": {
           "value": 1.0,
-          "sample_size": 21,
+          "sample_size": 8,
           "unlabelled": 0,
-          "cannot_tell": 3
+          "cannot_tell": 0
         },
         "estimated_recall": {
           "value": 1.0,
@@ -2591,15 +2810,15 @@
         "marked_matched": 0,
         "marked_code_only": 5,
         "code_sample": {
-          "sampled": 13,
-          "labelled": 13,
+          "sampled": 8,
+          "labelled": 8,
           "unlabelled": 0,
-          "stale": 0,
+          "stale": 12,
           "verdicts": {
-            "real": 5,
+            "real": 8,
             "false_positive": 0,
             "wrong_address": 0,
-            "cannot_tell": 8
+            "cannot_tell": 0
           },
           "marked_by_verdict": {
             "real": 0,
@@ -2609,27 +2828,27 @@
           }
         },
         "spec_sample": {
-          "sampled": 12,
-          "labelled": 12,
+          "sampled": 8,
+          "labelled": 8,
           "unlabelled": 0,
-          "stale": 0,
+          "stale": 6,
           "verdicts": {
             "miss": 0,
-            "not_served": 4,
-            "wrong_address": 8,
+            "not_served": 3,
+            "wrong_address": 5,
             "covered": 0,
             "cannot_tell": 0
           }
         },
         "estimated_precision": {
           "value": 1.0,
-          "sample_size": 5,
+          "sample_size": 8,
           "unlabelled": 0,
-          "cannot_tell": 8
+          "cannot_tell": 0
         },
         "estimated_recall": {
-          "value": 0.9235412474849095,
-          "sample_size": 12,
+          "value": 0.9279757391963609,
+          "sample_size": 8,
           "unlabelled": 0,
           "cannot_tell": 0
         }
@@ -2637,51 +2856,51 @@
     }
   ],
   "total": {
-    "matched": 2160,
-    "spec_only": 87,
-    "code_only": 1219,
-    "marked_matched": 351,
-    "marked_code_only": 263,
+    "matched": 2297,
+    "spec_only": 150,
+    "code_only": 1535,
+    "marked_matched": 415,
+    "marked_code_only": 350,
     "code_sample": {
-      "sampled": 182,
-      "labelled": 182,
+      "sampled": 178,
+      "labelled": 178,
       "unlabelled": 0,
-      "stale": 0,
+      "stale": 28,
       "verdicts": {
-        "real": 169,
+        "real": 176,
         "false_positive": 1,
         "wrong_address": 1,
-        "cannot_tell": 11
+        "cannot_tell": 0
       },
       "marked_by_verdict": {
-        "real": 35,
+        "real": 32,
         "false_positive": 1,
         "wrong_address": 0,
-        "cannot_tell": 3
+        "cannot_tell": 0
       }
     },
     "spec_sample": {
-      "sampled": 35,
-      "labelled": 35,
+      "sampled": 39,
+      "labelled": 39,
       "unlabelled": 0,
-      "stale": 0,
+      "stale": 6,
       "verdicts": {
-        "miss": 0,
-        "not_served": 11,
-        "wrong_address": 9,
+        "miss": 4,
+        "not_served": 14,
+        "wrong_address": 6,
         "covered": 15,
         "cannot_tell": 0
       }
     },
     "estimated_precision": {
-      "value": 0.983361283746013,
-      "sample_size": 171,
+      "value": 0.9853282301090235,
+      "sample_size": 178,
       "unlabelled": 0,
-      "cannot_tell": 11
+      "cannot_tell": 0
     },
     "estimated_recall": {
-      "value": 0.9930273542257299,
-      "sample_size": 35,
+      "value": 0.9804193565597823,
+      "sample_size": 39,
       "unlabelled": 0,
       "cannot_tell": 0
     }

@@ -4,11 +4,11 @@ description = "Code analyzer recall and agreement against pinned repositories' o
 weight = 2
 +++
 
-This source-only measurement compares code analyzers with the OpenAPI contracts kept in real repositories. Fixtures are not ground truth. The corpus contains 15 repositories across 10 technologies. It is selected for inspectable contracts; its numbers do not represent all projects using a framework.
+This source-only measurement compares code analyzers with the OpenAPI contracts kept in real repositories. Fixtures are not ground truth. The corpus pins 17 repositories across 10 technologies. listmonk joins Vikunja for Echo and Meshery joins podinfo for Gorilla mux. Flowable is the sole Spring pin. ASP.NET Core minimal APIs and NestJS each have one pin. The tables show the pins included in the dated run. It is selected for inspectable contracts; its numbers do not represent all projects using a framework.
 
 <!-- SCOREBOARD -->
 
-Measured: 2026-11-22. Analyzer source: `03395ca4ddd53eaa6bc34506ab9f0b4a6e8cc020`.
+Measured: 2026-11-22. Analyzer source: `cf17712744df4334c00705d50f8ec7411f7b7820`.
 
 A technology measured on one repository is a single data point.
 
@@ -16,9 +16,9 @@ A technology measured on one repository is a single data point.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | cs_aspnet_core_minimal_api | 1 | 16 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
 | go_chi | 2 | 264 | 41 | 249 | 86.6% | 51.5% | 21 (4.1%) |
-| go_echo | 1 | 153 | 19 | 115 | 89.0% | 57.1% | 5 (1.9%) |
+| go_echo | 2 | 225 | 19 | 233 | 92.2% | 49.1% | 156 (34.1%) |
 | go_gin | 2 | 238 | 3 | 44 | 98.8% | 84.4% | 230 (81.6%) |
-| go_mux | 1 | 26 | 1 | 88 | 96.3% | 22.8% | 108 (94.7%) |
+| go_mux | 2 | 91 | 64 | 286 | 58.7% | 24.1% | 108 (28.6%) |
 | java_spring | 1 | 182 | 2 | 28 | 98.9% | 86.7% | 0 (0.0%) |
 | js_express | 2 | 411 | 20 | 264 | 95.4% | 60.9% | 228 (33.8%) |
 | python_django | 2 | 235 | 0 | 300 | 100.0% | 43.9% | 1 (0.2%) |
@@ -37,6 +37,8 @@ A technology measured on one repository is a single data point.
 | gotify | 42 | 0 | 10 | 100.0% | 80.8% | 2 (3.8%) |
 | immich | 287 | 0 | 17 | 100.0% | 94.4% | 0 (0.0%) |
 | langflow | 84 | 0 | 111 | 100.0% | 43.1% | 21 (10.8%) |
+| listmonk | 72 | 0 | 118 | 100.0% | 37.9% | 151 (79.5%) |
+| meshery | 65 | 63 | 198 | 50.8% | 24.7% | 0 (0.0%) |
 | owncast | 241 | 0 | 189 | 100.0% | 56.0% | 21 (4.9%) |
 | podinfo | 26 | 1 | 88 | 96.3% | 22.8% | 108 (94.7%) |
 | pokeapi | 102 | 0 | 0 | 100.0% | 100.0% | 0 (0.0%) |
@@ -47,9 +49,9 @@ A technology measured on one repository is a single data point.
 | --- | ---: | ---: | ---: |
 | cs_aspnet_core_minimal_api | 100.0% (n=0, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
 | go_chi | 100.0% (n=17, 0 unlabelled, 0 undecided) | 100.0% (n=8, 0 unlabelled, 0 undecided) | 0 / 21 |
-| go_echo | 100.0% (n=5, 0 unlabelled, 8 undecided) | 92.4% (n=12, 0 unlabelled, 0 undecided) | 0 / 5 |
+| go_echo | 100.0% (n=17, 0 unlabelled, 0 undecided) | 95.0% (n=8, 0 unlabelled, 0 undecided) | 64 / 92 |
 | go_gin | 100.0% (n=22, 0 unlabelled, 0 undecided) | 100.0% (n=3, 0 unlabelled, 0 undecided) | 198 / 32 |
-| go_mux | 100.0% (n=21, 0 unlabelled, 3 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 26 / 82 |
+| go_mux | 100.0% (n=16, 0 unlabelled, 0 undecided) | 74.3% (n=9, 0 unlabelled, 0 undecided) | 26 / 82 |
 | java_spring | 100.0% (n=23, 0 unlabelled, 0 undecided) | 100.0% (n=2, 0 unlabelled, 0 undecided) | 0 / 0 |
 | js_express | 91.7% (n=17, 0 unlabelled, 0 undecided) | 99.4% (n=8, 0 unlabelled, 0 undecided) | 108 / 120 |
 | python_django | 100.0% (n=25, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 1 |
@@ -65,20 +67,22 @@ A technology measured on one repository is a single data point.
 | gotify | 100.0% (n=10, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 2 / 0 |
 | immich | 100.0% (n=17, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
 | langflow | 100.0% (n=21, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 19 / 2 |
+| listmonk | 100.0% (n=9, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 64 / 87 |
+| meshery | 100.0% (n=8, 0 unlabelled, 0 undecided) | 67.4% (n=8, 0 unlabelled, 0 undecided) | 0 / 0 |
 | owncast | 100.0% (n=8, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 21 |
-| podinfo | 100.0% (n=21, 0 unlabelled, 3 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 26 / 82 |
+| podinfo | 100.0% (n=8, 0 unlabelled, 0 undecided) | 100.0% (n=1, 0 unlabelled, 0 undecided) | 26 / 82 |
 | pokeapi | 100.0% (n=0, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 0 |
 | pretalx | 100.0% (n=25, 0 unlabelled, 0 undecided) | 100.0% (n=0, 0 unlabelled, 0 undecided) | 0 / 1 |
-| vikunja | 100.0% (n=5, 0 unlabelled, 8 undecided) | 92.4% (n=12, 0 unlabelled, 0 undecided) | 0 / 5 |
-| Total | 98.3% (n=171, 0 unlabelled, 11 undecided) | 99.3% (n=35, 0 unlabelled, 0 undecided) | 351 / 263 |
+| vikunja | 100.0% (n=8, 0 unlabelled, 0 undecided) | 92.8% (n=8, 0 unlabelled, 0 undecided) | 0 / 5 |
+| Total | 98.5% (n=178, 0 unlabelled, 0 undecided) | 98.0% (n=39, 0 unlabelled, 0 undecided) | 415 / 350 |
 
 | Technology | Detected / repositories | Other technologies detected | Forced-only rows | Automatic-only rows |
 | --- | ---: | --- | ---: | ---: |
 | cs_aspnet_core_minimal_api | 1 / 1 | http_file, oas3 | 0 | 0 |
 | go_chi | 2 / 2 | caddy, go_cli, go_http, js_cli, js_http, js_nextjs, oas3 | 0 | 0 |
-| go_echo | 1 / 1 | go_cli, go_http, go_huma, oas2 | 0 | 0 |
+| go_echo | 2 / 2 | go_cli, go_http, go_huma, oas2, oas3 | 0 | 0 |
 | go_gin | 2 / 2 | go_cli, go_http, k8s_ingress, oas2 | 0 | 0 |
-| go_mux | 1 / 1 | go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2 | 0 | 0 |
+| go_mux | 2 / 2 | go_cli, graphql_sdl, grpc, k8s_gateway_api, k8s_ingress, oas2, oas3 | 0 | 0 |
 | java_spring | 1 / 1 | oas2 | 0 | 0 |
 | js_express | 2 / 2 | js_apollo, js_cli, js_socketio, js_sveltekit, oas3, wsdl | 0 | 0 |
 | python_django | 2 / 2 | graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli | 0 | 0 |
@@ -97,6 +101,8 @@ A technology measured on one repository is a single data point.
 | gotify | go_gin | true | go_cli, go_http, oas2 | 0 | 0 |
 | immich | ts_nestjs | true | js_express, js_socketio, oas3 | 0 | 0 |
 | langflow | python_fastapi | true | oas3, python_cli, python_fastmcp, python_starlette | 0 | 0 |
+| listmonk | go_echo | true | go_cli, oas3 | 0 | 0 |
+| meshery | go_mux | true | graphql_sdl, grpc, oas3 | 0 | 0 |
 | owncast | go_chi | true | caddy, go_cli, go_http, js_cli, js_http, js_nextjs, oas3 | 0 | 0 |
 | podinfo | go_mux | true | go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2 | 0 | 0 |
 | pokeapi | python_django | true | graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli | 0 | 0 |
@@ -109,12 +115,12 @@ A technology measured on one repository is a single data point.
 | cs_aspnet_core_minimal_api | Body fields | 39 | 0 | 0 | 100.0% | 100.0% |
 | go_chi | Parameters | 57 | 1 | 110 | 98.3% | 34.1% |
 | go_chi | Body fields | 168 | 10 | 37 | 94.4% | 82.0% |
-| go_echo | Parameters | 197 | 0 | 52 | 100.0% | 79.1% |
-| go_echo | Body fields | 368 | 1 | 246 | 99.7% | 59.9% |
+| go_echo | Parameters | 254 | 16 | 78 | 94.1% | 76.5% |
+| go_echo | Body fields | 428 | 169 | 295 | 71.7% | 59.2% |
 | go_gin | Parameters | 130 | 11 | 122 | 92.2% | 51.6% |
 | go_gin | Body fields | 326 | 16 | 467 | 95.3% | 41.1% |
-| go_mux | Parameters | 7 | 0 | 0 | 100.0% | 100.0% |
-| go_mux | Body fields | 0 | 0 | 0 | n/a | n/a |
+| go_mux | Parameters | 51 | 97 | 0 | 34.5% | 100.0% |
+| go_mux | Body fields | 0 | 92 | 0 | 0.0% | n/a |
 | java_spring | Parameters | 544 | 21 | 109 | 96.3% | 83.3% |
 | java_spring | Body fields | 378 | 67 | 90 | 84.9% | 80.8% |
 | js_express | Parameters | 313 | 35 | 80 | 89.9% | 79.6% |
@@ -130,9 +136,9 @@ A technology measured on one repository is a single data point.
 | --- | ---: | ---: | ---: | ---: |
 | cs_aspnet_core_minimal_api | 0 | 16 | 0 | 0 |
 | go_chi | 120 | 3 | 8 | 133 |
-| go_echo | 135 | 9 | 1 | 8 |
+| go_echo | 135 | 81 | 1 | 8 |
 | go_gin | 162 | 56 | 10 | 10 |
-| go_mux | 0 | 26 | 0 | 0 |
+| go_mux | 0 | 90 | 1 | 0 |
 | java_spring | 0 | 0 | 182 | 0 |
 | js_express | 8 | 170 | 0 | 233 |
 | python_django | 0 | 230 | 0 | 5 |
@@ -142,11 +148,12 @@ A technology measured on one repository is a single data point.
 | Technology | Resolution claim | Marked endpoints | Share of code endpoints |
 | --- | --- | ---: | ---: |
 | go_chi | `handler:heuristic` | 21 | 4.1% |
-| go_echo | `prefix:heuristic` | 1 | 0.4% |
-| go_echo | `prefix:unresolved` | 4 | 1.5% |
+| go_echo | `handler:heuristic` | 151 | 33.0% |
+| go_echo | `prefix:heuristic` | 1 | 0.2% |
+| go_echo | `prefix:unresolved` | 4 | 0.9% |
 | go_gin | `handler:heuristic` | 8 | 2.8% |
 | go_gin | `prefix:unresolved` | 228 | 80.9% |
-| go_mux | `prefix:heuristic` | 108 | 94.7% |
+| go_mux | `prefix:heuristic` | 108 | 28.6% |
 | js_express | `prefix:heuristic` | 217 | 32.1% |
 | js_express | `prefix:unresolved` | 11 | 1.6% |
 | python_django | `prefix:unresolved` | 1 | 0.2% |
@@ -162,6 +169,8 @@ A technology measured on one repository is a single data point.
 - [gotify](https://github.com/gotify/server/tree/01086b95a8b69ee87383f6e8bcae601d8c33384b) · `01086b95a8b69ee87383f6e8bcae601d8c33384b` · `go_gin` · scope `.` · `docs/spec.json`. Makefile:41-50 regenerates docs/spec.json from source annotations and fails on a diff. Covers this notification service, including users, clients, applications, messages and plugins; UI and optional transport routes remain in scope. No prefix adjustment. plugin/example/echo/echo.go:74-77 defines an example plugin webhook, not a core service registration, and is excluded. Outside this service: `plugin/example`.
 - [immich](https://github.com/immich-app/immich/tree/e5d6eb7be67834f59d90e4b7a86f5dec7ac9af86) · `e5d6eb7be67834f59d90e4b7a86f5dec7ac9af86` · `ts_nestjs` · scope `server` · `open-api/immich-openapi-specs.json`. Generated from server controllers by the OpenAPI tooling; .github/workflows/check-openapi.yml checks contract changes. Only server is scanned.
 - [langflow](https://github.com/langflow-ai/langflow/tree/e8bbae8eeb8729abd650f07bfc55957cbdbc1636) · `e8bbae8eeb8729abd650f07bfc55957cbdbc1636` · `python_fastapi` · scope `src/backend/base` · `docs/openapi/openapi.json`. docs/openapi/generate_openapi.py:83-93 writes create_app().openapi(); lines 96-103 select this committed document. Pinned to the schema-generator introduction, before workflow routes moved into the separate lfx package, so src/backend/base contains all service routers (langflow/main.py:532-534). Component examples, frontend and tests are outside scope. No prefix adjustment.
+- [listmonk](https://github.com/knadh/listmonk/tree/878b5313d51942b722c33d33f9d1be955578d7e3) · `878b5313d51942b722c33d33f9d1be955578d7e3` · `go_echo` · scope `cmd` · `docs/swagger/collections.yaml`. .github/workflows/github-pages.yml renders Swagger UI from this hand-maintained collection. cmd/handlers.go registers both the mailing-list API and subscriber-facing pages. Keep its literal /api prefix. The collection omits GET /api/subscribers/:id/activity and the user-management endpoints.
+- [meshery](https://github.com/meshery/meshery/tree/016b42910216f2072b4f6a1527cf3a90f1191c00) · `016b42910216f2072b4f6a1527cf3a90f1191c00` · `go_mux` · scope `server` · `docs/data/openapi.yml`. The Meshery Server contract is bundled from API definitions maintained in meshery/schemas. The contributing-schemas guide describes the OSS bundle. server/router/server.go registers the Gorilla mux routes, including /api/registry and its deprecated /api/meshmodels alias through registerRegistryRoute. The contract includes controller status subscriptions but omits GET /api/system/events/subscribe and the /api/user/prefs routes.
 - [owncast](https://github.com/owncast/owncast/tree/c3a9ac1c46c043358fe7382a6d62d5227e4b2efe) · `c3a9ac1c46c043358fe7382a6d62d5227e4b2efe` · `go_chi` · scope `.` · `openapi.yaml`. Makefile api-generate produces the checked-in chi server from this spec; /api is a real mount, not a prefix to strip.
 - [podinfo](https://github.com/stefanprodan/podinfo/tree/fd3a834ed8d14b80ea334cf8a2fddd4597924da6) · `fd3a834ed8d14b80ea334cf8a2fddd4597924da6` · `go_mux` · scope `.` · `pkg/api/http/docs/swagger.json`. Makefile swagger regenerates this document from handler annotations; runtime path helpers remain part of the analyzer task. token/validate is annotated POST although registered GET.
 - [pokeapi](https://github.com/PokeAPI/pokeapi/tree/8a92bfa7dab2f12b84b5d151562f9857c133ff30) · `8a92bfa7dab2f12b84b5d151562f9857c133ff30` · `python_django` · scope `.` · `openapi.yml`. Makefile openapi-generate uses Django spectacular; describes the REST API, not the separate GraphQL service.
@@ -197,7 +206,7 @@ The original endpoint series uses a combined scan with the pinned code analyzers
 
 **Guards.** The OAS-only scan retains the importer’s `auth` tag from `oas2_access` or `oas3_access`. Operation-level `security` overrides the root declaration. An explicit empty list, an anonymous `{}` alternative or no declaration counts as open. The importer filters unknown schemes when a scheme registry exists. The code-only scan enables `--use-all-taggers` and counts an endpoint as guarded when a framework tagger ending in `_auth` emits the endpoint tag `auth`. Authorization-only and credential parameter tags supply no authentication signal. Each matched row contributes to one of four counts according to those two signals. Open on the code side means Noir found no authentication guard. A stale document or a guard beyond the tagger’s coverage can produce a disagreement.
 
-The current corpus has one code technology per repository. It therefore takes four scans per repository instead of one (60 scans across the 15 pins). Allow roughly four times the scanning time as a planning estimate. Automatic detection and tagging costs depend on the service, and each checkout and export is shared.
+The current corpus has one code technology per repository. It therefore takes four scans per repository instead of one (68 scans across the 17 pins). Allow roughly four times the scanning time as a planning estimate. Automatic detection and tagging costs depend on the service, and each checkout and export is shared.
 
 ### Explicit deployment-prefix adjustment
 
@@ -283,5 +292,11 @@ Hwaro renders the committed Markdown tables. It does not read the results file a
 - **spring-petclinic-microservices**: no checked-in OpenAPI document at the inspected pin.
 - **VAmPI**: Connexion constructs routes from the same spec rather than independent Flask declarations.
 - **shlink**: left out because the corpus already covered enough technologies, not because its contract is stale.
+- **ASP.NET Core minimal APIs** — CleanArchitecture builds `src/Web/wwwroot/openapi/v1.json`. Its two committed NSwag files configure client generation. dotnet-starter-kit serves a document per API version, and TodoApp calls `MapOpenApi()` in `Todo.Api/Program.cs`. None of the three commits its service document.
+- **Echo** — Gotenberg registers module routes on Echo, but its contributing guide places the OpenAPI generator and its output in the separate gotenberg.dev repository. Memos commits 92 operations in `proto/gen/openapi.yaml`. Protoc generates them from protobuf definitions served through gRPC-Gateway.
+- **Gorilla mux** — Mattermost's Makefile concatenates `api/v4/source/` fragments. The checkout lacks the assembled v4 document. Tyk commits a 66-operation Gateway contract, but `swagger.yml` references a schema on the remote master branch. Noir reports an incomplete import, which stops the scoreboard.
+- **Nakadi** — Its hand-maintained contract is suitable, and 43 routes agree by method and path. The multi-module Gradle build places the document and controllers in different projects, so the scoreboard cannot pair their rows under its merged-row matching rule.
+- **Spring** — Halo's CI regenerates the 410-operation `aggregated.json` from Spring WebFlux. `SwaggerConfig.java` selects v1alpha1 API paths and specific login and setup paths. Apollo's portal generates Spring interfaces from a versioned document in the separate apollo-openapi repository.
+- **NestJS** — NocoDB's versioned schemas include licensed operations, such as v3 scripts and dashboards, whose controllers are absent from the community checkout. Its per-base Swagger endpoint describes a single database. Ghostfolio documents selected public routes in its README. Amplication creates Swagger documents from running NestJS services. Neither commits a service contract.
 
 Also inspected for this expansion and not added: apache/fineract (JAX-RS `@Path` resources, not Spring mappings); novuhq/novu (its export removes endpoints without API-key authentication); thomiceli/opengist (the document covers only the token API and nothing checks it against the routes); dyrector-io/dyrectorio (the Swagger configuration is committed, the generated document is not); and PrefectHQ/prefect, freqtrade/freqtrade, healthchecks/healthchecks, PostHog/posthog, wger-project/wger and statping-ng/statping-ng (no committed service OpenAPI document). Langflow is pinned to the commit that introduced its schema generator: at its current head the workflow routes come from the separate `lfx` package, outside the scanned scope. The pin was chosen before its score was seen and does not measure current Langflow.
