@@ -70,7 +70,7 @@ module Analyzer::Php
         end
         details = Details.new(PathInfo.new(path, line_number_for_index(content, attr.start)))
         methods.each do |method|
-          endpoint = Endpoint.new(route_path, method.upcase, extract_route_params(route_path), details.dup)
+          endpoint = Endpoint.new(route_path, method.upcase, Noir::URLPath.params(route_path, Noir::URLPath::BRACE_WORD, unique: true), details.dup)
           tag_requirements(endpoint, requirements)
           endpoints << endpoint
         end
@@ -116,7 +116,7 @@ module Analyzer::Php
           # to GET to avoid method explosion.
           methods = ["GET"] if methods.empty?
 
-          params = extract_route_params(route_path)
+          params = Noir::URLPath.params(route_path, Noir::URLPath::BRACE_WORD, unique: true)
           requirements = {} of String => String
           any_mode = route_h[YAML::Any.new("options")]?.try(&.as_h?).try(&.[YAML::Any.new("_access_mode")]?).try(&.raw.to_s.upcase) == "ANY"
           route_h[YAML::Any.new("requirements")]?.try(&.as_h?).try &.each do |key, value|
@@ -147,20 +147,6 @@ module Analyzer::Php
       else
         [] of String
       end
-    end
-
-    # Drupal path parameters use `{name}` placeholders (e.g.
-    # `/node/{node}/edit`). Deduplicate repeated names.
-    private def extract_route_params(route_path : String) : Array(Param)
-      params = [] of Param
-      seen = Set(String).new
-      route_path.scan(/\{(\w+)\}/) do |m|
-        name = m[1]
-        next if seen.includes?(name)
-        seen.add(name)
-        params << Param.new(name, "", "path")
-      end
-      params
     end
   end
 end

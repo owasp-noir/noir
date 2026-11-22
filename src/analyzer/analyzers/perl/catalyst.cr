@@ -107,7 +107,7 @@ module Analyzer::Perl
         methods = methods_for_action(action, method_handlers)
         methods.each do |method|
           params = [] of Param
-          extract_path_params(path).each { |param| push_unique_param(params, param) }
+          Noir::URLPath.params(path, Noir::URLPath::COLON_OR_STAR_ASCII).each { |param| push_unique_param(params, param) }
           extract_params_from_body(action.body, method).each { |param| push_unique_param(params, param) }
           if handler = method_handlers[method]?
             extract_params_from_body(handler.body, method).each { |param| push_unique_param(params, param) }
@@ -460,13 +460,13 @@ module Analyzer::Perl
       if attr_present?(action, "path")
         value = first_attr(action, "path")
         value = "" if bare_attr_value?(value)
-        return normalize_path(value) if value.starts_with?("/")
+        return Noir::URLPath.normalize(value, trim: true) if value.starts_with?("/")
         return join_url(prefix, value)
       end
 
-      return prefix.empty? ? "/" : normalize_path(prefix) if attr_present?(action, "index")
+      return prefix.empty? ? "/" : Noir::URLPath.normalize(prefix, trim: true) if attr_present?(action, "index")
       return join_url(prefix, action.name) if attr_present?(action, "local")
-      return normalize_path(action.name) if attr_present?(action, "global")
+      return Noir::URLPath.normalize(action.name, trim: true) if attr_present?(action, "global")
 
       nil
     end
@@ -612,14 +612,6 @@ module Analyzer::Perl
       end
 
       value.split(',').count { |part| !part.strip.empty? }
-    end
-
-    private def extract_path_params(path : String) : Array(Param)
-      params = [] of Param
-      path.scan(/[:*]([A-Za-z_][A-Za-z0-9_]*)/) do |match|
-        params << Param.new(match[1], "", "path")
-      end
-      params
     end
 
     private def extract_params_from_body(body : String, method : String) : Array(Param)
@@ -771,18 +763,7 @@ module Analyzer::Perl
     end
 
     private def join_url(prefix : String, leaf : String) : String
-      return normalize_path(leaf) if prefix.empty?
-      return normalize_path(prefix) if leaf.empty?
-
-      base = prefix.size > 1 ? prefix.chomp('/') : prefix
-      tail = leaf.starts_with?('/') ? leaf : "/#{leaf}"
-      normalize_path("#{base}#{tail}")
-    end
-
-    private def normalize_path(path : String) : String
-      normalized = path.empty? ? "/" : path
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized.size > 1 && normalized.ends_with?("/") ? normalized.rchop : normalized
+      Noir::URLPath.normalize(Noir::URLPath.join(prefix, leaf, :preserve_root_prefix), trim: true)
     end
 
     private def catalyst_source_file?(path : String) : Bool

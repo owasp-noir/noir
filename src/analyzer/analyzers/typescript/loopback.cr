@@ -122,7 +122,7 @@ module Analyzer::Typescript
               endpoint = Endpoint.new(url, verb)
               endpoint.details = Details.new(PathInfo.new(file_path, decorator_line))
 
-              extract_path_parameters(url, endpoint)
+              Noir::URLPath.add_params(endpoint, url, Noir::URLPath::BRACE_WORD)
               extract_decorator_parameters(method, endpoint)
               callees.try &.each do |name, callee_path, line|
                 endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
@@ -165,15 +165,6 @@ module Analyzer::Typescript
       verb = match[1].upcase
       verb = "DELETE" if verb == "DEL"
       HTTP_VERBS.includes?(verb) ? verb : nil
-    end
-
-    # LoopBack path templates use OpenAPI-style `{id}` placeholders
-    # (not Express-style `:id`).
-    private def extract_path_parameters(url : String, endpoint : Endpoint)
-      url.scan(/\{(\w+)\}/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
     end
 
     private def extract_decorator_parameters(method : Noir::TsDecoratorExtractor::Method, endpoint : Endpoint)

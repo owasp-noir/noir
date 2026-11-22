@@ -119,7 +119,7 @@ module Analyzer::Python
             path_hits = extract_paths_from_body(body_lines, i)
 
             path_hits.each do |p, hit_line|
-              normalized = normalize_http_path(p)
+              normalized = Noir::URLPath.request_path(p)
               next if normalized.empty?
 
               endpoint = Endpoint.new(normalized, http_method)
@@ -220,15 +220,6 @@ module Analyzer::Python
       return false if p.includes?(" ")
       return false if p.size > 200
       p.starts_with?("/")
-    end
-
-    private def normalize_http_path(p : ::String) : ::String
-      np = p.split("?", 2).first
-      np = np.split("#", 2).first
-      np = "/" + np unless np.starts_with?("/")
-      np = np.gsub(/\/+/, "/")
-      np = np[0...-1] if np.ends_with?("/") && np != "/"
-      np.empty? ? "/" : np
     end
 
     # Return Array of {path_literal, absolute_line_index_0based} for paths discovered

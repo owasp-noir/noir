@@ -731,68 +731,17 @@ module Analyzer::CSharp::MinimalApiSupport
     # `MapGet("", …)` maps the group prefix itself, or `/` outside a group.
     raw_route = "/" if raw_route.empty?
 
-    route = normalize_route(raw_route)
-    params = build_path_params(route)
+    route = Noir::URLPath.normalize(raw_route.strip.gsub(/^\//, ""), collapse: true)
+    params = Noir::URLPath.template_names(route).map { |name| Param.new(name, "", "path") }
     extra_params.each do |param|
       params << param unless params.any? { |p| p.name == param.name && p.param_type == param.param_type }
     end
-    route = prune_optional_placeholders(route, params)
+    route = Noir::URLPath.bind_optional_slots(route, params.map(&.name))
 
     details = Details.new(PathInfo.new(file, line))
     endpoint = Endpoint.new(route, http_method, details)
     params.each { |param| endpoint.params << param }
     endpoint
-  end
-
-  private def normalize_route(route : String) : String
-    normalized = route.strip
-    normalized = normalized.gsub(/^\//, "").gsub(/\/+/, "/")
-    normalized = "/" + normalized unless normalized.starts_with?("/")
-    normalized = "/" if normalized == "//" || normalized == "/"
-    normalized
-  end
-
-  private def build_path_params(route : String) : Array(Param)
-    extract_route_placeholders(route).map do |name|
-      Param.new(name, "", "path")
-    end
-  end
-
-  private def prune_optional_placeholders(route : String, parameters : Array(Param)) : String
-    param_names = parameters.map(&.name)
-    result = route.dup
-
-    route.scan(/\{([^}]+)\}/) do |match|
-      raw = match[1]? || match[0]
-      next unless raw
-
-      optional = raw.ends_with?("?")
-      name = Common.route_placeholder_name(raw)
-
-      if optional && !param_names.includes?(name)
-        result = result.gsub("/{#{raw}}", "")
-        result = result.gsub("{#{raw}}/", "")
-        result = result.gsub("{#{raw}}", "")
-      elsif optional || raw.includes?('=')
-        # `{id?}` -> `{id}` and `{id=5}` -> `{id}`: a default value is part of
-        # the route *template*, never of the URL a client sends.
-        result = result.gsub("{#{raw}}", "{#{raw.split('=').first.rstrip('?')}}")
-      end
-    end
-
-    result
-  end
-
-  private def extract_route_placeholders(route : String) : Array(String)
-    keys = [] of String
-    route.scan(/\{([^}]+)\}/) do |match|
-      raw = match[1]? || match[0]
-      next unless raw
-
-      keys << Common.route_placeholder_name(raw)
-    end
-
-    keys.uniq
   end
 
   # --- Method-group handler resolution -------------------------------------
@@ -925,7 +874,7 @@ module Analyzer::CSharp::MinimalApiSupport
   # (`CreateOrderRequest request` is the members a client sends, not a
   # field called `request`).
   private def bound_handler_params(list : String, route : String, http_method : String, file : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
-    route_params = extract_route_placeholders(route)
+    route_params = Noir::URLPath.template_names(route)
     params = [] of Param
     split_csharp_parameters(list).each do |pdef|
       if pdef.includes?("[AsParameters]") || pdef.includes?("[AsParameters ")

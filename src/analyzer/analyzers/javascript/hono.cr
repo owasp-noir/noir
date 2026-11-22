@@ -30,7 +30,7 @@ module Analyzer::Javascript
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
           include_callees: include_callee, route_callees: callees_by_route, on_routes: true)
         parser_endpoints.each do |endpoint|
-          extract_path_params(endpoint)
+          Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_WORD)
           result << endpoint
         end
 
@@ -71,7 +71,7 @@ module Analyzer::Javascript
         location.route_middleware = registration.middleware.try { |source| [RouteMiddleware.new(source, registration.file)] }
         endpoint = Endpoint.new(url, route.method, Details.new(location))
         endpoint.resolution = {"registration" => Endpoint::RESOLUTION_UNRESOLVED} if registration.unresolved
-        url.scan(/\{(\w+)\}/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+        Noir::URLPath.add_params(endpoint, url, Noir::URLPath::BRACE_WORD)
         route.params.each { |name, type| endpoint.push_param(Param.new(name, "", type)) }
         endpoint
       end
@@ -93,17 +93,6 @@ module Analyzer::Javascript
         line_to_params(line).each do |param|
           unless last_endpoint.method.empty?
             last_endpoint.push_param(param)
-          end
-        end
-      end
-    end
-
-    private def extract_path_params(endpoint : Endpoint)
-      if endpoint.url.includes?(":")
-        endpoint.url.scan(/:(\w+)/) do |m|
-          if m.size > 0
-            param = Param.new(m[1], "", "path")
-            endpoint.push_param(param)
           end
         end
       end

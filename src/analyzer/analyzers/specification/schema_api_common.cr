@@ -35,8 +35,7 @@ module Analyzer::Specification
     # only rewrites the colon form for insomnia/postman, so a `:id`
     # emitted here would survive verbatim into output.
     def normalize_colon_path(path : String) : String
-      return path unless path.includes?(':')
-      path.gsub(/:([A-Za-z_][A-Za-z0-9_]*)/) { "{#{$1}}" }
+      Noir::URLPath.normalize(path, Noir::URLPath::COLON_ASCII, rooted: false)
     end
 
     # Joins a mount prefix to a route path without doubling or dropping

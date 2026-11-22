@@ -50,8 +50,8 @@ module Analyzer::Python
         callees = def_line >= 0 ? build_callees_from(body, def_line + 1, path, definition_base_path: base_path, source: source) : [] of Callee
 
         deco.paths.each do |route|
-          path_names = [] of ::String
-          url = Helper.normalize_path(route.gsub(PATH_PARAM_RE) { path_names << $~[1]; "{#{$~[1]}}" })
+          url, path_names = Noir::URLPath.rewrite_names(route, PATH_PARAM_RE)
+          url = Helper.normalize_path(url)
 
           methods.each do |method|
             param_type = json ? "json" : (method == "GET" || method == "HEAD" ? "query" : "form")

@@ -265,3 +265,139 @@ describe "Noir::URLPath.strip_regex_anchors" do
     Noir::URLPath.strip_regex_anchors("(^/a)/b$").should eq("(^/a)/b")
   end
 end
+
+private alias RouteSyntax = Noir::URLPath
+
+describe "adapter route spellings" do
+  # A whole-segment dedup key is too restrictive for these adapters. Exercise
+  # matches with neighboring literals, malformed syntax and digit-leading names.
+  {
+    {RouteSyntax::COLON_WORD, ":9/:a-b", %w[9 a]},
+    {RouteSyntax::COLON_IDENT, ":9/pre:id.json", %w[id]},
+    {RouteSyntax::COLON_ASCII, ":9/pre:id-x", %w[id]},
+    {RouteSyntax::COLON_SEGMENT_ASCII, ":a/pre:b/:c.json", %w[a c]},
+    {RouteSyntax::SEGMENT_COLON_IDENT, ":a/text\n:b/:c.json", %w[a c]},
+    {RouteSyntax::COLON_OR_STAR, "x:a/*b/*9", %w[a b]},
+    {RouteSyntax::COLON_OR_STAR_ASCII, "x:a/*b/#c", %w[a b]},
+    {RouteSyntax::COLON_STAR_HASH, ":a/*b/#c/#1", %w[a b c]},
+    {RouteSyntax::COLON_OR_STAR_HYPHEN, ":a-b/*c-d", %w[a-b c-d]},
+    {RouteSyntax::COLON_DOTTED, ":a.b-c/:9", %w[a.b-c]},
+    {RouteSyntax::BRACE_DOTTED, "{a.b-c}/{9}", %w[a.b-c]},
+    {RouteSyntax::BRACE_WORD, "{9}/{id?}/{id}", %w[9 id]},
+    {RouteSyntax::BRACE_IDENT, "{_ok}/{9}/{a-b}", %w[_ok]},
+    {RouteSyntax::BRACE_ASCII, "{a}_{b}/{2}", %w[a b]},
+    {RouteSyntax::BRACE_CATCH_ALL, "{*1}/{**id}/{id}", %w[1 id]},
+    {RouteSyntax::BRACE_REST_WORD, "{***9}/{id}", %w[9 id]},
+    {RouteSyntax::BRACE_REST_IDENT, "{***a}/{9}", %w[a]},
+    {RouteSyntax::SLASH_SPLAT_IDENT, "*a/*b/*9", %w[b]},
+    {RouteSyntax::SPLAT_WORD, "*1/x*b", %w[1 b]},
+    {RouteSyntax::BRACE_REST_PIPE, "{**id|.*}/{9}/{x:int}", %w[id 9]},
+    {RouteSyntax::BRACE_CONVERTER, "{id:int}/{9}/{name}/{x:[0-9]+}", %w[id name]},
+    {RouteSyntax::BRACE_TYPED, "{id:int}/{name}", %w[id]},
+    {RouteSyntax::BRACE_CONVERTER_FIRST, "{ int:id}/{int : slug}/{x}", %w[slug x]},
+    {RouteSyntax::BRACE_CONSTRAINT, "{with space:.*}/{id:[0-9]{2}}/{empty:}", ["with space"]},
+    {RouteSyntax::BRACE_TYPED_ASCII, "{id:[0-9]+}/{9:x}/{empty:}", %w[id]},
+    {RouteSyntax::BRACE_WITH_CONSTRAINT, "{id:[0-9]+}/{name}/{9}/{x:}", %w[id name]},
+    {RouteSyntax::BRACE_FLAT_CONSTRAINT, "{id:}/{id:[0-9]{2}}/{name}", %w[id name]},
+    {RouteSyntax::BRACE_OPTIONAL_CONSTRAINT, "{9?:abc}/{x?}/{y:[0-9]{2}}", %w[9 x 2]},
+    {RouteSyntax::BRACE_WORD_CONSTRAINT, "{9:.*}/{x:}/{y}", %w[9 y]},
+    {RouteSyntax::BRACE_TYPED_WORD, "{9:.*}/{x}/{y:}", %w[9]},
+    {RouteSyntax::BRACE_OR_SPLAT, "*tail/{a:.*}/*tail/{2}", %w[tail a tail]},
+    {RouteSyntax::COLON_TYPED, ":id:int/:9/:other", %w[id other]},
+    {RouteSyntax::COLON_OPTIONAL, ":a?/:b/:9?", %w[a b]},
+    {RouteSyntax::COLON_ANGLE_CONSTRAINT, ":9<>/:a<.*>", %w[9 a]},
+    {RouteSyntax::ANGLE_PIPE, "<id|[0-9]*>/<x>/<9>", %w[id x]},
+    {RouteSyntax::ANGLE_WORD, "<9>/<name:int>", %w[9]},
+    {RouteSyntax::ANGLE_WORD_TYPED, "<9:uint>/<id:x>/<bad:>", %w[9 id]},
+    {RouteSyntax::ANGLE_NAME_TYPED, "<9:uint>/<id:x>/<x>", %w[id x]},
+    {RouteSyntax::ANGLE_CONVERTER_FIRST, "<int:id>/<x>/<id:9>", %w[id x]},
+    {RouteSyntax::ANGLE_BODY, "<x:int>/< id >/<:>", ["x:int", " id ", ":"]},
+    {RouteSyntax::DOLLAR_OPTIONAL_BRACES, "${foo/$bar}/$9", %w[foo bar]},
+    {RouteSyntax::DOLLAR_BRACED_IDENT, "${a}/$b", %w[a]},
+    {RouteSyntax::DOLLAR_IDENT, "${a}/$b", %w[b]},
+    {RouteSyntax::DOLLAR_REGEX, "$id<[0-9]+>/$b/$2<.>", %w[id 2]},
+    {RouteSyntax::NAMED_CAPTURE, "(?<x>.+)/(?P<y>.)", %w[x]},
+  }.each do |pattern, path, expected|
+    it "reads #{path.inspect} with #{pattern.inspect}" do
+      RouteSyntax.names(path, pattern).should eq(expected)
+    end
+  end
+
+  it "applies each adapter's replacement and slash choices independently" do
+    RouteSyntax.normalize("a//:id(\\d+)/", RouteSyntax::COLON_IDENT).should eq("/a//{id}(\\d+)/")
+    RouteSyntax.normalize("a//:id:int/", RouteSyntax::COLON_TYPED, collapse: true, trim: true).should eq("/a/{id}")
+    RouteSyntax.normalize(":id?", RouteSyntax::COLON_OPTIONAL, rooted: false).should eq("{id}")
+    RouteSyntax.normalize("<a|.*>/", RouteSyntax::ANGLE_PIPE, rooted: false).should eq("{a}/")
+    RouteSyntax.normalize("/x/{a.b}", RouteSyntax::BRACE_DOTTED, replacement: ":\\1").should eq("/x/:a.b")
+    RouteSyntax.normalize("{n:[0-9]{2}}", RouteSyntax::BRACE_CONSTRAINT).should eq("/{n:[0-9]{2}}")
+    RouteSyntax.normalize(":${id}/$slug", *RouteSyntax::DOLLAR_SLOTS).should eq("/:{id}/{slug}")
+    RouteSyntax.normalize("a///", trim: true).should eq("/a//")
+    RouteSyntax.normalize("", empty: "").should eq("")
+    RouteSyntax.normalize("").should eq("/")
+    RouteSyntax.request_path("a//x/#frag?query").should eq("/a/x")
+    RouteSyntax.request_path("?x").should eq("/")
+    RouteSyntax.normalize_prefixed_template(" //a///b/ ").should eq("//a/b/")
+    RouteSyntax.normalize_prefixed_template("///").should eq("/")
+    RouteSyntax.trimmed_segments(" a / // b ").should eq(%w[a b])
+    RouteSyntax.brace_interpolation(%q(#{ var }/x)).should eq("{var}/x")
+  end
+
+  it "keeps pass order and duplicates unless its caller requests deduplication" do
+    path = "/{a}/:z/{z}/:z"
+    RouteSyntax.params(path, *RouteSyntax::COLON_THEN_BRACE).map(&.name).should eq(%w[z z a z])
+    RouteSyntax.params(path, *RouteSyntax::COLON_THEN_BRACE, unique: true).map(&.name).should eq(%w[z a])
+    endpoint = Endpoint.new(path, "GET", [Param.new("z", "", "query"), Param.new("a", "int", "path")])
+    RouteSyntax.add_params(endpoint, path, *RouteSyntax::COLON_THEN_BRACE)
+    endpoint.params.map { |p| {p.name, p.param_type, p.value} }.should eq([{"z", "query", ""}, {"a", "path", "int"}, {"z", "path", ""}])
+    RouteSyntax.params("{{id:int}}", RouteSyntax::BRACE_CONVERTER, doubled_braces: true).map(&.name).should eq(["id"])
+    RouteSyntax.strip_type_converters("/{{id:int}}/{rest:path}/{name:.*}").should eq("/{{id}}/{rest:path}/{name:.*}")
+  end
+
+  it "preserves optional brackets, empty sigil names and rooted prefix seams" do
+    RouteSyntax.normalize("[:a]/[:b/:c]", *RouteSyntax::OPTIONAL_THEN_COLON).should eq("/{a}/[{b}/{c}]")
+    RouteSyntax.normalize("[:id]suffix", *RouteSyntax::OPTIONAL_THEN_COLON).should eq("/{idsuffix}")
+    route = "/@id:int/?slug/x@keep/@:empty"
+    RouteSyntax.names(route, RouteSyntax::SIGIL_SEGMENT).should eq(["id", "slug", ""])
+    RouteSyntax.normalize(route, RouteSyntax::SIGIL_SEGMENT).should eq("/{id}/{slug}/x@keep/{}")
+    RouteSyntax.join("/", "/x", :preserve_root_prefix).should eq("//x")
+    RouteSyntax.join("a//", "", :preserve_root_prefix).should eq("a//")
+  end
+
+  it "uses the same matches for replacements and parameters" do
+    path, params = RouteSyntax.rewrite_params("<int:id>_<id>", RouteSyntax::ANGLE_CONVERTER_FIRST, unique: true)
+    path.should eq("{id}_{id}")
+    params.map(&.name).should eq(["id"])
+    RouteSyntax.rewrite_names("< id :int>/<:>", RouteSyntax::ANGLE_BODY, colon: true) { |m| m[1].split(':').first.strip }.should eq({":id/:", ["id", ""]})
+  end
+
+  it "retains optional, default and catch-all name conventions" do
+    route = "/{**tail}/{id:int=4}/{odd*}/{a/b}/{?}"
+    RouteSyntax.template_names(route).should eq(["tail", "id", "odd*", "a/b", ""])
+    RouteSyntax.template_names(route, RouteSyntax::BRACE_SEGMENT_BODY, trailing_star: true).should eq(["tail", "id", "odd", ""])
+    RouteSyntax.bind_optional_slots("/{missing?}/items/{id:int?}/{page=1}", ["id"]).should eq("/items/{id:int}/{page}")
+  end
+
+  it "uses the file router's catch-all spelling and first matched segment" do
+    RouteSyntax.bracket_segment("[id]").should eq("{id}")
+    RouteSyntax.bracket_segment("[...id]").should eq("{id}")
+    RouteSyntax.bracket_segment("[[...id]]").should eq("[[...id]]")
+    RouteSyntax.bracket_segment("[[...id]]", catch_all: true).should eq("{*id}")
+    RouteSyntax.bracket_segment("[...id]]", catch_all: true).should eq("{*id}")
+    RouteSyntax.bracket_segment("x[id]").should eq("x[id]")
+  end
+
+  it "handles empty operands, the seam and interior slashes separately" do
+    RouteSyntax.join("", "", :collapsed).should eq("/")
+    RouteSyntax.join("api//v1/", "", :collapsed).should eq("/api/v1/")
+    RouteSyntax.join("/a//", "///b/", :trim_seam).should eq("/a/b/")
+    RouteSyntax.join("/a//", "", :trim_seam).should eq("/a//")
+    RouteSyntax.join("", "users", :chomp_prefix).should eq("users")
+    RouteSyntax.join("", "users", :root_child).should eq("/users")
+    RouteSyntax.join("/a//", "//b", :root_child).should eq("/a///b")
+    RouteSyntax.join("a/", "///", :rooted_mount).should eq("/a")
+    RouteSyntax.join("/", "//x", :rooted_mount).should eq("//x")
+    RouteSyntax.join("", "users", :require_seam).should eq("/users")
+    RouteSyntax.join("api", "", :require_seam).should eq("api/")
+    RouteSyntax.join("", "", :require_seam).should eq("/")
+  end
+end

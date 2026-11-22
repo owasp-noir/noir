@@ -316,16 +316,6 @@ module Analyzer::Java
       names
     end
 
-    # Classic Router path params are `:name` only. `{name}` is OpenAPI-style
-    # and is a literal segment on the classic API — do not classify as path.
-    private def extract_path_parameters(path : String, endpoint : Endpoint)
-      path.scan(/:(\w+)/) do |match|
-        next unless match.size > 1
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
-    end
-
     private def extract_method_bodies(content : String) : Hash(String, String)
       bodies = {} of String => String
       begin
@@ -782,7 +772,7 @@ module Analyzer::Java
 
     private def build_endpoint(path : String, method : String, details : Details) : Endpoint
       endpoint = Endpoint.new(path, method, details)
-      extract_path_parameters(path, endpoint)
+      Noir::URLPath.add_params(endpoint, path, Noir::URLPath::COLON_WORD)
       endpoint
     end
 

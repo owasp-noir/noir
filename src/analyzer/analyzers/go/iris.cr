@@ -4,6 +4,10 @@ module Analyzer::Go
   class Iris < GoEngine
     analyzer_for "go_iris"
 
+    def normalize_iris_path(path : String) : String
+      Noir::URLPath.normalize(path, Noir::URLPath::BRACE_CONSTRAINT, rooted: false)
+    end
+
     HTTP_METHODS  = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
     IMPORT_MARKER = "github.com/kataras/iris"
 
@@ -134,12 +138,6 @@ module Analyzer::Go
       if line.matches?(/\.Read(?:JSON|XML|YAML|MsgPack|Protobuf|Body|Form)\s*\(/)
         add_param_to_endpoint(Param.new("body", "", "json"), ep)
       end
-    end
-
-    # Strip Iris type annotations from path params: `{id:uint64}` → `{id}`,
-    # `{file:path}` → `{file}`. Leaves unadorned `{id}` untouched.
-    def normalize_iris_path(path : String) : String
-      path.gsub(/\{([^{}:]+):[^{}]+\}/) { "{#{$1}}" }
     end
 
     # Iris route paths always start with `/`; a `Party` prefix that does

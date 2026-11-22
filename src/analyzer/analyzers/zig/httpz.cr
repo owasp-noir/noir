@@ -122,7 +122,7 @@ module Analyzer::Zig
     end
 
     private def emit(path, text, offset, url, method, handler, bodies, include_callee)
-      params = extract_path_params(url)
+      params = Noir::URLPath.params(url, Noir::URLPath::COLON_IDENT)
       line = Noir::ZigCalleeExtractor.line_at(text, offset)
       details = Details.new(PathInfo.new(path, line))
       endpoint = Endpoint.new(url, method, params, details)
@@ -136,10 +136,6 @@ module Analyzer::Zig
       end
 
       @result << endpoint
-    end
-
-    private def extract_path_params(url : String) : Array(Param)
-      url.scan(/:([A-Za-z_]\w*)/).map { |m| Param.new(m[1], "", "path") }
     end
   end
 end

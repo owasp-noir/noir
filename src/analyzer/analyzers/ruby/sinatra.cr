@@ -252,17 +252,10 @@ module Analyzer::Ruby
 
     private def sinatra_prefixed_path(prefix_stack : Array(NamedTuple(depth: Int32, path: String)), path : String, mount_prefix : String = "") : String
       parts = [] of String
-      append_sinatra_path(parts, mount_prefix)
-      prefix_stack.each { |entry| append_sinatra_path(parts, entry[:path]) }
-      append_sinatra_path(parts, path)
+      parts.concat(Noir::URLPath.trimmed_segments(mount_prefix))
+      prefix_stack.each { |entry| parts.concat(Noir::URLPath.trimmed_segments(entry[:path])) }
+      parts.concat(Noir::URLPath.trimmed_segments(path))
       parts.empty? ? "/" : "/#{parts.join("/")}"
-    end
-
-    private def append_sinatra_path(parts : Array(String), raw : String)
-      raw.split("/").each do |piece|
-        trimmed = piece.strip
-        parts << trimmed unless trimmed.empty?
-      end
     end
 
     # Net change in block nesting contributed by a single line. Unlike a

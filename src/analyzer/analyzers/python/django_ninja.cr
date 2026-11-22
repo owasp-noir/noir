@@ -35,7 +35,6 @@ module Analyzer::Python
     # the converter (when present) comes BEFORE the name: `{item_id}` or
     # `{int:item_id}`. This is the reverse of FastAPI's `{item_id:int}`,
     # so the capture takes the token AFTER an optional `converter:`.
-    PATH_PARAM_REGEX = /\{(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?([A-Za-z_][A-Za-z0-9_]*)\}/
 
     # Verbs exposed as `@api.<verb>(...)` decorators. `api_operation`
     # (an explicit method list) is handled separately.
@@ -257,7 +256,7 @@ module Analyzer::Python
                                        base : ::String,
                                        import_modules : Hash(::String, Tuple(::String, Int32))) : Array(Param)
       params = [] of Param
-      path_param_names = ninja_path_param_names(op_path)
+      path_param_names = Noir::URLPath.names(op_path, Noir::URLPath::BRACE_CONVERTER_FIRST).uniq!
 
       function_definition = parse_function_def(lines, def_line)
       return params unless function_definition
@@ -575,7 +574,7 @@ module Analyzer::Python
         inst.edges.each do |edge|
           child = edge.child_key
           next unless child
-          child_prefix = combine_router_prefixes(prefix, normalize_segment(edge.prefix))
+          child_prefix = combine_router_prefixes(prefix, Noir::URLPath.normalize(edge.prefix.strip, empty: ""))
           queue << {child, child_prefix}
         end
       end
@@ -592,8 +591,8 @@ module Analyzer::Python
 
     private def emit_instance(inst : NinjaInstance, prefix : ::String) : Nil
       inst.operations.each do |op|
-        full_path = normalize_ninja_path(combine_router_prefixes(prefix, op.path))
-        path_param_names = ninja_path_param_names(full_path)
+        full_path = Noir::URLPath.normalize(combine_router_prefixes(prefix, op.path), Noir::URLPath::BRACE_CONVERTER_FIRST, collapse: true)
+        path_param_names = Noir::URLPath.names(full_path, Noir::URLPath::BRACE_CONVERTER_FIRST).uniq!
         params = reconcile_params(op.params, path_param_names)
 
         op.methods.each do |method|
@@ -624,34 +623,12 @@ module Analyzer::Python
       dedupe_params(params)
     end
 
-    private def ninja_path_param_names(path : ::String) : Array(::String)
-      names = [] of ::String
-      path.scan(PATH_PARAM_REGEX) do |match|
-        names << match[1] if match.size > 1 && !names.includes?(match[1])
-      end
-      names
-    end
-
-    private def normalize_ninja_path(path : ::String) : ::String
-      normalized = path.gsub(PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized.gsub(/\/+/, "/")
-    end
-
     # A mount can be declared with `re_path(r"^api/$", api.urls)`, whose
     # captured prefix carries Django regex anchors. Strip a leading `^`
     # and trailing `$` (mirroring django.cr's normalize_django_route) so
     # the mount doesn't leak regex syntax into the URL.
     private def normalize_mount_prefix(prefix : ::String) : ::String
-      normalize_segment(prefix.gsub(/^\^/, "").gsub(/\$$/, ""))
-    end
-
-    # Prefix a URL segment with a leading slash and trim whitespace,
-    # leaving a trailing slash intact (`"events/"` → `"/events/"`).
-    private def normalize_segment(segment : ::String) : ::String
-      seg = segment.strip
-      return "" if seg.empty?
-      seg.starts_with?("/") ? seg : "/#{seg}"
+      Noir::URLPath.normalize(prefix.gsub(/^\^/, "").gsub(/\$$/, "").strip, empty: "")
     end
 
     private def dedupe_params(params : Array(Param)) : Array(Param)

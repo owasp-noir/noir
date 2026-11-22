@@ -31,20 +31,7 @@ module PlayRouteSupport
 
   # Extract path parameters from route pattern
   private def extract_path_params(endpoint : Endpoint, route_path : String)
-    # Match :param style parameters
-    route_path.scan(/:(\w+)/) do |match|
-      endpoint.push_param(Param.new(match[1], "", "path"))
-    end
-
-    # Match $param<regex> style parameters
-    route_path.scan(/\$(\w+)<[^>]+>/) do |match|
-      endpoint.push_param(Param.new(match[1], "", "path"))
-    end
-
-    # Match *param wildcard style parameters
-    route_path.scan(/\*(\w+)/) do |match|
-      endpoint.push_param(Param.new(match[1], "", "path"))
-    end
+    Noir::URLPath.add_params(endpoint, route_path, Noir::URLPath::COLON_WORD, Noir::URLPath::DOLLAR_REGEX, Noir::URLPath::SPLAT_WORD)
   end
 
   # Extract query parameters from action signature

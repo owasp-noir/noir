@@ -63,8 +63,7 @@ module Analyzer::Python
                     ["GET", "POST"]
                   end
 
-        path_names = [] of ::String
-        url = route.gsub(PATH_PARAM_RE) { path_names << $~[1]; "{#{$~[1]}}" }
+        url, path_names = Noir::URLPath.rewrite_names(route, PATH_PARAM_RE)
         ws = deco.attribute_name == "ws"
         arg_names = [] of ::String
         parse_function_def(lines, def_line).try &.params.each do |param|

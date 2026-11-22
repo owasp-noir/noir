@@ -327,14 +327,7 @@ module Analyzer::Ruby
     end
 
     private def grape_join_segments(*segments : String) : String
-      parts = [] of String
-      segments.each do |seg|
-        seg.split('/').each do |piece|
-          trimmed = piece.strip
-          parts << trimmed unless trimmed.empty?
-        end
-      end
-      parts.join("/")
+      segments.flat_map { |segment| Noir::URLPath.trimmed_segments(segment) }.join("/")
     end
 
     # A concern's routes are drawn under the includer's prefix, so an
@@ -796,15 +789,9 @@ module Analyzer::Ruby
     end
 
     private def extract_path_params(raw : String) : Array(String)
-      names = [] of String
-      raw.scan(/:([a-zA-Z_][\w]*)/) do |m|
-        names << m[1] if m.size > 1
-      end
-      raw.scan(/\{([a-zA-Z_][\w]*)\}/) do |m|
-        names << m[1] if m.size > 1 && !names.includes?(m[1])
-      end
-      raw.scan(/\*([a-zA-Z_][\w]*)/) do |m|
-        names << m[1] if m.size > 1 && !names.includes?(m[1])
+      names = Noir::URLPath.names(raw, Noir::URLPath::COLON_IDENT)
+      Noir::URLPath.each_name(raw, Noir::URLPath::BRACE_IDENT, /\*([A-Za-z_]\w*)/) do |name|
+        names << name unless names.includes?(name)
       end
       names
     end

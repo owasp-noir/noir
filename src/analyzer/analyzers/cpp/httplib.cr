@@ -38,7 +38,6 @@ module Analyzer::Cpp
     PATH_PARAM_ACCESS = /\bpath_params\s*(?:\.\s*at\s*\(\s*|\[\s*)"([^"]+)"/
     BODY_ACCESS       = /\b(?:req|request)\s*\.\s*body\b/
     # `:name` path placeholder (cpp-httplib named params).
-    NAMED_PARAM_REGEX = /:([A-Za-z_][A-Za-z0-9_]*)/
     # Regex metacharacters that mark a route pattern as a regex (kept verbatim).
     REGEX_META = /[()\[\]\\+*?^$|]/
     # Precompiled union for the per-file verb-call evidence gate in
@@ -95,7 +94,11 @@ module Analyzer::Cpp
         raw_path = parse_path_arg(args[0]?)
         next unless raw_path
 
-        normalized_path, path_params = normalize_path(raw_path)
+        normalized_path, path_params = if raw_path.matches?(REGEX_META)
+                                         {Noir::URLPath.strip_regex_anchors(raw_path), [] of Param}
+                                       else
+                                         Noir::URLPath.rewrite_params(raw_path, Noir::URLPath::COLON_ASCII)
+                                       end
         line_number = Noir::CppCalleeExtractor.line_number_for(source, call_start)
         details = Details.new(PathInfo.new(path, line_number))
         endpoint = Endpoint.new(normalized_path, verb, path_params.dup, details)
@@ -148,20 +151,6 @@ module Analyzer::Cpp
       end
       return s[1...-1] if s.size >= 2 && s.starts_with?('"') && s.ends_with?('"')
       nil
-    end
-
-    private def normalize_path(raw : String) : Tuple(String, Array(Param))
-      # Regex routes are kept verbatim — the captures are positional, with no
-      # named placeholders to rewrite.
-      return {Noir::URLPath.strip_regex_anchors(raw), [] of Param} if raw.matches?(REGEX_META)
-
-      params = [] of Param
-      normalized = raw.gsub(NAMED_PARAM_REGEX) do
-        name = $1
-        params << Param.new(name, "", "path")
-        "{#{name}}"
-      end
-      {normalized, params}
     end
 
     private def collect_params(body : String) : Array(Param)

@@ -450,7 +450,7 @@ module Analyzer::Java
         next unless open_idx
         close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '{', '}') || open_idx
         base_path = reactive_annotation_path(match[1]? || "") || ""
-        bases << ReactiveRouteBase.new(start_offset, close_idx, normalize_route_path(base_path))
+        bases << ReactiveRouteBase.new(start_offset, close_idx, Noir::URLPath.normalize(base_path.strip))
       end
       bases
     end
@@ -463,7 +463,7 @@ module Analyzer::Java
     # regex, fall back to Quarkus's dashify of the method name.
     private def reactive_route_path(annotation_body : String, method_name : String) : String?
       if path = reactive_annotation_path(annotation_body)
-        return normalize_route_path(path)
+        return Noir::URLPath.normalize(path.strip)
       end
 
       if regex = reactive_annotation_regex(annotation_body)
@@ -476,7 +476,7 @@ module Analyzer::Java
       # to the method-name path — Quarkus never registers that path.
       return if annotation_body.match(/\bregex\s*=/)
 
-      normalize_route_path(dashify(method_name))
+      Noir::URLPath.normalize(dashify(method_name).strip)
     end
 
     private def reactive_annotation_path(annotation_body : String) : String?
@@ -627,13 +627,6 @@ module Analyzer::Java
       if match = expression.strip.match(/\A["']([^"']*)["']\z/)
         match[1]
       end
-    end
-
-    private def normalize_route_path(path : String) : String
-      normalized = path.strip
-      return "/" if normalized.empty?
-
-      normalized.starts_with?("/") ? normalized : "/#{normalized}"
     end
 
     private def add_param(params : Array(Param), name : String, param_type : String)

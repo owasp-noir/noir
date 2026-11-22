@@ -91,7 +91,7 @@ module Analyzer::CSharp
     end
 
     private def emit_standalone_route(pattern : ConventionalRoute)
-      route = normalize_route(prune_optional_placeholders(pattern.pattern, [] of Param))
+      route = normalize_route(Noir::URLPath.bind_optional_slots(pattern.pattern, [] of String))
       endpoint = Endpoint.new(route, "GET", Details.new(PathInfo.new(pattern.file, pattern.line)))
       align_params_with_route([] of Param, route).each { |param| endpoint.params << param }
       @result << endpoint
@@ -1009,7 +1009,7 @@ module Analyzer::CSharp
           # A catch-all's `{id?}` is a generic slot, kept only for an action
           # that binds it; a template pinned to one action is that action's
           # own URL, optional segments included.
-          raw_route = pattern.catch_all? ? prune_optional_placeholders(raw_route, parameters) : raw_route.gsub(PLACEHOLDER_DEFAULT_RE, "{\\1}")
+          raw_route = pattern.catch_all? ? Noir::URLPath.bind_optional_slots(raw_route, parameters.map(&.name)) : raw_route.gsub(PLACEHOLDER_DEFAULT_RE, "{\\1}")
           routes << normalize_route(raw_route)
         end
       end
@@ -1028,15 +1028,15 @@ module Analyzer::CSharp
       action_part = replace_tokens(action_route, controller_name, action_name, area)
 
       if !has_action_route
-        raw_route = prune_optional_placeholders(base_route, parameters)
+        raw_route = Noir::URLPath.bind_optional_slots(base_route, parameters.map(&.name))
         routes << normalize_route(raw_route) unless raw_route.empty?
       elsif action_part.starts_with?("/") || action_part.starts_with?("~/")
         # `/x` and `~/x` both override the controller's `[Route]` prefix.
-        raw_route = prune_optional_placeholders(action_part, parameters)
+        raw_route = Noir::URLPath.bind_optional_slots(action_part, parameters.map(&.name))
         routes << normalize_route(raw_route)
       else
         combined = [base_route, action_part].reject(&.empty?).join("/")
-        raw_route = prune_optional_placeholders(combined, parameters)
+        raw_route = Noir::URLPath.bind_optional_slots(combined, parameters.map(&.name))
         routes << normalize_route(raw_route)
       end
 
@@ -1068,36 +1068,7 @@ module Analyzer::CSharp
     private def normalize_route(route : String) : String
       normalized = route.strip
       normalized = normalized.lchop('~') if normalized.starts_with?("~/") # app-root marker
-      normalized = normalized.gsub(/^\//, "").gsub(/\/+/, "/")
-      normalized = "/" + normalized unless normalized.starts_with?("/")
-      normalized = "/" if normalized == "//" || normalized == "/"
-      normalized
-    end
-
-    private def prune_optional_placeholders(route : String, parameters : Array(Param)) : String
-      param_names = parameters.map(&.name)
-      result = route.dup
-
-      placeholder_regex = /\{([^}]+)\}/
-      route.scan(placeholder_regex) do |match|
-        raw = match[1]? || match[0]
-        next unless raw
-
-        optional = raw.ends_with?("?")
-        name = Common.route_placeholder_name(raw)
-
-        if optional && !param_names.includes?(name)
-          result = result.gsub("/{#{raw}}", "")
-          result = result.gsub("{#{raw}}/", "")
-          result = result.gsub("{#{raw}}", "")
-        elsif optional || raw.includes?('=')
-          # `{id?}` -> `{id}` and `{id=5}` -> `{id}`: a default value belongs
-          # to the route template, not to the URL a client sends.
-          result = result.gsub("{#{raw}}", "{#{raw.split('=').first.rstrip('?')}}")
-        end
-      end
-
-      result
+      Noir::URLPath.normalize(normalized.gsub(/^\//, ""), collapse: true)
     end
 
     # Route values match action parameters case-insensitively
@@ -1106,7 +1077,7 @@ module Analyzer::CSharp
     # spells it exactly takes it alone: a body member `Id` beside `Guid id`
     # stays a form field. A JSON body member is never a route value.
     private def align_params_with_route(params : Array(Param), route : String) : Array(Param)
-      path_keys = extract_route_placeholders(route)
+      path_keys = Noir::URLPath.template_names(route)
 
       mapped = params.map do |param|
         next Param.new(param.name, param.value, param.param_type) if param.param_type == "json"
@@ -1126,19 +1097,6 @@ module Analyzer::CSharp
       end
 
       mapped
-    end
-
-    private def extract_route_placeholders(route : String) : Array(String)
-      keys = [] of String
-      placeholder_regex = /\{([^}]+)\}/
-
-      route.scan(placeholder_regex) do |match|
-        raw = match[1]? || match[0]
-        next unless raw
-        keys << Common.route_placeholder_name(raw)
-      end
-
-      keys.uniq
     end
   end
 end

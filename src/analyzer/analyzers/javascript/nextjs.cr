@@ -230,7 +230,7 @@ module Analyzer::Javascript
         endpoint.details = Details.new(PathInfo.new(path, body_info.try(&.body_line) || default_source_line))
         endpoint.handler = handler
 
-        extract_path_params(url, endpoint)
+        Noir::URLPath.add_params(endpoint, url, Noir::URLPath::BRACE_CATCH_ALL)
         extract_pages_router_params(scoped[method], body_info.try(&.params) || "", endpoint)
         if include_callee
           attach_js_callees(endpoint, body_info.callees) if body_info
@@ -262,7 +262,7 @@ module Analyzer::Javascript
 
       # Strip route groups (parenthesized segments)
       segments = relative.split("/").reject { |seg| seg.empty? || (seg.starts_with?("(") && seg.ends_with?(")")) }
-      converted = segments.map { |seg| convert_segment(seg) }
+      converted = segments.map { |seg| Noir::URLPath.bracket_segment(seg, catch_all: true) }
 
       url = "#{base_path_for(path)}/" + converted.join("/")
       catch_all_urls(normalize_url(url), relative).each do |served|
@@ -303,7 +303,7 @@ module Analyzer::Javascript
         endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.body_line) || same_file_line || 1))
         endpoint.handler = handler
 
-        extract_path_params(url, endpoint)
+        Noir::URLPath.add_params(endpoint, url, Noir::URLPath::BRACE_CATCH_ALL)
         extract_app_router_params(param_source, endpoint)
         if include_callee
           attach_js_callees(endpoint, method_body_info.callees) if method_body_info
@@ -870,12 +870,6 @@ module Analyzer::Javascript
       destructure.split(",").map(&.strip).select(&.match(/^\w+$/))
     end
 
-    private def extract_path_params(url : String, endpoint : Endpoint)
-      url.scan(/\{\*?(\w+)\}/) do |m|
-        add_param(endpoint, m[1], "path")
-      end
-    end
-
     # `[[...seed]]` also serves the URL without the segment (`/api/og`).
     private def catch_all_urls(url : String, relative : String) : Array(String)
       m = url.match(/\/\{\*(\w+)\}\z/) || return [url]
@@ -898,21 +892,7 @@ module Analyzer::Javascript
 
     private def convert_segments(relative : String) : String
       segments = relative.split("/").reject(&.empty?)
-      segments.map { |seg| convert_segment(seg) }.join("/")
-    end
-
-    private def convert_segment(seg : String) : String
-      # Catch-all `[...slug]` and optional `[[...slug]]` span one or more
-      # segments: `{*slug}`, the rest-of-path spelling the optimizer and
-      # the OAS builder already read as param `slug`.
-      if m = seg.match(/^\[\[?\.\.\.(\w+)\]\]?$/)
-        return "{*#{m[1]}}"
-      end
-      # Dynamic: [id]
-      if m = seg.match(/^\[(\w+)\]$/)
-        return "{#{m[1]}}"
-      end
-      seg
+      segments.map { |seg| Noir::URLPath.bracket_segment(seg, catch_all: true) }.join("/")
     end
 
     private def has_use_server_directive?(content : String) : Bool

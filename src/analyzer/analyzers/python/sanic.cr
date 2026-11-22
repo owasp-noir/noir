@@ -800,7 +800,7 @@ module Analyzer::Python
       # Create endpoints for each method
       methods.each do |http_method|
         # Create endpoint with the prefix
-        full_path = normalize_sanic_path_params(Helper.normalized_join(prefix, route_path))
+        full_path = Noir::URLPath.normalize(Helper.normalized_join(prefix, route_path), Noir::URLPath::ANGLE_NAME_TYPED, rooted: false)
         filtered_params = get_filtered_params(http_method, params.dup)
         endpoint = Endpoint.new(full_path, http_method, filtered_params)
         endpoint.protocol = "ws" if route_attr == "websocket"
@@ -824,12 +824,6 @@ module Analyzer::Python
       normalized = Helper.normalize_path(path)
       normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
       normalized == "/" ? "/*" : "#{normalized}/*"
-    end
-
-    private def normalize_sanic_path_params(path : ::String) : ::String
-      path.gsub(/<([A-Za-z_][A-Za-z0-9_]*)(?::[^>]+)?>/) do |_match|
-        "{#{$1}}"
-      end
     end
 
     private def parse_code_block(lines : Array(String)) : String?

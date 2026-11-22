@@ -190,7 +190,7 @@ module Analyzer::Dart
 
         comma = Helper.first_top_level_comma(cleaned, open_paren + 1, close_paren)
         next unless comma
-        raw << {own: normalize_path(literal), param: param, range_start: comma + 1, range_end: close_paren, call: call}
+        raw << {own: Noir::URLPath.normalize(literal, Noir::URLPath::COLON_OPTIONAL), param: param, range_start: comma + 1, range_end: close_paren, call: call}
       end
 
       raw.map do |g|
@@ -208,7 +208,7 @@ module Analyzer::Dart
         break unless visited.add?(current[:call])
         parent = enclosing_group(current, raw)
         break unless parent
-        prefix = mount_join(parent[:own], prefix)
+        prefix = Noir::URLPath.join(parent[:own], prefix, :chomp_prefix)
         current = parent
       end
       prefix
@@ -260,7 +260,7 @@ module Analyzer::Dart
       literal = Helper.extract_string_literal(args[0])
       return unless literal
 
-      url = mount_join(prefix, normalize_path(literal))
+      url = Noir::URLPath.join(prefix, Noir::URLPath.normalize(literal, Noir::URLPath::COLON_OPTIONAL), :chomp_prefix)
       line = lines.line_for(open_paren)
 
       callees = [] of Noir::DartCalleeExtractor::Entry
@@ -274,21 +274,6 @@ module Analyzer::Dart
         next unless seen.add?({verb, url})
         endpoints << Helper.build_endpoint(url, verb, path, line, callees)
       end
-    end
-
-    # Ensure a leading slash and translate Express-style `:id` captures
-    # into `{id}` path params. A trailing `?` (optional, `:arg?`) is dropped.
-    private def normalize_path(path : String) : String
-      base = path.starts_with?('/') ? path : "/#{path}"
-      base.gsub(/:([A-Za-z_]\w*)\??/) { "{#{$~[1]}}" }
-    end
-
-    private def mount_join(prefix : String, sub : String) : String
-      return sub if prefix.empty?
-      left = prefix.rchop('/')
-      right = sub.starts_with?('/') ? sub : "/#{sub}"
-      result = "#{left}#{right}"
-      result.empty? ? "/" : result
     end
   end
 end

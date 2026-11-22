@@ -60,12 +60,7 @@ module Analyzer::Javascript
           end
 
           # Parse path parameters from the URL path itself
-          if endpoint.url.includes?(":")
-            endpoint.url.scan(/:(\w+)/) do |m|
-              param = Param.new(m[1], "", "path")
-              endpoint.push_param(param)
-            end
-          end
+          Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_WORD)
 
           result << endpoint
         end
@@ -185,9 +180,7 @@ module Analyzer::Javascript
         args = Noir::JSRouteExtractor.route_arguments(content, m.byte_begin(0)).skip(2)
         details = middleware_details(path, line, "this", m.byte_begin(0), "", url, args)
         endpoint = Endpoint.new(url, method, details)
-        url.scan(/:(\w+)/) do |pm|
-          endpoint.push_param(Param.new(pm[1], "", "path"))
-        end
+        Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
         attach_js_callees(endpoint, parse_server_route_callees(content, path, call_start)) if include_callee
         result << endpoint
       end
@@ -258,7 +251,7 @@ module Analyzer::Javascript
             methods.each do |method|
               next if route_recorded_for_file?(result, path, url, method)
               endpoint = Endpoint.new(url, method, middleware_details(path, line, m[1], m.byte_begin(0), prefix, url, args[1..].map(&.[0])))
-              url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+              Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
               result << endpoint
             end
           end
@@ -280,7 +273,7 @@ module Analyzer::Javascript
           url = prefix.empty? ? mount_path : Noir::JSMountPrefix.join(prefix, mount_path)
           FILE_ROUTE_METHODS.each do |method|
             endpoint = Endpoint.new(url, method, middleware_details(path, line, m[1], m.byte_begin(0), prefix, url, args[1..].map(&.[0])))
-            url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+            Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
             Noir::JSRouteExtractor.apply_handler_facts(endpoint, facts)
             Noir::JSRouteExtractor.push_callees(endpoint, chain_callees)
             endpoint.handler = handler
@@ -307,7 +300,7 @@ module Analyzer::Javascript
       Noir::JSRouteExtractor.finale_resource_routes(content).each do |method, url, call_start|
         at = offsets.byte(call_start)
         endpoint = Endpoint.new(url, method, middleware_details(path, offsets.line(at), receiver, at, "", url, [] of String))
-        url.scan(/:(\w+)/) { |pm| endpoint.push_param(Param.new(pm[1], "", "path")) }
+        Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
         result << endpoint
       end
     rescue e
@@ -622,12 +615,7 @@ module Analyzer::Javascript
             endpoint.details = fallback_details(path, content, m.byte_begin(0), router_prefix_router_name, router_prefix, full_path)
 
             # Extract path parameters
-            if full_path.includes?(":")
-              full_path.scan(/:(\w+)/) do |param_m|
-                param = Param.new(param_m[1], "", "path")
-                endpoint.push_param(param)
-              end
-            end
+            Noir::URLPath.add_params(endpoint, full_path, Noir::URLPath::COLON_WORD)
 
             # Extract params from handler body
             extract_handler_params_from_content(content, router_prefix_router_name, method, route_path, endpoint)
@@ -664,12 +652,7 @@ module Analyzer::Javascript
             endpoint.details = fallback_details(path, content, m.byte_begin(0), router_name, prefix, full_path)
 
             # Extract path parameters
-            if full_path.includes?(":")
-              full_path.scan(/:(\w+)/) do |param_m|
-                param = Param.new(param_m[1], "", "path")
-                endpoint.push_param(param)
-              end
-            end
+            Noir::URLPath.add_params(endpoint, full_path, Noir::URLPath::COLON_WORD)
 
             # Extract parameters from handler body
             # Query parameters
@@ -1098,9 +1081,7 @@ module Analyzer::Javascript
       scanner.routes_for(path, content).each do |route|
         details = middleware_details(path, route.line, route.receiver, route.offset, route.prefix, route.url, [] of String, forwarded_steps: route.steps)
         endpoint = Endpoint.new(route.url, route.method, details)
-        route.url.scan(/:(\w+)/) do |pm|
-          endpoint.push_param(Param.new(pm[1], "", "path"))
-        end
+        Noir::URLPath.add_params(endpoint, route.url, Noir::URLPath::COLON_WORD)
         if handler_idx = route.handler_arg
           source, start = route.args[handler_idx]
           step = source.strip

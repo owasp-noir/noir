@@ -5,6 +5,8 @@ module Analyzer::Specification
   class Postman < SpecificationEngine
     analyzer_for "postman"
 
+    PATH_SLOTS = {Noir::URLPath::COLON_DOTTED, Noir::URLPath::BRACE_DOTTED}
+
     # `{{var}}`, plus the `{{$guid}}` dynamic variables Postman generates.
     POSTMAN_VAR = /\{\{\s*\$?[A-Za-z0-9_.-]+\s*\}\}/
 
@@ -60,7 +62,7 @@ module Analyzer::Specification
         resolved_url = resolve_vars(request_url, variables)
         url_path = extract_path_from_url(resolved_url)
         extract_query_params(resolved_url).each { |param| push_param_once(params, param) }
-        extract_path_vars(url_path).each { |name| push_param_once(params, Param.new(name, "", "path")) }
+        Noir::URLPath.names(url_path, *PATH_SLOTS).uniq!.each { |name| push_param_once(params, Param.new(name, "", "path")) }
         apply_auth(inherited_auth, params)
         @result << Endpoint.new(url_path, "GET", params, Details.new(PathInfo.new(source_path))) unless url_path.empty?
         return
@@ -173,7 +175,7 @@ module Analyzer::Specification
         resolved_url = resolve_vars(url_string, variables)
         extract_query_params(resolved_url).each { |param| push_param_once(params, param) }
         url_path = extract_path_from_url(resolved_url)
-        extract_path_vars(url_path).each { |name| push_param_once(params, Param.new(name, "", "path")) }
+        Noir::URLPath.names(url_path, *PATH_SLOTS).uniq!.each { |name| push_param_once(params, Param.new(name, "", "path")) }
         return url_path
       end
 
@@ -217,7 +219,7 @@ module Analyzer::Specification
         end
       end
 
-      extract_path_vars(url_path).each { |name| push_param_once(params, Param.new(name, "", "path")) }
+      Noir::URLPath.names(url_path, *PATH_SLOTS).uniq!.each { |name| push_param_once(params, Param.new(name, "", "path")) }
       url_path
     end
 
@@ -252,7 +254,7 @@ module Analyzer::Specification
         return normalize_path(rest[slash_idx..])
       end
 
-      pathish = strip_query_and_fragment(stripped)
+      pathish = Noir::URLPath.before_query_or_fragment(stripped)
       return normalize_path(pathish) if pathish.starts_with?("/")
 
       parts = pathish.split("/", 2)
@@ -327,19 +329,8 @@ module Analyzer::Specification
       params
     end
 
-    private def extract_path_vars(path : String) : Array(String)
-      vars = [] of String
-      path.scan(/:([A-Za-z_][A-Za-z0-9_.-]*)/) do |m|
-        vars << m[1]
-      end
-      path.scan(/\{([A-Za-z_][A-Za-z0-9_.-]*)\}/) do |m|
-        vars << m[1]
-      end
-      vars.uniq
-    end
-
     private def normalize_path(path : String) : String
-      stripped = strip_query_and_fragment(path.strip)
+      stripped = Noir::URLPath.before_query_or_fragment(path.strip)
       return "" if stripped.empty?
 
       # The optional `$` covers Postman dynamic variables such as `{{$guid}}`
@@ -348,20 +339,7 @@ module Analyzer::Specification
       normalized = stripped.gsub(/\{\{\s*\$?([A-Za-z0-9_.-]+)\s*\}\}/) do
         ":#{$1.split(".").last}"
       end
-      normalized = normalized.gsub(/\{([A-Za-z_][A-Za-z0-9_.-]*)\}/) { ":#{$1}" }
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized
-    end
-
-    private def strip_query_and_fragment(value : String) : String
-      end_idx = value.size
-      if query_idx = value.index("?")
-        end_idx = Math.min(end_idx, query_idx)
-      end
-      if fragment_idx = value.index("#")
-        end_idx = Math.min(end_idx, fragment_idx)
-      end
-      value[0...end_idx]
+      Noir::URLPath.normalize(normalized, Noir::URLPath::BRACE_DOTTED, replacement: ":\\1")
     end
 
     private def host_like_segment?(segment : String) : Bool

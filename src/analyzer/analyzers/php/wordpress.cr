@@ -142,7 +142,7 @@ module Analyzer::Php
           route = parts[1]?.try { |arg| resolve_string_expr(arg, src, klass, call_start) }
           if namespace && route
             full_path = build_rest_path(namespace, route)
-            path_params = extract_wp_path_params(full_path)
+            path_params = Noir::URLPath.params(full_path, Noir::URLPath::BRACE_WORD, unique: true)
             details = Details.new(PathInfo.new(path, offsets.line(call_start)))
 
             rest_handlers(parts[2]? || "", src, klass).each do |method, (arg_names, typed, guard)|
@@ -650,18 +650,6 @@ module Analyzer::Php
         end
       end
       out.to_s
-    end
-
-    private def extract_wp_path_params(route : String) : Array(Param)
-      params = [] of Param
-      seen = Set(String).new
-      route.scan(/\{(\w+)\}/) do |m|
-        name = m[1]
-        next if seen.includes?(name)
-        seen.add(name)
-        params << Param.new(name, "", "path")
-      end
-      params
     end
 
     # `Rules::SHARED_DEPTH_RAW` with a trailing empty dropped and, like

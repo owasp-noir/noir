@@ -133,7 +133,7 @@ module Analyzer::Perl
         end
         line_endpoints.each do |endpoint|
           endpoint.details = Details.new(PathInfo.new(file_path, index + 1))
-          extract_path_params(endpoint).each { |p| endpoint.push_param(p) unless p.name.empty? }
+          Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_STAR_HASH)
           attach_route_callees(endpoint, content, raw_lines[index], offsets[index], controller_callees, configured_base_for(file_path)) if include_callee
           endpoints << endpoint
         end
@@ -496,10 +496,7 @@ module Analyzer::Perl
       return leaf if prefix.empty?
       return prefix if leaf.empty?
 
-      base = prefix.size > 1 ? prefix.chomp('/') : prefix
-      tail = leaf.starts_with?('/') ? leaf : "/#{leaf}"
-      joined = "#{base}#{tail}"
-      joined.size > 1 && joined.ends_with?('/') ? joined.rchop : joined
+      Noir::URLPath.normalize(Noir::URLPath.join(prefix, leaf, :preserve_root_prefix), rooted: false, trim: true)
     end
 
     private def build_endpoint(path : String, verb : String) : Endpoint
@@ -546,14 +543,6 @@ module Analyzer::Perl
         verbs << verb if HTTP_VERBS.includes?(verb.downcase)
       end
       verbs
-    end
-
-    private def extract_path_params(endpoint : Endpoint) : Array(Param)
-      params = [] of Param
-      endpoint.url.scan(/[:*#]([A-Za-z_][A-Za-z0-9_]*)/) do |m|
-        params << Param.new(m[1], "", "path")
-      end
-      params
     end
 
     private def extract_params_from_line(line : String, method : String) : Array(Param)

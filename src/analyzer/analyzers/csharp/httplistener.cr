@@ -282,7 +282,7 @@ module Analyzer::CSharp
         literal = match[1]
         next unless looks_like_route_path?(literal)
 
-        route = normalize_route_path(literal)
+        route = Noir::URLPath.request_path(literal)
         paths << route unless paths.includes?(route)
       end
       paths
@@ -306,15 +306,6 @@ module Analyzer::CSharp
       true
     end
 
-    private def normalize_route_path(path : String) : String
-      normalized = path.split("?", 2).first
-      normalized = normalized.split("#", 2).first
-      normalized = "/" + normalized unless normalized.starts_with?("/")
-      normalized = normalized.gsub(/\/+/, "/")
-      normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
-      normalized.empty? ? "/" : normalized
-    end
-
     private def extract_tuple_case_candidates(line : String) : Array(Tuple(String, String))
       candidates = [] of Tuple(String, String)
       line.scan(/\bcase\s*\(\s*@?"([A-Za-z]+)"\s*,\s*@?"([^"]*)"\s*\)/) do |match|
@@ -323,7 +314,7 @@ module Analyzer::CSharp
         next unless HTTP_METHODS.includes?(method)
         next unless looks_like_route_path?(path)
 
-        candidates << {method, normalize_route_path(path)}
+        candidates << {method, Noir::URLPath.request_path(path)}
       end
       candidates.uniq
     end
@@ -389,7 +380,7 @@ module Analyzer::CSharp
       method = raw_method.upcase
       return unless HTTP_METHODS.includes?(method)
 
-      route = normalize_route_path(raw_route)
+      route = Noir::URLPath.request_path(raw_route)
       block, block_start = extract_route_block(lines, masked_lines, line_index)
 
       endpoint = Endpoint.new(route, method, Details.new(PathInfo.new(file, line_index + 1)))

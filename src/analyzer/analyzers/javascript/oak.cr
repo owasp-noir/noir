@@ -49,14 +49,7 @@ module Analyzer::Javascript
             endpoint.details = Details.new(PathInfo.new(path))
           end
 
-          if endpoint.url.includes?(":")
-            endpoint.url.scan(/:(\w+)/) do |m|
-              if m.size > 0
-                param = Param.new(m[1], "", "path")
-                endpoint.push_param(param)
-              end
-            end
-          end
+          Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_WORD)
           result << endpoint
         end
       rescue e
@@ -200,9 +193,7 @@ module Analyzer::Javascript
         endpoint = Endpoint.new(full_path, http_method)
         endpoint.details = Details.new(PathInfo.new(path, 1))
 
-        route_path.scan(/:(\w+)/) do |m|
-          endpoint.push_param(Param.new(m[1], "", "path")) if m.size > 0
-        end
+        Noir::URLPath.add_params(endpoint, route_path, Noir::URLPath::COLON_WORD)
 
         extract_oak_params_from_content(file_content, router_var || "app", match[2], route_path, endpoint)
 

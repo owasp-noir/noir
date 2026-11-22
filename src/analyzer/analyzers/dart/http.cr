@@ -126,7 +126,7 @@ module Analyzer::Dart
 
         new_endpoints = [] of Endpoint
         routes.each do |route_path, method|
-          normalized = normalize_path(route_path)
+          normalized = Noir::URLPath.normalize(Noir::URLPath.request_path(route_path), *Noir::URLPath::DOLLAR_SLOTS)
           next unless valid_route_path?(normalized)
 
           key = "#{method}:#{normalized}:#{index + 1}"
@@ -147,7 +147,7 @@ module Analyzer::Dart
             method_contexts << {method: guard_method, depth: next_depth, params: [] of Param, switch_case: false}
           end
           paths.each do |route_path|
-            normalized = normalize_path(route_path)
+            normalized = Noir::URLPath.normalize(Noir::URLPath.request_path(route_path), *Noir::URLPath::DOLLAR_SLOTS)
             path_contexts << {path: normalized, depth: next_depth, params: [] of Param, switch_case: false} if valid_route_path?(normalized)
           end
           if !new_endpoints.empty?
@@ -312,22 +312,9 @@ module Analyzer::Dart
       inherited_params.each do |param|
         endpoint.push_param(param)
       end
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
+      Noir::URLPath.add_params(endpoint, url, Noir::URLPath::BRACE_WORD)
       Noir::DartCalleeExtractor.attach_to(endpoint, callees)
       endpoint
-    end
-
-    private def normalize_path(route_path : String) : String
-      path = route_path.split("?", 2).first
-      path = path.split("#", 2).first
-      path = "/#{path}" unless path.starts_with?("/")
-      path = path.gsub(/\/+/, "/")
-      path = path[0...-1] if path.ends_with?("/") && path != "/"
-      path = path.gsub(/\$\{([A-Za-z_]\w*)\}/) { "{#{$1}}" }
-      path = path.gsub(/\$([A-Za-z_]\w*)/) { "{#{$1}}" }
-      path.empty? ? "/" : path
     end
 
     private def valid_route_path?(path : String) : Bool
@@ -381,7 +368,7 @@ module Analyzer::Dart
     private def replace_path_switch_context(contexts : Array(PathContext), depth : Int32, paths : Array(String))
       contexts.reject! { |context| context[:switch_case] && context[:depth] == depth }
       paths.each do |route_path|
-        normalized = normalize_path(route_path)
+        normalized = Noir::URLPath.normalize(Noir::URLPath.request_path(route_path), *Noir::URLPath::DOLLAR_SLOTS)
         contexts << {path: normalized, depth: depth, params: [] of Param, switch_case: true} if valid_route_path?(normalized)
       end
     end

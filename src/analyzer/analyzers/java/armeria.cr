@@ -12,6 +12,8 @@ require "../../../miniparsers/jvm_ts_helpers"
 module Analyzer::Java
   class Armeria < Analyzer
     analyzer_for "java_armeria"
+
+    PATH_SLOTS = {Noir::URLPath::BRACE_CATCH_ALL, Noir::URLPath::COLON_WORD}
     include Noir::JvmTsHelpers::Modifiers
 
     # Anchor only — the chain body is bounded by a depth-aware scan so
@@ -808,7 +810,7 @@ module Analyzer::Java
             params = route.params.reject { |param| param.param_type == "query" && path_vars.includes?(param.name) }
             endpoint = Endpoint.new(url_path, route.verb, params, details)
             route.callees.each { |(name, line)| endpoint.push_callee(Callee.new(name, path: path, line: line)) }
-            extract_path_parameters(url_path, endpoint)
+            Noir::URLPath.add_params(endpoint, url_path, *PATH_SLOTS)
             @result << endpoint
           end
         end
@@ -890,7 +892,7 @@ module Analyzer::Java
             collect_method_callees(method, content, path).each do |(name, callee_path, callee_line)|
               endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
             end
-            extract_path_parameters(url_path, endpoint)
+            Noir::URLPath.add_params(endpoint, url_path, *PATH_SLOTS)
             @result << endpoint
           end
         end
@@ -1169,24 +1171,6 @@ module Analyzer::Java
         end
       end
       buf
-    end
-
-    # Extract path parameters from URLs like /users/{userId} or /items/{itemId}/comments
-    # (`\*?` also captures the rest-path form `{*name}` as `name`).
-    private def extract_path_parameters(url : String, endpoint : Endpoint)
-      url.scan(/\{\*?(\w+)\}/) do |match|
-        if match.size > 0
-          param_name = match[1]
-          # Only add if not already present
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
-      end
-
-      url.scan(/:(\w+)/) do |match|
-        next unless match.size > 0
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
     end
 
     # Which registrations of one `Server.builder()` chain an `AuthService`

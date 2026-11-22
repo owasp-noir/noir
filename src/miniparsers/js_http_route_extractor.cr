@@ -1,4 +1,4 @@
-require "../models/endpoint"
+require "../utils/url_path/params"
 require "../miniparsers/js_route_extractor"
 require "../utils/top_level_split"
 require "../utils/char_offsets"
@@ -194,7 +194,7 @@ module Noir
 
       line = (newlines.bsearch_index { |newline| newline >= pos } || newlines.size) + 1
       endpoint = Endpoint.new(hit.path, hit.method, Details.new(PathInfo.new(file_path, line)))
-      push_path_params(endpoint)
+      Noir::URLPath.add_params(endpoint, endpoint.url, Noir::URLPath::COLON_WORD)
       extract_params(handler, hit, endpoint, siblings) if handler
       endpoints << endpoint
     end
@@ -1124,13 +1124,6 @@ module Noir
       param
     end
 
-    private def self.push_path_params(endpoint : Endpoint) : Nil
-      endpoint.url.scan(/:(\w+)/) do |match|
-        next unless match.size > 1
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-    end
-
     private def self.normalize_method(raw_method : String) : String
       method = raw_method.upcase
       method = "DELETE" if method == "DEL"
@@ -1144,11 +1137,7 @@ module Noir
       return "" if path.includes?(" ")
       return "" if path.size > 300
 
-      path = path.split("?", 2).first
-      path = path.split("#", 2).first
-      path = path.gsub(/\/+/, "/")
-      path = path[0...-1] if path.ends_with?("/") && path != "/"
-      path.empty? ? "/" : path
+      Noir::URLPath.request_path(path)
     end
 
     private def self.split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))

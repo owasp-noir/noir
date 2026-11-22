@@ -122,7 +122,7 @@ module Analyzer::Java
       route_path = resolve_string(path_arg, content, constants)
       # The JDK requires '/' as the first character of a context path.
       return unless route_path && route_path.starts_with?('/')
-      route_path = normalize_path(route_path)
+      route_path = Noir::URLPath.normalize(route_path.rstrip, rooted: false, collapse: true, trim: true)
       return unless valid_path?(route_path)
 
       line = Noir::TreeSitter.node_start_row(call) + 1
@@ -651,12 +651,6 @@ module Analyzer::Java
 
     private def simple_name(type_text : String) : String
       type_text.split('<').first.split('.').last.strip
-    end
-
-    private def normalize_path(path : String) : String
-      np = path.rstrip.gsub(%r{/+}, "/")
-      np = np[0...-1] if np.ends_with?("/") && np != "/"
-      np
     end
 
     private def valid_path?(path : String) : Bool

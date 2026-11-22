@@ -271,3 +271,5 @@ module Noir
     end
   end
 end
+
+require "./url_path/route_patterns"

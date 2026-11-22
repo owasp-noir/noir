@@ -284,7 +284,7 @@ module Analyzer::Zig
 
     private def emit_range(path : String, text : String, text_chars : Array(Char), chars : Array(Char), offset : Int32, url : String, method : String, body_start : Int32, body_end : Int32, include_callee : Bool)
       line = Noir::ZigCalleeExtractor.line_at(text, offset)
-      endpoint = Endpoint.new(url, method, extract_path_params(url), Details.new(PathInfo.new(path, line)))
+      endpoint = Endpoint.new(url, method, Noir::URLPath.params(url, Noir::URLPath::COLON_IDENT), Details.new(PathInfo.new(path, line)))
 
       if include_callee
         body = slice(chars, body_start, body_end)
@@ -367,10 +367,6 @@ module Analyzer::Zig
       end
 
       switch_close
-    end
-
-    private def extract_path_params(url : String) : Array(Param)
-      url.scan(/:([A-Za-z_]\w*)/).map { |m| Param.new(m[1], "", "path") }
     end
 
     private def unescape_string(value : String) : String

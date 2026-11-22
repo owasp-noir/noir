@@ -278,16 +278,9 @@ module Analyzer::R
     end
 
     private def normalize_path(raw_path : String) : Tuple(String, Array(String))
-      path_params = [] of String
-      # R plumber path parameters are in angle brackets: <id> or <id:int>
-      # Replace <param:type> or <param> with :param
-      normalized = raw_path.gsub(/<([^>]+)>/) do |match|
-        inside = match[1...-1] # Strip angle brackets
-        param_name = inside.split(':').first.strip
-        path_params << param_name
-        ":#{param_name}"
+      Noir::URLPath.rewrite_names(raw_path, Noir::URLPath::ANGLE_BODY, colon: true) do |match|
+        match[1].split(':').first.strip
       end
-      {normalized, path_params}
     end
 
     private def parse_programmatic_routes(path : String, line : String, line_num : Int32)

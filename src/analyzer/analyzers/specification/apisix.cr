@@ -64,13 +64,13 @@ module Analyzer::Specification
     private def route_paths(route) : Array(String)
       paths = [] of String
       if uri = route["uri"]?.try(&.as_s?)
-        normalized = normalize_path(uri)
+        normalized = Noir::URLPath.normalize(uri.strip, empty: "")
         paths << normalized unless normalized.empty?
       end
       if uris = route["uris"]?.try(&.as_a?)
         uris.each do |uri_node|
           if uri_text = uri_node.as_s?
-            normalized = normalize_path(uri_text)
+            normalized = Noir::URLPath.normalize(uri_text.strip, empty: "")
             paths << normalized unless normalized.empty?
           end
         end
@@ -130,13 +130,6 @@ module Analyzer::Specification
       return ["ANY"] if methods.empty?
       return ["ANY"] if methods.includes?("*")
       methods.uniq
-    end
-
-    private def normalize_path(path : String) : String
-      stripped = path.strip
-      return "" if stripped.empty?
-      return stripped if stripped.starts_with?("/")
-      "/" + stripped
     end
   end
 end

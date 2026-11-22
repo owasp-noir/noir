@@ -1901,7 +1901,7 @@ module Analyzer::Python
           FAB_MODEL_REST_ROUTES.each do |handler, method, suffix|
             next unless fab_route_served?(handler, include_methods, exclude_methods)
             next if exposes.any? { |_, expose| expose.handler == handler }
-            normalized_path, path_params = normalize_flask_path_params(Helper.normalized_join(base, suffix))
+            normalized_path, path_params = Noir::URLPath.rewrite_params(Helper.normalized_join(base, suffix), Noir::URLPath::ANGLE_CONVERTER_FIRST, unique: true)
             endpoint = Endpoint.new(normalized_path, method, path_params,
               Details.new(PathInfo.new(decl.path, decl.line_index + 1)))
             # Flask-AppBuilder stacks `@protect()` on each of these: a
@@ -1919,7 +1919,7 @@ module Analyzer::Python
           # it as `url_prefix.rstrip("/") + rule`: `@expose("/")` on
           # `route_base = "/api/v1/chart"` is `/api/v1/chart/`, WITH the
           # trailing slash (Superset's own OpenAPI spells it that way).
-          normalized_path, path_params = normalize_flask_path_params(Helper.normalized_join(base, expose.route_path))
+          normalized_path, path_params = Noir::URLPath.rewrite_params(Helper.normalized_join(base, expose.route_path), Noir::URLPath::ANGLE_CONVERTER_FIRST, unique: true)
           def_line = find_def_line(lines, expose.line_index)
           codeblock = def_line.try { |index| parse_code_block(lines[index..]) }
           expose.methods.each do |method|
@@ -1989,17 +1989,6 @@ module Analyzer::Python
 
     private def join_flask_paths(prefix : ::String, path : ::String) : ::String
       path == "/" ? Helper.normalize_path(prefix) : Helper.normalized_join(prefix, path)
-    end
-
-    private def normalize_flask_path_params(path : ::String) : Tuple(::String, Array(Param))
-      params = [] of Param
-      normalized = path.gsub(/<(?:(?:[^:<>]+):)?([A-Za-z_][A-Za-z0-9_]*)>/) do
-        name = $~[1]
-        params << Param.new(name, "", "path") unless params.any? { |param| param.name == name && param.param_type == "path" }
-        "{#{name}}"
-      end
-
-      {normalized, params}
     end
 
     private def extract_add_url_rule_function_name(args_str : ::String) : ::String

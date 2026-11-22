@@ -108,7 +108,7 @@ class EndpointOptimizer
       # No technology at all still scans: callers and specs build endpoints
       # before a framework is known, and `<int:id>` there is the placeholder.
       if angle_placeholder_tech?(endpoint.details.technology)
-        url.scan(ANGLE_PLACEHOLDER_RE) do |match|
+        url.scan(Noir::URLPath::ANGLE_BODY) do |match|
           param = angle_bracket_param(match[1], endpoint)
           # Skip regex fragments. Play declares constrained path params as
           # `$name<regex>`, so the framework analyzer already recorded
@@ -144,9 +144,8 @@ class EndpointOptimizer
   # (`:id`, `{id:\d+}`, `<int:id>`, `*path`) and the param name it declares.
   private record PathPlaceholder, start : Int32, stop : Int32, name : String
 
-  COLON_SEGMENT_RE     = /\/:([^\/{}]+)/
-  ANGLE_PLACEHOLDER_RE = /<([^>]+)>/
-  SPLAT_SEGMENT_RE     = /\/\*([^\/]+)/
+  COLON_SEGMENT_RE = /\/:([^\/{}]+)/
+  SPLAT_SEGMENT_RE = /\/\*([^\/]+)/
 
   # A `:name` param name. Hyphens are part of the identifier — kebab-case
   # path params are idiomatic in Clojure (`/:artifact-id`, `/:group-id`) and

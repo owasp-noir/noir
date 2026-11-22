@@ -183,10 +183,10 @@ module Analyzer::Python
               codeblock = parse_code_block(lines[i..])
               body_lines = codeblock ? codeblock.split("\n") : [] of ::String
               params = extract_request_params(body_lines, http_method)
-              path_params_from_url(route_path).each { |p| params << p }
+              Noir::URLPath.params(route_path, Noir::URLPath::BRACE_WITH_CONSTRAINT).each { |p| params << p }
 
               details = Details.new(PathInfo.new(route_file_path, route_line + 1))
-              endpoint = Endpoint.new(normalize_path(route_path), http_method, params)
+              endpoint = Endpoint.new(Noir::URLPath.normalize(route_path, Noir::URLPath::BRACE_TYPED_ASCII, rooted: false), http_method, params)
               endpoint.details = details
 
               push_callees_from(
@@ -276,14 +276,6 @@ module Analyzer::Python
       classes
     end
 
-    private def path_params_from_url(route_path : ::String) : Array(Param)
-      params = [] of Param
-      route_path.scan(/\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[^}]+)?\}/) do |match|
-        params << Param.new(match[1], "", "path")
-      end
-      params
-    end
-
     private def extract_static_route_path(line : ::String) : ::String?
       call_match = line.match(/\.add_static_route\s*\((.*)\)\s*$/m)
       return unless call_match
@@ -302,20 +294,11 @@ module Analyzer::Python
     end
 
     private def static_route_path(route_path : ::String) : ::String
-      normalized = normalize_path(route_path)
+      normalized = Noir::URLPath.normalize(route_path, Noir::URLPath::BRACE_TYPED_ASCII, rooted: false)
       normalized = "/#{normalized}" unless normalized.starts_with?("/")
       normalized = normalized.gsub(/\/+/, "/")
       normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
       normalized == "/" ? "/*" : "#{normalized}/*"
-    end
-
-    # Strip Falcon type converters from the URL so `/things/{id:int}` is
-    # reported as `/things/{id}`, matching how the endpoint is actually
-    # invoked by clients.
-    private def normalize_path(route_path : ::String) : ::String
-      route_path.gsub(/\{([a-zA-Z_][a-zA-Z0-9_]*):[^}]+\}/) do |_match|
-        "{#{$~[1]}}"
-      end
     end
 
     # Memoized per media-variable name (`data`, `body`, ...): the patterns

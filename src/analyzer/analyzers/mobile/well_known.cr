@@ -131,7 +131,7 @@ module Analyzer::Mobile
 
     private def emit_link(pattern : String, path : String, package : String,
                           excluded : Bool, seen : Set(String), params : Array(Param) = [] of Param)
-      url = normalize_path(pattern)
+      url = Noir::URLPath.normalize(pattern.strip, empty: "")
       return if url.empty?
       return unless seen.add?(url)
 
@@ -171,15 +171,6 @@ module Analyzer::Mobile
         hash.each_key { |name| params << Param.new(name, "", "query") }
       end
       params
-    end
-
-    # Ensures a leading slash and keeps glob wildcards (`*`, `?`) as-is, the
-    # closest Noir path form for these host-relative patterns.
-    private def normalize_path(pattern : String) : String
-      pattern = pattern.strip
-      return "" if pattern.empty?
-      pattern = "/#{pattern}" unless pattern.starts_with?('/')
-      pattern
     end
 
     private def truthy?(node : JSON::Any?) : Bool

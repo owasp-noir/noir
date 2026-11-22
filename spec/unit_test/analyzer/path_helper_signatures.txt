@@ -1,0 +1,90 @@
+src/analyzer/analyzers/cfml/coldbox.cr: private def normalize_placeholders(pattern : String) : String
+src/analyzer/analyzers/clojure/compojure.cr: private def normalize_route_path(route_path : String) : String
+src/analyzer/analyzers/cpp/crow.cr: private def join_blueprint_prefix(prefix : String?, rule : String) : String
+src/analyzer/analyzers/cpp/crow.cr: private def normalize_path(route_path : String) : Tuple(String, Array(Param))
+src/analyzer/analyzers/cpp/drogon.cr: private def join_controller_path(prefix : String?, pattern : String) : String
+src/analyzer/analyzers/cpp/drogon.cr: private def normalize_drogon_path(raw : String, via_regex : Bool = false) : Tuple(String, Array(Param), Array(Param))
+src/analyzer/analyzers/csharp/aspnet_core_mvc.cr: private def normalize_route(route : String) : String
+src/analyzer/analyzers/csharp/minimal_api_support.cr: private def join_route_parts(*parts : RoutePart) : RoutePart
+src/analyzer/analyzers/csharp/minimal_api_support.cr: private def join_route_parts_array(parts : Array(RoutePart)) : RoutePart
+src/analyzer/analyzers/go/chi.cr: private def mount_join(prefix : String, url : String) : String
+src/analyzer/analyzers/go/go_restful.cr: def normalize_restful_path(path : String) : String
+src/analyzer/analyzers/go/iris.cr: def normalize_iris_path(path : String) : String
+src/analyzer/analyzers/java/dropwizard.cr: private def normalize_root_path(path : String?) : String
+src/analyzer/analyzers/java/spring.cr: private def java_path_variables(method : LibTreeSitter::TSNode, content : String) : Array(String)
+src/analyzer/analyzers/java/struts2.cr: private def namespace_join(prefix : String, suffix : String) : String
+src/analyzer/analyzers/java/struts2.cr: private def normalize_path(path : String) : String
+src/analyzer/analyzers/java/wicket.cr: private def join_mount_paths(base_path : String, child_path : String) : String
+src/analyzer/analyzers/java/wicket.cr: private def normalize_mount_path(path : String) : String
+src/analyzer/analyzers/javascript/express.cr: private def drop_undeclared_path_params(endpoint : Endpoint) : Endpoint
+src/analyzer/analyzers/javascript/nestjs.cr: private def combine_paths(base : String, route : String) : String
+src/analyzer/analyzers/javascript/nestjs.cr: private def join_router_prefix(prefix : String, url : String) : String
+src/analyzer/analyzers/javascript/nestjs.cr: private def join_router_prefix_after_version(prefix : String, url : String, file : String?) : String
+src/analyzer/analyzers/javascript/nestjs.cr: private def normalized_global_prefix(config : GlobalPrefixConfig) : String?
+src/analyzer/analyzers/javascript/nextjs.cr: private def convert_segments(relative : String) : String
+src/analyzer/analyzers/javascript/nextjs.cr: private def normalize_url(url : String) : String
+src/analyzer/analyzers/javascript/nuxtjs.cr: private def convert_nuxt_segments(path : String) : String
+src/analyzer/analyzers/javascript/remix.cr: private def normalize_segment(seg : String) : String
+src/analyzer/analyzers/kotlin/ktor.cr: private def ktor_path_param_name(body : String) : String?
+src/analyzer/analyzers/lua/lapis.cr: private def normalize_lapis_url(url : String) : String
+src/analyzer/analyzers/lua/lor.cr: private def join_prefix(prefix : String, relative : String) : String
+src/analyzer/analyzers/mobile/android.cr: private def normalize_path(data : XML::Node, strings : Hash(String, String),
+src/analyzer/analyzers/perl/catalyst.cr: private def join_url(prefix : String, leaf : String) : String
+src/analyzer/analyzers/perl/dancer2.cr: private def join_url(prefix : String, leaf : String) : String
+src/analyzer/analyzers/perl/dancer2.cr: private def normalize_prefix(prefix : String) : String
+src/analyzer/analyzers/perl/mojolicious.cr: private def join_url(prefix : String, leaf : String) : String
+src/analyzer/analyzers/perl/mojolicious.cr: private def normalize_placeholders(path : String) : String
+src/analyzer/analyzers/php/cakephp.cr: private def extract_route_params(route_path : String) : Array(Param)
+src/analyzer/analyzers/php/cakephp.cr: private def normalize_controller_segment(segment : String) : String
+src/analyzer/analyzers/php/codeigniter.cr: private def extract_ci_path_params(route_path : String) : Array(Param)
+src/analyzer/analyzers/php/codeigniter.cr: private def normalize_route(route_path : String) : String
+src/analyzer/analyzers/php/laminas.cr: private def extract_laminas_path_params(route_path : String, constraints = Hash(String, String).new) : Array(Param)
+src/analyzer/analyzers/php/laminas.cr: private def normalize_laminas_route_path(route : String, hostname : Bool = false) : String
+src/analyzer/analyzers/php/phalcon.cr: private def normalize_phalcon_route_path(route : String) : String
+src/analyzer/analyzers/php/symfony.cr: private def combine_symfony_paths(class_prefixes : Array(Tuple(String?, String))?,
+src/analyzer/analyzers/php/symfony.cr: private def normalize_symfony_placeholders(path : String) : String
+src/analyzer/analyzers/php/wordpress.cr: private def normalize_wp_route(route : String) : String
+src/analyzer/analyzers/python/cherrypy.cr: private def append_path_params(url : ::String, names : Array(::String)) : ::String
+src/analyzer/analyzers/python/django.cr: private def join_url_parts(*parts : ::String) : ::String
+src/analyzer/analyzers/python/django.cr: private def join_url_parts(parts : Array(::String)) : ::String
+src/analyzer/analyzers/python/django.cr: private def normalize_django_route(route : ::String) : ::String
+src/analyzer/analyzers/python/django_ninja.cr: private def normalize_mount_prefix(prefix : ::String) : ::String
+src/analyzer/analyzers/python/fastapi.cr: def join_prefix(url : ::String) : ::String
+src/analyzer/analyzers/python/fastapi.cr: private def combine_fastapi_router_prefixes(parent : ::String, own : ::String) : ::String
+src/analyzer/analyzers/python/flask.cr: private def join_flask_paths(prefix : ::String, path : ::String) : ::String
+src/analyzer/analyzers/python/http_server.cr: private def find_path_param_in_branch(body_lines : Array(::String), branch_line_idx : Int32) : ::String?
+src/analyzer/analyzers/python/python_helper.cr: def normalize_path(path : ::String) : ::String
+src/analyzer/analyzers/python/starlette.cr: private def normalize_route_prefix(parent_prefix : ::String, child_prefix : ::String) : ::String
+src/analyzer/analyzers/python/starlette_endpoint_support.cr: private def extract_path_params(route_path : ::String) : Array(Param)
+src/analyzer/analyzers/python/starlette_endpoint_support.cr: private def normalize_route_url(prefix : ::String, route_path : ::String) : ::String
+src/analyzer/analyzers/python/tornado.cr: private def extract_path_params_from_method_signature(def_line : ::String, route_path : ::String) : Array(Param)
+src/analyzer/analyzers/r/plumber.cr: private def normalize_path(raw_path : String) : Tuple(String, Array(String))
+src/analyzer/analyzers/ruby/grape.cr: private def extract_path_params(raw : String) : Array(String)
+src/analyzer/analyzers/ruby/grape.cr: private def normalize_grape_route_method(raw : String) : String
+src/analyzer/analyzers/ruby/padrino.cr: private def normalize_padrino_mount_prefix(raw : String) : String
+src/analyzer/analyzers/ruby/rails.cr: private def normalize_mount_prefix(at : String) : String
+src/analyzer/analyzers/ruby/rails.cr: private def normalize_route_prefix(path : String) : String
+src/analyzer/analyzers/ruby/rails.cr: private def promote_path_params(params : Array(Param), names : Array(String)) : Array(Param)
+src/analyzer/analyzers/ruby/roda.cr: private def apply_path_params(endpoint : Endpoint, stack : Array(PrefixEntry))
+src/analyzer/analyzers/rust/actix_web.cr: def extract_path_params(route : String, endpoint : Endpoint)
+src/analyzer/analyzers/rust/actix_web.cr: private def canonicalize_actix_path(route : String) : String
+src/analyzer/analyzers/rust/axum.cr: private def nest_join(prefix : String, path : String) : String
+src/analyzer/analyzers/rust/poem.cr: def normalize_path(route : String) : String
+src/analyzer/analyzers/rust/rocket.cr: private def canonicalize_rocket_path(route : String) : String
+src/analyzer/analyzers/rust/rwf.cr: private def join_engine_path(prefix : String, route_path : String) : String
+src/analyzer/analyzers/rust/salvo.cr: private def canonicalize_salvo_path(route : String) : String
+src/analyzer/analyzers/rust/salvo.cr: private def join_router_path(prefix : String, seg : String) : String
+src/analyzer/analyzers/scala/akka.cr: private def path_param_names(line : String) : Array(String)
+src/analyzer/analyzers/scala/play.cr: private def join_included_route(prefix : String, suffix : String) : String
+src/analyzer/analyzers/scala/play.cr: private def normalize_sird_path(pattern : String) : Tuple(String, Array(String))
+src/analyzer/analyzers/specification/har.cr: private def normalize_dynamic_path(path : String) : String
+src/analyzer/analyzers/specification/har.cr: private def normalized_uri_path(uri : URI) : String
+src/analyzer/analyzers/specification/nginx.cr: private def normalize_location_path(path : String) : String
+src/analyzer/analyzers/specification/postman.cr: private def normalize_path(path : String) : String
+src/analyzer/analyzers/specification/schema_api_common.cr: def normalize_colon_path(path : String) : String
+src/analyzer/analyzers/specification/typespec.cr: private def join_route(parent : String, segment : String) : String
+src/analyzer/analyzers/swift/vapor.cr: private def joined_route_call(masked_lines : Array(String), code_lines : Array(String), index : Int32) : Tuple(String, String)
+src/analyzer/analyzers/typescript/tanstack_router.cr: private def combine_route_paths(parent : String, child : String) : String
+src/analyzer/analyzers/typescript/tanstack_router.cr: private def normalize_path(path : String) : String
+src/analyzer/analyzers/typescript/trpc.cr: private def normalize_v9_merge_prefix(prefix : String?, child : String) : String
+src/analyzer/analyzers/zig/tokamak.cr: private def join_route(prefix : String, route : String) : String

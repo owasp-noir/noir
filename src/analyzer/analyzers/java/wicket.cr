@@ -8,6 +8,8 @@ module Analyzer::Java
   class Wicket < Analyzer
     analyzer_for "java_wicket"
 
+    MOUNT_SLOTS = {/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/, /#\{([A-Za-z_][A-Za-z0-9_]*)\}/, Noir::URLPath::BRACE_TYPED_ASCII}
+
     JAVA_EXTENSION = "java"
     WICKET_MARKERS = [
       "org.apache.wicket",
@@ -524,7 +526,7 @@ module Analyzer::Java
     end
 
     private def add_endpoint(path : String, file_path : String, line : Int32, seen : Set(String), method : String, callees : Array(Callee) = [] of Callee, extra_params : Array(Param) = [] of Param)
-      params = path_params(path)
+      params = Noir::URLPath.params(path, Noir::URLPath::BRACE_ASCII, unique: true)
       extra_params.each do |param|
         next if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
         params << param
@@ -542,15 +544,6 @@ module Analyzer::Java
     private def endpoint_key(endpoint : Endpoint) : String
       params = endpoint.params.map { |param| "#{param.param_type}:#{param.name}" }.sort!.join(",")
       "#{endpoint.method}::#{endpoint.url}::#{params}"
-    end
-
-    private def path_params(path : String) : Array(Param)
-      params = [] of Param
-      path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)\}/) do |match|
-        name = match[1]
-        params << Param.new(name, "", "path") unless params.any? { |param| param.name == name && param.param_type == "path" }
-      end
-      params
     end
 
     private def mount_path_values(args : String,
@@ -742,13 +735,7 @@ module Analyzer::Java
     end
 
     private def normalize_mount_path(path : String) : String
-      normalized = path.strip
-      normalized = normalized.gsub(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/, "{\\1}")
-      normalized = normalized.gsub(/#\{([A-Za-z_][A-Za-z0-9_]*)\}/, "{\\1}")
-      normalized = normalized.gsub(/\{([A-Za-z_][A-Za-z0-9_]*):[^}]+\}/, "{\\1}")
-      normalized = normalized.gsub(%r{/+}, "/")
-      return "/" if normalized.empty?
-      normalized.starts_with?("/") ? normalized : "/#{normalized}"
+      Noir::URLPath.normalize(path.strip, *MOUNT_SLOTS, collapse: true)
     end
 
     private def join_mount_paths(base_path : String, child_path : String) : String

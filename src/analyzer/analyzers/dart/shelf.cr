@@ -228,7 +228,11 @@ module Analyzer::Dart
 
         owner = enclosing_class(classes, match_begin)
         prefix = owner ? prefixes[owner]? : nil
-        route_path = normalize_path(prefix ? mount_join(prefix, normalize_path(literal)) : literal)
+        route_path = Noir::URLPath.normalize(literal, Noir::URLPath::ANGLE_PIPE)
+        if prefix
+          mounted = Noir::URLPath.join(prefix, route_path, :root_child)
+          route_path = Noir::URLPath.normalize(mounted, Noir::URLPath::ANGLE_PIPE)
+        end
 
         line = co.line(match_begin)
         callees = fco ? annotation_callees(fco, close_paren, path) : [] of Noir::DartCalleeExtractor::Entry
@@ -261,7 +265,7 @@ module Analyzer::Dart
         # bracketed by any class body — attribute it to the class whose
         # declaration immediately follows.
         owner = class_after(classes, match_begin)
-        prefixes[owner] = normalize_path(literal) if owner
+        prefixes[owner] = Noir::URLPath.normalize(literal, Noir::URLPath::ANGLE_PIPE) if owner
       end
       prefixes
     end
@@ -480,14 +484,14 @@ module Analyzer::Dart
         return if args.size < 2
         child = extract_mount_child(args[1])
         return unless child
-        mounts << {prefix: normalize_path(literal), child: child}
+        mounts << {prefix: Noir::URLPath.normalize(literal, Noir::URLPath::ANGLE_PIPE), child: child}
       else
         verbs = method == "all" ? ANY_ROUTE_HTTP_METHODS : [HTTP_METHOD_MAP[method]?].compact
         return if verbs.empty?
         callees = fco && args.size >= 2 ? handler_callees(args[1], fco, close_paren, path, line) : [] of Noir::DartCalleeExtractor::Entry
         params = args.size >= 2 ? handler_params(args[1], co, close_paren, defs) : [] of Param
         verbs.each do |verb|
-          routes << {verb: verb, path: normalize_path(literal), line: line, file: path, callees: callees, params: params}
+          routes << {verb: verb, path: Noir::URLPath.normalize(literal, Noir::URLPath::ANGLE_PIPE), line: line, file: path, callees: callees, params: params}
         end
       end
     end
@@ -559,12 +563,6 @@ module Analyzer::Dart
       cleaned
     end
 
-    # `<id>` → `{id}` ; `<id|[0-9]+>` → `{id}` ; keep slashes.
-    private def normalize_path(path : String) : String
-      base = path.starts_with?('/') ? path : "/" + path
-      base.gsub(/<([A-Za-z_]\w*)(?:\|[^>]*)?>/) { |_, m| "{#{m[1]}}" }
-    end
-
     private def assemble_endpoints(routers : Hash(RouterKey, RouterInfo)) : Array(Endpoint)
       mounted_children = Set(RouterKey).new
       routers.each do |key, info|
@@ -598,24 +596,17 @@ module Analyzer::Dart
       info = routers[key]?
       if info
         info[:routes].each do |route|
-          full_path = mount_join(prefix, route[:path])
+          full_path = Noir::URLPath.join(prefix, route[:path], :root_child)
           endpoint = Helper.build_endpoint(full_path, route[:verb], route[:file], route[:line], route[:callees])
           route[:params].each { |param| endpoint.push_param(param) }
           endpoints << endpoint
         end
         info[:mounts].each do |mnt|
-          child_prefix = mount_join(prefix, mnt[:prefix])
+          child_prefix = Noir::URLPath.join(prefix, mnt[:prefix], :root_child)
           emit_router(router_key(key[0], mnt[:child]), child_prefix, routers, endpoints, visited)
         end
       end
       visited.delete(key)
-    end
-
-    private def mount_join(prefix : String, sub : String) : String
-      left = prefix.rchop('/')
-      right = sub.starts_with?('/') ? sub : "/#{sub}"
-      result = "#{left}#{right}"
-      result.empty? ? "/" : result
     end
 
     # ---------- Source-string utilities ----------

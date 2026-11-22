@@ -143,10 +143,10 @@ module Analyzer::Specification
         scan_matchers(alt) do |name, args|
           case name.downcase
           when "path", "pathprefix"
-            args.each { |arg| paths << normalize_path(arg) }
+            args.each { |arg| paths << Noir::URLPath.normalize(arg.strip) }
           when "pathregexp"
             args.each do |arg|
-              path = normalize_path(Noir::URLPath.strip_regex_anchors(arg))
+              path = Noir::URLPath.normalize(Noir::URLPath.strip_regex_anchors(arg).strip)
               paths << path
               regex_paths << path if Noir::URLPath.regex_route?(arg.strip)
             end
@@ -223,12 +223,6 @@ module Analyzer::Specification
 
     private def split_top_level(input : String, delimiter : String) : Array(String)
       Noir::TopLevelSplit.split(input, delimiter, SPLIT_RULES)
-    end
-
-    private def normalize_path(path : String) : String
-      cleaned = path.strip
-      return "/" if cleaned.empty?
-      cleaned.starts_with?('/') ? cleaned : "/#{cleaned}"
     end
 
     private def strip_quotes(value : String) : String

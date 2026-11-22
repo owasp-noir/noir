@@ -430,6 +430,11 @@ module Analyzer::Php
       m ? m[1] : nil
     end
 
+    private def normalize_phalcon_route_path(route : String) : String
+      normalized = Noir::URLPath.normalize(route, *Noir::URLPath::BRACE_THEN_COLON, collapse: true, trim: true)
+      normalize_php_interpolation(normalized)
+    end
+
     private def class_prefix_for_position(scopes : Array(PhalconClassScope), pos : Int32) : String
       scope = scopes.find { |s| pos >= s.body_start && pos < s.body_end }
       scope ? scope.path : ""
@@ -515,17 +520,6 @@ module Analyzer::Php
         names << m[1]
       end
       names
-    end
-
-    private def normalize_phalcon_route_path(route : String) : String
-      # `{id:[0-9]+}` -> `{id}`; legacy positional placeholders
-      # `/:controller/:action/:params` -> `/{controller}/{action}/{params}`.
-      normalized = route.gsub(/\{(\w+):[^}]+\}/) { |_| "{#{$~[1]}}" }
-      normalized = normalized.gsub(/:([A-Za-z_]\w*)/) { |_| "{#{$~[1]}}" }
-      normalized = "/" + normalized unless normalized.starts_with?("/")
-      normalized = normalized.gsub(/\/+/, "/")
-      normalized = normalized.chomp('/') if normalized.size > 1
-      normalize_php_interpolation(normalized)
     end
 
     # Request/response accessors a Phalcon handler (Micro closure, MVC

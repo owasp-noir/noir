@@ -203,8 +203,8 @@ module Analyzer::Python
                                           route_file : ::String,
                                           line : Int32) : Array(Endpoint)
       endpoints = [] of Endpoint
-      full_url = normalize_masonite_path(Helper.normalized_join(prefix, url))
-      path_params = masonite_path_params(url)
+      full_url = Noir::URLPath.normalize(Helper.normalized_join(prefix, url), Noir::URLPath::SIGIL_SEGMENT, collapse: true, trim: true)
+      path_params = Noir::URLPath.names(url, Noir::URLPath::SIGIL_SEGMENT).reject!(&.empty?).map { |name| Param.new(name, "", "path") }
       resolved = controller_raw ? parse_controller_ref(controller_raw) : nil
 
       methods.each do |http_method|
@@ -361,38 +361,6 @@ module Analyzer::Python
       end
 
       params
-    end
-
-    # `@name` (required) / `?name` (optional) segments, each with an
-    # optional `:compiler` suffix (`@id:integer`), are Masonite's path
-    # parameters.
-    private def masonite_path_params(url : ::String) : Array(Param)
-      params = [] of Param
-      url.split('/').each do |segment|
-        next unless segment.starts_with?('@') || segment.starts_with?('?')
-        name = segment[1..].split(':').first
-        next if name.empty?
-        params << Param.new(name, "", "path")
-      end
-      params
-    end
-
-    private def normalize_masonite_path(url : ::String) : ::String
-      segments = url.split('/').map do |segment|
-        if segment.starts_with?('@') || segment.starts_with?('?')
-          "{#{segment[1..].split(':').first}}"
-        else
-          segment
-        end
-      end
-      normalized = Helper.normalize_path(segments.join('/'))
-
-      # Masonite strips a trailing slash from every compiled route except
-      # the bare root (`HTTPRoute.__init__`) — a group whose inner route
-      # is `"/"` (e.g. `Route.group([Route.get("/", ...)],
-      # prefix="/admin/users")`) would otherwise serve `/admin/users`
-      # but Noir would record `/admin/users/`.
-      normalized.size > 1 && normalized.ends_with?("/") ? normalized[0..-2] : normalized
     end
 
     # Static assets — Masonite maps local directories to URL prefixes via

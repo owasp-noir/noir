@@ -184,7 +184,7 @@ module Analyzer::Cfml
     end
 
     private def emit(path : String, url : String, method : String, line : Int32)
-      normalized = normalize(url)
+      normalized = Noir::URLPath.normalize(url, PLACEHOLDER_RE, collapse: true, trim: true, replacement: ":\\1")
       return if normalized.empty?
       return unless HTTP_VERBS.includes?(method)
 
@@ -197,16 +197,6 @@ module Analyzer::Cfml
       return prefix if trimmed.empty?
 
       "#{prefix}/#{trimmed}"
-    end
-
-    # `[key]` is Wheels' placeholder spelling; rewrite it to the `:name`
-    # form the optimizer already registers as a path param.
-    private def normalize(url : String) : String
-      normalized = url.gsub(PLACEHOLDER_RE) { ":#{$~[1]}" }
-      normalized = normalized.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized = normalized.chomp('/') if normalized.size > 1
-      normalized
     end
   end
 end

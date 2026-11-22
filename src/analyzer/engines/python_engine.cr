@@ -148,14 +148,8 @@ module Analyzer::Python
     # `("/api/v1/", "users")` → `/api/v1/users`. A trailing slash on `own`
     # is preserved.
     protected def combine_router_prefixes(parent : ::String, own : ::String) : ::String
-      return own if parent.empty?
       return parent if own.empty?
-      normalized_parent = parent.ends_with?("/") ? parent[0..-2] : parent
-      if own.starts_with?("/")
-        "#{normalized_parent}#{own}"
-      else
-        "#{normalized_parent}/#{own}"
-      end
+      Noir::URLPath.join(parent, own, :chomp_prefix)
     end
 
     # The `/*` wildcard a static-files mount serves under. Adapters whose

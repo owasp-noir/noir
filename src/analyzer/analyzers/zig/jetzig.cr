@@ -135,7 +135,7 @@ module Analyzer::Zig
         action = m[4]
 
         line = Noir::ZigCalleeExtractor.line_at(text, m.begin(0) || 0)
-        endpoint = Endpoint.new(url, method, path_params(url), Details.new(PathInfo.new(path, line)))
+        endpoint = Endpoint.new(url, method, Noir::URLPath.params(url, Noir::URLPath::COLON_IDENT), Details.new(PathInfo.new(path, line)))
 
         if include_callee
           view_path = Noir::PathScope.expand(File.join(dir, import_rel))
@@ -158,10 +158,6 @@ module Analyzer::Zig
         return Noir::ZigCalleeExtractor.callees_for_body(body[:body], body[:path], body[:start_line])
       end
       [] of Noir::ZigCalleeExtractor::Entry
-    end
-
-    private def path_params(url : String) : Array(Param)
-      url.scan(/:([A-Za-z_]\w*)/).map { |m| Param.new(m[1], "", "path") }
     end
 
     # Resource path = the view file path below `app/views/`, extension

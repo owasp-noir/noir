@@ -112,7 +112,7 @@ module Analyzer::Cfml
         end
       end
 
-      url = normalize(pattern)
+      url = Noir::URLPath.normalize(pattern.strip, collapse: true, trim: true, empty: "")
       return if url.empty?
 
       methods.each do |method|
@@ -128,7 +128,7 @@ module Analyzer::Cfml
         next if resource.empty?
 
         RESOURCE_TEMPLATES.each do |methods, suffix, include_id|
-          url = normalize("/#{resource}#{include_id ? "/:id" : ""}#{suffix}")
+          url = Noir::URLPath.normalize("/#{resource}#{include_id ? "/:id" : ""}#{suffix}".strip, collapse: true, trim: true, empty: "")
           next if url.empty?
 
           methods.each do |method|
@@ -136,15 +136,6 @@ module Analyzer::Cfml
           end
         end
       end
-    end
-
-    private def normalize(pattern : String) : String
-      normalized = pattern.strip.gsub(/\/+/, "/")
-      return "" if normalized.empty?
-
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized = normalized.chomp('/') if normalized.size > 1
-      normalized
     end
   end
 end

@@ -73,6 +73,10 @@ module Analyzer::Javascript
     # walks `.js`, so cast a wide net here.
     GLOBAL_LITERAL_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]
 
+    protected def route_placeholder_pattern : Regex
+      Noir::URLPath::COLON_WORD
+    end
+
     def analyze
       analyze_with_extensions([".js", ".jsx"])
     end
@@ -781,22 +785,14 @@ module Analyzer::Javascript
     end
 
     private def exclude_path_matches?(url : String, exclude_path : String) : Bool
-      normalized_url = normalize_path_for_prefix_exclude(url)
-      normalized_exclude = normalize_path_for_prefix_exclude(exclude_path)
+      normalized_url = Noir::URLPath.normalize(url.strip, collapse: true, trim: true)
+      normalized_exclude = Noir::URLPath.normalize(exclude_path.strip, collapse: true, trim: true)
 
       if normalized_exclude.ends_with?("*")
         normalized_url.starts_with?(normalized_exclude.rstrip('*'))
       else
         normalized_url == normalized_exclude
       end
-    end
-
-    private def normalize_path_for_prefix_exclude(path : String) : String
-      normalized = path.strip
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized = normalized.squeeze('/')
-      normalized = normalized.chomp("/") unless normalized == "/"
-      normalized
     end
 
     # Midway imports the same `@Controller`/`@Get` vocabulary from
@@ -1360,7 +1356,7 @@ module Analyzer::Javascript
                 endpoint.handler = handler
                 endpoint.route_conditions = [Param.new(VERSION_CONDITION, versions.join(","), "header")] unless uri_versioning || versions.empty?
 
-                extract_path_parameters(full_path, endpoint)
+                Noir::URLPath.add_params(endpoint, full_path, route_placeholder_pattern)
                 extract_decorator_parameters(method.params, endpoint, dto_fields)
                 extract_interceptor_parameters(decorator_block, endpoint)
                 route_decorated(endpoint, method, route, controller_decorator)
@@ -1570,15 +1566,6 @@ module Analyzer::Javascript
                "#{base.chomp("/")}#{route.starts_with?("/") ? route : "/#{route}"}"
              end
       path.size > 1 && path.ends_with?('/') ? (path.rstrip('/').presence || "/") : path
-    end
-
-    private def extract_path_parameters(url : String, endpoint : Endpoint)
-      # Extract path parameters from URL patterns like :id
-      url.scan(/:(\w+)/) do |match|
-        param_name = match[1]
-        # push_param skips one already added by a @Param decorator
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
     end
   end
 end

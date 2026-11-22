@@ -99,7 +99,7 @@ module Analyzer::Dart
         next unless class_name
         route_path = Helper.extract_string_literal(args[1])
         next unless route_path
-        registrations << {base_path: base_path, class_name: class_name, path: normalize_web_path(route_path)}
+        registrations << {base_path: base_path, class_name: class_name, path: Noir::URLPath.normalize(route_path)}
       end
     end
 
@@ -124,10 +124,6 @@ module Analyzer::Dart
       # `StaticRoute` / `RouteStaticDirectory` serve files, not handlers.
       return if name.includes?("Static")
       name
-    end
-
-    private def normalize_web_path(path : String) : String
-      path.starts_with?('/') ? path : "/#{path}"
     end
 
     private def web_handler_callees(path : String,

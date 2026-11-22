@@ -53,8 +53,7 @@ module Analyzer::Python
       routes = [] of Route
       Noir::TreeSitterPythonRouteExtractor.extract_decorations(source).each do |deco|
         body, callees = handler_body(lines, deco.def_line, path, base_path, source)
-        path_names = [] of ::String
-        url = deco.path.gsub(PATH_PARAM_RE) { path_names << $~[1]; "{#{$~[1]}}" }
+        url, path_names = Noir::URLPath.rewrite_names(deco.path, PATH_PARAM_RE)
         params = path_names.map { |name| Param.new(name, "", "path") }
         params.concat(argument_params(lines, deco.def_line, path_names))
         params.concat(request_params(body, "current_event", ALIAS_RE, REQUEST_ATTRS))

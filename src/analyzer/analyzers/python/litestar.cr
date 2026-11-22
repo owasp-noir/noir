@@ -32,12 +32,6 @@ module Analyzer::Python
     # The same, as the whole default: `x: str = Parameter(header="X")`.
     # Anchored, so a long default is not searched end to end.
     PARAMETER_DEFAULT_LOCATION_REGEX = /\A\s*#{PARAMETER_LOCATION_REGEX}/
-    # Path param: {name} or {name:type}. Litestar uses the :type suffix
-    # as a converter (int, str, uuid, path, float); strip it when
-    # exposing the param.
-    PATH_PARAM_REGEX       = /\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}/
-    TYPED_PATH_PARAM_REGEX = /\{([a-zA-Z_][a-zA-Z0-9_]*):[a-zA-Z_][a-zA-Z0-9_]*\}/
-
     # Hoisted out of the per-line/per-param loops: an interpolated regex
     # literal recompiles (PCRE2 JIT) on every evaluation, and these
     # interpolate only constants or fixed sets. The `.to_s` expansion is
@@ -188,12 +182,11 @@ module Analyzer::Python
                             end
 
           prefixes.flat_map { |prefix| route_paths.map { |route_path| "#{prefix}#{route_path}" } }.uniq!.each do |full_path|
-            full_path = "/#{full_path}" unless full_path.starts_with?("/")
-            full_path = full_path.gsub(/\/+/, "/")
+            full_path = Noir::URLPath.normalize(full_path, collapse: true)
             # `{p:path}` stays: it spans `/`, so it is not `{p}`.
-            full_path = full_path.gsub(TYPED_PATH_PARAM_REGEX) { |typed| typed.ends_with?(":path}") ? typed : "{#{$~[1]}}" }
+            full_path = Noir::URLPath.strip_type_converters(full_path)
 
-            path_params = extract_path_params(full_path)
+            path_params = Noir::URLPath.params(full_path, Noir::URLPath::BRACE_CONVERTER, unique: true)
             handler_params = handler_line ? extract_handler_params(lines, handler_line, full_path, handler_body, source, path, definition_base_path) : [] of Param
 
             methods.uniq.each do |method|
@@ -492,16 +485,6 @@ module Analyzer::Python
       names.empty? ? nil : names
     end
 
-    private def extract_path_params(route_path : ::String) : Array(Param)
-      params = [] of Param
-      route_path.scan(PATH_PARAM_REGEX) do |match|
-        name = match[1]
-        next if params.any? { |p| p.name == name }
-        params << Param.new(name, "", "path")
-      end
-      params
-    end
-
     # Parse the handler function parameters and its body to collect
     # query/header/cookie/body params. `codeblock` is the pre-parsed
     # handler body (caller-side `parse_code_block(lines[def..])`), so
@@ -513,10 +496,7 @@ module Analyzer::Python
 
       function_def = parse_function_def(lines, def_line_index)
       if function_def
-        path_param_names = Set(::String).new
-        route_path.scan(PATH_PARAM_REGEX) do |m|
-          path_param_names << m[1]
-        end
+        path_param_names = Noir::URLPath.names(route_path, Noir::URLPath::BRACE_CONVERTER).to_set
 
         function_def.params.each do |fp|
           name = fp.name.strip

@@ -71,8 +71,8 @@ module Analyzer::Python
 
             http_method = attr == "websocket" ? "GET" : attr.upcase
             prefix = router_prefixes[deco.router_name]
-            route_path = normalize_path(deco.path)
-            full_path = join_prefix(prefix, route_path)
+            route_path = Noir::URLPath.normalize(deco.path, Noir::URLPath::COLON_SEGMENT_ASCII, rooted: false)
+            full_path = Noir::URLPath.join(prefix, route_path, :chomp_prefix)
 
             params = [] of Param
             # `:name` and `{name}` segments are path params.
@@ -117,7 +117,7 @@ module Analyzer::Python
           name = m[1]
           tail = m[2]
           prefix = extract_subrouter_prefix(tail)
-          router_prefixes[name] = normalize_path(prefix)
+          router_prefixes[name] = Noir::URLPath.normalize(prefix, Noir::URLPath::COLON_SEGMENT_ASCII, rooted: false)
         end
       end
     end
@@ -170,33 +170,12 @@ module Analyzer::Python
           next if parent_prefix.nil? || child_prefix.nil? || parent_prefix.empty?
           next if child_prefix == parent_prefix || child_prefix.starts_with?("#{parent_prefix}/")
 
-          composed_prefix = normalize_path(join_prefix(parent_prefix, child_prefix))
+          composed_prefix = Noir::URLPath.normalize(Noir::URLPath.join(parent_prefix, child_prefix, :chomp_prefix), Noir::URLPath::COLON_SEGMENT_ASCII, rooted: false)
           next if composed_prefix == child_prefix
 
           router_prefixes[child] = composed_prefix
           changed = true
         end
-      end
-    end
-
-    # Robyn uses `:name` for path params; Noir's canonical form is `{name}`.
-    # Convert each `:identifier` segment when it occupies a full path
-    # segment (i.e. preceded by `/` or start, followed by `/` or end).
-    private def normalize_path(path : ::String) : ::String
-      path.gsub(/(^|\/):([A-Za-z_][A-Za-z0-9_]*)/) do |_, match|
-        prefix = match[1]
-        name = match[2]
-        "#{prefix}{#{name}}"
-      end
-    end
-
-    private def join_prefix(prefix : ::String, route : ::String) : ::String
-      return route if prefix.empty?
-      normalized_prefix = prefix.ends_with?("/") ? prefix[0..-2] : prefix
-      if route.starts_with?("/")
-        "#{normalized_prefix}#{route}"
-      else
-        "#{normalized_prefix}/#{route}"
       end
     end
 

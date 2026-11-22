@@ -133,9 +133,7 @@ module Analyzer::Javascript
         methods.each do |method|
           details = Details.new(PathInfo.new(routes_file, line))
           endpoint = Endpoint.new(url, method, details)
-          url.scan(/:(\w+)/) do |pm|
-            endpoint.push_param(Param.new(pm[1], "", "path")) if pm.size > 0
-          end
+          Noir::URLPath.add_params(endpoint, url, Noir::URLPath::COLON_WORD)
           apply_inline_handler_params(offsets, value_start, endpoint)
           result << endpoint
         end

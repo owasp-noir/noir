@@ -222,20 +222,11 @@ module Analyzer::Cpp
     end
 
     private def normalize_path(route_path : String) : Tuple(String, Array(Param))
-      params = [] of Param
       counter = 0
-      normalized = route_path.gsub(PATH_PARAM_REGEX) do |_|
-        maybe_name = $~[2]?
-        name = if maybe_name && !maybe_name.empty?
-                 maybe_name
-               else
-                 counter += 1
-                 "param#{counter}"
-               end
-        params << Param.new(name, "", "path")
-        "{#{name}}"
+      normalized, names = Noir::URLPath.rewrite_names(route_path, PATH_PARAM_REGEX) do |match|
+        match[2]? || "param#{counter += 1}"
       end
-      {normalized, params}
+      {normalized, names.map { |name| Param.new(name, "", "path") }}
     end
 
     private def parse_methods(raw : String) : Array(String)

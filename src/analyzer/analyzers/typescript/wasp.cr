@@ -127,7 +127,7 @@ module Analyzer::Typescript
       methods = api.method == "ALL" ? ALL_METHODS : [api.method]
       methods.each do |method|
         endpoint = Endpoint.new(api.path, method, details_for(file, api.line, handler))
-        path_params(api.path).each { |name| endpoint.push_param(Param.new(name, "", "path")) }
+        Noir::URLPath.add_params(endpoint, api.path, Noir::URLPath::SEGMENT_COLON_IDENT)
         if found = handler
           body = found[:handler].body
           Noir::JSRouteExtractor.extract_query_params(body, endpoint)
@@ -179,7 +179,7 @@ module Analyzer::Typescript
 
     private def emit_page(file : SpecFile, route : Noir::WaspExtractor::PageRoute)
       endpoint = Endpoint.new(route.path, "GET", Details.new(PathInfo.new(file.path, route.line)))
-      path_params(route.path).each { |name| endpoint.push_param(Param.new(name, "", "path")) }
+      Noir::URLPath.add_params(endpoint, route.path, Noir::URLPath::SEGMENT_COLON_IDENT)
       endpoint.add_tag(Tag.new("wasp-page", route.name, TAGGER))
       if route.auth_required
         endpoint.add_tag(Tag.new("wasp-auth-required", "Client-side redirect when logged out; not enforced by the server", TAGGER))
@@ -268,13 +268,6 @@ module Analyzer::Typescript
         return
       end
       nil
-    end
-
-    # Express-style `:name` / `:name?` segments.
-    private def path_params(path : String) : Array(String)
-      path.split('/').compact_map do |segment|
-        segment.match(/\A:([A-Za-z_]\w*)/).try(&.[1])
-      end.uniq!
     end
 
     # waspc's `camelToKebabCase`: a dash before every uppercase letter that

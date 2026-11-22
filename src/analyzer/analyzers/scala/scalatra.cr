@@ -57,15 +57,11 @@ module Analyzer::Scala
           next unless line.includes?("mount")
           line.scan(/\bmount\s*\(\s*(?:new\s+)?([A-Za-z_][\w.]*).*?"(\/[^"]*)"/) do |m|
             cls = m[1].split('.').last
-            map[cls] ||= normalize_mount_prefix(m[2])
+            map[cls] ||= m[2].rstrip("/*")
           end
         end
       end
       map
-    end
-
-    private def normalize_mount_prefix(prefix : String) : String
-      prefix.rstrip("/*")
     end
 
     # Extract routes from Scalatra DSL
@@ -94,7 +90,8 @@ module Analyzer::Scala
             endpoint = create_endpoint(full_path, method.upcase, path, index + 1)
 
             # Extract path parameters from the route
-            extract_path_params(endpoint, route_path)
+            Noir::URLPath.add_params(endpoint, route_path, Noir::URLPath::COLON_WORD)
+            endpoint.push_param(Param.new("splat", "", "path")) if route_path.includes?('*')
 
             # Extract parameters from the route block
             block = extract_block_from_index(code_lines, masked_lines, index)
@@ -108,21 +105,6 @@ module Analyzer::Scala
       end
 
       endpoints
-    end
-
-    # Extract path parameters from the route pattern
-    private def extract_path_params(endpoint : Endpoint, route_path : String)
-      # Match :param style parameters
-      route_path.scan(/:(\w+)/) do |match|
-        param_name = match[1]
-        endpoint.push_param(Param.new(param_name, "", "path"))
-      end
-
-      # Match *splat parameters (even without name)
-      if route_path.includes?("*")
-        # Scalatra uses "splat" as the default name for wildcard parameters
-        endpoint.push_param(Param.new("splat", "", "path"))
-      end
     end
 
     # Extract block content starting from a given index

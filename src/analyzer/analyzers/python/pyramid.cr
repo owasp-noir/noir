@@ -381,7 +381,7 @@ module Analyzer::Python
                                *,
                                definition_base_path : String,
                                source : String)
-      path_params = extract_path_params(route_path)
+      path_params = Noir::URLPath.params(route_path, Noir::URLPath::BRACE_OR_SPLAT, unique: true)
       request_params = extract_request_params(body)
 
       # extract_function_body skips the def line, so body row 0 lives
@@ -408,18 +408,6 @@ module Analyzer::Python
         handler_callees.each { |c| endpoint.push_callee(c) }
         result << endpoint
       end
-    end
-
-    private def extract_path_params(route_path : String) : Array(Param)
-      params = [] of Param
-      seen = Set(String).new
-      # Pyramid path params: `{name}`, `{name:regex}`, or `*remainder` glob.
-      route_path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)(?::[^}]+)?\}|\*([A-Za-z_][A-Za-z0-9_]*)/) do |m|
-        name = m[1]? || m[2]?
-        next if name.nil? || !seen.add?(name)
-        params << Param.new(name, "", "path")
-      end
-      params
     end
 
     private def extract_request_params(body : String) : Array(Param)
