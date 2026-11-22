@@ -23,7 +23,7 @@ JSON은 다음 단계가 다 읽는 형식이야. jq든 스크립트든 AI 감�
 noir scan . -f json --no-log
 ```
 
-결과는 `endpoints`, `passive_results`, `errors` 배열을 담은 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml` 등), 소스 코드 위치(`details.code_paths`), 엔드포인트를 만든 분석기(`details.technology`), 그리고 태거가 붙인 보안 태그가 들어갑니다.
+결과는 `endpoints`, `passive_results`, `errors`, `scan_technologies` 배열을 담은 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml` 등), 소스 코드 위치(`details.code_paths`), 엔드포인트를 만든 분석기(`details.technology`), 그리고 태거가 붙인 보안 태그가 들어갑니다.
 
 같은 엔드포인트를 여러 분석기가 찾으면(예: Go 라우터와 프로젝트의 OpenAPI 문서) Noir는 하나의 항목으로 합칩니다. `details.technology`는 병합에서 이긴 분석기이고, `details.technologies`는 기여한 모든 분석기를 정렬·중복 제거해 담은 목록입니다. 이 목록은 항목이 둘 이상일 때만 출력되므로, 분석기 하나만 찾은 엔드포인트에는 `technology`만 있습니다. 출처가 모두 필요하면 `technologies`를 읽고, 이 키가 없을 때는 `[technology]`로 대체하면 됩니다.
 
@@ -172,9 +172,22 @@ YAML, JSONL, TOML 출력에도 같은 필드가 들어가고, 일반 리포트�
     }
   ],
   "passive_results": [],
-  "errors": []
+  "errors": [],
+  "scan_technologies": ["go_beego"]
 }
 ```
+
+## 탐지된 기술
+
+`scan_technologies`는 스캔에 사용된 기술을 정렬해서 담습니다. 탐지 단계가 찾은 기술(분석기가 엔드포인트를 하나도 내지 않은 프레임워크 포함)과 `--techs`로 지정한 기술이 모두 들어갑니다.
+
+```json
+{
+  "scan_technologies": ["crystal_kemal", "oas3"]
+}
+```
+
+엔드포인트의 `details.technology`는 그 엔드포인트를 만든 분석기를 가리킵니다. `scan_technologies`는 다른 질문, 즉 프레임워크가 탐지됐는지에 답합니다. 여기에 있는데 엔드포인트가 없다면 탐지는 됐지만 찾은 것이 없는 것이고, 여기에 없다면 탐지되지 않은 것입니다.
 
 ## OpenAPI 명세 비교 범위
 
