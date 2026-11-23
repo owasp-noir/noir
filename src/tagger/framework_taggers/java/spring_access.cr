@@ -59,7 +59,9 @@ module SpringAccess
   end
 
   # `text` split at the top-level `symbol` / `word` operator (SpEL accepts
-  # both spellings, in any case); nil when its parens or quotes do not balance.
+  # both spellings, in any case); nil when its brackets or quotes do not
+  # balance, or when a ternary or Elvis sits at the top level: those bind
+  # looser than `or`, so no operand of the split is a whole condition.
   private def operands(text : String, symbol : String, word : String) : Array(String)?
     chars = text.chars
     parts = [] of String
@@ -77,11 +79,13 @@ module SpringAccess
         end
       elsif char == '"' || char == '\''
         quote = char
-      elsif char == '('
+      elsif char.in?('(', '[', '{')
         depth += 1
-      elsif char == ')'
+      elsif char.in?(')', ']', '}')
         return if (depth -= 1) < 0
       elsif depth == 0
+        # Not safe navigation (`a?.b`) or a selection (`a.?[...]`).
+        return if char == '?' && chars[index + 1]? != '.' && (index == 0 || chars[index - 1] != '.')
         width =
           if chars[index, symbol.size].join == symbol
             symbol.size
@@ -138,9 +142,8 @@ module SpringAccess
   end
 
   # One clause over the comma-separated values of `args`, each mapped by the
-  # block; a non-literal value is an unresolved atom. A nil from the block is
-  # a value that admits anyone, which makes the whole clause hold.
-  private def list(args : String?, source : String, & : String -> Access::Atom?) : Access::CNF
+  # block; a non-literal value is an unresolved atom.
+  private def list(args : String?, source : String, & : String -> Access::Atom) : Access::CNF
     return unresolved(source) unless args
     inner = args.sub(VALUE_KEY, "").strip
     inner = inner[1...-1] if (inner.starts_with?('{') && inner.ends_with?('}')) || (inner.starts_with?('[') && inner.ends_with?(']'))
@@ -149,8 +152,7 @@ module SpringAccess
     atoms = [] of Access::Atom
     values.each do |value|
       if text = literal(value)
-        return Access::CNF.new unless atom = yield text
-        atoms << atom
+        atoms << yield text
       else
         atoms << Access::Atom.new(:unresolved, value)
       end
@@ -173,13 +175,10 @@ module SpringAccess
     end
   end
 
-  # `IS_AUTHENTICATED_ANONYMOUSLY` admits every caller, signed in or not.
-  private def secured_atom(value : String) : Access::Atom?
-    case value
-    when "IS_AUTHENTICATED_ANONYMOUSLY"                          then nil
-    when "IS_AUTHENTICATED_FULLY", "IS_AUTHENTICATED_REMEMBERED" then Access::Atom.new(:authenticated)
-    else                                                              authority_atom(value)
-    end
+  # Spring Security 5 gives `IS_AUTHENTICATED_*` a meaning of its own; 6
+  # compares it as a literal authority nobody holds.
+  private def secured_atom(value : String) : Access::Atom
+    value.starts_with?("IS_AUTHENTICATED_") ? Access::Atom.new(:unresolved, value) : authority_atom(value)
   end
 
   private def literal(text : String) : String?

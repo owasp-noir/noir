@@ -75,6 +75,28 @@ describe SpringAccess do
       unresolved_values(cnf).should eq(["@acl.check(#id)"])
     end
 
+    it "leaves a top-level ternary or Elvis wholly unresolved, since it binds looser than or" do
+      [
+        "#restricted ? hasRole('ADMIN') : hasRole('USER') or permitAll()",
+        "hasRole('USER') or #flag ? hasRole('ADMIN') : denyAll()",
+        "#role ?: hasRole('USER') or permitAll()",
+      ].each do |text|
+        cnf = SpringAccess.expression(text)
+        cnf.map(&.map(&.to_s)).should eq([["unresolved"]])
+        unresolved_values(cnf).should eq([text])
+      end
+      read("hasRole('A') and (#x ? hasRole('B') : hasRole('C'))").should eq([["role:A"], ["unresolved"]])
+      read("hasRole('A') and #user?.name == 'x'").should eq([["role:A"], ["unresolved"]])
+    end
+
+    it "does not split at an operator inside a selection, projection or inline list" do
+      text = "#items.?[owner == authentication.name or hasRole('USER') or open].size() > 0"
+      cnf = SpringAccess.expression(text)
+      cnf.map(&.map(&.to_s)).should eq([["unresolved"]])
+      unresolved_values(cnf).should eq([text])
+      read("{'a', 'b'}.contains(#kind) or hasRole('ADMIN')").should eq([["role:ADMIN", "unresolved"]])
+    end
+
     it "reads text that is not one whole expression as a single unresolved atom" do
       ["hasRole('A') and", "hasRole('A') or (hasRole('B')", "hasRole('A')) or hasRole('B')", "hasRole('A'"].each do |broken|
         SpringAccess.expression(broken).should eq([[Access::Atom.new(:unresolved, broken)]])
@@ -102,13 +124,13 @@ describe SpringAccess do
     it "reads @Secured authorities" do
       read_annotation("Secured", "\"ROLE_USER\"").should eq([["role:USER"]])
       read_annotation("Secured", "{\"ROLE_ADMIN\", \"SCOPE_read\", \"audit\"}").should eq([["role:ADMIN", "permission:audit", "scope:read"]])
-      read_annotation("Secured", "\"IS_AUTHENTICATED_FULLY\"").should eq([["authenticated"]])
-      read_annotation("Secured", "\"IS_AUTHENTICATED_REMEMBERED\"").should eq([["authenticated"]])
     end
 
-    it "reads @Secured(IS_AUTHENTICATED_ANONYMOUSLY) as admitting anyone" do
-      read_annotation("Secured", "\"IS_AUTHENTICATED_ANONYMOUSLY\"").should eq([] of Array(String))
-      read_annotation("Secured", "{\"ROLE_USER\", \"IS_AUTHENTICATED_ANONYMOUSLY\"}").should eq([] of Array(String))
+    it "leaves @Secured(IS_AUTHENTICATED_*) unresolved, since Spring Security 5 and 6 read it differently" do
+      %w[IS_AUTHENTICATED_ANONYMOUSLY IS_AUTHENTICATED_FULLY IS_AUTHENTICATED_REMEMBERED].each do |value|
+        read_annotation("Secured", %("#{value}")).should eq([["unresolved"]])
+      end
+      read_annotation("Secured", "{\"ROLE_USER\", \"IS_AUTHENTICATED_ANONYMOUSLY\"}").should eq([["role:USER", "unresolved"]])
     end
 
     it "reads @RolesAllowed roles, stripping one ROLE_ prefix" do
