@@ -158,3 +158,22 @@ describe "NoirRunner with -u" do
     route_view("http://admin.h/auth").should eq(plain)
   end
 end
+
+private def tag_names_with_format(format : String) : Array(String)
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new(File.expand_path("../../functional_test/fixtures/java/spring_auth", __DIR__))])
+  options["format"] = YAML::Any.new(format)
+  runner = NoirRunner.new(options)
+  runner.detect
+  runner.analyze
+  CodeLocator.instance.reset_files
+  runner.endpoints.flat_map(&.tags).map(&.name).uniq!.sort!
+end
+
+describe "NoirRunner formats that need tags" do
+  it "runs every tagger for -f access-matrix and -f only-tag without -T" do
+    tag_names_with_format("access-matrix").should contain("auth")
+    tag_names_with_format("only-tag").should contain("auth")
+    tag_names_with_format("json").should be_empty
+  end
+end

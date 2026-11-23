@@ -256,12 +256,12 @@ class NoirRunner
       elsif ai_context_enabled?
         @logger.success "Running AI-context taggers."
         NoirTaggers.run_tagger @endpoints, @options, "all"
-      elsif @options["format"].to_s == "only-tag"
-        # `-f only-tag` has nothing to print unless a tagger populated tags.
+      elsif (format = @options["format"].to_s).in?("only-tag", "access-matrix")
+        # These formats have nothing to print unless a tagger populated tags.
         # Without this, the format silently produced empty output unless the
         # user also passed -T/--use-taggers — an easy trap. Imply all taggers
         # when no explicit tagger option was given.
-        @logger.success "Running all taggers (implied by -f only-tag)."
+        @logger.success "Running all taggers (implied by -f #{format})."
         NoirTaggers.run_tagger @endpoints, @options, "all"
       elsif @options["tagger_rules_path"]?.try(&.as_a?).try(&.present?)
         # Custom rules run on their own; the branches above run them too.
