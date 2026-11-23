@@ -272,7 +272,7 @@ module Noir::CLI::QueryCommand
                                A value no endpoint carries is reported on stderr with the values seen.
         --requires <atom,...>  Its access requirement names one of these: role:ADMIN, permission:posts:write,
                                scope:read, or a bare authenticated, anonymous, deny, unresolved. Read from
-                               guard tags; anonymous is a declared open access, not a missing guard
+                               guard tags; anonymous matches a declaration that admits anonymous callers
         --reachable-by <principal>
                                A caller holding this one value is not denied: anonymous, authenticated,
                                role:X, permission:X or scope:X. A route with no guard found is reachable

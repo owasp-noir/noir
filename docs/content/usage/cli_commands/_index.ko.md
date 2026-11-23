@@ -251,7 +251,7 @@ noir query --exclude resolution=heuristic --guard .
 - `--behind-gateway` / `--not-behind-gateway`: 앞에 게이트웨이 규칙이 있는지 여부 ([게이트웨이 뒤](#게이트웨이-뒤) 참고)
 
 접근 요구 조건 (가드 태그와 그 [`requires`](@/usage/output_formats/json/index.ko.md) 필드에서 읽음):
-- `--requires <atom,...>`: 엔드포인트의 요구 조건에 이 아톰 중 하나가 있음. 아톰은 `role`, `permission`, `scope`이면 `kind:value`(`role:ADMIN`, `permission:posts:write`, `scope:read:pets`. 값은 첫 번째 콜론 뒤부터 끝까지), 그 밖에는 `authenticated`, `anonymous`, `deny`, `unresolved`를 값 없이 씁니다. `unresolved`는 Noir가 읽지 못한 가드 전부에 매칭됩니다. `anonymous`는 `permitAll()`처럼 명시적으로 열어 둔 접근에 매칭되며, 가드를 찾지 못한 라우트에는 매칭되지 않습니다. 그쪽은 `--no-guard`로 찾습니다.
+- `--requires <atom,...>`: 엔드포인트의 요구 조건에 이 아톰 중 하나가 있음. 아톰은 `role`, `permission`, `scope`이면 `kind:value`(`role:ADMIN`, `permission:posts:write`, `scope:read:pets`. 값은 첫 번째 콜론 뒤부터 끝까지), 그 밖에는 `authenticated`, `anonymous`, `deny`, `unresolved`를 값 없이 씁니다. `unresolved`는 Noir가 읽지 못한 가드 전부에 매칭됩니다. `anonymous`는 `@PermitAll` 핸들러처럼 익명 호출자를 허용하는 선언에 매칭됩니다. 결과가 아니라 선언에 매칭되므로 같은 라우트의 다른 가드가 익명 호출자를 거부할 수 있습니다. 가드를 찾지 못한 라우트는 `--no-guard`로 찾습니다.
 - `--reachable-by <principal>`: 이 값 하나를 가진 호출자가 거부되지 않음. principal은 `anonymous`, `authenticated`, `role:X`, `permission:X`, `scope:X`이고, [접근 매트릭스](@/usage/output_formats/access_matrix/index.ko.md)의 열과 같은 뜻입니다. 가드를 찾지 못한 라우트는 누구나 도달할 수 있습니다. Noir가 읽지 못한 가드 뒤의 라우트도 결과에 남으며, 그 행의 `via`에 그런 가드마다 `access_unknown`과 가드의 텍스트, 파일, 줄이 붙습니다. 이 항목이 없는 행은 확실히 도달 가능한 행입니다.
 
 `requires`를 기록하지 않는 태거의 가드 태그도 셉니다. `auth` 태그는 "로그인 + Noir가 읽지 못한 검사"로, `authz` 태그는 Noir가 읽지 못한 검사로 읽습니다. 외부 서비스를 부르는 클라이언트 선언은 두 필터 어디에도 매칭되지 않습니다. 두 필터 모두 `--exclude`와 함께 쓸 수 있습니다. 이 두 필터는 태그를 읽고 `--guard`는 `ai_context.guards`를 읽으므로 결과가 다를 수 있습니다. `-T`도 `--ai-context`도 없이 스캔한 리포트에는 가드 태그가 없어 모든 라우트가 가드 없음으로 읽히며, 이때 stderr에 경고가 출력됩니다.

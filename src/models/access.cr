@@ -205,8 +205,11 @@ module Access
   # `unresolved` matches any fragment, so it takes none.
   def self.parse_atom(text : String) : Atom
     name, colon, value = text.strip.partition(':')
-    unless kind = Kind.parse?(name)
-      raise ArgumentError.new("unknown kind #{name}. Valid: #{Kind.names.map(&.downcase).join(", ")}")
+    name = name.strip
+    value = value.strip
+    # `Kind.parse?` would also take `r_o_l_e`.
+    unless kind = Kind.values.find { |candidate| candidate.to_s.compare(name, case_insensitive: true) == 0 }
+      raise ArgumentError.new("unknown kind #{name.empty? ? "(none)" : name}. Valid: #{Kind.names.map(&.downcase).join(", ")}")
     end
     if VALUED_KINDS.includes?(kind)
       raise ArgumentError.new("#{kind.to_s.downcase} needs a value (#{kind.to_s.downcase}:<value>)") if value.empty?

@@ -1377,6 +1377,20 @@ describe "query --requires / --reachable-by" do
     end
   end
 
+  it "excludes only what the principal certainly reaches, and keeps a multi-line unread guard on one row" do
+    opaque = endpoint("GET", "/bean", "src/A.java", 40)
+    opaque.add_tag(Tag.new("authz", "Protected by @acl.check", "spring_auth"))
+    parsed = Noir::CLI::QueryCommand.parse_filters(["--reachable-by", "role:ADMIN", "--exclude", "reachable-by=anonymous"])
+    Noir::CLI::Inspect.query([opaque, open], parsed.filters, false, parsed.excludes).map(&.url).should eq(["/bean"])
+
+    multiline = endpoint("GET", "/multi", "src/A.java", 50)
+    multiline.add_tag(Tag.new("auth", "d", "spring_auth", requires: [clause.call([Access::Atom.new(:unresolved, "@a.check() +\n    @b.check()")])]))
+    anyone = Noir::CLI::QueryCommand.parse_filters(["--reachable-by", "anonymous"]).filters
+    row = Noir::CLI::Inspect.query([multiline], anyone, false)[0]
+    row.via.map(&.name).should eq(["@a.check() + @b.check()"])
+    row.to_text.lines.size.should eq(1)
+  end
+
   it "names the unread guard on an unknown row in every output mode, and leaves a definite row as it was" do
     rows = query.call(["--reachable-by", "role:USER"], false)
     unknown = Noir::CLI::Inspect::Via.new("access_unknown", "Protected by AuthGuard", 3, "src/me.ts")
@@ -1420,6 +1434,6 @@ describe "query --requires / --reachable-by" do
     f = Noir::CLI::QueryCommand.parse_filters(["--reachable-by", "anonymous"]).filters
     Noir::CLI::Inspect.filter_warnings(endpoints, f).should be_empty
     Noir::CLI::Inspect.filter_warnings([open, client], f)
-      .should eq(["no endpoint carries an access requirement (no guard tag found); a report needs `noir scan -T` or `--ai-context`"])
+      .should eq(["no endpoint carries a guard tag, so every route reads as open; a report made without `-T` or `--ai-context` has none"])
   end
 end
