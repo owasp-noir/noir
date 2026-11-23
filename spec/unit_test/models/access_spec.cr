@@ -245,3 +245,25 @@ describe Access do
     end
   end
 end
+
+describe "Access.parse_atom" do
+  it "splits at the first colon and canonicalizes the kind" do
+    Access.parse_atom("role:ADMIN").should eq(Access::Atom.new(:role, "ADMIN"))
+    Access.parse_atom("Permission:posts:write").should eq(Access::Atom.new(:permission, "posts:write"))
+    Access.parse_atom("scope:read:pets").to_s.should eq("scope:read:pets")
+    Access.parse_atom("authenticated").should eq(Access::Atom.new(:authenticated))
+    Access.parse_atom("unresolved").to_s.should eq("unresolved")
+  end
+
+  it "rejects an unknown kind, a missing value, and a value on a bare kind" do
+    {
+      "rol:ADMIN"         => "unknown kind rol. Valid: role, permission, scope, authenticated, anonymous, deny, unresolved",
+      "role"              => "role needs a value (role:<value>)",
+      "scope:"            => "scope needs a value (scope:<value>)",
+      "authenticated:yes" => "authenticated takes no value",
+      "unresolved:x"      => "unresolved takes no value",
+    }.each do |text, message|
+      expect_raises(ArgumentError, message) { Access.parse_atom(text) }
+    end
+  end
+end
