@@ -217,6 +217,15 @@ describe "Endpoint equality" do
       endpoint.tags[0].requires.should eq([role])
     end
 
+    it "tells apart two tags that differ only in their requirement" do
+      plain = Tag.new("auth", "guard", "spring_auth", "A.java", 3)
+      with_role = Tag.new("auth", "guard", "spring_auth", "A.java", 3, [role])
+
+      (plain == with_role).should be_false
+      [plain, with_role].uniq.size.should eq 2
+      (with_role == Tag.new("auth", "guard", "spring_auth", "A.java", 3, [role])).should be_true
+    end
+
     it "serializes a tag without a requirement as before" do
       endpoint = Endpoint.new("/plain", "GET")
       endpoint.add_tag(Tag.new("auth", "first", "django_auth", "a.py", 4))

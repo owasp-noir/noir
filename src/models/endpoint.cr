@@ -560,14 +560,6 @@ struct Tag
   def self.declared_access_tagger(technology : String) : String
     "#{technology}_access"
   end
-
-  def ==(other : Tag) : Bool
-    @name == other.name &&
-      @description == other.description &&
-      @tagger == other.tagger &&
-      @path == other.path &&
-      @line == other.line
-  end
 end
 
 # A function/method invoked directly from an endpoint's handler body
