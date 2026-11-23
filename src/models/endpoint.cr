@@ -184,7 +184,7 @@ struct Endpoint
   # collections, so re-tagging the same target (e.g. a match in two
   # code_paths) can't surface a duplicate "auth auth" in the text output.
   # A second tag from one tagger keeps the first one's text, and both
-  # requirements hold, so their clauses are ANDed onto the kept tag.
+  # requirements hold, so the kept tag takes the clauses of both.
   def add_tag(tag : Tag)
     if index = @tags.index { |existing| existing.name == tag.name && existing.tagger == tag.tagger }
       kept = @tags[index]

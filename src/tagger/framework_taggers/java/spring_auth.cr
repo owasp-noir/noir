@@ -2683,7 +2683,7 @@ class SpringAuthTagger < FrameworkTagger
     # not stop the URL-rule and in-handler checks, and it is recorded as
     # anonymous so a name-only source scan does not put the guard back.
     annotation_public = false
-    # What a public annotation still requires (`isAnonymous()`), ANDed onto
+    # What a public annotation still requires (`isAnonymous()`), added to
     # whichever later layer guards the endpoint.
     public_requires = [] of Access::Clause
     marker : String? = nil
