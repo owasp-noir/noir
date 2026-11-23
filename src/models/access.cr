@@ -147,12 +147,26 @@ module Access
   # Clauses are matched on their atoms alone: source and location are kept
   # for the reviewer, and a moved or reformatted declaration is no change.
   def self.compare(old : Array(Clause), new : Array(Clause)) : Change
+    lost = old.reject do |clause|
+      clause.any_of.any?(&.kind.anonymous?) || new.any? { |held| implies?(held, clause, lenient: false) }
+    end
+    # An unread check stands in for one reworded check at most: a new clause
+    # that already accounts for an old one, or that adds an unread
+    # alternative, covers nothing more. Otherwise deleting one of two unread
+    # guards would pass as a rewording of the other.
+    spare = new.reject { |held| old.any? { |clause| implies?(held, clause, lenient: false) } }
     widened = [] of Clause
     unverified = [] of Clause
-    old.each do |clause|
-      next if clause.any_of.any?(&.kind.anonymous?)
-      next if new.any? { |held| implies?(held, clause, lenient: false) }
-      (new.any? { |held| implies?(held, clause, lenient: true) } ? unverified : widened) << clause
+    lost.each do |clause|
+      index = spare.index do |held|
+        implies?(held, clause, lenient: true) && held.any_of.count(&.kind.unresolved?) <= clause.any_of.count(&.kind.unresolved?)
+      end
+      if index
+        spare.delete_at(index)
+        unverified << clause
+      else
+        widened << clause
+      end
     end
     Change.new(widened, unverified)
   end
