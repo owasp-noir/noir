@@ -1,6 +1,7 @@
 require "json"
 require "yaml"
 require "./service_call"
+require "./access"
 
 struct Endpoint
   include JSON::Serializable
@@ -182,8 +183,17 @@ struct Endpoint
   # Dedup by (name, tagger) like push_callee/push_param do for their
   # collections, so re-tagging the same target (e.g. a match in two
   # code_paths) can't surface a duplicate "auth auth" in the text output.
+  # A second tag from one tagger keeps the first one's text, and both
+  # requirements hold, so the kept tag takes the clauses of both.
   def add_tag(tag : Tag)
-    return if @tags.any? { |existing| existing.name == tag.name && existing.tagger == tag.tagger }
+    if index = @tags.index { |existing| existing.name == tag.name && existing.tagger == tag.tagger }
+      kept = @tags[index]
+      if kept.requires || tag.requires
+        kept.requires = ((kept.requires || [] of Access::Clause) + (tag.requires || [] of Access::Clause)).uniq
+        @tags[index] = kept
+      end
+      return
+    end
     @tags << tag
   end
 
@@ -533,8 +543,12 @@ struct Tag
   @[JSON::Field(emit_null: false)]
   @[YAML::Field(emit_null: false)]
   property line : Int32?
+  # What the guard this tag reports requires; nil when its tagger reads none.
+  @[JSON::Field(emit_null: false)]
+  @[YAML::Field(emit_null: false)]
+  property requires : Array(Access::Clause)?
 
-  def initialize(@name : String, @description : String, @tagger : String, @path : String? = nil, line : Int32? = nil)
+  def initialize(@name : String, @description : String, @tagger : String, @path : String? = nil, line : Int32? = nil, @requires : Array(Access::Clause)? = nil)
     @line = line && line > 0 ? line : nil
   end
 
@@ -545,14 +559,6 @@ struct Tag
   # technology states one (`Optimizer#merge_declared_access`).
   def self.declared_access_tagger(technology : String) : String
     "#{technology}_access"
-  end
-
-  def ==(other : Tag) : Bool
-    @name == other.name &&
-      @description == other.description &&
-      @tagger == other.tagger &&
-      @path == other.path &&
-      @line == other.line
   end
 end
 

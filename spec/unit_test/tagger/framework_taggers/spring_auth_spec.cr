@@ -928,6 +928,13 @@ describe "SpringAuthTagger (multi-module projects)" do
     endpoints[0].tags.should be_empty
   end
 
+  it "lets the permitAll list it cannot read lift the guard's requirement" do
+    endpoints = run_spring_endpoints_map(files, {"GET /lib" => "lib/src/main/java/com/example/lib/Controller.java:2"})
+    requires = endpoints["GET /lib"].tags[0].requires.not_nil!
+    requires.map(&.any_of.map(&.to_s)).should eq([["authenticated", "unresolved"]])
+    requires[0].any_of[1].value.should eq("the permitAll list bound from secure.ignored.urls")
+  end
+
   it "applies a chain only to modules that depend on the module declaring it" do
     tags = run_spring_multi_module(files, {
       "GET /search" => "search/src/main/java/com/example/search/Controller.java:2",
@@ -1235,7 +1242,7 @@ describe "SpringAuthTagger (multi-module projects)" do
 
     endpoints[0].tags.should be_empty
     endpoints[1].tags.should be_empty
-    endpoints[2].tags.should be_empty
+    endpoints[2].tags.map { |tag| {tag.name, tag.description} }.should eq([{"denied", "Denied by Spring Security denyAll via authorize(\"/legacy/**\")"}])
     endpoints[3].tags.map(&.description).should eq(["Protected by Spring Security authenticated via authorize(anyRequest)"])
   end
 
@@ -1308,7 +1315,7 @@ describe "SpringAuthTagger (multi-module projects)" do
     jaxrs_tag.path.should eq(config_path)
     jaxrs_tag.line.should eq(11)
 
-    endpoints[1].tags.should be_empty
+    endpoints[1].tags.map { |tag| {tag.name, tag.description, tag.line} }.should eq([{"denied", "Denied by Spring Security denyAll via requestMatchers(\"/legacy/**\")", 10}])
     endpoints[1].resolution.should be_nil
   end
 end
@@ -3732,6 +3739,22 @@ describe "SpringAuthTagger (configurations that must not read as open)" do
     tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyExchange()"])
   end
 
+  it "requires an authenticated caller under Boot's default chain" do
+    files = boot_app_files.call("build.gradle", "#{SPRING_WEB_STARTER}    implementation 'org.springframework.boot:spring-boot-starter-security'\n}\n")
+    tag = run_spring_endpoints_map(files, {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})["GET /items"].tags[0]
+    tag.requires.not_nil!.map { |clause| {clause.any_of.map(&.to_s), clause.source} }.should eq([{["authenticated"], boot_default[0]}])
+  end
+
+  it "leaves an XML <http> configuration it does not read unresolved" do
+    xml = %(<beans:beans xmlns="http://www.springframework.org/schema/security" xmlns:beans="http://www.springframework.org/schema/beans">\n  <http>\n    <intercept-url pattern="/**" access="authenticated"/>\n  </http>\n</beans:beans>\n)
+    endpoints = run_spring_endpoints_map({
+      "app/pom.xml"                                   => spring_module_pom("app", ["spring-security-config"]),
+      "app/src/main/webapp/WEB-INF/security.xml"      => xml,
+      "app/src/main/java/com/example/Controller.java" => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})
+    endpoints["GET /items"].tags[0].requires.not_nil!.map(&.any_of.map(&.value)).should eq([["the XML <http> configuration"]])
+  end
+
   it "guards an app whose security configuration it does not read" do
     xml = %(<beans:beans xmlns="http://www.springframework.org/schema/security" xmlns:beans="http://www.springframework.org/schema/beans">\n  <http>\n    <intercept-url pattern="/**" access="authenticated"/>\n  </http>\n</beans:beans>\n)
     tags = run_spring_multi_module({
@@ -3988,10 +4011,59 @@ describe "SpringAuthTagger guard resolution (#3567)" do
       endpoints[route].tags.map(&.name).should eq(["auth"])
       endpoints[route].resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
     end
-    %w[GET\ /deny-all GET\ /deny-all-marker GET\ /post-deny-all GET\ /class-deny-all].each do |route|
-      endpoints[route].tags.should be_empty
+    {
+      "GET /deny-all"        => "Denied by Spring @PreAuthorize",
+      "GET /deny-all-marker" => "Denied by Spring @DenyAll",
+      "GET /post-deny-all"   => "Denied by Spring @PostAuthorize",
+      "GET /class-deny-all"  => "Denied by Spring @DenyAll on the controller class",
+    }.each do |route, description|
+      endpoints[route].tags.map { |tag| {tag.name, tag.description} }.should eq([{"denied", description}])
+      endpoints[route].tags[0].requires.not_nil!.map(&.any_of.map(&.to_s)).should eq([["deny"]])
       endpoints[route].resolution.should be_nil
     end
+  end
+
+  it "does not read an interceptor behind a chain that denies the route" do
+    config = <<-JAVA
+      @Configuration
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(auth -> auth.requestMatchers("/api/**").denyAll());
+              return http.build();
+          }
+      }
+      JAVA
+    interceptor = <<-JAVA
+      public class AuthInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+              if (request.getHeader("Authorization") == null) {
+                  response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+                  return false;
+              }
+              return true;
+          }
+      }
+      JAVA
+    web = <<-JAVA
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new AuthInterceptor()).addPathPatterns("/api/**");
+          }
+      }
+      JAVA
+    controller = "@RestController\npublic class Controller {\n    @GetMapping(\"/api/items\") public String items() { return \"ok\"; }\n}\n"
+    endpoint = run_spring_endpoints_map({
+      "src/main/java/com/example/SecurityConfig.java"  => config,
+      "src/main/java/com/example/AuthInterceptor.java" => interceptor,
+      "src/main/java/com/example/WebConfig.java"       => web,
+      "src/main/java/com/example/Controller.java"      => controller,
+    }, {"GET /api/items" => "src/main/java/com/example/Controller.java:3"})["GET /api/items"]
+    endpoint.tags.map(&.name).should eq(["denied"])
+    endpoint.resolution.should be_nil
   end
 
   it "does not tag denyAll rules or their deny-by-default remainder as authentication" do
@@ -4024,8 +4096,12 @@ describe "SpringAuthTagger guard resolution (#3567)" do
       "GET /unmatched"    => "src/main/java/com/example/Controller.java:7",
     })
 
-    %w[GET\ /closed/items GET\ /unmatched].each do |route|
-      endpoints[route].tags.should be_empty
+    {
+      "GET /closed/items" => "Denied by Spring Security denyAll via requestMatchers(\"/closed/**\")",
+      "GET /unmatched"    => "Denied by Spring Security: authorizeHttpRequests denies a request no rule matches",
+    }.each do |route, description|
+      endpoints[route].tags.map { |tag| {tag.name, tag.description} }.should eq([{"denied", description}])
+      endpoints[route].tags[0].requires.not_nil!.map(&.any_of.map(&.to_s)).should eq([["deny"]])
       endpoints[route].resolution.should be_nil
     end
     endpoints["GET /roles/items"].tags.map(&.name).should eq(["auth"])

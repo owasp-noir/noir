@@ -185,6 +185,57 @@ describe "Endpoint equality" do
       endpoint.tags.size.should eq 3
       endpoint.tags.count { |t| t.name == "auth" && t.tagger == "django_auth" }.should eq 1
     end
+
+    role = Access::Clause.new([Access::Atom.new(:role, "ADMIN")], "@PreAuthorize(\"hasRole('ADMIN')\")")
+    signed_in = Access::Clause.new([Access::Atom.new(:authenticated)], "authenticated()")
+
+    it "ANDs a second tag's requirement onto the kept tag, keeping its text" do
+      endpoint = Endpoint.new("/admin", "GET")
+      endpoint.add_tag(Tag.new("auth", "annotation", "spring_auth", "A.java", 3, [role]))
+      endpoint.add_tag(Tag.new("auth", "chain", "spring_auth", "B.java", 9, [signed_in, role]))
+
+      endpoint.tags.size.should eq 1
+      tag = endpoint.tags[0]
+      {tag.description, tag.path, tag.line}.should eq({"annotation", "A.java", 3})
+      tag.requires.should eq([role, signed_in])
+    end
+
+    it "gives a kept tag without a requirement the incoming one's" do
+      endpoint = Endpoint.new("/admin", "GET")
+      endpoint.add_tag(Tag.new("auth", "first", "spring_auth"))
+      endpoint.add_tag(Tag.new("auth", "second", "spring_auth", requires: [signed_in]))
+
+      endpoint.tags[0].description.should eq("first")
+      endpoint.tags[0].requires.should eq([signed_in])
+    end
+
+    it "keeps the kept tag's requirement when the incoming tag has none" do
+      endpoint = Endpoint.new("/admin", "GET")
+      endpoint.add_tag(Tag.new("auth", "first", "spring_auth", requires: [role]))
+      endpoint.add_tag(Tag.new("auth", "second", "spring_auth"))
+
+      endpoint.tags[0].requires.should eq([role])
+    end
+
+    it "tells apart two tags that differ only in their requirement" do
+      plain = Tag.new("auth", "guard", "spring_auth", "A.java", 3)
+      with_role = Tag.new("auth", "guard", "spring_auth", "A.java", 3, [role])
+
+      (plain == with_role).should be_false
+      [plain, with_role].uniq.size.should eq 2
+      (with_role == Tag.new("auth", "guard", "spring_auth", "A.java", 3, [role])).should be_true
+    end
+
+    it "serializes a tag without a requirement as before" do
+      endpoint = Endpoint.new("/plain", "GET")
+      endpoint.add_tag(Tag.new("auth", "first", "django_auth", "a.py", 4))
+      endpoint.add_tag(Tag.new("auth", "second", "django_auth"))
+
+      endpoint.tags.size.should eq 1
+      endpoint.tags[0].requires.should be_nil
+      endpoint.tags[0].to_json.should eq(%({"name":"auth","description":"first","tagger":"django_auth","path":"a.py","line":4}))
+      endpoint.tags[0].to_yaml.should_not contain("requires")
+    end
   end
 end
 
