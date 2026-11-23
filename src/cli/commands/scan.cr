@@ -688,8 +688,9 @@ module Noir::CLI::ScanCommand
 
     app = NoirRunner.new noir_options
     start_time = Time.instant
-    app.logger.info "Running all taggers because --fail-on auth-removed reads the auth tags." if implied_taggers
-    app.logger.info "Adding the auth taggers because --fail-on auth-removed reads the auth tags." if implied_auth_taggers
+    gated = Noir::DiffGate.tagged(fail_on).join(", ")
+    app.logger.info "Running all taggers because --fail-on #{gated} reads the auth tags." if implied_taggers
+    app.logger.info "Adding the auth taggers because --fail-on #{gated} reads the auth tags." if implied_auth_taggers
 
     app.logger.debug("Start Debug mode")
     app.logger.debug("Noir version: #{Noir::VERSION}")

@@ -523,7 +523,7 @@ class ConfigInitializer
       diff_ref: "#{options["diff_ref"]}"
 
       # Exit 3 when the diff has any of these (--fail-on)
-      # e.g "added,auth-removed" (added, removed, changed, auth-removed)
+      # e.g "added,auth-removed" (added, removed, changed, auth-removed, access-widened)
       fail_on: "#{options["fail_on"]}"
 
       # The passive rules to use
