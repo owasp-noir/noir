@@ -1,6 +1,7 @@
 require "json"
 require "yaml"
 require "./service_call"
+require "./access"
 
 struct Endpoint
   include JSON::Serializable
@@ -533,8 +534,12 @@ struct Tag
   @[JSON::Field(emit_null: false)]
   @[YAML::Field(emit_null: false)]
   property line : Int32?
+  # What the guard this tag reports requires; nil when its tagger reads none.
+  @[JSON::Field(emit_null: false)]
+  @[YAML::Field(emit_null: false)]
+  property requires : Array(Access::Clause)?
 
-  def initialize(@name : String, @description : String, @tagger : String, @path : String? = nil, line : Int32? = nil)
+  def initialize(@name : String, @description : String, @tagger : String, @path : String? = nil, line : Int32? = nil, @requires : Array(Access::Clause)? = nil)
     @line = line && line > 0 ? line : nil
   end
 
