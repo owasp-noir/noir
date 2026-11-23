@@ -150,6 +150,11 @@ describe Access do
       Access.of(Tag.new("denied", "d", "spring_auth", requires: [denied])).should eq([denied])
     end
 
+    it "reads a guard whose requirement always holds as open to anyone" do
+      clauses = Access.of(Tag.new("auth", "Protected by Spring @PreAuthorize", "spring_auth", "A.java", 4, [] of Access::Clause))
+      clauses.should eq([Access::Clause.new([atom(:anonymous)], "Protected by Spring @PreAuthorize", "A.java", 4)])
+    end
+
     it "reads an unmigrated guard tag conservatively from its description" do
       Access.of(Tag.new("auth", "Protected by @UseGuards", "nestjs_auth", "a.ts", 9)).should eq([
         Access::Clause.new([signed_in], "Protected by @UseGuards", "a.ts", 9),

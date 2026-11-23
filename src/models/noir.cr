@@ -251,8 +251,15 @@ class NoirRunner
           end
         end
       elsif !@options["use_taggers"].to_s.empty?
-        @logger.success "Running #{@options["use_taggers"]} taggers."
-        NoirTaggers.run_tagger @endpoints, @options, @options["use_taggers"].to_s
+        taggers = @options["use_taggers"].to_s
+        @logger.success "Running #{taggers} taggers."
+        if @options["format"].to_s == "access-matrix" && !NoirTaggers.auth_tagging?(taggers)
+          # Without a tagger that emits guard tags, every row would read as
+          # open to everyone, a denied route included.
+          @logger.info "Adding the auth taggers because -f access-matrix reads the guard tags."
+          taggers = ([taggers] + NoirTaggers::AUTH_ENTRIES.map(&.key)).join(",")
+        end
+        NoirTaggers.run_tagger @endpoints, @options, taggers
       elsif ai_context_enabled?
         @logger.success "Running AI-context taggers."
         NoirTaggers.run_tagger @endpoints, @options, "all"

@@ -90,7 +90,9 @@ module Access
   # exists, so it reads as signed-in plus something noir could not read.
   def self.of(tag : Tag) : Array(Clause)
     if requires = tag.requires
-      return requires
+      return requires unless requires.empty?
+      # A guard whose condition always holds (`hasRole('A') or permitAll()`).
+      return [Clause.new([Atom.new(Kind::Anonymous)], tag.description, tag.path, tag.line)]
     end
     case tag.name
     when "auth"

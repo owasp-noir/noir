@@ -14,13 +14,18 @@ class OutputBuilderAccessMatrix < OutputBuilder
     # here, so nobody reaches it.
     rows = endpoints.reject(&.internal).map { |endpoint| {endpoint, Access.of(endpoint)} }
     principals = Access.principals(rows.flat_map(&.[1]))
+    show_project = rows.any? { |endpoint, _| !report_projects(endpoint).empty? }
 
-    columns = ["Endpoint"] + principals.map { |principal| markdown_code_span(sanitize_code_span_cell(principal.to_s)) } + ["Requires"]
+    columns = ["Endpoint"]
+    columns << "Project" if show_project
+    columns.concat(principals.map { |principal| markdown_code_span(sanitize_code_span_cell(principal.to_s)) })
+    columns << "Requires"
     ob_puts "| #{columns.join(" | ")} |"
     ob_puts "| #{columns.map { "---" }.join(" | ")} |"
 
     rows.each do |endpoint, clauses|
       cells = [markdown_code_span(sanitize_code_span_cell("#{endpoint.method} #{endpoint.url}"))]
+      cells << sanitize_text_cell(report_projects(endpoint)) if show_project
       principals.each { |principal| cells << MARKS[Access.cell(clauses, principal)] }
       cells << requires_cell(clauses)
       ob_puts "| #{cells.join(" | ")} |"

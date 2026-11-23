@@ -66,4 +66,6 @@ Noir reads the requirement from the endpoint's tags:
 - An `authz` tag from any other tagger reads as `unresolved`.
 - An `anonymous` tag reads as `anonymous`. It does not lift a guard from another tag: a route whose handler admits anonymous callers but whose filter chain requires a sign-in still shows `-` in the `anonymous` column.
 
-The conditions from all tags on an endpoint must all hold. The table leaves out outbound client calls (a Feign or `@HttpExchange` declaration), which the application calls and does not serve. Non-HTTP routes are included.
+The format runs every tagger by default. With `--use-taggers` it adds the framework auth taggers to your list, because a matrix built without guard tags would show every route as open.
+
+The conditions from all tags on an endpoint must all hold. When rows come from more than one project, a Project column tells them apart. The table leaves out outbound client calls (a Feign or `@HttpExchange` declaration), which the application calls and does not serve. Non-HTTP routes are included.

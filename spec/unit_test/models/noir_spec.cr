@@ -159,8 +159,9 @@ describe "NoirRunner with -u" do
   end
 end
 
-private def tag_names_with_format(format : String) : Array(String)
+private def tag_names_with_format(format : String, use_taggers : String = "") : Array(String)
   options = create_test_options
+  options["use_taggers"] = YAML::Any.new(use_taggers)
   options["base"] = YAML::Any.new([YAML::Any.new(File.expand_path("../../functional_test/fixtures/java/spring_auth", __DIR__))])
   options["format"] = YAML::Any.new(format)
   runner = NoirRunner.new(options)
@@ -175,5 +176,10 @@ describe "NoirRunner formats that need tags" do
     tag_names_with_format("access-matrix").should contain("auth")
     tag_names_with_format("only-tag").should contain("auth")
     tag_names_with_format("json").should be_empty
+  end
+
+  it "adds the auth taggers for -f access-matrix when the chosen taggers emit no guard tag" do
+    tag_names_with_format("access-matrix", "admin").should eq(["admin", "auth", "denied"])
+    tag_names_with_format("json", "admin").should eq(["admin"])
   end
 end

@@ -53,6 +53,20 @@ describe OutputBuilderAccessMatrix do
     output.lines.first(8).each { |line| line.scan(/(?<!\\)\|/).size.should eq(8), line }
   end
 
+  it "adds a Project column when rows come from more than one project" do
+    guarded_one = guarded("GET", "/admin", requiring([admin]))
+    guarded_one.details.project = "svc1"
+    open_one = Endpoint.new("/admin", "GET")
+    open_one.details.project = "svc2"
+
+    render_matrix([guarded_one, open_one]).lines.first(4).should eq([
+      "| Endpoint | Project | `anonymous` | `authenticated` | `role:ADMIN` | Requires |",
+      "| --- | --- | --- | --- | --- | --- |",
+      "| `GET /admin` | svc1 | - | - | Y | `role:ADMIN` |",
+      "| `GET /admin` | svc2 | Y | Y | Y | no guard found |",
+    ])
+  end
+
   it "prints the header and legend for no endpoints" do
     render_matrix([] of Endpoint).should eq(<<-MD)
       | Endpoint | `anonymous` | `authenticated` | Requires |
