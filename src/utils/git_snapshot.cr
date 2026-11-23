@@ -51,6 +51,14 @@ module Noir
             ServiceCall.new(sink, call.url, call.method, call.matches.map { |edge| relocate_edge(edge, pairs) })
           end
           endpoint.called_by = endpoint.called_by.map { |edge| relocate_edge(edge, pairs) }
+          # A diff names where a lost guard was declared on the old side.
+          endpoint.tags = endpoint.tags.map do |tag|
+            tag.path = tag.path.try { |path| relocate_path(path, pairs) }
+            tag.requires = tag.requires.try &.map do |clause|
+              Access::Clause.new(clause.any_of, clause.source, clause.path.try { |path| relocate_path(path, pairs) }, clause.line)
+            end
+            tag
+          end
           endpoint
         end
       end
