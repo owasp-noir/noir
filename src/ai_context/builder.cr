@@ -2827,8 +2827,9 @@ module NoirAIContext
 
     private def guard_tag?(tag : Tag) : Bool
       return true if tag.name == "auth" || tag.name == "authz"
-      # A framework's statement that the route admits anonymous callers.
-      return false if tag.name == "anonymous"
+      # A framework's statement that the route admits anonymous callers, or
+      # that it admits no caller at all.
+      return false if tag.name == "anonymous" || tag.name == "denied"
       tag.tagger.downcase.ends_with?("_auth")
     end
 

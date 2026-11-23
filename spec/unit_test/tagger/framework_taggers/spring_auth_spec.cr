@@ -1235,7 +1235,7 @@ describe "SpringAuthTagger (multi-module projects)" do
 
     endpoints[0].tags.should be_empty
     endpoints[1].tags.should be_empty
-    endpoints[2].tags.should be_empty
+    endpoints[2].tags.map { |tag| {tag.name, tag.description} }.should eq([{"denied", "Denied by Spring Security denyAll via authorize(\"/legacy/**\")"}])
     endpoints[3].tags.map(&.description).should eq(["Protected by Spring Security authenticated via authorize(anyRequest)"])
   end
 
@@ -1308,7 +1308,7 @@ describe "SpringAuthTagger (multi-module projects)" do
     jaxrs_tag.path.should eq(config_path)
     jaxrs_tag.line.should eq(11)
 
-    endpoints[1].tags.should be_empty
+    endpoints[1].tags.map { |tag| {tag.name, tag.description, tag.line} }.should eq([{"denied", "Denied by Spring Security denyAll via requestMatchers(\"/legacy/**\")", 10}])
     endpoints[1].resolution.should be_nil
   end
 end
@@ -3988,8 +3988,14 @@ describe "SpringAuthTagger guard resolution (#3567)" do
       endpoints[route].tags.map(&.name).should eq(["auth"])
       endpoints[route].resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
     end
-    %w[GET\ /deny-all GET\ /deny-all-marker GET\ /post-deny-all GET\ /class-deny-all].each do |route|
-      endpoints[route].tags.should be_empty
+    {
+      "GET /deny-all"        => "Denied by Spring @PreAuthorize",
+      "GET /deny-all-marker" => "Denied by Spring @DenyAll",
+      "GET /post-deny-all"   => "Denied by Spring @PostAuthorize",
+      "GET /class-deny-all"  => "Denied by Spring @DenyAll on the controller class",
+    }.each do |route, description|
+      endpoints[route].tags.map { |tag| {tag.name, tag.description} }.should eq([{"denied", description}])
+      endpoints[route].tags[0].requires.not_nil!.map(&.any_of.map(&.to_s)).should eq([["deny"]])
       endpoints[route].resolution.should be_nil
     end
   end
@@ -4024,8 +4030,12 @@ describe "SpringAuthTagger guard resolution (#3567)" do
       "GET /unmatched"    => "src/main/java/com/example/Controller.java:7",
     })
 
-    %w[GET\ /closed/items GET\ /unmatched].each do |route|
-      endpoints[route].tags.should be_empty
+    {
+      "GET /closed/items" => "Denied by Spring Security denyAll via requestMatchers(\"/closed/**\")",
+      "GET /unmatched"    => "Denied by Spring Security: authorizeHttpRequests denies a request no rule matches",
+    }.each do |route, description|
+      endpoints[route].tags.map { |tag| {tag.name, tag.description} }.should eq([{"denied", description}])
+      endpoints[route].tags[0].requires.not_nil!.map(&.any_of.map(&.to_s)).should eq([["deny"]])
       endpoints[route].resolution.should be_nil
     end
     endpoints["GET /roles/items"].tags.map(&.name).should eq(["auth"])

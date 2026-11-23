@@ -2673,7 +2673,10 @@ class SpringAuthTagger < FrameworkTagger
     locations.each do |location|
       decision = check_annotations(location, endpoint.method)
       next unless decision
-      return endpoint if decision[:denies_all]
+      if decision[:denies_all]
+        deny = decision[:requires].find(&.any_of.==([DENY])) || Access::Clause.new([DENY], decision[:description])
+        return note_denied(endpoint, decision[:description], [deny], deny.path, deny.line)
+      end
       if decision[:public_access]
         annotation_public = true
         public_requires.concat(decision[:requires])
@@ -2683,6 +2686,7 @@ class SpringAuthTagger < FrameworkTagger
         # The chain rule matching the route applies on top of the annotation.
         if chain = check_security_config_rules(endpoint, marker, layer: true)
           endpoint.add_tag(Tag.new("auth", decision[:description], "spring_auth", requires: chain[3]))
+          note_chain_denial(endpoint, marker) if chain[3].map(&.any_of) == [[DENY]]
         end
         return endpoint
       end
@@ -2692,9 +2696,13 @@ class SpringAuthTagger < FrameworkTagger
     if decision = check_security_config_rules(endpoint, marker)
       description, rule_path, rule_line, requires = decision
       endpoint = add_guard_tag(endpoint, description, false, requires + public_requires, rule_path, rule_line)
+      note_chain_denial(endpoint, marker) if requires.map(&.any_of) == [[DENY]]
       note_public_annotation(endpoint) if annotation_public
       return endpoint
     end
+    # The later layers never see a denied request, yet their tags stay: each
+    # reports what that layer would do.
+    note_chain_denial(endpoint, marker)
 
     # Phase 4: Match endpoint URL against registered HandlerInterceptors
     if decision = check_interceptor_rules(endpoint)
@@ -2728,6 +2736,30 @@ class SpringAuthTagger < FrameworkTagger
   # A guard whose refusal noir reads but not what would pass it.
   private def unread_guard(description : String, path : String?, line : Int32?) : Array(Access::Clause)
     [Access::Clause.unresolved(description, description, path, line)]
+  end
+
+  DENY = Access::Atom.new(:deny)
+
+  # A route no caller can satisfy is not an `auth` guard, so its tag has a
+  # name of its own.
+  private def note_denied(endpoint : Endpoint, description : String, requires : Array(Access::Clause), path : String?, line : Int32?) : Endpoint
+    endpoint.add_tag(Tag.new("denied", description.sub(/\AProtected by/, "Denied by"), "spring_auth", path, line, requires))
+    endpoint
+  end
+
+  # Only when the chain of every app serving the route denies it: one app
+  # that admits someone leaves the route reachable.
+  private def note_chain_denial(endpoint : Endpoint, marker : String?) : Nil
+    denial = nil
+    admitted = per_serving_classpath(endpoint, false) do |classpath, app|
+      decision = security_decision(endpoint, app, classpath, marker, layer: true)
+      next true unless decision && decision[3].map(&.any_of) == [[DENY]]
+      denial ||= decision
+      nil
+    end
+    return if admitted
+    return unless found = denial
+    note_denied(endpoint, found[0], found[3], found[1], found[2])
   end
 
   private def note_public_annotation(endpoint : Endpoint)

@@ -97,7 +97,39 @@ describe "SpringAuthTagger access requirements" do
       "Controller.java"     => controller("", "@Secured(\"ROLE_USER\")"),
       "SecurityConfig.java" => chain(%(.requestMatchers("/api/**").denyAll())),
     }
-    atoms(spring_tags(files, "GET", "/api/items", 10)[0]).should eq([["role:USER"], ["deny"]])
+    tags = spring_tags(files, "GET", "/api/items", 10)
+    tags.map(&.name).should eq(["auth", "denied"])
+    atoms(tags[0]).should eq([["role:USER"], ["deny"]])
+    tags[1].description.should eq(%(Denied by Spring Security denyAll via requestMatchers("/api/**")))
+    atoms(tags[1]).should eq([["deny"]])
+  end
+
+  it "tags a route an anyRequest denyAll decides as denied, not auth" do
+    files = {"SecurityConfig.java" => chain(%(.requestMatchers("/api/**").authenticated()\n.anyRequest().denyAll()))}
+    tags = spring_tags(files, "GET", "/other")
+    tags.map { |tag| {tag.name, tag.description} }.should eq([{"denied", "Denied by Spring Security denyAll via anyRequest()"}])
+    atoms(tags[0]).should eq([["deny"]])
+  end
+
+  it "tags a route a Kotlin anyExchange denyAll decides as denied, reading authorize's rule past its pattern" do
+    config = <<-KOTLIN
+      @Configuration
+      class WebFluxSecurityConfig {
+          @Bean
+          fun chain(http: ServerHttpSecurity): SecurityWebFilterChain {
+              return http.authorizeExchange {
+                  authorize("/guarded/**", hasAuthority("ROLE_USER"))
+                  authorize(anyExchange, denyAll)
+              }.build()
+          }
+      }
+      KOTLIN
+    closed = spring_tags({"WebFluxSecurityConfig.kt" => config}, "GET", "/closed")
+    closed.map { |tag| {tag.name, tag.description} }.should eq([{"denied", "Denied by Spring Security denyAll via authorize(anyExchange)"}])
+    atoms(closed[0]).should eq([["deny"]])
+    guarded = spring_tags({"WebFluxSecurityConfig.kt" => config}, "GET", "/guarded/items")
+    guarded.map(&.name).should eq(["auth"])
+    atoms(guarded[0]).should eq([["role:USER"]])
   end
 
   it "adds nothing for a chain rule that permits all" do
