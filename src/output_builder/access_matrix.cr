@@ -38,10 +38,7 @@ class OutputBuilderAccessMatrix < OutputBuilder
   private def requires_cell(clauses : Array(Access::Clause)) : String
     return "no guard found" if clauses.empty?
     # Two unread clauses differ only in a fragment this cell does not show.
-    text = clauses.map do |clause|
-      atoms = clause.any_of.join(" | ")
-      clause.any_of.size > 1 ? "(#{atoms})" : atoms
-    end.uniq!.join(" & ")
+    text = clauses.map(&.to_s).uniq!.join(" & ")
     markdown_code_span(sanitize_code_span_cell(text))
   end
 end
