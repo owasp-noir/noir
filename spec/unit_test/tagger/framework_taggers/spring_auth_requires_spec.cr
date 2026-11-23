@@ -225,3 +225,37 @@ describe "SpringAuthTagger access requirements" do
     tags[1].requires.should be_nil
   end
 end
+
+describe "SpringAuthTagger access requirements (unread and conditional chains)" do
+  it "lets a setting lift a chain registered under @Profile" do
+    config = chain(%(.anyRequest().authenticated())).sub("@Configuration", "@Configuration\n@Profile(\"auth\")")
+    requires = spring_tags({"SecurityConfig.java" => config}, "GET", "/x")[0].requires.not_nil!
+    requires.map(&.any_of.map(&.to_s)).should eq([["authenticated", "unresolved"]])
+    requires[0].any_of[1].value.should eq(%(it is registered only under `@Profile("auth")`))
+  end
+
+  it "leaves a decision that holds for some verbs only unresolved" do
+    rules = %(.requestMatchers(HttpMethod.GET, "/").permitAll()\n.requestMatchers(HttpMethod.DELETE, "/open/**").authenticated()\n.anyRequest().permitAll())
+    open = spring_tags({"SecurityConfig.java" => chain(rules)}, "ANY", "/open/x")[0].requires.not_nil!
+    open.map(&.any_of.map(&.value)).should eq([["for DELETE only"]])
+    guarded = spring_tags({"SecurityConfig.java" => chain(rules.sub(".anyRequest().permitAll()", ".anyRequest().authenticated()"))}, "ANY", "/")[0].requires.not_nil!
+    guarded.map(&.any_of.map(&.value)).should eq([["except for GET"]])
+  end
+
+  it "leaves a chain whose rules it does not read unresolved" do
+    config = <<-JAVA
+      package com.example;
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(this::rules);
+              return http.build();
+          }
+      }
+      JAVA
+    tag = spring_tags({"SecurityConfig.java" => config}, "GET", "/items")[0]
+    tag.description.should eq("Protected by Spring Security, configured by the authorization rules of the chain in SecurityConfig.java, which noir does not read")
+    tag.requires.not_nil!.map(&.any_of.map(&.to_s)).should eq([["unresolved"]])
+    tag.requires.not_nil![0].any_of[0].value.should eq("authorizeHttpRequests")
+  end
+end

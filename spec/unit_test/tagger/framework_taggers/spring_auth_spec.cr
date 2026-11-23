@@ -928,6 +928,13 @@ describe "SpringAuthTagger (multi-module projects)" do
     endpoints[0].tags.should be_empty
   end
 
+  it "lets the permitAll list it cannot read lift the guard's requirement" do
+    endpoints = run_spring_endpoints_map(files, {"GET /lib" => "lib/src/main/java/com/example/lib/Controller.java:2"})
+    requires = endpoints["GET /lib"].tags[0].requires.not_nil!
+    requires.map(&.any_of.map(&.to_s)).should eq([["authenticated", "unresolved"]])
+    requires[0].any_of[1].value.should eq("the permitAll list bound from secure.ignored.urls")
+  end
+
   it "applies a chain only to modules that depend on the module declaring it" do
     tags = run_spring_multi_module(files, {
       "GET /search" => "search/src/main/java/com/example/search/Controller.java:2",
@@ -3730,6 +3737,22 @@ describe "SpringAuthTagger (configurations that must not read as open)" do
     tags = run_spring_security_config({"SecurityConfig.java" => config}, ["GET /public/x", "GET /items"])
     tags["GET /public/x"].should be_empty
     tags["GET /items"].should eq(["Protected by Spring Security authenticated via anyExchange()"])
+  end
+
+  it "requires an authenticated caller under Boot's default chain" do
+    files = boot_app_files.call("build.gradle", "#{SPRING_WEB_STARTER}    implementation 'org.springframework.boot:spring-boot-starter-security'\n}\n")
+    tag = run_spring_endpoints_map(files, {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})["GET /items"].tags[0]
+    tag.requires.not_nil!.map { |clause| {clause.any_of.map(&.to_s), clause.source} }.should eq([{["authenticated"], boot_default[0]}])
+  end
+
+  it "leaves an XML <http> configuration it does not read unresolved" do
+    xml = %(<beans:beans xmlns="http://www.springframework.org/schema/security" xmlns:beans="http://www.springframework.org/schema/beans">\n  <http>\n    <intercept-url pattern="/**" access="authenticated"/>\n  </http>\n</beans:beans>\n)
+    endpoints = run_spring_endpoints_map({
+      "app/pom.xml"                                   => spring_module_pom("app", ["spring-security-config"]),
+      "app/src/main/webapp/WEB-INF/security.xml"      => xml,
+      "app/src/main/java/com/example/Controller.java" => SPRING_ITEMS_CONTROLLER,
+    }, {"GET /items" => "app/src/main/java/com/example/Controller.java:2"})
+    endpoints["GET /items"].tags[0].requires.not_nil!.map(&.any_of.map(&.value)).should eq([["the XML <http> configuration"]])
   end
 
   it "guards an app whose security configuration it does not read" do
