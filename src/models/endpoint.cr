@@ -183,8 +183,17 @@ struct Endpoint
   # Dedup by (name, tagger) like push_callee/push_param do for their
   # collections, so re-tagging the same target (e.g. a match in two
   # code_paths) can't surface a duplicate "auth auth" in the text output.
+  # A second tag from one tagger keeps the first one's text, and both
+  # requirements hold, so their clauses are ANDed onto the kept tag.
   def add_tag(tag : Tag)
-    return if @tags.any? { |existing| existing.name == tag.name && existing.tagger == tag.tagger }
+    if index = @tags.index { |existing| existing.name == tag.name && existing.tagger == tag.tagger }
+      kept = @tags[index]
+      if kept.requires || tag.requires
+        kept.requires = ((kept.requires || [] of Access::Clause) + (tag.requires || [] of Access::Clause)).uniq
+        @tags[index] = kept
+      end
+      return
+    end
     @tags << tag
   end
 
