@@ -170,11 +170,16 @@ describe Access do
       Access.of(endpoint).should eq([admin_clause, Access::Clause.unresolved("policy", "policy")])
     end
 
-    it "lets an anonymous tag override every guard tag" do
+    it "keeps a guard another layer applies next to a declared anonymous access" do
+      open = Access::Clause.new([atom(:anonymous)], "permitAll()", "S.java", 12)
       endpoint = Endpoint.new("/login", "POST")
-      endpoint.tags << Tag.new("auth", "d", "spring_auth", requires: [admin_clause])
       endpoint.tags << Tag.new("anonymous", "permitAll()", "spring_auth", "S.java", 12)
-      Access.of(endpoint).should eq([Access::Clause.new([atom(:anonymous)], "permitAll()", "S.java", 12)])
+      Access.of(endpoint).should eq([open])
+      Access.cell(Access.of(endpoint), atom(:anonymous)).should be_true
+
+      endpoint.tags << Tag.new("auth", "d", "spring_auth", requires: [admin_clause])
+      Access.of(endpoint).should eq([open, admin_clause])
+      Access.cell(Access.of(endpoint), atom(:anonymous)).should be_false
     end
 
     it "finds nothing on an endpoint without guard tags" do

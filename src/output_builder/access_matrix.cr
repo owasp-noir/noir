@@ -10,7 +10,9 @@ class OutputBuilderAccessMatrix < OutputBuilder
   MARKS = {true => "Y", false => "-", nil => "?"}
 
   def print(endpoints : Array(Endpoint))
-    rows = endpoints.map { |endpoint| {endpoint, Access.of(endpoint)} }
+    # An outbound client declaration (Feign, `@HttpExchange`) is not served
+    # here, so nobody reaches it.
+    rows = endpoints.reject(&.internal).map { |endpoint| {endpoint, Access.of(endpoint)} }
     principals = Access.principals(rows.flat_map(&.[1]))
 
     columns = ["Endpoint"] + principals.map { |principal| markdown_code_span(sanitize_code_span_cell(principal.to_s)) } + ["Requires"]

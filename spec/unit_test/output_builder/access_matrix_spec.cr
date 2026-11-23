@@ -23,13 +23,16 @@ describe OutputBuilderAccessMatrix do
   write = Access::Atom.new(:permission, "posts:write")
   hostile = Access::Atom.new(:role, "a|b`c")
 
-  it "renders one row per endpoint, a column per principal and the requirement" do
+  it "renders one row per served endpoint, a column per principal and the requirement" do
+    client_call = Endpoint.new("/upstream/users", "GET")
+    client_call.internal = true
     output = render_matrix([
       guarded("DELETE", "/api/admin/users/{id}", requiring([admin], [Access::Atom.new(:authenticated)])),
       guarded("PUT", "/api/posts/{id}", requiring([admin, write], [Access::Atom.new(:unresolved, "@acl.check(#id)")])),
       guarded("GET", "/me", Tag.new("auth", "Protected by @UseGuards", "nestjs_auth")),
       Endpoint.new("/api/public/health", "GET"),
-      guarded("POST", "/login", requiring([admin]), Tag.new("anonymous", "permitAll()", "spring_auth")),
+      guarded("POST", "/login", Tag.new("anonymous", "permitAll()", "spring_auth")),
+      client_call,
       guarded("GET", "/x", requiring([hostile])),
     ])
 

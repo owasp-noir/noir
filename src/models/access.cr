@@ -98,17 +98,17 @@ module Access
        Clause.unresolved(tag.description, tag.description, tag.path, tag.line)]
     when "authz"
       [Clause.unresolved(tag.description, tag.description, tag.path, tag.line)]
+    when "anonymous"
+      [Clause.new([Atom.new(Kind::Anonymous)], tag.description, tag.path, tag.line)]
     else
       [] of Clause
     end
   end
 
-  # Empty means no guard was found. An `anonymous` tag overrides every guard
-  # tag, as it does in `NoirAIContext`.
+  # Empty means no guard was found. A declaration that admits anonymous
+  # callers does not lift a guard another layer applies: a Spring chain rule
+  # still refuses them ahead of a `@PermitAll` handler.
   def self.of(endpoint : Endpoint) : Array(Clause)
-    if open = endpoint.tags.find { |tag| tag.name == "anonymous" }
-      return [Clause.new([Atom.new(Kind::Anonymous)], open.description, open.path, open.line)]
-    end
     endpoint.tags.flat_map { |tag| of(tag) }.uniq!
   end
 

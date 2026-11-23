@@ -64,6 +64,6 @@ Noir reads the requirement from the endpoint's tags:
 - A tag with a `requires` field (see [JSON output](../json/)) gives its conditions as written. Today the `spring_auth` tagger fills it.
 - An `auth` tag from any other tagger reads as `authenticated & unresolved`. The tag says a guard exists, but not what it checks.
 - An `authz` tag from any other tagger reads as `unresolved`.
-- An `anonymous` tag overrides every other guard tag on the endpoint, and the row reads `anonymous`.
+- An `anonymous` tag reads as `anonymous`. It does not lift a guard from another tag: a route whose handler admits anonymous callers but whose filter chain requires a sign-in still shows `-` in the `anonymous` column.
 
-The conditions from all tags on an endpoint must all hold. The table includes every endpoint that `-f markdown-table` includes, with no filter for outbound client calls or non-HTTP routes.
+The conditions from all tags on an endpoint must all hold. The table leaves out outbound client calls (a Feign or `@HttpExchange` declaration), which the application calls and does not serve. Non-HTTP routes are included.
