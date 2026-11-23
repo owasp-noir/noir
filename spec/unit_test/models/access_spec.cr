@@ -191,4 +191,53 @@ describe Access do
       Access.of(Endpoint.new("/health", "GET")).should be_empty
     end
   end
+
+  describe ".compare" do
+    support = atom(:role, "SUPPORT")
+    write_scope = atom(:scope, "w")
+    opaque = atom(:unresolved, "@acl.check(#id)")
+    other_opaque = atom(:unresolved, "@acl.owns(#id)")
+    deny = atom(:deny)
+    cnf = ->(clauses : Array(Array(Access::Atom))) { clauses.map { |atoms| Access::Clause.new(atoms, "s") } }
+
+    it "reports old clauses the new requirement no longer implies, strictly or only leniently" do
+      none = [] of Array(Access::Atom)
+      ([
+        {[[admin]], [[admin, support]], [[admin]], none},
+        {[[admin], [write_scope]], [[admin]], [[write_scope]], none},
+        {[[admin], [opaque]], [[admin]], [[opaque]], none},
+        {[[admin]], [[admin, opaque]], [[admin]], none},
+        {[[admin]], [[admin], [opaque]], none, none},
+        {[[opaque]], [[other_opaque]], none, [[opaque]]},
+        {[[signed_in], [opaque]], none, [[signed_in], [opaque]], none},
+        {[[signed_in]], [[admin]], none, none},
+        {[[admin]], [[signed_in]], [[admin]], none},
+        {[[admin], [opaque]], [[deny]], none, none},
+        {[[deny]], [[admin]], [[deny]], none},
+        {[[atom(:anonymous)]], none, none, none},
+        {[[atom(:anonymous), admin]], [[support]], none, none},
+      ] of {Array(Array(Access::Atom)), Array(Array(Access::Atom)), Array(Array(Access::Atom)), Array(Array(Access::Atom))}).each do |old, new, widened, unverified|
+        change = Access.compare(cnf.call(old), cnf.call(new))
+        change.widened.map(&.any_of).should eq(widened), "widened for #{old} -> #{new}"
+        change.unverified.map(&.any_of).should eq(unverified), "unverified for #{old} -> #{new}"
+        change.empty?.should eq(widened.empty? && unverified.empty?)
+      end
+    end
+
+    it "ignores where a clause was declared, so a moved annotation is no change" do
+      old = [Access::Clause.new([admin], "@Secured(\"ROLE_ADMIN\")", "A.java", 4)]
+      moved = [Access::Clause.new([admin], "@Secured({\"ROLE_ADMIN\"})", "B.java", 40)]
+      Access.compare(old, moved).empty?.should be_true
+    end
+
+    it "names a clause by its atoms, parenthesized when there are several" do
+      Access::Clause.new([user, admin], "s").to_s.should eq("(role:ADMIN | role:USER)")
+      Access::Clause.new([opaque], "s").to_s.should eq("unresolved")
+    end
+
+    it "keeps the old clause's source and location for the reviewer" do
+      lost = Access::Clause.new([admin], "hasRole('ADMIN')", "A.java", 4)
+      Access.compare([lost], [] of Access::Clause).widened.should eq([lost])
+    end
+  end
 end

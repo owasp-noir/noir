@@ -66,6 +66,22 @@ module Access
       raise ArgumentError.new("an access clause needs at least one atom") if @any_of.empty?
       @any_of = @any_of.uniq.sort!
     end
+
+    def to_s(io : IO) : Nil
+      io << '(' if @any_of.size > 1
+      @any_of.join(io, " | ")
+      io << ')' if @any_of.size > 1
+    end
+  end
+
+  # What changed between two requirements of one endpoint. `widened` holds
+  # old clauses no new clause implies even when every unread check is taken
+  # for the same one; `unverified` holds those implied only under that
+  # lenient reading, i.e. an unread check whose text changed.
+  record Change, widened : Array(Clause), unverified : Array(Clause) do
+    def empty? : Bool
+      widened.empty? && unverified.empty?
+    end
   end
 
   # The empty CNF is TRUE: it requires nothing.
@@ -126,6 +142,29 @@ module Access
   def self.principals(clauses : Enumerable(Clause)) : Array(Atom)
     held = clauses.flat_map(&.any_of).select { |atom| atom.kind.role? || atom.kind.permission? || atom.kind.scope? }
     [Atom.new(Kind::Anonymous), Atom.new(Kind::Authenticated)] + held.uniq.sort!
+  end
+
+  # Clauses are matched on their atoms alone: source and location are kept
+  # for the reviewer, and a moved or reformatted declaration is no change.
+  def self.compare(old : Array(Clause), new : Array(Clause)) : Change
+    widened = [] of Clause
+    unverified = [] of Clause
+    old.each do |clause|
+      next if clause.any_of.any?(&.kind.anonymous?)
+      next if new.any? { |held| implies?(held, clause, lenient: false) }
+      (new.any? { |held| implies?(held, clause, lenient: true) } ? unverified : widened) << clause
+    end
+    Change.new(widened, unverified)
+  end
+
+  private def self.implies?(held : Clause, required : Clause, lenient : Bool) : Bool
+    held.any_of.all? { |a| required.any_of.any? { |b| implies?(a, b, lenient) } }
+  end
+
+  private def self.implies?(a : Atom, b : Atom, lenient : Bool) : Bool
+    return true if b.kind.anonymous? || a.kind.deny? || a == b
+    return true if b.kind.authenticated? && (a.kind.role? || a.kind.permission? || a.kind.scope?)
+    lenient && a.kind.unresolved? && b.kind.unresolved?
   end
 
   private def self.admits?(clause : Clause, principal : Atom) : Bool?
