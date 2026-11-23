@@ -2688,7 +2688,7 @@ class SpringAuthTagger < FrameworkTagger
           endpoint.add_tag(Tag.new("auth", decision[:description], "spring_auth", requires: chain[3]))
           note_chain_denial(endpoint, marker) if chain[3].map(&.any_of) == [[DENY]]
         end
-        return endpoint
+        return and_unread_layers(endpoint, decision[:description])
       end
     end
 
@@ -2697,6 +2697,7 @@ class SpringAuthTagger < FrameworkTagger
       description, rule_path, rule_line, requires = decision
       endpoint = add_guard_tag(endpoint, description, false, requires + public_requires, rule_path, rule_line)
       note_chain_denial(endpoint, marker) if requires.map(&.any_of) == [[DENY]]
+      endpoint = and_unread_layers(endpoint, description)
       note_public_annotation(endpoint) if annotation_public
       return endpoint
     end
@@ -2730,6 +2731,16 @@ class SpringAuthTagger < FrameworkTagger
     end
 
     note_public_annotation(endpoint) if annotation_public
+    endpoint
+  end
+
+  # An interceptor or servlet filter that also matches an already guarded
+  # route holds on top of its guard.
+  private def and_unread_layers(endpoint : Endpoint, description : String) : Endpoint
+    {check_interceptor_rules(endpoint), check_servlet_filter_rules(endpoint)}.each do |layer|
+      next unless layer
+      endpoint.add_tag(Tag.new("auth", description, "spring_auth", requires: unread_guard(*layer)))
+    end
     endpoint
   end
 

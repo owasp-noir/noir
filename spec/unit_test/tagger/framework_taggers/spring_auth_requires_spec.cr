@@ -104,6 +104,64 @@ describe "SpringAuthTagger access requirements" do
     atoms(tags[1]).should eq([["deny"]])
   end
 
+  it "ANDs a registered interceptor onto a guarded route only where it matches" do
+    interceptor = <<-JAVA
+      package com.example;
+      public class AuthInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+              if (request.getHeader("Authorization") == null) {
+                  response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+                  return false;
+              }
+              return true;
+          }
+      }
+      JAVA
+    web = <<-JAVA
+      package com.example;
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new AuthInterceptor()).addPathPatterns("/api/**");
+          }
+      }
+      JAVA
+    files = {"Controller.java" => controller("", "@Secured(\"ROLE_USER\")"), "AuthInterceptor.java" => interceptor, "WebConfig.java" => web}
+    tags = spring_tags(files, "GET", "/api/items", 10)
+    tags.size.should eq(1)
+    {tags[0].description, tags[0].path, tags[0].line}.should eq({"Protected by Spring @Secured", nil, nil})
+    atoms(tags[0]).should eq([["role:USER"], ["unresolved"]])
+    tags[0].requires.not_nil![1].source.should eq("Protected by Spring HandlerInterceptor AuthInterceptor")
+
+    files["WebConfig.java"] = web.sub("/api/**", "/admin/**")
+    atoms(spring_tags(files, "GET", "/api/items", 10)[0]).should eq([["role:USER"]])
+  end
+
+  it "ANDs a refusing servlet filter onto a chain rule's guard" do
+    filter = <<-JAVA
+      package com.example;
+      @Component
+      public class TokenFilter extends OncePerRequestFilter {
+          @Override
+          protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+              if (request.getHeader("Authorization") == null) {
+                  response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+                  return;
+              }
+              chain.doFilter(request, response);
+          }
+      }
+      JAVA
+    files = {"SecurityConfig.java" => chain(%(.requestMatchers("/admin/**").hasRole("ADMIN"))), "TokenFilter.java" => filter}
+    tags = spring_tags(files, "GET", "/admin/users")
+    tags.size.should eq(1)
+    tags[0].description.should eq(%(Protected by Spring Security hasRole via requestMatchers("/admin/**")))
+    atoms(tags[0]).should eq([["role:ADMIN"], ["unresolved"]])
+    tags[0].requires.not_nil![1].source.should start_with("Protected by Servlet filter TokenFilter")
+  end
+
   it "tags a route an anyRequest denyAll decides as denied, not auth" do
     files = {"SecurityConfig.java" => chain(%(.requestMatchers("/api/**").authenticated()\n.anyRequest().denyAll()))}
     tags = spring_tags(files, "GET", "/other")
