@@ -83,6 +83,34 @@ Express auth tags also use `guard: heuristic` when every guard relies on a name,
 
 The YAML, JSONL and TOML outputs carry the same field, and the plain report prints it as a `resolution` row.
 
+An auth tag can carry `requires`, the access the guard asks of a caller. It is a list of clauses, and every clause must hold. A clause holds when any one of its `any_of` atoms does. Each atom has a `kind`, which is one of `role`, `permission`, `scope`, `authenticated`, `anonymous`, `deny` or `unresolved`, and most kinds also have a `value`. An `unresolved` atom keeps the source text Noir could not read, such as a bean call, a negation, or a constant from another file. Treat it as a condition no caller is known to meet. Each clause also names its `source` declaration and, when known, its `path` and `line`. An empty list means the guard admits every caller. A tag without the key comes from a tagger that does not read requirements yet. In this version only `spring_auth` sets it.
+
+`spring_auth` reads the handler's annotation, which replaces the class's own. It then adds the clauses of the security filter chain rule that matches the route, because the chain and the annotation must both pass. An endpoint whose route is denied outright (`@DenyAll`, a chain `denyAll()`) gets no auth tag, and so it has no `requires` key. A `deny` atom appears only when a guarded endpoint also matches a rule that denies it.
+
+```json
+{
+  "name": "auth",
+  "description": "Protected by Spring @PreAuthorize",
+  "tagger": "spring_auth",
+  "requires": [
+    {
+      "any_of": [{ "kind": "role", "value": "ADMIN" }, { "kind": "permission", "value": "posts:write" }],
+      "source": "@PreAuthorize(\"hasRole('ADMIN') or hasAuthority('posts:write')\")",
+      "path": "src/main/java/com/example/PostController.java",
+      "line": 31
+    },
+    {
+      "any_of": [{ "kind": "authenticated" }],
+      "source": "authenticated()",
+      "path": "src/main/java/com/example/SecurityConfig.java",
+      "line": 19
+    }
+  ]
+}
+```
+
+The YAML, JSONL and TOML outputs carry `requires` as well.
+
 A full report looks like this. It was produced with taggers enabled (`-T`), which is what fills the `tags` arrays.
 
 ```json
