@@ -22,6 +22,7 @@ Pick an output format with `-f`. Some formats are for scripts and other tools, o
 | Import into Postman | [More](more/) (Postman Collection) | `-f postman` |
 | Visual report sharing | [HTML](html/) | `-f html` |
 | API structure visualization | [Mermaid](mermaid/) | `-f mermaid` |
+| Who can reach each endpoint | [Access Matrix](access_matrix/) | `-f access-matrix` |
 | Just list URLs or params | [More](more/) (Filters) | `-f only-url` |
 
 ## Request body coverage by format
@@ -48,6 +49,7 @@ Every value `-f` accepts (`noir list formats` prints the same list):
 | `yaml` | YAML | [YAML](yaml/) |
 | `toml` | TOML | [More](more/) |
 | `markdown-table` | Markdown table | [More](more/) |
+| `access-matrix` | Markdown matrix of who can reach each endpoint | [Access Matrix](access_matrix/) |
 | `sarif` | SARIF v2.1.0 | [SARIF](sarif/) |
 | `html` | Self-contained HTML report | [HTML](html/) |
 | `curl`, `httpie`, `powershell` | HTTP client commands | [HTTP Client Commands](curl/) |

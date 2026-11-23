@@ -16,7 +16,7 @@ sort_by = "weight"
 
 ## 사용법
 
-태거는 기본으로 꺼져 있습니다. `--verbose`, `--ai-context`, `-f only-tag`를 주면 모두 켜집니다. 직접 고르려면 다음 플래그를 쓰세요.
+태거는 기본으로 꺼져 있습니다. `--verbose`, `--ai-context`, `-f only-tag`, `-f access-matrix`를 주면 모두 켜집니다. 직접 고르려면 다음 플래그를 쓰세요.
 
 **모든 태거 활성화** (`-T` / `--use-all-taggers`)
 
