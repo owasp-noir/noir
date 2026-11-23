@@ -355,6 +355,9 @@ describe "OutputBuilderDiff" do
       change["url"].should eq("/a")
       change["params_added"].as_a.first["name"].should eq("id")
       change["auth_removed"].as_bool.should be_false
+      change.as_h.has_key?("access_widened").should be_false
+      change.as_h.has_key?("access_unverified").should be_false
+      OutputBuilderDiff::Change.from_json(change.to_json).access_widened.should be_empty
     end
 
     it "names change records as change tables in toml" do
@@ -393,7 +396,7 @@ describe "OutputBuilderDiff" do
 
     it "counts each --fail-on category" do
       counts = OutputBuilderDiff.gate_counts(fixture.call)
-      counts.should eq({"added" => 1, "removed" => 1, "changed" => 2, "auth-removed" => 1})
+      counts.should eq({"added" => 1, "removed" => 1, "changed" => 2, "auth-removed" => 1, "access-widened" => 1})
     end
 
     it "renders a markdown summary with the lost-auth routes first" do
@@ -431,6 +434,7 @@ describe "OutputBuilderDiff" do
       results.should eq([
         {"diff-endpoint-added", "note"},
         {"diff-auth-removed", "warning"},
+        {"diff-access-widened", "warning"},
         {"diff-params-added", "note"},
       ])
       # DELETE /gone has no line left in the reviewed tree to point at.
@@ -477,6 +481,119 @@ describe "OutputBuilderDiff" do
       builder.print_json(fixture.call)
 
       JSON.parse(builder.io.to_s)["errors"].as_a.should be_empty
+    end
+  end
+
+  describe "access requirements" do
+    admin = Access::Atom.new(:role, "ADMIN")
+    user = Access::Atom.new(:role, "USER")
+    opaque = Access::Atom.new(:unresolved, "@acl.check(#id)")
+    guarded = ->(requires : Array(Access::Clause)) do
+      endpoint = Endpoint.new("/admin", "DELETE", Details.new(PathInfo.new("New.java", 30)))
+      endpoint.add_tag(Tag.new("auth", "Protected by Spring @PreAuthorize", "spring_auth", "New.java", 29, requires))
+      endpoint
+    end
+    old_admin = Access::Clause.new([admin], "@PreAuthorize(\"hasRole('ADMIN')\")", "Old.java", 29)
+    old_opaque = Access::Clause.new([opaque], "@PreAuthorize(\"@acl.check(#id)\")", "Old.java", 28)
+
+    it "reports a route whose tag names are unchanged but whose requirement widened" do
+      old = guarded.call([old_admin, old_opaque])
+      new = guarded.call([Access::Clause.new([admin, user], "@PreAuthorize(\"hasAnyRole('ADMIN','USER')\")", "New.java", 29),
+                          Access::Clause.new([opaque], "s", "New.java", 28)])
+      result = OutputBuilderDiff.new(create_test_options).diff([new], [old])
+
+      result[:changed].should eq([new])
+      change = result[:changes].first
+      change.tags_added.should be_empty
+      change.tags_removed.should be_empty
+      change.auth_removed?.should be_false
+      change.access_widened.should eq([old_admin])
+      change.access_unverified.should be_empty
+      OutputBuilderDiff.gate_counts(result)["access-widened"].should eq(1)
+    end
+
+    it "reports a changed unread check as unverified without counting it as widened" do
+      old = guarded.call([old_opaque])
+      new = guarded.call([Access::Clause.new([Access::Atom.new(:unresolved, "@acl.owns(#id)")], "s")])
+      result = OutputBuilderDiff.new(create_test_options).diff([new], [old])
+
+      result[:changes].first.access_unverified.should eq([old_opaque])
+      result[:changes].first.access_widened.should be_empty
+      OutputBuilderDiff.gate_counts(result)["access-widened"].should eq(0)
+    end
+
+    it "counts a dropped unread check as widened" do
+      result = OutputBuilderDiff.new(create_test_options).diff([guarded.call([old_admin])], [guarded.call([old_admin, old_opaque])])
+      result[:changes].first.access_widened.should eq([old_opaque])
+    end
+
+    it "reads an unmigrated guard tag whose description changed as unverified" do
+      old = Endpoint.new("/admin", "GET")
+      old.add_tag(Tag.new("auth", "Protected by login_required", "flask_auth"))
+      new = Endpoint.new("/admin", "GET")
+      new.add_tag(Tag.new("auth", "Protected by admin_required", "flask_auth"))
+      result = OutputBuilderDiff.new(create_test_options).diff([new], [old])
+
+      result[:changed].should eq([new])
+      result[:changes].first.access_unverified.map(&.source).should eq(["Protected by login_required"])
+      result[:changes].first.access_widened.should be_empty
+    end
+
+    it "does not report a guard that only moved" do
+      moved = Access::Clause.new([admin], "@Secured(\"ROLE_ADMIN\")", "New.java", 90)
+      OutputBuilderDiff.new(create_test_options).diff([guarded.call([moved])], [guarded.call([old_admin])])[:changed].should be_empty
+    end
+
+    it "renders widened and unverified clauses in every format" do
+      old = guarded.call([old_admin, old_opaque])
+      new = guarded.call([Access::Clause.new([admin, user], "s"), Access::Clause.new([Access::Atom.new(:unresolved, "@acl.owns(#id)")], "s")])
+      result = OutputBuilderDiff.new(create_test_options).diff([new], [old])
+      render = ->(format : String) do
+        options = create_test_options
+        options["color"] = YAML::Any.new(false)
+        builder = OutputBuilderDiff.new(options)
+        builder.io = IO::Memory.new
+        case format
+        when "plain"    then builder.print(result)
+        when "json"     then builder.print_json(result)
+        when "yaml"     then builder.print_yaml(result)
+        when "toml"     then builder.print_toml(result)
+        when "markdown" then builder.print_markdown(result)
+        else                 builder.print_sarif(result)
+        end
+        builder.io.to_s
+      end
+
+      render.call("plain").should contain(<<-TEXT)
+          ! access widened: no longer requires role:ADMIN, from @PreAuthorize("hasRole('ADMIN')") (Old.java:29)
+            now requires: (role:ADMIN | role:USER) & unresolved
+          ~ access check changed: @PreAuthorize("@acl.check(#id)") (Old.java:28)
+        TEXT
+      json = JSON.parse(render.call("json"))["changes"][0]
+      json["access_widened"][0]["any_of"][0]["value"].should eq("ADMIN")
+      json["access_widened"][0]["line"].should eq(29)
+      json["access_unverified"][0]["source"].should eq("@PreAuthorize(\"@acl.check(#id)\")")
+      YAML.parse(render.call("yaml"))["changes"][0]["access_widened"][0]["path"].should eq("Old.java")
+      render.call("toml").should contain("access_widened")
+
+      markdown = render.call("markdown")
+      markdown.should contain("### :warning: Access widened")
+      markdown.should contain("| `DELETE /admin` | `role:ADMIN` | @PreAuthorize(\"hasRole('ADMIN')\") (Old.java:29) | `(role:ADMIN \\| role:USER) & unresolved` |")
+      markdown.should contain("**access widened**: no longer requires `role:ADMIN`<br>access check changed: `@PreAuthorize(\"@acl.check(#id)\")`")
+
+      results = JSON.parse(render.call("sarif"))["runs"][0]["results"].as_a.map { |r| {r["ruleId"].as_s, r["level"].as_s} }
+      results.should eq([{"diff-access-widened", "warning"}, {"diff-access-unverified", "note"}])
+    end
+
+    it "keeps the sarif rule list when no requirement changed" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+      new = Endpoint.new("/a", "GET")
+      new.push_param(Param.new("q", "", "query"))
+      builder.print_sarif(builder.diff([new], [Endpoint.new("/a", "GET")]))
+
+      rules = JSON.parse(builder.io.to_s)["runs"][0]["tool"]["driver"]["rules"].as_a.map(&.["id"].as_s)
+      rules.should eq(["diff-endpoint-added", "diff-params-added", "diff-auth-removed"])
     end
   end
 end

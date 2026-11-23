@@ -144,7 +144,7 @@ When endpoints carry callees (`--include callee`) or AI review context (`--ai-co
 
 ### Diff Mode
 
-With `--diff-path` or `--diff-ref`, `-f sarif` reports only the new attack surface, using the rules `diff-endpoint-added`, `diff-params-added` and `diff-auth-removed`. Removed routes have no line to annotate in the new tree, so they are left out. See [Diff](@/usage/more_features/diff/index.md).
+With `--diff-path` or `--diff-ref`, `-f sarif` reports only the new attack surface, using the rules `diff-endpoint-added`, `diff-params-added`, `diff-auth-removed`, `diff-access-widened` and `diff-access-unverified`. The two access rules are listed only when a result uses them. Removed routes have no line to annotate in the new tree, so they are left out. See [Diff](@/usage/more_features/diff/index.md).
 
 ## Integration Examples
 

@@ -9,7 +9,7 @@ module Noir
     # three apart.
     EXIT_CODE = 3
 
-    CATEGORIES = %w[added removed changed auth-removed]
+    CATEGORIES = %w[added removed changed auth-removed access-widened]
 
     def parse(value : String) : Array(String)
       value.split(',').map(&.strip.downcase).reject(&.empty?).uniq!
@@ -19,11 +19,18 @@ module Noir
       categories.reject { |category| CATEGORIES.includes?(category) }
     end
 
-    # `auth-removed` is read off the `auth` tag, and tags exist only when a
-    # tagger ran. Without one the gate could never fire, which in CI looks
-    # exactly like a pull request that removed no auth.
+    # `auth-removed` and `access-widened` are read off the guard tags, and
+    # tags exist only when a tagger ran. Without one the gate could never
+    # fire, which in CI looks exactly like a pull request that removed no auth.
+    TAGGED = %w[auth-removed access-widened]
+
+    # The requested categories that need the auth taggers.
+    def tagged(categories : Array(String)) : Array(String)
+      categories & TAGGED
+    end
+
     def needs_taggers?(categories : Array(String)) : Bool
-      categories.includes?("auth-removed")
+      !tagged(categories).empty?
     end
 
     # The categories that fired, given how many findings each one has.

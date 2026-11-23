@@ -11,9 +11,11 @@ describe Noir::DiffGate do
     Noir::DiffGate.unknown(["added", "removd", "changed"]).should eq(["removd"])
   end
 
-  it "needs taggers only for auth-removed" do
+  it "needs taggers only for the categories read off guard tags" do
     Noir::DiffGate.needs_taggers?(["added", "changed"]).should be_false
     Noir::DiffGate.needs_taggers?(["auth-removed"]).should be_true
+    Noir::DiffGate.needs_taggers?(["access-widened"]).should be_true
+    Noir::DiffGate.tagged(["access-widened", "added", "auth-removed"]).should eq(["access-widened", "auth-removed"])
   end
 
   it "fires the requested categories that have findings" do

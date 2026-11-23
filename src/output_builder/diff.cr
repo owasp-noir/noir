@@ -1,5 +1,6 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "../models/access"
 require "./toml_serializer"
 require "./markdown_cell"
 require "sarif"
@@ -45,15 +46,26 @@ class OutputBuilderDiff < OutputBuilder
     # security-relevant reading of a tag change, spelled out so a CI gate
     # does not have to know which tag name the auth taggers use.
     getter? auth_removed : Bool
+    # `Access.compare` over the requirement on both sides. Tag names alone
+    # miss a guard that kept its tag and lost a role. Left out of JSON and
+    # YAML when empty, so a diff without such a change reads as before.
+    @[JSON::Field(ignore_serialize: @access_widened.empty?)]
+    @[YAML::Field(ignore_serialize: @access_widened.empty?)]
+    getter access_widened : Array(Access::Clause) = [] of Access::Clause
+    @[JSON::Field(ignore_serialize: @access_unverified.empty?)]
+    @[YAML::Field(ignore_serialize: @access_unverified.empty?)]
+    getter access_unverified : Array(Access::Clause) = [] of Access::Clause
 
     def initialize(@method : String, @url : String, @params_added : Array(ParamRef),
                    @params_removed : Array(ParamRef), @tags_added : Array(String),
-                   @tags_removed : Array(String))
+                   @tags_removed : Array(String), @access_widened = [] of Access::Clause,
+                   @access_unverified = [] of Access::Clause)
       @auth_removed = @tags_removed.includes?(AUTH_TAG)
     end
 
     def empty? : Bool
-      params_added.empty? && params_removed.empty? && tags_added.empty? && tags_removed.empty?
+      params_added.empty? && params_removed.empty? && tags_added.empty? && tags_removed.empty? &&
+        access_widened.empty? && access_unverified.empty?
     end
   end
 
@@ -103,6 +115,7 @@ class OutputBuilderDiff < OutputBuilder
     old_params = param_index(old_endpoint)
     new_tags = new_endpoint.tags.map(&.name).uniq!.sort!
     old_tags = old_endpoint.tags.map(&.name).uniq!.sort!
+    access = Access.compare(Access.of(old_endpoint), Access.of(new_endpoint))
 
     Change.new(
       method: new_endpoint.method,
@@ -111,6 +124,8 @@ class OutputBuilderDiff < OutputBuilder
       params_removed: old_params.reject { |key, _| new_params.has_key?(key) }.values,
       tags_added: new_tags - old_tags,
       tags_removed: old_tags - new_tags,
+      access_widened: access.widened,
+      access_unverified: access.unverified,
     )
   end
 
@@ -135,10 +150,11 @@ class OutputBuilderDiff < OutputBuilder
   # How many findings each `--fail-on` category has in `result`.
   def self.gate_counts(result : Result) : Hash(String, Int32)
     {
-      "added"        => result[:added].size,
-      "removed"      => result[:removed].size,
-      "changed"      => result[:changed].size,
-      "auth-removed" => result[:changes].count(&.auth_removed?),
+      "added"          => result[:added].size,
+      "removed"        => result[:removed].size,
+      "changed"        => result[:changed].size,
+      "auth-removed"   => result[:changes].count(&.auth_removed?),
+      "access-widened" => result[:changes].count { |change| !change.access_widened.empty? },
     }
   end
 
@@ -172,21 +188,37 @@ class OutputBuilderDiff < OutputBuilder
       ob_puts "#{separator}#{format_section_header("≠", "Changed", result[:changed].size, :yellow)}"
       result[:changed].zip(result[:changes]) do |endpoint, change|
         common.print([endpoint])
-        ob_puts format_change(change)
+        ob_puts format_change(endpoint, change)
       end
     end
   end
 
-  # The `+`/`-` rows under a changed endpoint. The auth line comes first and
-  # in red because it is the one a reviewer must not miss.
-  private def format_change(change : Change) : String
+  # The `+`/`-` rows under a changed endpoint. The auth and access lines come
+  # first and in red because they are the ones a reviewer must not miss.
+  private def format_change(endpoint : Endpoint, change : Change) : String
     rows = [] of {String, Symbol}
     rows << {"! auth tag removed", :red} if change.auth_removed?
+    change.access_widened.each do |clause|
+      rows << {"! access widened: no longer requires #{clause}, from #{declared(clause)}", :red}
+    end
+    rows << {"  now requires: #{requirement(Access.of(endpoint))}", :red} unless change.access_widened.empty?
+    change.access_unverified.each { |clause| rows << {"~ access check changed: #{declared(clause)}", :yellow} }
     change.params_added.each { |param| rows << {"+ #{param.param_type}: #{param.name}", :green} }
     change.params_removed.each { |param| rows << {"- #{param.param_type}: #{param.name}", :red} }
     change.tags_added.each { |tag| rows << {"+ tag: #{tag}", :green} }
     change.tags_removed.each { |tag| rows << {"- tag: #{tag}", :red} unless tag == AUTH_TAG }
     rows.join("\n") { |(text, color)| "  #{escape_control_chars(text).colorize(color).toggle(@is_color)}" }
+  end
+
+  private def declared(clause : Access::Clause) : String
+    path = clause.path
+    return clause.source unless path
+    "#{clause.source} (#{clause.line ? "#{path}:#{clause.line}" : path})"
+  end
+
+  # Unread clauses print as `unresolved` alike, so they are shown once.
+  private def requirement(clauses : Array(Access::Clause)) : String
+    clauses.empty? ? "no guard found" : clauses.map(&.to_s).uniq!.join(" & ")
   end
 
   private def format_section_header(icon : String, text : String, count : Int32, color : Symbol) : String
@@ -240,6 +272,7 @@ class OutputBuilderDiff < OutputBuilder
   # through the same escaping `-f markdown-table` uses.
   def print_markdown(result : Result)
     auth_removed = result[:changed].zip(result[:changes]).select { |(_, change)| change.auth_removed? }
+    widened = result[:changed].zip(result[:changes]).reject { |(_, change)| change.access_widened.empty? }
 
     ob_puts "## Attack surface diff"
     ob_puts ""
@@ -274,6 +307,22 @@ class OutputBuilderDiff < OutputBuilder
       ob_puts "| -------- | -------- |"
       auth_removed.each do |(endpoint, _)|
         ob_puts "| #{markdown_endpoint(endpoint)} | #{markdown_location(endpoint)} |"
+      end
+    end
+
+    unless widened.empty?
+      ob_puts ""
+      ob_puts "### :warning: Access widened"
+      ob_puts ""
+      ob_puts "These routes no longer require something they required before this change."
+      ob_puts ""
+      ob_puts "| Endpoint | No longer requires | Declared by | Now requires |"
+      ob_puts "| -------- | ------------------ | ----------- | ------------ |"
+      widened.each do |(endpoint, change)|
+        now = markdown_code_span(sanitize_code_span_cell(requirement(Access.of(endpoint))))
+        change.access_widened.each do |clause|
+          ob_puts "| #{markdown_endpoint(endpoint)} | #{markdown_code_span(sanitize_code_span_cell(clause.to_s))} | #{sanitize_text_cell(declared(clause))} | #{now} |"
+        end
       end
     end
 
@@ -331,6 +380,12 @@ class OutputBuilderDiff < OutputBuilder
   private def markdown_change(change : Change) : String
     parts = [] of String
     parts << "**auth tag removed**" if change.auth_removed?
+    change.access_widened.each do |clause|
+      parts << "**access widened**: no longer requires #{markdown_code_span(sanitize_code_span_cell(clause.to_s))}"
+    end
+    change.access_unverified.each do |clause|
+      parts << "access check changed: #{markdown_code_span(sanitize_code_span_cell(clause.source))}"
+    end
     parts << "added #{markdown_params(change.params_added)}" unless change.params_added.empty?
     parts << "removed #{markdown_params(change.params_removed)}" unless change.params_removed.empty?
     change.tags_added.each { |tag| parts << "tag #{markdown_code_span(sanitize_code_span_cell(tag))} added" }
@@ -368,6 +423,24 @@ class OutputBuilderDiff < OutputBuilder
           full_description: "The endpoint carried an auth tag in the compared revision and no longer does, so it may now be reachable without authentication.",
           level: Sarif::Level::Warning,
           help_uri: "https://owasp-noir.github.io/noir/usage/more_features/diff/")
+        # Registered only when used, so a diff without an access change keeps
+        # the rule list it had before these rules existed.
+        if result[:changes].any? { |change| !change.access_widened.empty? }
+          r.rule("diff-access-widened",
+            name: "Access Widened",
+            short_description: "An endpoint requires less than it did",
+            full_description: "A requirement the endpoint had in the compared revision is no longer implied by its current guards, so more callers may reach it.",
+            level: Sarif::Level::Warning,
+            help_uri: "https://owasp-noir.github.io/noir/usage/more_features/diff/")
+        end
+        if result[:changes].any? { |change| !change.access_unverified.empty? }
+          r.rule("diff-access-unverified",
+            name: "Access Check Changed",
+            short_description: "An access check noir cannot read changed",
+            full_description: "The endpoint keeps a guard noir could not read, but its text differs from the compared revision, so whether it still refuses the same callers is unverified.",
+            level: Sarif::Level::Note,
+            help_uri: "https://owasp-noir.github.io/noir/usage/more_features/diff/")
+        end
 
         result[:added].each do |endpoint|
           sarif_result(r, endpoint, "diff-endpoint-added", Sarif::Level::Note,
@@ -378,6 +451,15 @@ class OutputBuilderDiff < OutputBuilder
           if change.auth_removed?
             sarif_result(r, endpoint, "diff-auth-removed", Sarif::Level::Warning,
               "#{endpoint.method} #{endpoint.url} no longer has an auth tag")
+          end
+          unless change.access_widened.empty?
+            lost = change.access_widened.join("; ") { |clause| "#{clause}, from #{declared(clause)}" }
+            sarif_result(r, endpoint, "diff-access-widened", Sarif::Level::Warning,
+              "#{endpoint.method} #{endpoint.url} no longer requires #{lost}. Now requires: #{requirement(Access.of(endpoint))}")
+          end
+          change.access_unverified.each do |clause|
+            sarif_result(r, endpoint, "diff-access-unverified", Sarif::Level::Note,
+              "#{endpoint.method} #{endpoint.url} access check changed: #{declared(clause)}")
           end
           unless change.params_added.empty?
             sarif_result(r, endpoint, "diff-params-added", Sarif::Level::Note,

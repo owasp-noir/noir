@@ -183,7 +183,7 @@ describe Noir::GitSnapshot do
     relocated.first.details.code_paths.first.line.should eq(3)
   end
 
-  it "relocates callee and AI-context paths as well" do
+  it "relocates callee, tag and AI-context paths as well" do
     snapshot = Noir::GitSnapshot::Snapshot.new(root: "/tmp/snap", commit: "abc", bases: ["/tmp/snap/tree/app"])
     endpoint = Endpoint.new("/a", "GET")
     endpoint.handler = Handler.new("handle", "/tmp/snap/tree/app/handlers.rb", 12)
@@ -194,8 +194,13 @@ describe Noir::GitSnapshot do
     context.sinks << AIContextEntry.new("sink", "exec", path: "/tmp/snap/tree/app/run.rb", line: 2)
     endpoint.ai_context = context
 
+    clause = Access::Clause.new([Access::Atom.new(:role, "ADMIN")], "hasRole('ADMIN')", "/tmp/snap/tree/app/a.rb", 4)
+    endpoint.tags << Tag.new("auth", "d", "spring_auth", "/tmp/snap/tree/app/a.rb", 4, [clause])
+
     relocated = snapshot.relocate([endpoint], ["app"]).first
 
+    relocated.tags.first.path.should eq("app/a.rb")
+    relocated.tags.first.requires.not_nil!.first.path.should eq("app/a.rb")
     relocated.callees.map(&.path).should eq(["app/models/user.rb", nil])
     relocated.ai_context.not_nil!.sinks.first.path.should eq("app/run.rb")
     relocated.handler.not_nil!.path.should eq("app/handlers.rb")

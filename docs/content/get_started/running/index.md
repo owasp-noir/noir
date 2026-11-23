@@ -175,7 +175,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--ai-key KEY`        | AI API key (prefer `NOIR_AI_KEY` or `--ai-key-file PATH`: argv is visible in the process list) |
 | `--diff-path <path>`  | Old code path for [Diff Mode](@/usage/more_features/diff/index.md) |
 | `--diff-ref <ref>`    | Git revision to diff against (e.g. `main`, `HEAD~1`; see [Diff Mode](@/usage/more_features/diff/index.md)) |
-| `--fail-on <list>`    | Exit `3` when the diff has any of `added`, `removed`, `changed`, `auth-removed` |
+| `--fail-on <list>`    | Exit `3` when the diff has any of `added`, `removed`, `changed`, `auth-removed`, `access-widened` |
 | `--passive-scan-severity LVL` | Min passive-scan severity (`critical`, `high`, `medium`, or `low`; default `high`) |
 | `-d, --debug`         | Enable debug messages |
 | `--config-file <path>`| Load default options from a YAML config file |

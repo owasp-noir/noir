@@ -65,7 +65,7 @@ jobs:
 | `export_webhook` | POST endpoint catalog as JSON to a webhook URL (`--export-webhook`) | No | `` |
 | `diff_path` | Old code version path for diff analysis (`--diff-path`) | No | `` |
 | `diff_ref` | Git revision to diff the checkout against, e.g. the pull request base; fetched if the checkout lacks it (`--diff-ref`) | No | `` |
-| `fail_on` | Fail the step (exit code `3`) when the diff has any of `added`, `removed`, `changed`, `auth-removed` (`--fail-on`) | No | `` |
+| `fail_on` | Fail the step (exit code `3`) when the diff has any of `added`, `removed`, `changed`, `auth-removed`, `access-widened` (`--fail-on`) | No | `` |
 | `no_log` | Hide execution logs and show only results (`--no-log`) | No | `true` |
 
 **Notes:**
