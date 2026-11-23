@@ -197,4 +197,26 @@ module Access
     in .role?, .permission?, .scope? then atom == principal
     end
   end
+
+  VALUED_KINDS = [Kind::Role, Kind::Permission, Kind::Scope]
+
+  # `role:ADMIN`, `permission:posts:write`, or a bare kind (`authenticated`).
+  # Split at the first colon: values carry colons of their own. A bare
+  # `unresolved` matches any fragment, so it takes none.
+  def self.parse_atom(text : String) : Atom
+    name, colon, value = text.strip.partition(':')
+    name = name.strip
+    value = value.strip
+    # `Kind.parse?` would also take `r_o_l_e`.
+    unless kind = Kind.values.find { |candidate| candidate.to_s.compare(name, case_insensitive: true) == 0 }
+      raise ArgumentError.new("unknown kind #{name.empty? ? "(none)" : name}. Valid: #{Kind.names.map(&.downcase).join(", ")}")
+    end
+    if VALUED_KINDS.includes?(kind)
+      raise ArgumentError.new("#{kind.to_s.downcase} needs a value (#{kind.to_s.downcase}:<value>)") if value.empty?
+      Atom.new(kind, value)
+    else
+      raise ArgumentError.new("#{kind.to_s.downcase} takes no value") unless colon.empty?
+      Atom.new(kind)
+    end
+  end
 end

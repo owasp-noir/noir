@@ -652,6 +652,10 @@ module Noir::CLI::Inspect
     validators : Array(String) = [] of String,
     # At least one claim marked with one of these (`Endpoint#resolution`).
     resolutions : Array(String) = [] of String,
+    # Access atoms as `Access::Atom#to_s` spells them; an `unresolved` atom
+    # spells no fragment, so a bare `unresolved` matches any.
+    requires : Array(String) = [] of String,
+    reachable_by : Access::Atom? = nil,
     # One OR list per `--seen-in`; the lists AND (see QueryCommand).
     seen_in : Array(Array(String)) = [] of Array(String),
     not_seen_in : Array(String) = [] of String,
@@ -659,7 +663,7 @@ module Noir::CLI::Inspect
     # Read once per query by `with_gateway_rules`: a rule covers routes other
     # than its own row, so one endpoint alone cannot say.
     gateway_rules : Array(GatewayRule)? = nil do
-    def matches?(endpoint : Endpoint) : Bool
+    def matches?(endpoint : Endpoint, definite : Bool = false) : Bool
       return false unless methods.empty? || Inspect.method_listed?(methods, endpoint.method)
       return false unless (u = url).nil? || Inspect.glob_or_substring?(u, endpoint.url)
       return false unless (p = path).nil? || endpoint.details.code_paths.any? { |cp| Inspect.path_glob?(p, cp.path) }
@@ -696,6 +700,17 @@ module Noir::CLI::Inspect
       return false unless Inspect.bucket_matches?(sources, context.try(&.sources))
       return false unless Inspect.bucket_matches?(signals, Inspect.derived_signals(context))
       return false unless Inspect.bucket_matches?(validators, context.try(&.validators))
+      unless requires.empty? && reachable_by.nil?
+        return false if endpoint.internal
+        clauses = Access.of(endpoint)
+        return false unless requires.empty? || clauses.any?(&.any_of.any? { |atom| requires.includes?(atom.to_s) })
+        if principal = reachable_by
+          cell = Access.cell(clauses, principal)
+          # An `--exclude` drops only what the principal certainly reaches: a
+          # route behind a guard noir could not read stays for review.
+          return false if definite ? cell != true : cell == false
+        end
+      end
       true
     end
 
@@ -938,6 +953,16 @@ module Noir::CLI::Inspect
       warnings << "no endpoint carries ai_context; scan with --ai-context (or drop --from)"
       return warnings
     end
+    access_atoms = filters.requires.dup
+    if (principal = filters.reachable_by) && !(principal.kind.anonymous? || principal.kind.authenticated?)
+      access_atoms << principal.to_s
+    end
+    # Without taggers every route reads as "no guard found", which
+    # `--reachable-by anonymous` would return as the whole surface.
+    if (access_atoms.present? || filters.reachable_by) && endpoints.present? && endpoints.all? { |e| Access.of(e).empty? }
+      warnings << "no endpoint carries a guard tag, so every route reads as open; a report made without `-T` or `--ai-context` has none"
+      access_atoms.clear
+    end
     contexts = endpoints.compact_map(&.ai_context)
     {
       {"method", filters.methods, endpoints.map(&.method.upcase)},
@@ -957,6 +982,7 @@ module Noir::CLI::Inspect
       {"source kind", filters.sources, contexts.flat_map(&.sources.map(&.kind))},
       {"signal kind", filters.signals, contexts.flat_map { |c| derived_signals(c).map(&.kind) }},
       {"validator kind", filters.validators, contexts.flat_map(&.validators.map(&.kind))},
+      {"access atom", access_atoms, endpoints.flat_map { |e| Access.of(e).flat_map(&.any_of.map(&.to_s)) }},
     }.each do |label, wanted, seen|
       seen = seen.uniq.sort!
       unknown = wanted.reject do |k|
@@ -1013,14 +1039,27 @@ module Noir::CLI::Inspect
                  excludes : Array(Filters) = [] of Filters) : Array(Row)
     filters = with_gateway_rules(filters, endpoints)
     rules = filters.behind_gateway ? filters.gateway_rules : nil
-    endpoints.select { |e| filters.matches?(e) && excludes.none?(&.matches?(e)) }.map do |e|
+    endpoints.select { |e| filters.matches?(e) && excludes.none?(&.matches?(e, definite: true)) }.map do |e|
       row = Row.build(e, full)
       # The rule in front of the row, the evidence `--behind-gateway` rests on.
       if rules && (rule = gateway_rule(e, rules))
         row.via = [rule.via]
       end
+      if principal = filters.reachable_by
+        row.via.concat(unknown_access(e, principal))
+      end
       row
     end
+  end
+
+  # The guards that leave `principal`'s cell unknown, one per unread check.
+  # A kept row with none is a definite yes.
+  def self.unknown_access(endpoint : Endpoint, principal : Access::Atom) : Array(Via)
+    Access.of(endpoint).select { |clause| Access.cell([clause], principal).nil? }.flat_map do |clause|
+      clause.any_of.select(&.kind.unresolved?).map do |atom|
+        Via.new("access_unknown", (atom.value || clause.source).gsub(/\s+/, " ").presence, clause.line, clause.path)
+      end
+    end.uniq!
   end
 
   # `filter_warnings` for the kept filters, then for each `--exclude`: an

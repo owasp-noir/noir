@@ -510,7 +510,7 @@ describe Noir::CLI::Inspect do
     end
 
     it "rejects a value that names no filter, guard, or an empty value" do
-      keys = "method, url, path, project, handler, tech, tag, param, param-type, protocol, sink, source, signal, validator, resolution"
+      keys = "method, url, path, project, handler, tech, tag, param, param-type, protocol, sink, source, signal, validator, resolution, requires, reachable-by"
       {
         ["--exclude"]                  => "--exclude expects <filter>=<value> with a filter of #{keys}",
         ["--exclude", "cli"]           => "--exclude expects <filter>=<value> with a filter of #{keys}",
@@ -1321,5 +1321,119 @@ describe "query guarded rows with heuristic claims (#3567)" do
     row.to_text.should contain("resolution=guard:heuristic")
     full = Noir::CLI::Inspect.query(rows, include_filter.filters, true).first
     JSON.parse(full.to_json)["endpoint"]["resolution"]["guard"].should eq("heuristic")
+  end
+end
+
+describe "query --requires / --reachable-by" do
+  clause = ->(atoms : Array(Access::Atom)) { Access::Clause.new(atoms, "@PreAuthorize", "src/A.java", 9) }
+  admin_atom = Access::Atom.new(:role, "ADMIN")
+  write_atom = Access::Atom.new(:permission, "posts:write")
+  admin = endpoint("DELETE", "/admin", "src/A.java", 9)
+  admin.add_tag(Tag.new("auth", "d", "spring_auth", requires: [clause.call([admin_atom])]))
+  either = endpoint("PUT", "/posts", "src/A.java", 12)
+  either.add_tag(Tag.new("auth", "d", "spring_auth", requires: [clause.call([admin_atom, write_atom])]))
+  unread = endpoint("GET", "/me", "src/me.ts", 4)
+  unread.add_tag(Tag.new("auth", "Protected by AuthGuard", "nestjs_auth", "src/me.ts", 3))
+  open = endpoint("GET", "/health", "src/h.ts", 1)
+  permit = endpoint("POST", "/login", "src/A.java", 20)
+  permit.add_tag(Tag.new("anonymous", "permitAll()", "spring_auth", "src/A.java", 20))
+  denied = endpoint("GET", "/off", "src/A.java", 30)
+  denied.add_tag(Tag.new("denied", "Denied by @DenyAll", "spring_auth", requires: [clause.call([Access::Atom.new(:deny)])]))
+  client = endpoint("GET", "/remote", "src/Client.java", 1)
+  client.internal = true
+  endpoints = [admin, either, unread, open, permit, denied, client]
+
+  query = ->(argv : Array(String), full : Bool) do
+    parsed = Noir::CLI::QueryCommand.parse_filters(argv)
+    parsed.errors.should be_empty
+    Noir::CLI::Inspect.query(endpoints, parsed.filters, full, parsed.excludes)
+  end
+
+  it "keeps the endpoints whose requirement names one of the atoms" do
+    {
+      ["--requires", "role:ADMIN"]                    => ["/admin", "/posts"],
+      ["--requires", "permission:posts:write"]        => ["/posts"],
+      ["--requires", "Role:ADMIN,deny"]               => ["/admin", "/posts", "/off"],
+      ["--requires", "authenticated"]                 => ["/me"],
+      ["--requires", "unresolved"]                    => ["/me"],
+      ["--requires", "anonymous"]                     => ["/login"],
+      ["--exclude", "requires=role:ADMIN"]            => ["/me", "/health", "/login", "/off", "/remote"],
+      ["--requires=role:ADMIN", "--method", "DELETE"] => ["/admin"],
+    }.each do |argv, expected|
+      query.call(argv, false).map(&.url).should eq(expected), argv.join(" ")
+    end
+  end
+
+  it "keeps what a principal is not denied, never an outbound client declaration" do
+    {
+      ["--reachable-by", "anonymous"]                                         => ["/health", "/login"],
+      ["--reachable-by", "authenticated"]                                     => ["/me", "/health", "/login"],
+      ["--reachable-by", "role:USER"]                                         => ["/me", "/health", "/login"],
+      ["--reachable-by", "role:ADMIN"]                                        => ["/admin", "/posts", "/me", "/health", "/login"],
+      ["--reachable-by", "permission:posts:write"]                            => ["/posts", "/me", "/health", "/login"],
+      ["--reachable-by", "role:ADMIN", "--exclude", "reachable-by=anonymous"] => ["/admin", "/posts", "/me"],
+    }.each do |argv, expected|
+      query.call(argv, false).map(&.url).should eq(expected), argv.join(" ")
+    end
+  end
+
+  it "excludes only what the principal certainly reaches, and keeps a multi-line unread guard on one row" do
+    opaque = endpoint("GET", "/bean", "src/A.java", 40)
+    opaque.add_tag(Tag.new("authz", "Protected by @acl.check", "spring_auth"))
+    parsed = Noir::CLI::QueryCommand.parse_filters(["--reachable-by", "role:ADMIN", "--exclude", "reachable-by=anonymous"])
+    Noir::CLI::Inspect.query([opaque, open], parsed.filters, false, parsed.excludes).map(&.url).should eq(["/bean"])
+
+    multiline = endpoint("GET", "/multi", "src/A.java", 50)
+    multiline.add_tag(Tag.new("auth", "d", "spring_auth", requires: [clause.call([Access::Atom.new(:unresolved, "@a.check() +\n    @b.check()")])]))
+    anyone = Noir::CLI::QueryCommand.parse_filters(["--reachable-by", "anonymous"]).filters
+    row = Noir::CLI::Inspect.query([multiline], anyone, false)[0]
+    row.via.map(&.name).should eq(["@a.check() + @b.check()"])
+    row.to_text.lines.size.should eq(1)
+  end
+
+  it "names the unread guard on an unknown row in every output mode, and leaves a definite row as it was" do
+    rows = query.call(["--reachable-by", "role:USER"], false)
+    unknown = Noir::CLI::Inspect::Via.new("access_unknown", "Protected by AuthGuard", 3, "src/me.ts")
+    rows.map(&.via).should eq([[unknown], [] of Noir::CLI::Inspect::Via, [] of Noir::CLI::Inspect::Via])
+    JSON.parse(rows[0].to_json)["via"].should eq(JSON.parse(%([{"kind":"access_unknown","name":"Protected by AuthGuard","line":3,"path":"src/me.ts"}])))
+    rows[0].to_text.should end_with("  via=access_unknown:Protected by AuthGuard@src/me.ts:3")
+    plain = query.call([] of String, false)
+    rows[1].to_json.should eq(plain[3].to_json)
+    rows[1].to_text.should eq(plain[3].to_text)
+
+    full = query.call(["--reachable-by", "role:USER"], true)
+    JSON.parse(full[0].to_json)["via"][0]["kind"].should eq("access_unknown")
+    full[0].to_text.should end_with("via=access_unknown:Protected by AuthGuard@src/me.ts:3")
+    JSON.parse(full[1].to_json).as_h.has_key?("via").should be_false
+  end
+
+  it "leaves an unread guard without a description unnamed" do
+    bare = endpoint("GET", "/x", "src/x.ts", 1)
+    bare.add_tag(Tag.new("authz", "", "hunt"))
+    Noir::CLI::Inspect.unknown_access(bare, Access::Atom.new(:authenticated)).map(&.to_text).should eq(["access_unknown"])
+  end
+
+  it "rejects a malformed atom, a non-caller principal and more than one principal" do
+    {
+      ["--requires", "rol:ADMIN"]                           => "--requires rol:ADMIN: unknown kind rol. Valid: role, permission, scope, authenticated, anonymous, deny, unresolved",
+      ["--requires", "role"]                                => "--requires role: role needs a value (role:<value>)",
+      ["--exclude", "requires=scope:"]                      => "--requires scope:: scope needs a value (scope:<value>)",
+      ["--reachable-by", "deny"]                            => "--reachable-by deny: not a caller. Valid: anonymous, authenticated, role:<value>, permission:<value>, scope:<value>",
+      ["--reachable-by", "role:A,role:B"]                   => "--reachable-by takes one principal",
+      ["--reachable-by", "role:A", "--reachable-by=role:B"] => "--reachable-by takes one principal",
+      ["--requires"]                                        => "--requires requires a value",
+    }.each do |argv, error|
+      Noir::CLI::QueryCommand.parse_filters(argv).errors.should eq([error]), argv.join(" ")
+    end
+  end
+
+  it "warns on an atom no endpoint names and on a report without guard tags" do
+    f = Noir::CLI::QueryCommand.parse_filters(["--requires", "role:admin"]).filters
+    Noir::CLI::Inspect.filter_warnings(endpoints, f)
+      .should eq(["no endpoint carries access atom role:admin; in this report: anonymous, authenticated, deny, permission:posts:write, role:ADMIN, unresolved"])
+    f = Noir::CLI::QueryCommand.parse_filters(["--reachable-by", "anonymous"]).filters
+    Noir::CLI::Inspect.filter_warnings(endpoints, f).should be_empty
+    Noir::CLI::Inspect.filter_warnings([open, client], f)
+      .should eq(["no endpoint carries a guard tag, so every route reads as open; a report made without `-T` or `--ai-context` has none"])
   end
 end

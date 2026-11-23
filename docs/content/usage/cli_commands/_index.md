@@ -256,6 +256,18 @@ Boolean switches (mutually exclusive):
 - `--guard` / `--no-guard`: endpoint has or lacks an auth guard (`ai_context.guards`; rate limiting and CSRF checks do not count as a guard)
 - `--behind-gateway` / `--not-behind-gateway`: endpoint has or lacks a gateway rule in front of it (see [Behind a gateway](#behind-a-gateway))
 
+Access requirements (read from guard tags and their [`requires`](@/usage/output_formats/json/index.md) field):
+- `--requires <atom,...>`: the endpoint's requirement names one of these atoms. An atom is `kind:value` for `role`, `permission` and `scope` (`role:ADMIN`, `permission:posts:write`, `scope:read:pets`; the value runs from the first colon to the end), or a bare `authenticated`, `anonymous`, `deny` or `unresolved`. `unresolved` matches any guard Noir could not read. `anonymous` matches a declaration that admits anonymous callers, such as a `@PermitAll` handler. It matches the declaration, not the outcome: another guard on the route may still refuse them, and a route with no guard found is what `--no-guard` asks for.
+- `--reachable-by <principal>`: a caller holding this one value is not denied. The principal is `anonymous`, `authenticated`, `role:X`, `permission:X` or `scope:X`, read like a column of the [access matrix](@/usage/output_formats/access_matrix/index.md). A route with no guard found is reachable by everyone. A route behind a guard Noir could not read is kept, and its row names each such guard in `via` as `access_unknown` with the guard's text, file and line. A kept row without it is a definite yes.
+
+A guard tag whose tagger records no `requires` still counts: an `auth` tag reads as "signed in, plus a check Noir could not read", and an `authz` tag as a check Noir could not read. Outbound client declarations never match either filter. Both filters work with `--exclude`. These two read tags, while `--guard` reads `ai_context.guards`, so the answers can differ. A report scanned with neither `-T` nor `--ai-context` has no guard tags, so every route reads as unguarded, and stderr says so.
+
+```bash
+noir query --requires role:ADMIN ./app
+noir query --reachable-by anonymous --sink any ./app       # open to anyone, or behind a guard Noir could not read
+noir query --reachable-by role:USER --exclude reachable-by=anonymous ./app   # what a signed-in USER adds
+```
+
 Exclusion (repeatable):
 - `--exclude <filter>=<value>`: drop the endpoints that filter would match. `<filter>` is any filter above without its dashes (`protocol`, `tech`, `url`, `path`, `tag`, `sink`, ...) and `<value>` follows that filter's rules (a comma list is OR, `url`/`path`/`handler` take a glob or a substring, `any` works for the context kinds). An endpoint any `--exclude` matches is dropped, whatever the other filters say.
 

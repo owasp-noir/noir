@@ -10,7 +10,7 @@ require "../inspect"
 module Noir::CLI::QueryCommand
   # Filter flags and the `Filters` field each one fills. Every one takes a
   # value except the guard and gateway switches.
-  VALUE_FLAGS = %w[--method --url --path --project --handler --tech --tag --param --param-type --protocol --sink --source --signal --validator --resolution]
+  VALUE_FLAGS = %w[--method --url --path --project --handler --tech --tag --param --param-type --protocol --sink --source --signal --validator --resolution --requires --reachable-by]
 
   # One pattern each: a URL or path can hold a comma (matrix params, Rails
   # formats), so the value is not split into an OR list.
@@ -118,6 +118,7 @@ module Noir::CLI::QueryCommand
       i += 1
     end
 
+    errors << "--reachable-by takes one principal" if values["--reachable-by"].size > 1
     filters = build_filters(values, guard).copy_with(seen_in: seen_in, not_seen_in: not_seen_in, behind_gateway: behind)
     Parsed.new(filters, rest, errors, excludes, changes, fail_on_match)
   end
@@ -158,13 +159,31 @@ module Noir::CLI::QueryCommand
     build_filters(values, nil)
   end
 
-  # `--resolution` has a closed vocabulary, so a value outside it is a typo,
-  # not a value this report happens not to carry.
+  # `--resolution` and the access atoms have a closed vocabulary, so a value
+  # outside it is a typo, not a value this report happens not to carry.
   private def self.known_values?(flag : String, items : Array(String), errors : Array(String)) : Bool
-    return true unless flag == "--resolution"
-    unknown = items - Endpoint::RESOLUTION_VALUES
-    errors << "unknown --resolution #{unknown.join(", ")}. Valid: #{Endpoint::RESOLUTION_VALUES.join(", ")}" unless unknown.empty?
-    unknown.empty?
+    case flag
+    when "--resolution"
+      unknown = items - Endpoint::RESOLUTION_VALUES
+      errors << "unknown --resolution #{unknown.join(", ")}. Valid: #{Endpoint::RESOLUTION_VALUES.join(", ")}" unless unknown.empty?
+      unknown.empty?
+    when "--requires", "--reachable-by"
+      if flag == "--reachable-by" && items.size > 1
+        errors << "--reachable-by takes one principal"
+        return false
+      end
+      bad = items.compact_map do |item|
+        atom = Access.parse_atom(item)
+        next unless flag == "--reachable-by" && (atom.kind.deny? || atom.kind.unresolved?)
+        "--reachable-by #{item}: not a caller. Valid: anonymous, authenticated, role:<value>, permission:<value>, scope:<value>"
+      rescue ex : ArgumentError
+        "#{flag} #{item}: #{ex.message}"
+      end
+      errors.concat(bad)
+      bad.empty?
+    else
+      true
+    end
   end
 
   private def self.build_filters(values : Hash(String, Array(String)), guard : Bool?) : Inspect::Filters
@@ -185,6 +204,8 @@ module Noir::CLI::QueryCommand
       signals: values["--signal"],
       validators: values["--validator"],
       resolutions: values["--resolution"],
+      requires: values["--requires"].map { |text| Access.parse_atom(text).to_s },
+      reachable_by: values["--reachable-by"].first?.try { |text| Access.parse_atom(text) },
     )
   end
 
@@ -249,6 +270,14 @@ module Noir::CLI::QueryCommand
         --resolution <r,...>   A claim marked heuristic or unresolved (resolution in the row);
                                Go prefix, handler or guard claims; this filter matches any claim
                                A value no endpoint carries is reported on stderr with the values seen.
+        --requires <atom,...>  Its access requirement names one of these: role:ADMIN, permission:posts:write,
+                               scope:read, or a bare authenticated, anonymous, deny, unresolved. Read from
+                               guard tags; anonymous matches a declaration that admits anonymous callers
+        --reachable-by <principal>
+                               A caller holding this one value is not denied: anonymous, authenticated,
+                               role:X, permission:X or scope:X. A route with no guard found is reachable
+                               by everyone; one behind a guard noir could not read is kept and names it
+                               (via=access_unknown:...)
         --exclude <filter>=<value>
                                Drop the endpoints that filter matches (repeatable): any filter above
                                without its dashes, same values (e.g. protocol=cli, url='/health*')
@@ -282,6 +311,8 @@ module Noir::CLI::QueryCommand
         noir query --resolution unresolved --from report.json      # rows worth re-checking first
         noir query --guard --resolution heuristic .                # guarded, any claim guessed
         noir query --exclude resolution=heuristic --guard .        # guarded, no claim guessed
+        noir query --requires role:ADMIN,permission:posts:write ./app
+        noir query --reachable-by anonymous --sink any ./app       # open, or behind an unread guard
         noir query --diff-ref origin/main --no-guard --sink any --fail-on-match .
         noir query --diff-path ../old --change removed .
 
