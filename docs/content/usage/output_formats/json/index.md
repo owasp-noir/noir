@@ -85,7 +85,9 @@ The YAML, JSONL and TOML outputs carry the same field, and the plain report prin
 
 An auth tag can carry `requires`, the access the guard asks of a caller. It is a list of clauses, and every clause must hold. A clause holds when any one of its `any_of` atoms does. Each atom has a `kind`, which is one of `role`, `permission`, `scope`, `authenticated`, `anonymous`, `deny` or `unresolved`, and most kinds also have a `value`. An `unresolved` atom keeps the source text Noir could not read, such as a bean call, a negation, or a constant from another file. Treat it as a condition no caller is known to meet. Each clause also names its `source` declaration and, when known, its `path` and `line`. An empty list means the guard admits every caller. A tag without the key comes from a tagger that does not read requirements yet. In this version only `spring_auth` sets it.
 
-`spring_auth` reads the handler's annotation, which replaces the class's own. It then adds the clauses of the security filter chain rule that matches the route, because the chain and the annotation must both pass. An endpoint whose route is denied outright (`@DenyAll`, a chain `denyAll()`) gets no auth tag, and so it has no `requires` key. A `deny` atom appears only when a guarded endpoint also matches a rule that denies it.
+`spring_auth` reads the handler's annotations. A handler annotation replaces the class's annotation of the same kind, and annotations of different kinds (`@PreAuthorize`, `@Secured`, `@RolesAllowed`) all apply. It then adds the clauses of the security filter chain rule that matches the route, because the chain and the annotations must all pass. An interceptor or servlet filter that matches a guarded route adds an `unresolved` clause.
+
+A route denied outright (`@DenyAll`, `@PreAuthorize("denyAll()")`, a chain `denyAll()`) is not an authentication guard, so it gets a `denied` tag in place of an `auth` tag. That tag's `requires` holds one clause with the `deny` atom.
 
 ```json
 {
