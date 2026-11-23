@@ -65,7 +65,7 @@ jobs:
 | `export_webhook` | 엔드포인트 목록을 JSON으로 웹훅 URL에 POST (`--export-webhook`) | 아니오 | `` |
 | `diff_path` | diff 분석에 쓸 이전 버전 코드 경로 (`--diff-path`) | 아니오 | `` |
 | `diff_ref` | 체크아웃과 비교할 git 리비전(예: pull request의 base). 체크아웃에 없으면 가져옴 (`--diff-ref`) | 아니오 | `` |
-| `fail_on` | diff에 `added`, `removed`, `changed`, `auth-removed` 중 하나라도 있으면 스텝 실패(종료 코드 `3`) (`--fail-on`) | 아니오 | `` |
+| `fail_on` | diff에 `added`, `removed`, `changed`, `auth-removed`, `access-widened` 중 하나라도 있으면 스텝 실패(종료 코드 `3`) (`--fail-on`) | 아니오 | `` |
 | `no_log` | 실행 로그를 숨기고 결과만 표시 (`--no-log`) | 아니오 | `true` |
 
 **참고:**

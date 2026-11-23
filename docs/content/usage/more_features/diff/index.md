@@ -66,6 +66,7 @@ GET /profile
 - **Params** are compared by name and where they are sent (query, header, cookie, path, form, JSON body). A param that only changed its example or default value is not a change, since a client sends nothing different.
 - **Tags** are compared by name. Tags come from taggers, so run the diff with `-T` (or `--use-taggers`) to see them.
 - **`auth` removed**: when an endpoint had the `auth` tag before and doesn't now, the report puts `! auth tag removed` first. Check this one first in a review: a route that used to require login no longer does. The auth taggers only run with `-T` or `--use-taggers`, so enable one of them to get this line.
+- **Access requirement**: each side's requirement is read from its guard tags, the same reading as [`-f access-matrix`](@/usage/output_formats/access_matrix/index.md). An endpoint is changed when the new requirement no longer implies an old one, even when its tag names are the same. The report shows `! access widened: no longer requires <clause>, from <declaration> (<old path>:<line>)`, then the new requirement. A guard noir can't read on both sides, whose text changed, shows as `~ access check changed: <declaration>`, since noir can't tell whether it still refuses the same callers. An unread guard that was dropped, or a role added to an `or`, counts as widened.
 
 ### JSON and YAML Output
 
@@ -84,20 +85,23 @@ Use `-f json` or `-f yaml` for structured output. It has three endpoint lists (`
       "params_removed": [{ "name": "token", "param_type": "header" }],
       "tags_added": [],
       "tags_removed": ["auth"],
-      "auth_removed": true
+      "auth_removed": true,
+      "access_widened": [
+        { "any_of": [{ "kind": "role", "value": "ADMIN" }], "source": "@PreAuthorize(\"hasRole('ADMIN')\")", "path": "src/AdminController.java", "line": 12 }
+      ]
     }
   ],
   "errors": []
 }
 ```
 
-`changed` holds the endpoints as they are now. `changes` has one record per entry in `changed`, in the same order, saying what differs. `errors` lists analyzers that failed or skipped files on either side, in the same shape as `-f json`. An endpoint in `removed` may only be missing because of one of them.
+`changed` holds the endpoints as they are now. `changes` has one record per entry in `changed`, in the same order, saying what differs. `access_widened` lists the old clauses the new requirement no longer implies, and `access_unverified` the unread checks whose text changed. Each is left out when empty. `errors` lists analyzers that failed or skipped files on either side, in the same shape as `-f json`. An endpoint in `removed` may only be missing because of one of them.
 
 ### Markdown and SARIF Output
 
-`-f markdown-table` renders the diff as a pull request comment: any analyzer failures, a count table, then the routes that lost auth, then one table each for added, removed and changed endpoints.
+`-f markdown-table` renders the diff as a pull request comment: any analyzer failures, a count table, then the routes that lost auth, then the routes whose access widened, then one table each for added, removed and changed endpoints.
 
-`-f sarif` reports the new attack surface for code scanning: added endpoints and new params as notes, lost auth as a warning. Removed endpoints are left out because they have no line in the reviewed code to point at. The other formats still list them.
+`-f sarif` reports the new attack surface for code scanning: added endpoints and new params as notes, lost auth and widened access as warnings, and a changed unread check as a note. Removed endpoints are left out because they have no line in the reviewed code to point at. The other formats still list them.
 
 `-f toml` works too. Any other `-f` falls back to the text diff with a warning.
 
@@ -113,10 +117,11 @@ noir scan . --diff-ref origin/main --fail-on auth-removed,added -f markdown-tabl
 |---|---|
 | `added` | an endpoint exists now that didn't at the old side |
 | `removed` | an endpoint existed at the old side and doesn't now |
-| `changed` | an endpoint on both sides has different params or tags |
+| `changed` | an endpoint on both sides has different params, tags or access requirement |
 | `auth-removed` | an endpoint had the `auth` tag and doesn't now |
+| `access-widened` | an endpoint no longer requires something it required at the old side |
 
-`auth-removed` depends on the auth taggers. If you passed neither `-T` nor `--use-taggers`, Noir turns on all taggers. If your `--use-taggers` list has no auth tagger, Noir adds the auth taggers to it. The reason for the failure goes to stderr even with `--no-log`. Exit code `1` is still a usage error and `2` is `--strict`'s incomplete scan, which takes precedence over `3`.
+`access-widened` does not fire for an unread check whose text changed (`access_unverified`), only for a requirement that is gone. `auth-removed` and `access-widened` depend on the auth taggers. If you passed neither `-T` nor `--use-taggers`, Noir turns on all taggers. If your `--use-taggers` list has no auth tagger, Noir adds the auth taggers to it. The reason for the failure goes to stderr even with `--no-log`. Exit code `1` is still a usage error and `2` is `--strict`'s incomplete scan, which takes precedence over `3`.
 
 The same check works locally from a git `pre-push` hook:
 

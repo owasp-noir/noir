@@ -177,7 +177,7 @@ noir scan . --ai-context guards,sinks
 | `--ai-key KEY`        | AI API 키 (프로세스 목록에 노출되므로 `NOIR_AI_KEY` 또는 `--ai-key-file PATH` 권장) |
 | `--diff-path <path>`  | [Diff 모드](@/usage/more_features/diff/index.ko.md)용 이전 코드 경로 |
 | `--diff-ref <ref>`    | 비교할 git 리비전 (예: `main`, `HEAD~1`; [Diff 모드](@/usage/more_features/diff/index.ko.md) 참고) |
-| `--fail-on <list>`    | diff에 `added`, `removed`, `changed`, `auth-removed` 중 하나라도 있으면 종료 코드 `3` |
+| `--fail-on <list>`    | diff에 `added`, `removed`, `changed`, `auth-removed`, `access-widened` 중 하나라도 있으면 종료 코드 `3` |
 | `--passive-scan-severity LVL` | 패시브 스캔 최소 심각도 (`critical`, `high`, `medium`, `low` 중 하나; 기본 `high`) |
 | `-d, --debug`         | 디버그 메시지 활성화 |
 | `--config-file <경로>`| YAML 설정 파일에서 기본 옵션 로드 |

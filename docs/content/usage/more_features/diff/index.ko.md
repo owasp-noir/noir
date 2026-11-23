@@ -66,6 +66,7 @@ GET /profile
 - **파라미터**는 이름과 전달 위치(query, header, cookie, path, form, JSON 본문)로 비교합니다. 예시 값이나 기본값만 바뀐 파라미터는 클라이언트가 보내는 요청이 달라지지 않으므로 변경으로 보지 않습니다.
 - **태그**는 이름으로 비교합니다. 태그는 태거가 붙이므로 `-T`(또는 `--use-taggers`)와 함께 실행해야 보입니다.
 - **`auth` 제거**: 이전에는 `auth` 태그가 있었는데 지금은 없는 엔드포인트는 맨 위에 `! auth tag removed`로 표시됩니다. 로그인이 필요하던 라우트가 더 이상 요구하지 않는다는 뜻이라 리뷰에서 가장 먼저 봐야 할 변경입니다. auth 태거는 `-T`나 `--use-taggers`를 줄 때만 실행되므로, 이 줄을 보려면 둘 중 하나를 켜세요.
+- **접근 요구 조건**: 양쪽의 요구 조건을 가드 태그에서 읽습니다. [`-f access-matrix`](@/usage/output_formats/access_matrix/index.ko.md)와 같은 방식입니다. 새 요구 조건이 이전 요구 조건 중 하나를 더 이상 함축하지 않으면 태그 이름이 같아도 변경으로 봅니다. 리포트에는 `! access widened: no longer requires <절>, from <선언> (<이전 경로>:<줄>)`과 새 요구 조건이 나옵니다. 양쪽 모두 noir가 읽지 못한 가드인데 그 텍스트가 바뀐 경우는 `~ access check changed: <선언>`으로 표시합니다. 같은 호출자를 여전히 거부하는지 noir가 판단할 수 없다는 뜻입니다. 읽지 못한 가드가 사라졌거나 `or`에 역할이 더해진 경우는 넓어진 것으로 봅니다.
 
 ### JSON 및 YAML 출력
 
@@ -84,20 +85,23 @@ GET /profile
       "params_removed": [{ "name": "token", "param_type": "header" }],
       "tags_added": [],
       "tags_removed": ["auth"],
-      "auth_removed": true
+      "auth_removed": true,
+      "access_widened": [
+        { "any_of": [{ "kind": "role", "value": "ADMIN" }], "source": "@PreAuthorize(\"hasRole('ADMIN')\")", "path": "src/AdminController.java", "line": 12 }
+      ]
     }
   ],
   "errors": []
 }
 ```
 
-`changed`에는 현재 시점의 엔드포인트가 들어갑니다. `changes`에는 `changed`의 각 항목과 같은 순서로, 무엇이 달라졌는지를 담은 레코드가 하나씩 들어갑니다. `errors`에는 어느 쪽에서든 실패했거나 파일을 건너뛴 분석기가 `-f json`과 같은 형태로 들어갑니다. `removed`에 있는 엔드포인트가 이 때문에 빠졌을 수도 있습니다.
+`changed`에는 현재 시점의 엔드포인트가 들어갑니다. `changes`에는 `changed`의 각 항목과 같은 순서로, 무엇이 달라졌는지를 담은 레코드가 하나씩 들어갑니다. `access_widened`에는 새 요구 조건이 더 이상 함축하지 않는 이전 절이, `access_unverified`에는 텍스트가 바뀐 읽지 못한 검사가 들어갑니다. 비어 있으면 둘 다 생략됩니다. `errors`에는 어느 쪽에서든 실패했거나 파일을 건너뛴 분석기가 `-f json`과 같은 형태로 들어갑니다. `removed`에 있는 엔드포인트가 이 때문에 빠졌을 수도 있습니다.
 
 ### Markdown 및 SARIF 출력
 
-`-f markdown-table`은 diff를 풀 리퀘스트 코멘트 형태로 보여줍니다. 분석기 실패가 있으면 그 목록, 개수 요약 표, 인증이 빠진 라우트, 그리고 추가/삭제/변경된 엔드포인트 표가 차례로 나옵니다.
+`-f markdown-table`은 diff를 풀 리퀘스트 코멘트 형태로 보여줍니다. 분석기 실패가 있으면 그 목록, 개수 요약 표, 인증이 빠진 라우트, 접근이 넓어진 라우트, 그리고 추가/삭제/변경된 엔드포인트 표가 차례로 나옵니다.
 
-`-f sarif`는 코드 스캐닝용으로 새로 생긴 공격 표면을 보고합니다. 추가된 엔드포인트와 새 파라미터는 note, 인증이 빠진 라우트는 warning입니다. 삭제된 엔드포인트는 리뷰 대상 코드에 가리킬 줄이 없어서 제외합니다. 다른 출력 형식에는 그대로 나옵니다.
+`-f sarif`는 코드 스캐닝용으로 새로 생긴 공격 표면을 보고합니다. 추가된 엔드포인트와 새 파라미터는 note, 인증이 빠진 라우트와 접근이 넓어진 라우트는 warning, 텍스트가 바뀐 읽지 못한 검사는 note입니다. 삭제된 엔드포인트는 리뷰 대상 코드에 가리킬 줄이 없어서 제외합니다. 다른 출력 형식에는 그대로 나옵니다.
 
 `-f toml`도 쓸 수 있습니다. 그 밖의 `-f`는 경고와 함께 텍스트 diff로 출력됩니다.
 
@@ -113,10 +117,11 @@ noir scan . --diff-ref origin/main --fail-on auth-removed,added -f markdown-tabl
 |---|---|
 | `added` | 이전에는 없던 엔드포인트가 생김 |
 | `removed` | 이전에 있던 엔드포인트가 사라짐 |
-| `changed` | 양쪽에 모두 있는 엔드포인트의 파라미터나 태그가 달라짐 |
+| `changed` | 양쪽에 모두 있는 엔드포인트의 파라미터, 태그, 접근 요구 조건이 달라짐 |
 | `auth-removed` | `auth` 태그가 있던 엔드포인트에서 태그가 사라짐 |
+| `access-widened` | 이전에 요구하던 조건을 엔드포인트가 더 이상 요구하지 않음 |
 
-`auth-removed`는 auth 태거 결과에 의존합니다. `-T`와 `--use-taggers`를 둘 다 주지 않았다면 Noir가 모든 태거를 켭니다. `--use-taggers` 목록에 auth 태거가 없으면 auth 태거를 목록에 더합니다. 실패 사유는 `--no-log`여도 stderr로 출력됩니다. 종료 코드 `1`은 여전히 사용법 오류, `2`는 `--strict`의 불완전 스캔이며 `2`가 `3`보다 우선합니다.
+`access-widened`는 텍스트만 바뀐 읽지 못한 검사(`access_unverified`)에는 걸리지 않고, 사라진 요구 조건에만 걸립니다. `auth-removed`와 `access-widened`는 auth 태거 결과에 의존합니다. `-T`와 `--use-taggers`를 둘 다 주지 않았다면 Noir가 모든 태거를 켭니다. `--use-taggers` 목록에 auth 태거가 없으면 auth 태거를 목록에 더합니다. 실패 사유는 `--no-log`여도 stderr로 출력됩니다. 종료 코드 `1`은 여전히 사용법 오류, `2`는 `--strict`의 불완전 스캔이며 `2`가 `3`보다 우선합니다.
 
 같은 검사를 로컬의 git `pre-push` 훅에서도 쓸 수 있습니다.
 

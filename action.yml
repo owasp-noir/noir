@@ -110,7 +110,7 @@ inputs:
     required: false
     default: ""
   fail_on:
-    description: Fail the step when the diff has any of these (comma-separated added, removed, changed, auth-removed; equivalent to --fail-on)
+    description: Fail the step when the diff has any of these (comma-separated added, removed, changed, auth-removed, access-widened; equivalent to --fail-on)
     required: false
     default: ""
   no_log:

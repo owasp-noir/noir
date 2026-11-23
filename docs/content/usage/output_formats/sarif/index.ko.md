@@ -144,7 +144,7 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
 
 ### Diff 모드
 
-`--diff-path`나 `--diff-ref`와 함께 쓰면 `-f sarif`는 새로 생긴 공격 표면만 보고합니다. 규칙은 `diff-endpoint-added`, `diff-params-added`, `diff-auth-removed`입니다. 삭제된 라우트는 새 코드에 표시할 줄이 없어서 빠집니다. 자세한 내용은 [Diff](@/usage/more_features/diff/index.ko.md)를 참고하세요.
+`--diff-path`나 `--diff-ref`와 함께 쓰면 `-f sarif`는 새로 생긴 공격 표면만 보고합니다. 규칙은 `diff-endpoint-added`, `diff-params-added`, `diff-auth-removed`, `diff-access-widened`, `diff-access-unverified`입니다. 접근 규칙 두 개는 해당 결과가 있을 때만 목록에 들어갑니다. 삭제된 라우트는 새 코드에 표시할 줄이 없어서 빠집니다. 자세한 내용은 [Diff](@/usage/more_features/diff/index.ko.md)를 참고하세요.
 
 ## 통합 예제
 
