@@ -1,5 +1,6 @@
 require "json"
 require "yaml"
+require "./endpoint"
 
 # What a caller must hold to reach an endpoint, as a positive CNF: every
 # clause must hold, and a clause holds when any of its atoms does. An
@@ -83,5 +84,64 @@ module Access
   def self.clauses(cnf : CNF, source : String, path : String? = nil, line : Int32? = nil) : Array(Clause)
     return [Clause.unresolved(source, source, path, line)] if cnf.size > MAX_CLAUSES
     cnf.map { |atoms| Clause.new(atoms, source, path, line) }.uniq!
+  end
+
+  # A guard tag whose tagger records no requirement still states that a guard
+  # exists, so it reads as signed-in plus something noir could not read.
+  def self.of(tag : Tag) : Array(Clause)
+    if requires = tag.requires
+      return requires unless requires.empty?
+      # A guard whose condition always holds (`hasRole('A') or permitAll()`).
+      return [Clause.new([Atom.new(Kind::Anonymous)], tag.description, tag.path, tag.line)]
+    end
+    case tag.name
+    when "auth"
+      [Clause.new([Atom.new(Kind::Authenticated)], tag.description, tag.path, tag.line),
+       Clause.unresolved(tag.description, tag.description, tag.path, tag.line)]
+    when "authz"
+      [Clause.unresolved(tag.description, tag.description, tag.path, tag.line)]
+    when "anonymous"
+      [Clause.new([Atom.new(Kind::Anonymous)], tag.description, tag.path, tag.line)]
+    else
+      [] of Clause
+    end
+  end
+
+  # Empty means no guard was found. A declaration that admits anonymous
+  # callers does not lift a guard another layer applies: a Spring chain rule
+  # still refuses them ahead of a `@PermitAll` handler.
+  def self.of(endpoint : Endpoint) : Array(Clause)
+    endpoint.tags.flat_map { |tag| of(tag) }.uniq!
+  end
+
+  # true allowed, false denied, nil unknown. `principal` is a caller holding
+  # exactly that one value, signed in unless it is the anonymous principal.
+  def self.cell(clauses : Array(Clause), principal : Atom) : Bool?
+    results = clauses.map { |clause| admits?(clause, principal) }
+    return false if results.any? { |result| result == false }
+    return if results.any?(Nil)
+    true
+  end
+
+  def self.principals(clauses : Enumerable(Clause)) : Array(Atom)
+    held = clauses.flat_map(&.any_of).select { |atom| atom.kind.role? || atom.kind.permission? || atom.kind.scope? }
+    [Atom.new(Kind::Anonymous), Atom.new(Kind::Authenticated)] + held.uniq.sort!
+  end
+
+  private def self.admits?(clause : Clause, principal : Atom) : Bool?
+    results = clause.any_of.map { |atom| admits?(atom, principal) }
+    return true if results.any? { |result| result == true }
+    return false if results.all? { |result| result == false }
+    nil
+  end
+
+  private def self.admits?(atom : Atom, principal : Atom) : Bool?
+    case atom.kind
+    in .anonymous?                   then true
+    in .deny?                        then false
+    in .authenticated?               then !principal.kind.anonymous?
+    in .unresolved?                  then nil
+    in .role?, .permission?, .scope? then atom == principal
+    end
   end
 end

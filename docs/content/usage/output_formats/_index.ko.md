@@ -22,6 +22,7 @@ sort_by = "weight"
 | Postman으로 가져오기 | [기타](more/) (Postman Collection) | `-f postman` |
 | 시각적 리포트 공유 | [HTML](html/) | `-f html` |
 | API 구조 시각화 | [Mermaid](mermaid/) | `-f mermaid` |
+| 엔드포인트별 접근 가능한 호출자 | [접근 매트릭스](access_matrix/) | `-f access-matrix` |
 | URL이나 파라미터만 추출 | [기타](more/) (필터) | `-f only-url` |
 
 ## 형식별 요청 본문 지원
@@ -48,6 +49,7 @@ sort_by = "weight"
 | `yaml` | YAML | [YAML](yaml/) |
 | `toml` | TOML | [기타](more/) |
 | `markdown-table` | 마크다운 테이블 | [기타](more/) |
+| `access-matrix` | 엔드포인트별 접근 가능한 호출자를 보여주는 마크다운 매트릭스 | [접근 매트릭스](access_matrix/) |
 | `sarif` | SARIF v2.1.0 | [SARIF](sarif/) |
 | `html` | 단일 파일 HTML 리포트 | [HTML](html/) |
 | `curl`, `httpie`, `powershell` | HTTP 클라이언트 명령 | [HTTP 클라이언트 명령](curl/) |

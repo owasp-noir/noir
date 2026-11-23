@@ -43,7 +43,8 @@ describe "terminal escapes in stdout formats" do
   {% for pair in [{"only-url", OutputBuilderOnlyUrl}, {"only-param", OutputBuilderOnlyParam},
                   {"only-header", OutputBuilderOnlyHeader}, {"only-cookie", OutputBuilderOnlyCookie},
                   {"curl", OutputBuilderCurl}, {"httpie", OutputBuilderHttpie},
-                  {"powershell", OutputBuilderPowershell}, {"markdown-table", OutputBuilderMarkdownTable}] %}
+                  {"powershell", OutputBuilderPowershell}, {"markdown-table", OutputBuilderMarkdownTable},
+                  {"access-matrix", OutputBuilderAccessMatrix}] %}
     it "escapes them in -f {{ pair[0].id }}" do
       output = render({{ pair[1] }}.new(terminal_options), [hostile_endpoint])
       raw_controls(output).should be_empty
