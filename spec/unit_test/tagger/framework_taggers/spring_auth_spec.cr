@@ -4023,6 +4023,49 @@ describe "SpringAuthTagger guard resolution (#3567)" do
     end
   end
 
+  it "does not read an interceptor behind a chain that denies the route" do
+    config = <<-JAVA
+      @Configuration
+      public class SecurityConfig {
+          @Bean
+          SecurityFilterChain chain(HttpSecurity http) throws Exception {
+              http.authorizeHttpRequests(auth -> auth.requestMatchers("/api/**").denyAll());
+              return http.build();
+          }
+      }
+      JAVA
+    interceptor = <<-JAVA
+      public class AuthInterceptor implements HandlerInterceptor {
+          @Override
+          public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+              if (request.getHeader("Authorization") == null) {
+                  response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+                  return false;
+              }
+              return true;
+          }
+      }
+      JAVA
+    web = <<-JAVA
+      @Configuration
+      public class WebConfig implements WebMvcConfigurer {
+          @Override
+          public void addInterceptors(InterceptorRegistry registry) {
+              registry.addInterceptor(new AuthInterceptor()).addPathPatterns("/api/**");
+          }
+      }
+      JAVA
+    controller = "@RestController\npublic class Controller {\n    @GetMapping(\"/api/items\") public String items() { return \"ok\"; }\n}\n"
+    endpoint = run_spring_endpoints_map({
+      "src/main/java/com/example/SecurityConfig.java"  => config,
+      "src/main/java/com/example/AuthInterceptor.java" => interceptor,
+      "src/main/java/com/example/WebConfig.java"       => web,
+      "src/main/java/com/example/Controller.java"      => controller,
+    }, {"GET /api/items" => "src/main/java/com/example/Controller.java:3"})["GET /api/items"]
+    endpoint.tags.map(&.name).should eq(["denied"])
+    endpoint.resolution.should be_nil
+  end
+
   it "does not tag denyAll rules or their deny-by-default remainder as authentication" do
     config = <<-JAVA
       @Configuration

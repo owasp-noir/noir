@@ -2,10 +2,14 @@ require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
+private def spring_tags(files : Hash(String, String), method : String, url : String, line : Int32? = nil) : Array(Tag)
+  spring_endpoint(files, method, url, line).tags.select(&.tagger.==("spring_auth"))
+end
+
 # Writes `files` under a temp `src/main/java/com/example/`, tags one endpoint
 # whose handler is `Controller.java` at `line` (nil: no handler), and
-# returns its spring_auth tags.
-private def spring_tags(files : Hash(String, String), method : String, url : String, line : Int32? = nil) : Array(Tag)
+# returns it.
+private def spring_endpoint(files : Hash(String, String), method : String, url : String, line : Int32? = nil) : Endpoint
   CodeLocator.instance.clear_all
   tmpdir = File.tempname("spring_requires")
   dir = File.join(tmpdir, "src/main/java/com/example")
@@ -21,7 +25,7 @@ private def spring_tags(files : Hash(String, String), method : String, url : Str
   details.technology = "java_spring"
   endpoint = SpringAuthTagger.new(options).perform([Endpoint.new(url, method, [] of Param, details)])[0]
   FileUtils.rm_rf(tmpdir)
-  endpoint.tags.select(&.tagger.==("spring_auth"))
+  endpoint
 end
 
 private def atoms(tag : Tag) : Array(Array(String))
@@ -134,6 +138,7 @@ describe "SpringAuthTagger access requirements" do
     {tags[0].description, tags[0].path, tags[0].line}.should eq({"Protected by Spring @Secured", nil, nil})
     atoms(tags[0]).should eq([["role:USER"], ["unresolved"]])
     tags[0].requires.not_nil![1].source.should eq("Protected by Spring HandlerInterceptor AuthInterceptor")
+    spring_endpoint(files, "GET", "/api/items", 10).resolution.should be_nil
 
     files["WebConfig.java"] = web.sub("/api/**", "/admin/**")
     atoms(spring_tags(files, "GET", "/api/items", 10)[0]).should eq([["role:USER"]])
@@ -160,6 +165,15 @@ describe "SpringAuthTagger access requirements" do
     tags[0].description.should eq(%(Protected by Spring Security hasRole via requestMatchers("/admin/**")))
     atoms(tags[0]).should eq([["role:ADMIN"], ["unresolved"]])
     tags[0].requires.not_nil![1].source.should start_with("Protected by Servlet filter TokenFilter")
+  end
+
+  it "keeps the auth tag of an access(\"denyAll()\") rule and adds a denied tag" do
+    tags = spring_tags({"SecurityConfig.java" => chain(%(.requestMatchers("/admin/**").access("denyAll()")))}, "GET", "/admin/users")
+    tags.map { |tag| {tag.name, tag.description} }.should eq([
+      {"auth", %(Protected by Spring Security access via requestMatchers("/admin/**")) + SpringAuthTagger::ACCESS_NOTE},
+      {"denied", %(Denied by Spring Security access via requestMatchers("/admin/**"))},
+    ])
+    atoms(tags[1]).should eq([["deny"]])
   end
 
   it "tags a route an anyRequest denyAll decides as denied, not auth" do

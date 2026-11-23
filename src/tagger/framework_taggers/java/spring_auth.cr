@@ -2701,9 +2701,11 @@ class SpringAuthTagger < FrameworkTagger
       note_public_annotation(endpoint) if annotation_public
       return endpoint
     end
-    # The later layers never see a denied request, yet their tags stay: each
-    # reports what that layer would do.
-    note_chain_denial(endpoint, marker)
+    # The later layers never see a request the chain denies.
+    if note_chain_denial(endpoint, marker)
+      note_public_annotation(endpoint) if annotation_public
+      return endpoint
+    end
 
     # Phase 4: Match endpoint URL against registered HandlerInterceptors
     if decision = check_interceptor_rules(endpoint)
@@ -2752,15 +2754,16 @@ class SpringAuthTagger < FrameworkTagger
   DENY = Access::Atom.new(:deny)
 
   # A route no caller can satisfy is not an `auth` guard, so its tag has a
-  # name of its own.
+  # name of its own. An `access("denyAll()")` was read, so the note that a
+  # custom manager decides does not carry over.
   private def note_denied(endpoint : Endpoint, description : String, requires : Array(Access::Clause), path : String?, line : Int32?) : Endpoint
-    endpoint.add_tag(Tag.new("denied", description.sub(/\AProtected by/, "Denied by"), "spring_auth", path, line, requires))
+    endpoint.add_tag(Tag.new("denied", description.sub(/\AProtected by/, "Denied by").sub(ACCESS_NOTE, ""), "spring_auth", path, line, requires))
     endpoint
   end
 
   # Only when the chain of every app serving the route denies it: one app
   # that admits someone leaves the route reachable.
-  private def note_chain_denial(endpoint : Endpoint, marker : String?) : Nil
+  private def note_chain_denial(endpoint : Endpoint, marker : String?) : Bool
     denial = nil
     admitted = per_serving_classpath(endpoint, false) do |classpath, app|
       decision = security_decision(endpoint, app, classpath, marker, layer: true)
@@ -2768,9 +2771,9 @@ class SpringAuthTagger < FrameworkTagger
       denial ||= decision
       nil
     end
-    return if admitted
-    return unless found = denial
+    return false if admitted || !(found = denial)
     note_denied(endpoint, found[0], found[3], found[1], found[2])
+    true
   end
 
   private def note_public_annotation(endpoint : Endpoint)
