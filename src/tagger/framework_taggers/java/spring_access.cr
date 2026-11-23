@@ -120,8 +120,6 @@ module SpringAccess
         Access::CNF.new
       when "denyAll"
         [[Access::Atom.new(:deny)]]
-      when "isAnonymous", "anonymous"
-        [[Access::Atom.new(:anonymous)]]
       when "isAuthenticated", "isFullyAuthenticated", "authenticated", "fullyAuthenticated"
         [[Access::Atom.new(:authenticated)]]
       else
@@ -160,9 +158,11 @@ module SpringAccess
     [atoms]
   end
 
+  # ROLE_ANONYMOUS is held by signed-out callers only, which no atom says:
+  # `anonymous` admits everyone.
   private def role_atom(value : String) : Access::Atom
     role = value.lchop("ROLE_")
-    role == "ANONYMOUS" ? Access::Atom.new(:anonymous) : Access::Atom.new(:role, role)
+    role == "ANONYMOUS" ? Access::Atom.new(:unresolved, value) : Access::Atom.new(:role, role)
   end
 
   private def authority_atom(value : String) : Access::Atom
@@ -183,7 +183,10 @@ module SpringAccess
 
   private def literal(text : String) : String?
     return unless found = text.match(LITERAL)
-    (found[1]? || found[2]?).to_s.gsub(/\\(.)/, "\\1")
+    value = (found[1]? || found[2]?).to_s
+    # A Kotlin string template or a property placeholder is not the value.
+    return if value.matches?(/\$[{A-Za-z_]/)
+    value.gsub(/\\(.)/, "\\1")
   end
 
   private def unresolved(fragment : String) : Access::CNF

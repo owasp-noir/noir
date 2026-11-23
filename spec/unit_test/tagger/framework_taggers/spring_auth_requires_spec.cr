@@ -235,12 +235,45 @@ describe "SpringAuthTagger access requirements" do
     tags = spring_tags(files, "GET", "/api/items", 10)
     tags.map(&.name).should eq(["auth", "anonymous"])
     tags[0].description.should eq("Protected by Spring Security authenticated via anyRequest()")
-    atoms(tags[0]).should eq([["authenticated"], ["anonymous"]])
+    atoms(tags[0]).should eq([["authenticated"], ["unresolved"]])
     tags[1].requires.should be_nil
+  end
+
+  it "leaves a farther annotation of another kind unresolved, since Spring Security 5 and 6 differ on it" do
+    tags = spring_tags({"Controller.java" => controller("@PreAuthorize(\"hasRole('ADMIN')\")", "@RolesAllowed(\"USER\")")}, "GET", "/api/items", 10)
+    tags.map(&.description).should eq(["Protected by Spring @RolesAllowed"])
+    atoms(tags[0]).should eq([["role:USER"], ["unresolved"]])
+    tags[0].requires.not_nil![1].any_of[0].value.should eq("@PreAuthorize(\"hasRole('ADMIN')\")")
+
+    shiro = spring_tags({"Controller.java" => controller("@RequiresRoles(\"admin\")", "@RequiresPermissions(\"doc:read\")")}, "GET", "/api/items", 10)
+    atoms(shiro[0]).should eq([["unresolved"], ["unresolved"]])
+    shiro[0].requires.not_nil!.map(&.any_of[0].value).should eq(["@RequiresPermissions(\"doc:read\")", "@RequiresRoles(\"admin\")"])
+  end
+
+  it "adds nothing for a farther annotation of the same kind, which the nearer one replaces" do
+    tags = spring_tags({"Controller.java" => controller("@PreAuthorize(\"hasRole('ADMIN')\")", "@PreAuthorize(\"hasRole('USER')\")")}, "GET", "/api/items", 10)
+    atoms(tags[0]).should eq([["role:USER"]])
   end
 end
 
 describe "SpringAuthTagger access requirements (unread and conditional chains)" do
+  it "keeps what a public annotation still asks when no other layer guards" do
+    tags = spring_tags({"Controller.java" => controller("", "@PreAuthorize(\"isAnonymous()\")")}, "GET", "/api/items", 10)
+    tags.map(&.name).should eq(["anonymous"])
+    atoms(tags[0]).should eq([["unresolved"]])
+
+    plain = spring_tags({"Controller.java" => controller("", "@PermitAll")}, "GET", "/api/items", 10)
+    plain.map(&.name).should eq(["anonymous"])
+    plain[0].requires.should be_nil
+  end
+
+  it "reads a denial a setting can lift as unknown, not as a certain denial" do
+    config = chain(%(.anyRequest().denyAll())).sub("@Configuration", "@Configuration\n@Profile(\"lockdown\")")
+    tags = spring_tags({"SecurityConfig.java" => config}, "GET", "/api/items")
+    tags.map(&.name).should eq(["denied"])
+    atoms(tags[0]).should eq([["deny", "unresolved"]])
+  end
+
   it "lets a setting lift a chain registered under @Profile" do
     config = chain(%(.anyRequest().authenticated())).sub("@Configuration", "@Configuration\n@Profile(\"auth\")")
     requires = spring_tags({"SecurityConfig.java" => config}, "GET", "/x")[0].requires.not_nil!

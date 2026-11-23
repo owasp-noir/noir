@@ -1840,7 +1840,7 @@ class SpringAuthTagger < FrameworkTagger
       rule_line = block_start_line + block[0, match.begin(1)].count('\n')
       requires =
         if access_verdict == :open
-          [Access::Clause.new([Access::Atom.new(:anonymous)], auth_type, file_path, rule_line)]
+          [Access::Clause.unresolved(auth_type, auth_type, file_path, rule_line)]
         else
           rule_requires(block, auth_type, close + rule.byte_end(0), file_path, rule_line)
         end
@@ -1962,8 +1962,10 @@ class SpringAuthTagger < FrameworkTagger
     unless (conditions = chain_conditions(block, java_source, block_start_line)).empty?
       note = "; a setting can lift it: #{conditions.join("; ")}"
       rules = rules.map do |rule|
-        next rule unless rule[:protected_rule]
-        rule.merge(description: rule[:description] + note, requires: liftable(rule[:requires], conditions.join("; ")))
+        lifted = liftable(rule[:requires], conditions.join("; "))
+        # A denial lifts with the chain too, but only a guard's text says so.
+        next rule.merge(requires: lifted) unless rule[:protected_rule]
+        rule.merge(description: rule[:description] + note, requires: lifted)
       end
     end
 
@@ -2542,13 +2544,30 @@ class SpringAuthTagger < FrameworkTagger
       evidence = @fallback_annotations.at(location) || return
     end
 
-    evidence.chunk(&.level).each do |_, annotations|
+    evidence.chunk(&.level).each do |level, annotations|
       decisions = annotations.compact_map { |ann| judge_annotation(ann, method) }
       if picked = pick_security_annotation(decisions)
-        return picked.merge(requires: decisions.flat_map(&.[:requires]))
+        return picked.merge(requires: decisions.flat_map(&.[:requires]) + unsettled_annotations(evidence, level, annotations))
       end
     end
     nil
+  end
+
+  # Spring Security 6 also applies a farther annotation of another kind, and
+  # reads an inherited method's annotation ahead of the class's; 5 does
+  # neither. The version is not known here, so such an annotation is a
+  # requirement left unresolved.
+  private def unsettled_annotations(evidence : Array(RouteAnnotation), level : Int32, picked : Array(RouteAnnotation)) : Array(Access::Clause)
+    kinds = picked.map(&.name.split('.').last)
+    class_level = picked.all?(&.origin.in?(:class, :inherited_class))
+    farther = evidence.select do |ann|
+      name = ann.name.split('.').last
+      ann.level > level && SECURITY_ANNOTATIONS.includes?(name) && (!kinds.includes?(name) || (class_level && ann.origin == :inherited_method))
+    end
+    farther.map do |ann|
+      source = (argument = ann.argument) ? "@#{ann.name}(#{argument})" : "@#{ann.name}"
+      Access::Clause.unresolved(source, source, ann.file, ann.line)
+    end
   end
 
   private def judge_annotation(ann : RouteAnnotation, method : String) : SecurityAnnotation?
@@ -2686,7 +2705,7 @@ class SpringAuthTagger < FrameworkTagger
         # The chain rule matching the route applies on top of the annotation.
         if chain = check_security_config_rules(endpoint, marker, layer: true)
           endpoint.add_tag(Tag.new("auth", decision[:description], "spring_auth", requires: chain[3]))
-          note_chain_denial(endpoint, marker) if chain[3].map(&.any_of) == [[DENY]]
+          note_chain_denial(endpoint, marker) if denial?(chain[3])
         end
         return and_unread_layers(endpoint, decision[:description])
       end
@@ -2732,7 +2751,9 @@ class SpringAuthTagger < FrameworkTagger
       end
     end
 
-    note_public_annotation(endpoint) if annotation_public
+    # No other layer guards: what the annotation still asks (signed-out
+    # callers only, a kind Spring versions read differently) stays on its tag.
+    note_public_annotation(endpoint, public_requires.empty? ? nil : public_requires) if annotation_public
     endpoint
   end
 
@@ -2761,13 +2782,20 @@ class SpringAuthTagger < FrameworkTagger
     endpoint
   end
 
+  # One clause that denies every caller, or would unless a setting lifts it.
+  private def denial?(requires : Array(Access::Clause)) : Bool
+    return false unless requires.size == 1
+    atoms = requires[0].any_of
+    atoms.includes?(DENY) && atoms.all? { |atom| atom.kind.deny? || atom.kind.unresolved? }
+  end
+
   # Only when the chain of every app serving the route denies it: one app
   # that admits someone leaves the route reachable.
   private def note_chain_denial(endpoint : Endpoint, marker : String?) : Bool
     denial = nil
     admitted = per_serving_classpath(endpoint, false) do |classpath, app|
       decision = security_decision(endpoint, app, classpath, marker, layer: true)
-      next true unless decision && decision[3].map(&.any_of) == [[DENY]]
+      next true unless decision && denial?(decision[3])
       denial ||= decision
       nil
     end
@@ -2776,8 +2804,8 @@ class SpringAuthTagger < FrameworkTagger
     true
   end
 
-  private def note_public_annotation(endpoint : Endpoint)
-    endpoint.add_tag(Tag.new("anonymous", "Spring security annotation admits anonymous callers", "spring_auth"))
+  private def note_public_annotation(endpoint : Endpoint, requires : Array(Access::Clause)? = nil)
+    endpoint.add_tag(Tag.new("anonymous", "Spring security annotation admits anonymous callers", "spring_auth", requires: requires))
   end
 
   private def check_interceptor_rules(endpoint : Endpoint) : Tuple(String, String, Int32)?
