@@ -48,14 +48,24 @@ module Analyzer::Python
 
         tags = [] of Tag
         if (authorizer = deco.keywords["authorizer"]?) && authorizer != "None"
-          tags << Tag.new("auth", "Protected by Chalice authorizer=#{authorizer}", TAGGER)
+          tags << unread_guard("authorizer=#{authorizer}")
         elsif deco.keywords["api_key_required"]? == "True"
-          tags << Tag.new("auth", "Protected by Chalice api_key_required=True", TAGGER)
+          tags << unread_guard("api_key_required=True")
         end
 
         routes << Route.new(deco.router_name, deco.path, deco.methods.uniq, params, deco.decorator_line + 1, callees, tags)
       end
       FileScan.new(path, routes, mounts) unless routes.empty? && mounts.empty?
+    end
+
+    # API Gateway answers a request without the authorizer's identity
+    # header, or without a valid API key, before the function runs. What
+    # the authorizer accepts, and who holds a key, is the deployment's.
+    private def unread_guard(setting : ::String) : Tag
+      description = "Chalice #{setting}"
+      requires = [Access::Clause.new([Access::Atom.new(:authenticated)], description),
+                  Access::Clause.unresolved(description, description)]
+      Tag.new("auth", "Protected by #{description}", TAGGER, requires: requires)
     end
   end
 end

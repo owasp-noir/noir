@@ -59,8 +59,9 @@ module Analyzer::Python
             (arg_names - path_names).each { |name| params << Param.new(name, "", param_type) }
 
             endpoint = Endpoint.new(url, method, params, Details.new(PathInfo.new(path, deco.decorator_line + 1)))
-            endpoint.add_tag(Tag.new("auth", "Protected by Odoo auth='#{auth}'", TAGGER)) if PROTECTED_AUTH.includes?(auth)
-            endpoint.add_tag(Tag.new("odoo-auth", auth, TAGGER))
+            requires = access(auth)
+            endpoint.add_tag(Tag.new("auth", "Protected by Odoo auth='#{auth}'", TAGGER, requires: requires)) if PROTECTED_AUTH.includes?(auth)
+            endpoint.add_tag(Tag.new("odoo-auth", auth, TAGGER, requires: requires))
             endpoint.add_tag(Tag.new("odoo-type", kind, TAGGER))
             endpoint.add_tag(Tag.new("csrf-disabled", "Odoo csrf=False", TAGGER)) if deco.keywords["csrf"]? == "False"
             callees.each { |callee| endpoint.push_callee(callee) }
@@ -69,6 +70,23 @@ module Analyzer::Python
         end
       end
       endpoints
+    end
+
+    # `ir.http._auth_method_<auth>`: `user` refuses no uid and the public
+    # users; `bearer` takes an API key (scoped by `bearer_scope`) or else
+    # falls back to `user`; `public` runs as the public user when nobody is
+    # signed in, and `none` runs with no user at all, so both admit anyone.
+    # Any other value names a project's own method.
+    private def access(auth : ::String) : Array(Access::Clause)
+      source = "Odoo auth='#{auth}'"
+      case auth
+      when "user"           then [Access::Clause.new([Access::Atom.new(:authenticated)], source)]
+      when "public", "none" then [Access::Clause.new([Access::Atom.new(:anonymous)], source)]
+      when "bearer"
+        [Access::Clause.new([Access::Atom.new(:authenticated)], source), Access::Clause.unresolved("bearer_scope", source)]
+      else
+        [Access::Clause.unresolved(source, source)]
+      end
     end
   end
 end

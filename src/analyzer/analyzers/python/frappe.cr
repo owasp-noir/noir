@@ -50,9 +50,9 @@ module Analyzer::Python
           params = arg_names.map { |name| Param.new(name, "", param_type) }
           endpoint = Endpoint.new(url, method, params, Details.new(PathInfo.new(path, deco.decorator_line + 1)))
           if guest
-            endpoint.add_tag(Tag.new("frappe-allow-guest", "Frappe allow_guest=True", TAGGER))
+            endpoint.add_tag(Tag.new("frappe-allow-guest", "Frappe allow_guest=True", TAGGER, requires: access(guest, body)))
           else
-            endpoint.add_tag(Tag.new("auth", "Protected by Frappe login (allow_guest=False)", TAGGER))
+            endpoint.add_tag(Tag.new("auth", "Protected by Frappe login (allow_guest=False)", TAGGER, requires: access(guest, body)))
           end
           endpoint.add_tag(Tag.new("frappe-xss-safe", "Frappe xss_safe=True", TAGGER)) if TRUTHY.includes?(deco.keywords["xss_safe"]?)
           callees.each { |callee| endpoint.push_callee(callee) }
@@ -60,6 +60,20 @@ module Analyzer::Python
         end
       end
       endpoints
+    end
+
+    BODY_CHECK = /(?m)^.*\b(?:frappe\.(?:only_for|has_permission|get_roles|check_permission)\s*\(|PermissionError\b).*$/
+
+    # `frappe.is_whitelisted` refuses the Guest session a method not
+    # whitelisted with `allow_guest=True`. A role or permission check in
+    # the body is read no further than its line.
+    private def access(guest : Bool, body : ::String) : Array(Access::Clause)
+      source = guest ? "Frappe allow_guest=True" : "Frappe login (allow_guest=False)"
+      clauses = [Access::Clause.new([Access::Atom.new(guest ? Access::Kind::Anonymous : Access::Kind::Authenticated)], source)]
+      if check = body.match(BODY_CHECK)
+        clauses << Access::Clause.unresolved(check[0].strip, check[0].strip)
+      end
+      clauses
     end
 
     # Dotted module path: the file's stem under every enclosing package
