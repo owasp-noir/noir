@@ -61,5 +61,34 @@ describe "FastEndpointsAuthTagger" do
     FileUtils.rm_rf(tmpdir)
 
     endpoint.tags.map(&.description).should eq(["Protected by FastEndpoints default authorization (no AllowAnonymous)"])
+    endpoint.tags[0].requires.not_nil!.map(&.any_of.map(&.to_s)).should eq([["authenticated"]])
+  end
+
+  it "requires a signed-in caller holding one of the roles and one of the permissions" do
+    noir_options = create_test_options
+    tmpdir = File.tempname("fastendpoints_requires")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "ExportEndpoint.cs")
+    File.write(file, <<-CS)
+      public class ExportEndpoint : EndpointWithoutRequest
+      {
+          public override void Configure()
+          {
+              Get("/api/export");
+              Roles("Admin", "Manager");
+              Permissions(Perms.Export, "reports:read");
+          }
+      }
+      CS
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    details = Details.new(PathInfo.new(file, 5))
+    details.technology = "cs_fastendpoints"
+    endpoint = Endpoint.new("/api/export", "GET", [] of Param, details)
+    FastEndpointsAuthTagger.new(noir_options).perform([endpoint])
+    FileUtils.rm_rf(tmpdir)
+
+    endpoint.tags.map(&.description).should eq(["Protected by FastEndpoints Roles"])
+    endpoint.tags[0].requires.not_nil!.map(&.any_of.map(&.to_s)).should eq([["authenticated"], ["role:Admin", "role:Manager"], ["permission:reports:read", "unresolved"]])
   end
 end
