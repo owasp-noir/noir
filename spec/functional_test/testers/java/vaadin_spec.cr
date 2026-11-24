@@ -64,5 +64,13 @@ describe "Vaadin access annotations", tags: "functional" do
     tags.call("GET", "/login").should eq ["anonymous"]
     tags.call("GET", "/app/dashboard").should eq ["auth"]
     tags.call("GET", "/admin/users").should be_empty
+
+    requires = ->(method : String, url : String) do
+      Access.of(app.endpoints.find! { |ep| ep.method == method && ep.url == url }).map(&.to_s)
+    end
+    # Vaadin's `@PermitAll` admits any signed-in user.
+    requires.call("GET", "/app/dashboard").should eq ["authenticated"]
+    requires.call("POST", "/connect/UserEndpoint/deleteUser").should eq ["authenticated", "role:ADMIN"]
+    requires.call("GET", "/login").should eq ["anonymous"]
   end
 end

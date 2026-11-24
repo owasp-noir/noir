@@ -2,6 +2,8 @@ require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/java_type_model_extractor_ts"
 require "../../../utils/url_path"
+require "../../../utils/c_comments"
+require "../../../tagger/framework_taggers/java/java_access"
 
 module Analyzer::Java
   # Vaadin Flow navigation targets (`@Route` / `@RouteAlias`, prefixed by
@@ -92,7 +94,7 @@ module Analyzer::Java
       return if targets.empty?
 
       url_parameter = decl.supertypes.any? { |type| Model.simple_type_name(type) == "HasUrlParameter" }
-      tag = access_tag(decl.annotations)
+      tag = access_tag(decl.annotations, path)
       targets.each do |ann|
         # A value that is a constant from another file: no route to report.
         next if ann.values.has_key?("value") && ann.string.nil?
@@ -107,14 +109,14 @@ module Analyzer::Java
 
     private def emit_hilla_methods(path : String, decl : Model::TypeDecl, service : Model::Annotation, prefix : String)
       name = service.string || decl.name
-      class_tag = access_tag(decl.annotations)
+      class_tag = access_tag(decl.annotations, path)
       decl.methods.each do |method|
         next unless method.modifiers.includes?("public")
         next if method.modifiers.includes?("static")
 
         params = method.params.map { |param| Param.new(param.name, "", "json") }
         url = Noir::URLPath.join_rooted(prefix, "#{name}/#{method.name}")
-        add(url, "POST", method.line + 1, path, params, access_tag(method.annotations) || class_tag)
+        add(url, "POST", method.line + 1, path, params, access_tag(method.annotations, path) || class_tag)
       end
 
       declared = decl.methods.map(&.name).to_set
@@ -152,7 +154,34 @@ module Analyzer::Java
       name.downcase
     end
 
-    private def access_tag(annotations : Array(Model::Annotation)) : Tag?
+    ACCESS_ANNOTATIONS = %w[DenyAll AnonymousAllowed RolesAllowed PermitAll]
+
+    @access_lines = Hash(String, Array(String)).new
+
+    # The tag names the first access annotation written; its requirement
+    # follows Vaadin's precedence over all of them (`JavaAccess.vaadin`).
+    private def access_tag(annotations : Array(Model::Annotation), path : String) : Tag?
+      return unless tag = declared_access_tag(annotations)
+      lines = @access_lines[path] ||= Noir::CComments.strip(read_file_content(path)).split('\n')
+      declared = annotations.select { |ann| ACCESS_ANNOTATIONS.includes?(ann.name) }
+      # An argument list that does not close reads as no value at all.
+      written = declared.map { |ann| JavaAccess.annotation_in(lines, ann.line, ann.name) || JavaAccess::Annotation.new(ann.name, "", "@#{ann.name}") }
+      return tag unless cnf = JavaAccess.vaadin(written)
+      source = written.map(&.text).join(" ")
+      line = declared.min_of(&.line) + 1
+      clauses = Access.clauses(cnf, source, path, line)
+      tag.requires =
+        if tag.name == "anonymous"
+          clauses.empty? ? nil : clauses
+        elsif clauses.empty?
+          [Access::Clause.new([Access::Atom.new(:anonymous)], source, path, line)]
+        else
+          JavaAccess.signed_in(clauses, tag.description, path, line)
+        end
+      tag
+    end
+
+    private def declared_access_tag(annotations : Array(Model::Annotation)) : Tag?
       annotations.each do |ann|
         case ann.name
         when "AnonymousAllowed"
