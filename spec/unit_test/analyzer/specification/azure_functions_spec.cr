@@ -51,6 +51,15 @@ describe "Azure Functions Analyzer" do
       {"/api/users/{id?}", "POST"},
     ])
     endpoints.each { |e| tag_descriptions(e, "azure-auth-level").should eq ["function"] }
+    # A function key is a credential noir cannot model as a role.
+    endpoints.each { |e| Access.of(e).map(&.any_of.map(&.value)).should eq [["authLevel: function"]] }
+  end
+
+  it "reads an anonymous auth level as open to everyone" do
+    {"anonymous", "Anonymous"}.each do |level|
+      endpoints = analyze_azure(%({"bindings": [{"type": "httpTrigger", "methods": ["get"], "authLevel": "#{level}"}]}))
+      Access.of(endpoints[0]).map(&.to_s).should eq ["anonymous"]
+    end
   end
 
   it "falls back to function folder name when route is absent" do

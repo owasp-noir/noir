@@ -155,9 +155,9 @@ module Analyzer::Specification
       endpoint = Endpoint.new(full_path, resolved_method, details)
       endpoint.add_tag(Tag.new("serverless-event", kind, "serverless_framework_analyzer"))
       endpoint.add_tag(Tag.new("serverless-stage", stage, "serverless_framework_analyzer")) unless stage.empty?
-      endpoint.add_tag(Tag.new("serverless-auth", authorizer, "serverless_framework_analyzer")) if authorizer && !authorizer.empty?
+      endpoint.add_tag(Tag.new("serverless-auth", authorizer, "serverless_framework_analyzer", requires: [Access::Clause.unresolved(authorizer, "authorizer: #{authorizer}")])) if authorizer && !authorizer.empty?
       endpoint.add_tag(Tag.new("serverless-cors", "true", "serverless_framework_analyzer")) if cors_flag
-      endpoint.add_tag(Tag.new("serverless-private", "true", "serverless_framework_analyzer")) if private_flag
+      endpoint.add_tag(Tag.new("serverless-private", "true", "serverless_framework_analyzer", requires: [Access::Clause.unresolved("private: true", "private: true")])) if private_flag
       @result << endpoint
     end
 
