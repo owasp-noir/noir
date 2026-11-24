@@ -6,6 +6,7 @@ require "../../../utils/top_level_split"
 require "../../../miniparsers/import_graph"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/ts_decorator_extractor"
+require "./nestjs_access"
 
 @[Noir::TaggerFor(key: "nestjs_auth", name: "NestJS Auth Tagger", desc: "Identifies NestJS-style decorator auth (Nest guards, tsoa @Security, routing-controllers @Authorized, Ts.ED @Authenticate)", order: 150)]
 class NestjsAuthTagger < FrameworkTagger
@@ -36,8 +37,9 @@ class NestjsAuthTagger < FrameworkTagger
   # NestJS authorization decorators/guards — verify what the caller may do.
   # Distinct from authentication so JwtAuthGuard + @Roles stack as
   # auth_guard + authz_guard rather than collapsing into a single auth tag.
+  ROLES_GUARD   = /\A@UseGuards\s*\([\s\S]*\bRolesGuard\b/
   ROLE_PATTERNS = [
-    {/\A@UseGuards\s*\([\s\S]*\bRolesGuard\b/, "NestJS @UseGuards(RolesGuard)"},
+    {ROLES_GUARD, "NestJS @UseGuards(RolesGuard)"},
     {/\A@Roles\s*\(/, "NestJS @Roles decorator"},
     {/\A@Permissions\s*\(/, "NestJS @Permissions decorator"},
     {/\A@RequirePermissions\s*\(/, "NestJS @RequirePermissions decorator"},
@@ -139,6 +141,15 @@ class NestjsAuthTagger < FrameworkTagger
   PASSPORT_LOGIN_STRATEGY = /\A(?:local|google|google-oauth20?|github2?|gitlab|microsoft|azuread-openidconnect|facebook|twitter|linkedin|apple|discord|slack|saml|oauth2?|openidconnect|oidc)\z/i
   # One literal strategy name.
   STRATEGY_LITERAL = /\A['"`]([^'"`$]+)['"`]\z/
+  # A Passport guard subclass that overrides one of these can check more
+  # than its strategy does.
+  GUARD_OVERRIDE = /\b(?:canActivate|handleRequest)\s*\(/
+  # passport-anonymous lets every caller through.
+  ANONYMOUS_STRATEGY = /['"`]anonymous['"`]/
+  # Guards that add no clause to the auth tag: Nest's rate limiter answers
+  # 429 whoever calls, and `RolesGuard` enforces the route's `@Roles`, which
+  # the authz tag reads.
+  UNCOUNTED_GUARDS = {"ThrottlerGuard", "RolesGuard"}
   # What a `canActivate` does with a caller: throws 401 outright; throws 403
   # or returns false (Nest answers 403) on what it read from the request;
   # or only ever returns true.
@@ -173,6 +184,11 @@ class NestjsAuthTagger < FrameworkTagger
     @guard_decorators = Hash(String, Array({String, String?, String})).new
     # Guard class name => `:refuses` / `:admits`, read from its definition.
     @guard_classes = Hash(String, Symbol).new
+    # Passport guards that add nothing to their strategy (`class JwtAuthGuard
+    # extends AuthGuard('jwt') {}`): they require a signed-in caller and no more.
+    @plain_passport = Set(String).new
+    # Passport guards that also run the `anonymous` strategy.
+    @anonymous_passport = Set(String).new
     @for_routes = [] of ForRoutes
     @class_bodies = Hash(String, String).new
     @controller_paths = Hash(String, String).new
@@ -193,6 +209,8 @@ class NestjsAuthTagger < FrameworkTagger
     @optional_guards.clear
     @guard_decorators.clear
     @guard_classes.clear
+    @plain_passport.clear
+    @anonymous_passport.clear
     decorator_sources = [] of {String, String?, String}
     guard_sources = [] of {String?, String}
     # Every file declaring a guard class, passport ones (`extends
@@ -257,8 +275,11 @@ class NestjsAuthTagger < FrameworkTagger
     code.scan(GUARD_CLASS_DECL) do |decl|
       next if @guard_classes.has_key?(decl[1])
       next unless body_close = Noir::JSLiteralScanner.find_matching_brace(code, decl.end(0) - 1)
-      if verdict = guard_verdict(decl[2], code[(decl.end(0) - 1)..body_close])
+      body = code[(decl.end(0) - 1)..body_close]
+      if verdict = guard_verdict(decl[2], body)
         @guard_classes[decl[1]] = verdict
+        @plain_passport << decl[1] if verdict == :refuses && plain_passport_call?(decl[2]) && !body.matches?(GUARD_OVERRIDE)
+        @anonymous_passport << decl[1] if decl[2].matches?(PASSPORT_GUARD) && decl[2].matches?(ANONYMOUS_STRATEGY)
       end
     end
   end
@@ -314,6 +335,15 @@ class NestjsAuthTagger < FrameworkTagger
     list = list[1...-1] if list.starts_with?('[') && list.ends_with?(']')
     strategies = Noir::TopLevelSplit.split(list, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).reject(&.empty?)
     !strategies.empty? && strategies.all? { |strategy| strategy.match(STRATEGY_LITERAL).try(&.[1].matches?(PASSPORT_LOGIN_STRATEGY)) }
+  end
+
+  # A Passport `AuthGuard(...)` whose strategies are all literals.
+  private def plain_passport_call?(text : String) : Bool
+    return false unless text.matches?(PASSPORT_GUARD)
+    list = guard_arg_lists(text, PASSPORT_CALL).first?.try(&.strip) || return false
+    list = list[1...-1] if list.starts_with?('[') && list.ends_with?(']')
+    strategies = Noir::TopLevelSplit.split(list, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).reject(&.empty?)
+    !strategies.empty? && strategies.all?(&.matches?(STRATEGY_LITERAL))
   end
 
   # The argument text of each `call` (`UseGuards(`, `AuthGuard(`) in `text`,
@@ -473,12 +503,15 @@ class NestjsAuthTagger < FrameworkTagger
       collect_class_decorators(class_decorators, path_info.path, authn_descs, authz_descs)
 
       root = nearest_project_root(path_info.path, PACKAGE_JSON)
-      guard = @global_guards[root]? if authn_descs.empty?
-      metadata = @guard_metadata[root]? if guard
-      call = metadata.try { |meta| route_metadata(meta, method_decorators + class_decorators) }
+      global = @global_guards[root]?
+      global_metadata = @guard_metadata[root]? if global
+      call = global_metadata.try { |meta| route_metadata(meta, method_decorators + class_decorators) }
+      global_admits = global_metadata ? admits_anonymous?(global_metadata, call.try(&.[2])) : false
+      guard = global if authn_descs.empty?
+      metadata = global_metadata if guard
       # The global guard returns true on this route's metadata before it
       # authenticates anyone.
-      if metadata && authz_descs.empty? && admits_anonymous?(metadata, call.try(&.[2]))
+      if metadata && authz_descs.empty? && global_admits
         reason = call ? "@#{call[0]}(#{call[1]})" : "routes without its metadata"
         endpoint.add_tag(Tag.new("anonymous", "NestJS global APP_GUARD (#{guard}) admits anonymous callers on #{reason}", "nestjs_auth"))
         return
@@ -492,13 +525,17 @@ class NestjsAuthTagger < FrameworkTagger
         return
       end
 
+      middleware_tag = nil.as(String?)
       # `apply(Mw).forRoutes(...)` runs even on a handler with no decorator.
       if mw = for_routes_guard(endpoint)
-        endpoint.add_tag(Tag.new("auth", "Protected by NestJS #{mw} middleware", "nestjs_auth"))
+        middleware_tag = "Protected by NestJS #{mw} middleware"
+        # Its `use` refuses an anonymous caller; what else it checks is unread.
+        endpoint.add_tag(Tag.new("auth", middleware_tag, "nestjs_auth", requires: unread_guard("NestJS #{mw} middleware")))
       end
       # tsoa runs `@Middlewares` whatever `@NoSecurity` says: that lifts only `@Security`.
       if endpoint.details.technology == "ts_tsoa" && (mw = tsoa_middlewares(method_decorators, class_decorators))
-        endpoint.add_tag(Tag.new("auth", "Protected by #{mw}", "nestjs_auth"))
+        middleware_tag ||= "Protected by #{mw}"
+        endpoint.add_tag(Tag.new("auth", "Protected by #{mw}", "nestjs_auth", requires: unread_guard(mw)))
       end
 
       # Check if endpoint (or its whole controller) is explicitly public
@@ -506,33 +543,158 @@ class NestjsAuthTagger < FrameworkTagger
         return
       end
 
+      authn_requires, other_requires = guard_requires(method_decorators + class_decorators, path_info.path)
+      authz_requires = metadata_requires(method_decorators, class_decorators, path_info.path)
       if guard
         # The metadata the guard still authenticates under: authz keys
         # (`admin`, `permission`) on top of login become an authz guard;
         # any other flag (a `sharedLink` that also takes a share key) is
         # named on the auth guard.
         desc = "NestJS global APP_GUARD (#{guard})"
+        flags = [] of String
         if call && !(pairs = call[2].scan(FLAG_PAIR)).empty?
           authz = pairs.select { |pair| pair[1].matches?(AUTHZ_KEY) && pair[2].strip != "false" }
-          authz_descs << "NestJS @#{call[0]}({ #{authz.join(", ") { |pair| "#{pair[1]}: #{pair[2].strip}" }} })" unless authz.empty?
+          unless authz.empty?
+            authz_desc = "NestJS @#{call[0]}({ #{authz.join(", ") { |pair| "#{pair[1]}: #{pair[2].strip}" }} })"
+            authz_descs << authz_desc
+            # What the guard's auth service makes of the key is unread.
+            authz_requires << Access::Clause.unresolved(authz_desc, authz_desc, path_info.path)
+          end
           flags = pairs.compact_map { |pair| "#{pair[1]}: true" if pair[2].strip == "true" && !pair[1].matches?(AUTHZ_KEY) }
           desc += " with @#{call[0]}({ #{flags.join(", ")} })" unless flags.empty?
         end
         authn_descs << desc
+        authn_requires.concat(global_requires(guard, root, global_admits, flags.empty? ? nil : desc))
+      elsif global && !global_admits
+        # Nest runs a global guard ahead of the route's own guards.
+        authn_requires.concat(global_requires(global, root, false, nil))
       end
 
       # add_tag dedupes by (name, tagger), so authn and authz need distinct
       # names to stack on the same endpoint.
+      # Clauses no tag of their own carries (a non-auth guard, `@Scopes`,
+      # `@CheckPolicies`) go on whichever tag the route gets.
+      spare = other_requires
+      spare += authz_requires if authz_descs.empty?
       if authn = authn_descs.first?
         site = @global_guard_sites[root]? if guard
-        endpoint.add_tag(Tag.new("auth", "Protected by #{authn}", "nestjs_auth", site.try(&.[0]), site.try(&.[1])))
+        requires = authn_requires.empty? ? unread_guard(authn) : authn_requires
+        endpoint.add_tag(Tag.new("auth", "Protected by #{authn}", "nestjs_auth", site.try(&.[0]), site.try(&.[1]), requires + spare))
+        spare = [] of Access::Clause
       end
       if authz = authz_descs.first?
-        endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "nestjs_auth"))
+        requires = authz_requires + spare
+        requires = [Access::Clause.unresolved(authz, authz)] if requires.empty?
+        endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "nestjs_auth", requires: requires))
+        spare = [] of Access::Clause
+      end
+      # Only a middleware tag sits on the route: add_tag merges these into it.
+      if middleware_tag && !spare.empty?
+        endpoint.add_tag(Tag.new("auth", middleware_tag, "nestjs_auth", requires: spare))
       end
 
       return unless authn_descs.empty? && authz_descs.empty?
     end
+  end
+
+  # What `Access.of` reads for an auth tag that records nothing: a signed-in
+  # caller and a check noir did not read.
+  private def unread_guard(text : String, path : String? = nil, line : Int32? = nil) : Array(Access::Clause)
+    [Access::Clause.new([Access::Atom.new(:authenticated)], text, path, line), Access::Clause.unresolved(text, text, path, line)]
+  end
+
+  # What one guard of a `UseGuards(...)` list requires when it refuses
+  # anonymous callers: a Passport guard adding nothing to a named strategy
+  # asks for a signed-in caller; any other also runs a check noir did not read.
+  # One that also runs the `anonymous` strategy refuses nobody it can name.
+  private def refusing_guard(guard : String, source : String, path : String?, line : Int32?) : Array(Access::Clause)
+    name = guard.match(/\A\w+/).try(&.[0]) || guard
+    anonymous = guard.matches?(PASSPORT_CALL) ? guard.matches?(ANONYMOUS_STRATEGY) : @anonymous_passport.includes?(name)
+    return [Access::Clause.unresolved(guard, source, path, line)] if anonymous
+    plain = guard.matches?(PASSPORT_CALL) ? plain_passport_call?(guard) : @plain_passport.includes?(name)
+    signed_in = Access::Clause.new([Access::Atom.new(:authenticated)], source, path, line)
+    plain ? [signed_in] : [signed_in, Access::Clause.unresolved(guard, source, path, line)]
+  end
+
+  # The clauses of the route's guards: those of the guards that refuse
+  # anonymous callers, and those of every other guard bound beside them (Nest
+  # runs every bound guard), each unread. A tsoa, routing-controllers or Ts.ED
+  # decorator gets the reading of a tag that records nothing.
+  private def guard_requires(decorators : Array(Noir::TsDecoratorExtractor::Decorator), file : String) : {Array(Access::Clause), Array(Access::Clause)}
+    authn = [] of Access::Clause
+    other = [] of Access::Clause
+    decorators.each do |decorator|
+      source = decorator.text.gsub(/\s+/, " ")
+      line = decorator.row + 1
+      if args = guard_arg_lists(decorator.text, USE_GUARDS_CALL).first?
+        Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).reject(&.empty?).each do |guard|
+          name = guard.match(/\A\w+/).try(&.[0])
+          next if UNCOUNTED_GUARDS.includes?(name) || @optional_guards.includes?(name)
+          if authenticating_guards(guard).empty?
+            other << Access::Clause.unresolved(guard, source, file, line)
+          else
+            authn.concat(refusing_guard(guard, source, file, line))
+          end
+        end
+      elsif guard_decorator_desc(decorator, file)
+        # The bundle may bind more than its auth guard (`RolesGuard`, metadata).
+        authn << Access::Clause.new([Access::Atom.new(:authenticated)], source, file, line)
+        authn << Access::Clause.unresolved(source, source, file, line)
+      elsif GUARD_PATTERNS.any? { |pattern, _| decorator.text.matches?(pattern) }
+        authn.concat(unread_guard(source, file, line))
+      end
+    end
+    {authn, other}
+  end
+
+  # What the global guard requires of a route it does not let through:
+  # `flagged` names metadata (`sharedLink: true`) under which it may take
+  # another credential instead of a login, and `admits` a route its skip
+  # branch lets through, where only the authz guards decide.
+  private def global_requires(guard : String, root : String?, admits : Bool, flagged : String?) : Array(Access::Clause)
+    path, line = @global_guard_sites[root]? || {nil, nil}
+    source = "NestJS global APP_GUARD (#{guard})"
+    # A guard whose definition lets every caller through is named for auth only.
+    return [Access::Clause.unresolved(source, source, path, line)] if admits || @guard_classes[guard]? == :admits || @optional_guards.includes?(guard)
+    clauses = refusing_guard(guard, source, path, line)
+    return clauses unless flagged
+    clauses.map { |clause| clause.any_of.all?(&.kind.authenticated?) ? Access::Clause.new(clause.any_of + [Access::Atom.new(:unresolved, flagged)], source, path, line) : clause }
+  end
+
+  # The role and permission metadata of the route's decorators. When the
+  # method and its class both set one kind, the guard's reflector call
+  # decides: `getAllAndOverride([handler, class])` keeps the method's,
+  # `getAllAndMerge` admits either level's values. One clause of the method's
+  # values and the class decorator as an unresolved atom holds under both.
+  # A bound `RolesGuard` with no metadata to read is unresolved.
+  private def metadata_requires(method_decorators : Array(Noir::TsDecoratorExtractor::Decorator), class_decorators : Array(Noir::TsDecoratorExtractor::Decorator), file : String) : Array(Access::Clause)
+    code = nil.as(String?)
+    on_method, on_class = {method_decorators, class_decorators}.map do |decorators|
+      decorators.compact_map do |decorator|
+        next unless decorator.called
+        code ||= Noir::CComments.strip(read_file(file) || "", quotes: %("'`))
+        source = decorator.text.gsub(/\s+/, " ")
+        NestjsAccess.metadata(decorator.name, decorator.args, source, code).try { |kind, cnf| {kind, cnf, source, decorator.row + 1} }
+      end
+    end
+    clauses = [] of Access::Clause
+    on_method.each do |kind, cnf, source, line|
+      if outer = on_class.find(&.[0].==(kind))
+        cnf = cnf.map { |atoms| atoms + [Access::Atom.new(:unresolved, outer[2])] }
+      end
+      clauses.concat(Access.clauses(cnf, source, file, line))
+    end
+    on_class.each do |kind, cnf, source, line|
+      clauses.concat(Access.clauses(cnf, source, file, line)) unless on_method.any?(&.[0].==(kind))
+    end
+    if clauses.empty?
+      (method_decorators + class_decorators).each do |decorator|
+        next unless decorator.text.matches?(ROLES_GUARD)
+        source = decorator.text.gsub(/\s+/, " ")
+        clauses << Access::Clause.unresolved(source, source, file, decorator.row + 1)
+      end
+    end
+    clauses
   end
 
   # The decorators of the class and of the method a route at 0-based
