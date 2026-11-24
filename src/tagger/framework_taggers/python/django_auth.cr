@@ -282,8 +282,15 @@ class DjangoAuthTagger < FrameworkTagger
       # Empty text: a DRF view whose permissions leave this method open.
       drf = check_drf_permissions(lines, line, endpoint.method, endpoint.url, class_ctx.lines, class_line)
       guards << drf if drf && !drf.description.empty?
-      if drf.nil? && @login_required_middleware && !login_not_required?(lines, line)
-        guards << guard("Protected by Django LoginRequiredMiddleware", [[Access::Atom.new(:authenticated)]])
+      if @login_required_middleware && !login_not_required?(lines, line)
+        signed_in = [[Access::Atom.new(:authenticated)]]
+        if drf.nil?
+          guards << guard("Protected by Django LoginRequiredMiddleware", signed_in)
+        elsif !guards.empty?
+          # DRF 3.16 sets `login_required = False` on its views; earlier
+          # versions leave them to the middleware.
+          guards << guard("Protected by Django LoginRequiredMiddleware", DjangoAccess.liftable(signed_in, "DRF 3.16+ exempts its views from LoginRequiredMiddleware"))
+        end
       end
       if found = joined(guards)
         add_guard(endpoint, found)

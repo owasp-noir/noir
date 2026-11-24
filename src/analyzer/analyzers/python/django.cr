@@ -2129,6 +2129,7 @@ module Analyzer::Python
         cnf = DjangoAccess.decorator(found[1], args, source) || DjangoAccess.unresolved(source)
         requires.concat Access.clauses(cnf, source)
       end
+      requires = Access.clauses(DjangoAccess.unresolved(wrapper), wrapper) if requires.empty?
       endpoint.add_tag(Tag.new("auth", "Protected by Django #{name} in urlconf", TAGGER, requires: requires))
       endpoint
     end

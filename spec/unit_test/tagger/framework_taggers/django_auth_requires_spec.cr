@@ -151,6 +151,51 @@ describe "DjangoAuthTagger requires" do
     atoms(tags[0]).should eq([["authenticated"], ["authenticated", "unresolved:IsOwner"], ["unresolved:IsOwner", "unresolved:is_staff"]])
   end
 
+  it "lets each DRF permission list replace the one it overrides" do
+    views = <<-PY
+      from rest_framework import viewsets
+      from rest_framework.views import APIView
+
+      class ItemViewSet(viewsets.ModelViewSet):
+          permission_classes = [IsAdminUser]
+
+          @action(detail=False, permission_classes=[IsAuthenticated])
+          def mine(self, request):
+              pass
+
+      class PingView(APIView):
+          permission_classes = [IsAuthenticated]
+
+          def get(self, request):
+              pass
+
+      @api_view(["GET"])
+      @permission_classes([IsAuthenticated])
+      def health(request):
+          pass
+      PY
+    files = {
+      "settings.py" => %(REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAdminUser"]}\n),
+      "views.py"    => views,
+    }
+    # The action, the view over the default, and `@permission_classes`.
+    [8, 14, 19].each do |line|
+      tags = django_tags(files, "views.py", line)
+      tags[0].description.should eq("Protected by DRF permission_classes")
+      atoms(tags[0]).should eq([["authenticated"]])
+    end
+  end
+
+  it "keeps LoginRequiredMiddleware on a DRF view unread, since DRF 3.16 exempts its views" do
+    files = {
+      "settings.py" => %(MIDDLEWARE = ["django.contrib.auth.middleware.LoginRequiredMiddleware"]\n),
+      "views.py"    => "from rest_framework.views import APIView\n\nclass KeyView(APIView):\n    permission_classes = [HasAPIKey]\n\n    def get(self, request):\n        pass\n",
+    }
+    tags = django_tags(files, "views.py", 6)
+    tags[0].description.should eq("Protected by DRF permission_classes")
+    atoms(tags[0]).should eq([["unresolved:HasAPIKey"], ["authenticated", "unresolved:DRF 3.16+ exempts its views from LoginRequiredMiddleware"]])
+  end
+
   it "keeps only what disagreeing DEFAULT_PERMISSION_CLASSES share" do
     files = {
       "proj/settings/base.py" => %(REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]}\n),
