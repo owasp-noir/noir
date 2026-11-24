@@ -39,6 +39,7 @@ describe FastAPIAccess do
     {
       %q(["items:read", 'items:write']) => ["scope:items:read", "scope:items:write"],
       %q(("me",))                       => ["scope:me"],
+      %q(("me"))                        => ["unresolved"],
       %q(["me", EXTRA])                 => ["scope:me", "unresolved"],
       %q(SCOPES)                        => ["unresolved"],
       %q([f"{prefix}:read"])            => ["unresolved"],
@@ -107,6 +108,21 @@ describe FastAPIAccess do
         FastAPIAccess.role_comparison(cond).should eq(expected)
       end
     end
+
+    # The test a raise sits past rather than under: `if user.role ==
+    # "admin": return user` then `raise`.
+    {
+      %q(user.role == "admin")  => {"user", %q("admin"), false},
+      %q(user.role in ROLES)    => {"user", "ROLES", true},
+      %q("admin" in user.roles) => {"user", %q("admin"), false},
+      %q(user.role != "admin")  => nil,
+      %q("a" not in user.roles) => nil,
+      %q(user.role == "a" or x) => nil,
+    }.each do |cond, expected|
+      it "reads #{cond} as a test the raise sits past" do
+        FastAPIAccess.role_comparison(cond, false).should eq(expected)
+      end
+    end
   end
 
   describe ".role_atoms" do
@@ -118,6 +134,8 @@ describe FastAPIAccess do
       { %q([]), true }                     => ["unresolved"],
       { %q(Role.ADMIN), false }            => ["unresolved"],
       { %q(f"{x}"), false }                => ["unresolved"],
+      { %q(("admin")), true }              => ["unresolved"],
+      { %q(("admin",)), true }             => ["role:admin"],
     }.each do |(value, collection), expected|
       it "reads #{value}#{" as a collection" if collection}" do
         FastAPIAccess.role_atoms(value, "ref", collection).map(&.to_s).should eq(expected)
@@ -142,6 +160,24 @@ describe FastAPIAccess do
         FastAPIAccess.absence_test?(cond).should eq(expected)
       end
     end
+  end
+
+  describe ".presence_test?" do
+    {
+      "user"                 => true,
+      "token is not None"    => true,
+      "user.active"          => false,
+      "user and user.active" => false,
+    }.each do |cond, expected|
+      it "reads #{cond}" do
+        FastAPIAccess.presence_test?(cond).should eq(expected)
+      end
+    end
+  end
+
+  it "names the loop variable of the documented scope check" do
+    FastAPIAccess.scope_loop_variable("def f(s: SecurityScopes):\n    for sc in s.scopes:\n        pass").should eq("sc")
+    FastAPIAccess.scope_loop_variable("def f(s):\n    for sc in s.scopes:\n        pass").should be_nil
   end
 
   it "lifts each clause with the setting" do
