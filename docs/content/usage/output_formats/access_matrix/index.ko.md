@@ -61,10 +61,23 @@ Y allowed, - denied, ? unknown (a guard noir could not read)
 
 Noir는 엔드포인트의 태그에서 요구 조건을 읽습니다.
 
-- `requires` 필드가 있는 태그([JSON 출력](../json/) 참고)는 적힌 조건을 그대로 씁니다. 현재는 `spring_auth` 태거가 이 필드를 채웁니다.
-- 다른 태거가 붙인 `auth` 태그는 `authenticated & unresolved`로 읽습니다. 태그는 가드가 있다는 것만 알려 주고, 무엇을 검사하는지는 알려 주지 않습니다.
-- 다른 태거가 붙인 `authz` 태그는 `unresolved`로 읽습니다.
+- `requires` 필드가 있는 태그([JSON 출력](../json/) 참고)는 적힌 조건을 그대로 씁니다. 이 필드를 채우는 출처는 아래 표에 있습니다.
+- `requires`가 없는 `auth` 태그는 `authenticated & unresolved`로 읽습니다. 태그는 가드가 있다는 것만 알려 주고, 무엇을 검사하는지는 알려 주지 않습니다.
+- `requires`가 없는 `authz` 태그는 `unresolved`로 읽습니다.
 - `anonymous` 태그는 `anonymous`로 읽습니다. 다른 태그의 가드를 없애지는 않습니다. 핸들러는 익명 호출자를 허용하지만 필터 체인이 로그인을 요구하는 경로는 `anonymous` 열에 여전히 `-`가 표시됩니다.
+
+| 출처 | 요구 조건으로 읽는 것 |
+|---|---|
+| Spring Security | `@PreAuthorize`와 `@PostAuthorize` 식, `@Secured`, `@RolesAllowed`, 필터 체인 규칙 |
+| NestJS | `@UseGuards`, 전역 가드, `@Roles`, `@Permissions`, `@Scopes` |
+| ASP.NET Core, FastEndpoints | `[Authorize]`의 역할과 정책, `RequireAuthorization`, 엔드포인트의 `Roles`, `Permissions`, `Scopes` |
+| Django, Django REST framework | `login_required`, `permission_required`, 인증 믹스인, `permission_classes`, `LoginRequiredMiddleware` |
+| Laravel | 라우트·그룹·컨트롤러 미들웨어, `can:`, Spatie 역할과 권한, Sanctum과 Passport 스코프, `authorize()` |
+| FastAPI | `fastapi.security` 스킴, `Security(..., scopes=[...])`, 의존성의 역할 검사 |
+| OpenAPI 2와 3 | `security`의 스킴과 스코프 |
+| Azure Functions, Serverless Framework | 인증 수준, authorizer, `private` |
+
+값은 소스에 적혀 있을 때만 읽습니다. 애플리케이션 코드가 결정하는 부분은 `unresolved`로 남습니다. 커스텀 가드나 정책, 다른 파일의 상수, 가드를 끌 수 있는 설정, Noir가 읽지 못한 NestJS 역할 가드가 여기에 해당합니다. 그 밖의 프레임워크 태거는 아직 요구 조건을 기록하지 않습니다.
 
 이 포맷은 기본으로 모든 태거를 실행합니다. `--use-taggers`를 쓰면 지정한 목록에 프레임워크 인증 태거를 추가합니다. 가드 태그 없이 만든 표는 모든 경로를 열린 것으로 보여 주기 때문입니다.
 

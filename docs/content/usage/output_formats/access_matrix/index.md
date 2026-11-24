@@ -61,10 +61,23 @@ The requirement is a list of conditions that must all hold, joined with `&`. A c
 
 Noir reads the requirement from the endpoint's tags:
 
-- A tag with a `requires` field (see [JSON output](../json/)) gives its conditions as written. Today the `spring_auth` tagger fills it.
-- An `auth` tag from any other tagger reads as `authenticated & unresolved`. The tag says a guard exists, but not what it checks.
-- An `authz` tag from any other tagger reads as `unresolved`.
+- A tag with a `requires` field (see [JSON output](../json/)) gives its conditions as written. The table below lists what fills it.
+- An `auth` tag without one reads as `authenticated & unresolved`. The tag says a guard exists, but not what it checks.
+- An `authz` tag without one reads as `unresolved`.
 - An `anonymous` tag reads as `anonymous`. It does not lift a guard from another tag: a route whose handler admits anonymous callers but whose filter chain requires a sign-in still shows `-` in the `anonymous` column.
+
+| Source | Read into the requirement |
+|---|---|
+| Spring Security | `@PreAuthorize` and `@PostAuthorize` expressions, `@Secured`, `@RolesAllowed`, filter-chain rules |
+| NestJS | `@UseGuards`, global guards, `@Roles`, `@Permissions`, `@Scopes` |
+| ASP.NET Core, FastEndpoints | `[Authorize]` roles and policies, `RequireAuthorization`, endpoint `Roles`, `Permissions` and `Scopes` |
+| Django, Django REST framework | `login_required`, `permission_required`, the auth mixins, `permission_classes`, `LoginRequiredMiddleware` |
+| Laravel | route, group and controller middleware, `can:`, Spatie roles and permissions, Sanctum and Passport scopes, `authorize()` |
+| FastAPI | `fastapi.security` schemes, `Security(..., scopes=[...])`, role checks in dependencies |
+| OpenAPI 2 and 3 | `security` schemes and scopes |
+| Azure Functions, Serverless Framework | the auth level, the authorizer, `private` |
+
+A value is read only where the source states it. What application code decides stays `unresolved`: a custom guard or policy, a constant from another file, a setting that can switch a guard off, a NestJS roles guard Noir could not read. Taggers for other frameworks record no requirement yet.
 
 The format runs every tagger by default. With `--use-taggers` it adds the framework auth taggers to your list, because a matrix built without guard tags would show every route as open.
 
