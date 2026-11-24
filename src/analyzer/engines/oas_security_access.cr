@@ -27,8 +27,26 @@ module OasSecurityAccess
   # `schemes` maps each defined scheme name to its `type` (nil when it is
   # unreadable, such as a `$ref`), or is nil when the document defines none.
   # `requirements` must not be empty: no `security` requires nothing.
-  def cnf(requirements : Array(Requirement), schemes : Hash(String, String?)?) : Access::CNF
-    requirements.map { |requirement| requirement_cnf(requirement, schemes) }.reduce { |a, b| Access.either(a, b) }
+  # `source` is the guard's text, which stands for the requirement once it
+  # passes `Access::MAX_CLAUSES`. The fold stops there: the product of the
+  # alternatives grows as the product of their sizes.
+  def cnf(requirements : Array(Requirement), schemes : Hash(String, String?)?, source : String) : Access::CNF
+    alternatives = requirements.map { |requirement| requirement_cnf(requirement, schemes) }
+    joined = alternatives.reduce do |product, alternative|
+      return capped(alternatives, source) if product.size > Access::MAX_CLAUSES || alternative.size > Access::MAX_CLAUSES
+      Access.either(product, alternative)
+    end
+    joined.size > Access::MAX_CLAUSES ? capped(alternatives, source) : joined
+  end
+
+  # Past the cap, a requirement every alternative of which refuses anonymous
+  # callers still does.
+  private def capped(alternatives : Array(Access::CNF), source : String) : Access::CNF
+    anonymous = Access::Atom.new(:anonymous)
+    floor = alternatives.all? do |alternative|
+      Access.cell(alternative.map { |atoms| Access::Clause.new(atoms, source) }, anonymous) == false
+    end
+    floor ? [[Access::Atom.new(:authenticated)]] + unresolved(source) : unresolved(source)
   end
 
   private def requirement_cnf(requirement : Requirement, schemes) : Access::CNF
@@ -42,7 +60,13 @@ module OasSecurityAccess
     return unresolved(name) if schemes && !schemes.has_key?(name)
     if scopes.is_a?(Array)
       return [[Access::Atom.new(:authenticated)]] if scopes.empty?
-      return scopes.map { |scope| [Access::Atom.new(:scope, scope)] } if SCOPED_TYPES.includes?(schemes.try(&.[name]?))
+      if SCOPED_TYPES.includes?(schemes.try(&.[name]?))
+        blank, named = scopes.partition(&.blank?)
+        cnf = named.map { |scope| [Access::Atom.new(:scope, scope)] }
+        return cnf if blank.empty?
+        # A blank scope names nothing a token can hold.
+        return (cnf.empty? ? [[Access::Atom.new(:authenticated)]] : cnf) + unresolved("#{name}: #{blank.to_json}")
+      end
     end
     # OAS 3.1 lets other scheme types list role names, which no type defines.
     [[Access::Atom.new(:authenticated)]] + unresolved("#{name}: #{scopes.is_a?(Array) ? scopes.join(", ") : scopes}")

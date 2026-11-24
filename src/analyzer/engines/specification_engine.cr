@@ -862,7 +862,7 @@ module Analyzer::Specification
       description = "Protected by OAS security #{alternatives.map(&.join(" + ")).join(" or ")}#{origin}"
       # The description names the alternatives a server can check; the
       # requirement keeps the others as unread alternatives.
-      declared_access_tag(description, requires: Access.clauses(OasSecurityAccess.cnf(requirements, defined_schemes), description))
+      declared_access_tag(description, requires: Access.clauses(OasSecurityAccess.cnf(requirements, defined_schemes, description), description))
     end
 
     # OAS2/OAS3: each scheme a `securitySchemes` / `securityDefinitions`

@@ -11,7 +11,7 @@ private SCHEMES = {
 
 private def read(security : String, schemes : Hash(String, String?)? = SCHEMES) : Array(Array(String))
   requirements = YAML.parse(security).as_a.map { |node| OasSecurityAccess.requirement(node) }
-  OasSecurityAccess.cnf(requirements, schemes).map(&.map(&.to_s).sort!).sort!
+  OasSecurityAccess.cnf(requirements, schemes, "guard").map(&.map(&.to_s).sort!).sort!
 end
 
 describe OasSecurityAccess do
@@ -33,15 +33,27 @@ describe OasSecurityAccess do
     "[{oauth: [read, {x: 1}]}]"           => [["authenticated"], ["unresolved"]],
     "[bearer, {key: []}]"                 => [["authenticated", "unresolved"]],
     "[{oauth: !!binary aGk=}]"            => [["authenticated"], ["unresolved"]],
+    "[{oauth: [\"\"]}]"                   => [["authenticated"], ["unresolved"]],
+    "[{oauth: [a, \"  \"]}]"              => [["scope:a"], ["unresolved"]],
+    # Past the cap: the guard's text, and still no anonymous caller.
+    "[{oauth: [a, b, c]}, {oidc: [d, e, f]}]"               => [["authenticated"], ["unresolved"]],
+    "[{oauth: [a, b, c, d, e, f, g, h, i]}]"                => [["authenticated"], ["unresolved"]],
+    "[{oauth: [a, b, c]}, {oidc: [d, e, f]}, {nosuch: []}]" => [["unresolved"]],
   }.each do |security, expected|
     it "reads #{security}" do
       read(security).should eq(expected)
     end
   end
 
+  it "stops joining alternatives once they pass the cap" do
+    security = "[" + (1..8).map { |k| "{oauth: [#{(1..8).join(", ") { |n| "s#{k}_#{n}" }}]}" }.join(", ") + "]"
+    elapsed = Time.measure { read(security).should eq([["authenticated"], ["unresolved"]]) }
+    elapsed.should be < 1.second
+  end
+
   it "keeps the text it could not read" do
     requirements = YAML.parse("[{key: [admin, ops]}, {nosuch: []}, {oauth: read}, bearer]").as_a.map { |node| OasSecurityAccess.requirement(node) }
-    requirements.map { |requirement| OasSecurityAccess.cnf([requirement], SCHEMES).flatten.select(&.kind.unresolved?).map(&.value) }
+    requirements.map { |requirement| OasSecurityAccess.cnf([requirement], SCHEMES, "guard").flatten.select(&.kind.unresolved?).map(&.value) }
       .should eq([["key: admin, ops"], ["nosuch"], ["oauth: \"read\""], ["\"bearer\""]])
   end
 
