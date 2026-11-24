@@ -264,9 +264,9 @@ module Analyzer::Php
         names = enclosing.flat_map(&.[3])
         if api_spans.any?(&.includes?(at))
           prefix = build_full_path(api_prefix, prefix)
-          names.unshift("api")
+          names = ["api"] + names + ["#{ACCESS_ENTRY}api"]
         elsif web_spans.any?(&.includes?(at))
-          names.unshift("web")
+          names = ["web"] + names + ["#{ACCESS_ENTRY}web"]
         end
         file = Noir::PathScope.expand(File.join(relative_to, ref[2]))
         prefixes[file] ||= prefix

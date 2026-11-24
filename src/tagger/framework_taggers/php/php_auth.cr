@@ -151,9 +151,9 @@ class PhpAuthTagger < FrameworkTagger
         covered[idx] = frames.reverse_each.compact_map(&.[1]).first?
         if code.matches?(LARAVEL_GROUP_OPEN)
           guard = LARAVEL_ROUTE_MIDDLEWARE.find { |pattern, _| statement.matches?(pattern) }.try { |(_, desc)| {desc, laravel_requires(desc, statement)} }
-          if guard.nil? && (group = statement.match(LARAVEL_GROUP_MIDDLEWARE))
-            name = group[0].match(/['"]([^'"]+)['"]\z/).try(&.[1]) || "auth"
-            guard = {"Laravel auth middleware", middleware_requires(name)}
+          if guard.nil? && statement.matches?(LARAVEL_GROUP_MIDDLEWARE)
+            value = statement.match(GROUP_MIDDLEWARE_KEY).try { |key| LaravelAccess.value_at(statement, key.end(0)) }
+            guard = {"Laravel auth middleware", listed_requires(value.try { |text| LaravelAccess.elements(text) }, statement.strip)}
           end
           frames << {depth, guard}
         end
@@ -217,38 +217,65 @@ class PhpAuthTagger < FrameworkTagger
   # Only a Laravel route says what it requires: its analyzer tags it under
   # this tagger name with `requires` set, and a tag without it merged into
   # that one would lose its unknown.
+  #
+  # When the analyzer already tagged the route, it read the same statement
+  # with the app's alias table (which this tagger has not got), so only what
+  # this tagger read itself is added: its unread clauses would only hide
+  # what the analyzer read (`role:admin` under a Spatie alias).
   private def add_guard(endpoint : Endpoint, description : String, requires : Array(Access::Clause)) : Nil
-    endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth", requires: (requires if endpoint.details.contributing_technologies.includes?("php_laravel"))))
+    laravel = endpoint.details.contributing_technologies.includes?("php_laravel")
+    if laravel && endpoint.tags.any? { |tag| tag.name == "auth" && tag.tagger == "php_auth" && tag.requires }
+      requires = requires.reject(&.any_of.all?(&.kind.unresolved?))
+    end
+    endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth", requires: (requires if laravel)))
   end
 
   LARAVEL_AUTH_GUARDS = Set{
     "Laravel auth middleware", "Laravel auth:api middleware", "Laravel Sanctum auth",
     "Laravel web auth", "Laravel controller auth middleware",
   }
-  MIDDLEWARE_CALL = /middleware\s*\(/
-  AUTH_NAME       = /['"](auth(?::[\w,]+)?)['"]/
-  GATE_CALL_START = /\$this\s*->\s*authorize\s*\(|Gate::authorize\s*\(/
+  MIDDLEWARE_CALL      = /middleware\s*\(/
+  GROUP_MIDDLEWARE_KEY = /['"]middleware['"]\s*=>\s*/
+  GATE_CALL_START      = /\$this\s*->\s*authorize\s*\(|Gate::authorize\s*\(/
 
-  # What the guard `description` found on `line` requires. A check that does
-  # not itself turn a guest away (`Gate::allows`, `$request->user()`) or a
-  # pattern of another framework is unread.
+  # What the guard `description` found on `line` requires: the whole
+  # middleware list it matched in, or the gate call. A check that does not
+  # itself turn a guest away (`Gate::allows`, `$request->user()`) or a pattern
+  # of another framework keeps the conservative reading of an `auth` tag.
   private def laravel_requires(description : String, line : String) : Array(Access::Clause)
-    if description == "Laravel verified middleware"
-      middleware_requires("verified")
-    elsif LARAVEL_AUTH_GUARDS.includes?(description)
-      tail = line.index(MIDDLEWARE_CALL).try { |at| line[at..] } || line
-      middleware_requires(tail.match(AUTH_NAME).try(&.[1]) || "auth")
+    if description == "Laravel verified middleware" || LARAVEL_AUTH_GUARDS.includes?(description)
+      elements = line.index(MIDDLEWARE_CALL).try do |at|
+        LaravelAccess.arguments(line, line.index!('(', at)).try &.flat_map { |arg| LaravelAccess.elements(arg) }
+      end
+      listed_requires(elements, line.strip)
     elsif start = line.index(GATE_CALL_START)
       call = line[start..].strip.rchop(';').strip
-      Access.clauses(LaravelAccess.gate_call(call), call)
+      LaravelAccess.floor(Access.clauses(LaravelAccess.gate_call(call), call), call)
     else
-      [Access::Clause.unresolved(line.strip, description)]
+      unread(line.strip)
     end
   end
 
-  # `verified` is the one non-auth name this tagger reports as a guard.
-  private def middleware_requires(name : String) : Array(Access::Clause)
-    Access.clauses(LaravelAccess.middleware(name) || [[Access::Atom.new(:unresolved, name)]], name)
+  # Each entry of a middleware list, read without the app's alias table;
+  # nil (a list that does not close on the line) is unread. `verified` is
+  # the one non-auth name this tagger reports as a guard.
+  private def listed_requires(elements : Array(String)?, source : String) : Array(Access::Clause)
+    return unread(source) unless elements
+    clauses = elements.flat_map do |element|
+      entry = LaravelAccess.entry(element) { |name| name }
+      next [Access::Clause.unresolved(element, element)] unless entry
+      if cnf = LaravelAccess.middleware(entry)
+        next Access.clauses(cnf, entry)
+      end
+      next [] of Access::Clause if entry != "verified" && LaravelAccess.non_access?(entry)
+      [Access::Clause.unresolved(entry, entry)]
+    end
+    clauses.empty? ? unread(source) : LaravelAccess.floor(clauses.uniq!(&.any_of), source)
+  end
+
+  # How `Access.of` reads an `auth` tag without `requires`.
+  private def unread(source : String) : Array(Access::Clause)
+    [Access::Clause.new([Access::Atom.new(:authenticated)], source), Access::Clause.unresolved(source, source)]
   end
 
   # CakePHP's AuthenticationComponent requires an identity on every action of

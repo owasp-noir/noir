@@ -4,7 +4,8 @@ require "../../../../src/tagger/tagger"
 
 # Writes `source` as a routes file, tags the endpoint declared on `line`
 # with `technology`, and returns its php_auth tag.
-private def php_auth_tag(source : String, line : Int32, technology : String = "php_laravel") : Tag?
+# `existing` stands in for a tag the analyzer put on the route first.
+private def php_auth_tag(source : String, line : Int32, technology : String = "php_laravel", existing : Tag? = nil) : Tag?
   tmpdir = File.tempname("php_auth_requires")
   Dir.mkdir_p(tmpdir)
   routes = File.join(tmpdir, "web.php")
@@ -13,7 +14,9 @@ private def php_auth_tag(source : String, line : Int32, technology : String = "p
   options["base"] = YAML::Any.new(tmpdir)
   details = Details.new(PathInfo.new(routes, line))
   details.technology = technology
-  endpoint = PhpAuthTagger.new(options).perform([Endpoint.new("/x", "GET", [] of Param, details)])[0]
+  endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+  existing.try { |tag| endpoint.add_tag(tag) }
+  endpoint = PhpAuthTagger.new(options).perform([endpoint])[0]
   FileUtils.rm_rf(tmpdir)
   endpoint.tags.find(&.tagger.==("php_auth"))
 end
@@ -34,8 +37,22 @@ describe "PhpAuthTagger requires" do
     tag.requires.should be_nil
   end
 
-  it "reads the verified middleware as unread, not as signed in" do
-    atoms(php_auth_tag("<?php\nRoute::get('/x', fn () => 1)->middleware('verified');\n", 2)).should eq([["unresolved"]])
+  it "reads the verified middleware as unread, with the conservative signed-in floor" do
+    atoms(php_auth_tag("<?php\nRoute::get('/x', fn () => 1)->middleware('verified');\n", 2)).should eq([["unresolved"], ["authenticated"]])
+  end
+
+  it "reads every entry of the matched list, keeping what it cannot read" do
+    source = "<?php\nRoute::get('/x', fn () => 1)->middleware(['auth', 'can:edit,post', 'role:admin', 'throttle:6,1']);\n"
+    atoms(php_auth_tag(source, 2)).should eq([["authenticated"], ["permission:edit"], ["unresolved"]])
+  end
+
+  it "adds only what it read when the analyzer already tagged the route" do
+    source = "<?php\nRoute::get('/x', fn () => 1)->middleware(['auth', 'role:admin']);\n"
+    analyzer = Tag.new("auth", "Protected by Laravel auth middleware", "php_auth", requires: [
+      Access::Clause.new([Access::Atom.new(:authenticated)], "auth"),
+      Access::Clause.new([Access::Atom.new(:role, "admin")], "role:admin"),
+    ])
+    atoms(php_auth_tag(source, 2, existing: analyzer)).should eq([["authenticated"], ["role:admin"]])
   end
 
   it "reads the group middleware it matched, keeping the tag text" do
@@ -47,7 +64,7 @@ describe "PhpAuthTagger requires" do
     ].join("\n")
     tag = php_auth_tag(source, 3).should_not be_nil
     tag.description.should eq("Protected by Laravel auth middleware (group)")
-    atoms(tag).should eq([["unresolved"]])
+    atoms(tag).should eq([["unresolved"], ["authenticated"]])
     tag.requires.try(&.first.any_of.first.value).should eq("verified")
   end
 
@@ -62,7 +79,7 @@ describe "PhpAuthTagger requires" do
     atoms(php_auth_tag(source, 2)).should eq([["permission:update"]])
   end
 
-  it "keeps a check that does not refuse a guest unread" do
+  it "keeps the conservative reading for a check that does not refuse a guest" do
     source = [
       "<?php",
       "Route::get('/x', function () {",
@@ -72,6 +89,6 @@ describe "PhpAuthTagger requires" do
     ].join("\n")
     tag = php_auth_tag(source, 2).should_not be_nil
     tag.description.should eq("Protected by Laravel Gate authorization")
-    atoms(tag).should eq([["unresolved"]])
+    atoms(tag).should eq([["authenticated"], ["unresolved"]])
   end
 end

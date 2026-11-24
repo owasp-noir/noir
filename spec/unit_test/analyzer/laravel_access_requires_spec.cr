@@ -11,12 +11,16 @@ private KERNEL = <<-'PHP'
       protected $middlewareGroups = [
           'web' => [ \Illuminate\Session\Middleware\StartSession::class ],
           'admin' => [ 'auth', 'role:admin' ],
+          'manager' => [ 'auth', 'role:root' ],
+          'legacy-staff' => [ 'auth', 'legacy:staff' ],
       ];
       protected $middlewareAliases = [
           'role' => \Spatie\Permission\Middleware\RoleMiddleware::class,
           'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
           'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,
           'scope' => \Laravel\Passport\Http\Middleware\CheckForAnyScope::class,
+          'legacy' => \Zizaco\Entrust\Middleware\EntrustRole::class,
+          'member' => \App\Http\Middleware\MemberOnly::class,
       ];
   }
   PHP
@@ -24,6 +28,8 @@ private KERNEL = <<-'PHP'
 private ROUTES = <<-'PHP'
   <?php
   use Illuminate\Support\Facades\Route;
+  use App\Http\Controllers\DocController;
+  use Spatie\Permission\Middleware\RoleMiddleware;
 
   Route::get('/roles', fn () => 1)->middleware(['auth', 'role:admin|editor,api']);
   Route::get('/abilities', fn () => 1)->middleware(['auth:sanctum', 'abilities:read,write']);
@@ -43,6 +49,48 @@ private ROUTES = <<-'PHP'
       $this->authorize('update', $post);
       return $post;
   });
+  Route::get('/route-can', fn () => 1)->middleware('auth')->can('delete', 'post');
+  Route::get('/using', fn () => 1)->middleware(['auth', RoleMiddleware::using('manager')]);
+  Route::get('/non-literal', fn () => 1)->middleware(['auth', config('app.extra')]);
+  Route::get('/docs', [DocController::class, 'index']);
+  Route::get('/legacy', fn () => 1)->middleware(['auth', 'legacy:admin']);
+  Route::get('/legacy-group', fn () => 1)->middleware('legacy-staff');
+  Route::get('/member', fn () => 1)->middleware('member');
+  Route::middleware('admin')->group(function () {
+      Route::withoutMiddleware('role:admin')->group(function () {
+          Route::get('/group-without', fn () => 1);
+      });
+  });
+  Route::get('/unbalanced', fn () => 1)->middleware(['auth', 'can:x'
+  Route::get('/next', fn () => 1)->middleware(['auth', 'role:admin']);
+  PHP
+
+private MEMBER_ONLY = <<-'PHP'
+  <?php
+  namespace App\Http\Middleware;
+  class MemberOnly
+  {
+      public function handle($request, $next)
+      {
+          if (! $request->user()) {
+              return redirect()->route('login');
+          }
+          return $next($request);
+      }
+  }
+  PHP
+
+private DOC_CONTROLLER = <<-'PHP'
+  <?php
+  namespace App\Http\Controllers;
+  class DocController extends Controller
+  {
+      public function __construct()
+      {
+          $this->middleware(['auth', config('docs.mw')]);
+      }
+      public function index() { return 'i'; }
+  }
   PHP
 
 # Scanned once, on first use rather than when the suite loads.
@@ -57,7 +105,10 @@ private def scan_laravel : Array(Endpoint)
   CodeLocator.instance.clear_all
   root = File.tempname("laravel_requires")
   begin
-    FileUtils.mkdir_p(File.join(root, "app/Http"))
+    FileUtils.mkdir_p(File.join(root, "app/Http/Middleware"))
+    FileUtils.mkdir_p(File.join(root, "app/Http/Controllers"))
+    File.write(File.join(root, "app/Http/Middleware/MemberOnly.php"), MEMBER_ONLY)
+    File.write(File.join(root, "app/Http/Controllers/DocController.php"), DOC_CONTROLLER)
     FileUtils.mkdir_p(File.join(root, "routes"))
     File.write(File.join(root, "composer.json"), %({"require": {"laravel/framework": "^10.0"}}))
     File.write(File.join(root, "artisan"), "#!/usr/bin/env php\n<?php\n")
@@ -114,5 +165,35 @@ describe "Laravel route requires" do
 
   it "reads a handler's literal policy call as the ability" do
     requires_of("/posts/{post}").should eq({"auth" => [["permission:update"]]})
+  end
+
+  it "reads ->can() as the Authorize middleware it adds" do
+    requires_of("/route-can").should eq({"auth" => [["authenticated"], ["permission:delete"]]})
+  end
+
+  it "reads Foo::using(...) as one entry, never its argument as a middleware name" do
+    requires_of("/using").should eq({"auth" => [["authenticated"], ["role:manager"]]})
+  end
+
+  it "keeps an element that is not a literal, on a route and in a controller constructor" do
+    requires_of("/non-literal").should eq({"auth" => [["authenticated"], ["unresolved"]]})
+    requires_of("/docs").should eq({"auth" => [["authenticated"], ["unresolved"]]})
+  end
+
+  it "keeps an alias to a class it does not know, directly and in a group" do
+    requires_of("/legacy").should eq({"auth" => [["authenticated"], ["unresolved"]]})
+    requires_of("/legacy-group").should eq({"auth" => [["authenticated"], ["unresolved"]]})
+  end
+
+  it "reads a custom middleware judged to refuse guests as signed in plus unread" do
+    requires_of("/member").should eq({"auth" => [["authenticated"], ["unresolved"]]})
+  end
+
+  it "lifts what an enclosing group withdraws" do
+    requires_of("/group-without").should eq({"auth" => [["authenticated"], ["role:admin", "unresolved"]]})
+  end
+
+  it "does not read a list that never closes into the next route" do
+    requires_of("/unbalanced").should eq({"auth" => [["unresolved"], ["authenticated"]], "authz" => [["unresolved"]]})
   end
 end
