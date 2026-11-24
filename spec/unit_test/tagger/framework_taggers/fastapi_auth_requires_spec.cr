@@ -202,6 +202,34 @@ describe "FastAPIAuthTagger requires" do
     fastapi_requires(files, "/staff")["authz"].should eq([["authenticated"], ["role:admin", "role:staff"]])
   end
 
+  it "keeps a role or field check answered with 401" do
+    main = <<-PY
+      from fastapi import Depends, HTTPException
+      from users import get_current_user
+
+      def admin_only(user=Depends(get_current_user)):
+          if user.role != "admin":
+              raise HTTPException(status_code=401)
+          return user
+
+      def superuser_only(current_user=Depends(get_current_user)):
+          if not current_user.is_superuser:
+              raise HTTPException(status_code=401)
+          return current_user
+
+      @app.get("/admin")
+      async def admin(user=Depends(admin_only)):
+          return {}
+
+      @app.get("/super")
+      async def superuser(user=Depends(superuser_only)):
+          return {}
+      PY
+    files = {"users.py" => FASTAPI_REQUIRES_USERS, "main.py" => main}
+    fastapi_requires(files, "/admin")["authz"].should eq([["authenticated"], ["role:admin"]])
+    fastapi_requires(files, "/super")["authz"].should eq([["authenticated"], ["unresolved"]])
+  end
+
   it "does not read a 403 on a setting as a sign-in" do
     main = <<-PY
       from fastapi import Depends, HTTPException

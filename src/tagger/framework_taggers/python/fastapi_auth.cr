@@ -492,32 +492,38 @@ class FastAPIAuthTagger < FrameworkTagger
   end
 
   # What the refusals in a dependency's code require, one clause each: the
-  # request passes only when none fires. A 401 answers an unauthenticated
-  # caller whatever its condition; a 403 under a test that the caller's
-  # credential is absent does too. A 403 under one comparison of an injected
-  # caller's role with a value read here names the roles. Any other refusal
-  # is unresolved with its conditions. nil when it refuses nowhere.
+  # request passes only when none fires. A refusal under a test that the
+  # caller's credential is absent requires sign-in, and one under a single
+  # comparison of an injected caller's role with a value read here names
+  # the roles. Any other 401 answers an unauthenticated caller; any other
+  # 403 is unresolved with its conditions. nil when it refuses nowhere.
   private def refusal_cnf(body : CheckBody) : Access::CNF?
     lines = body.text.lines
     sites = refusal_sites(lines, body.file, REFUSAL_MARKER)
     return if sites.empty?
     unauthenticated = refusal_sites(lines, body.file, UNAUTHENTICATED_MARKER).map(&.[0]).to_set
-    sites.map do |idx, inline|
-      next [AUTHENTICATED] if unauthenticated.includes?(idx)
+    sites.flat_map do |idx, inline|
       conds = governing_conditions(lines, idx)
       conds << {inline, true} if inline
       if conds.size == 1 && conds[0][1]
         cond = conds[0][0]
-        next [AUTHENTICATED] if FastAPIAccess.absence_test?(cond) && credential_condition?(cond, Hash(String, String).new)
+        next [[AUTHENTICATED]] if FastAPIAccess.absence_test?(cond) && credential_condition?(cond, Hash(String, String).new)
         if (comparison = FastAPIAccess.role_comparison(cond)) && body.text.matches?(/[(,]\s*#{Regex.escape(comparison[0])}\s*[:=,)]/)
           _, ref, collection = comparison
           value = ref.starts_with?("self.") ? body.attrs[ref[5..]]? : eval_expr(ref, body.env, body.file, 0)
-          next FastAPIAccess.role_atoms(value, ref, collection)
+          next [FastAPIAccess.role_atoms(value, ref, collection)]
         end
       end
-      [Access::Atom.new(:unresolved, conds.empty? ? lines[idx].strip : conds.map { |test, positive| positive ? test : "not (#{test})" }.join(" and "))]
+      fragment = conds.empty? ? lines[idx].strip : conds.map { |test, positive| positive ? test : "not (#{test})" }.join(" and ")
+      unread = [Access::Atom.new(:unresolved, fragment)]
+      next [unread] unless unauthenticated.includes?(idx)
+      # A 401 on a role or ownership field still judges what the caller
+      # may do. The scopes the documented loop checks are read as scopes.
+      fragment.matches?(AUTHZ_FIELD_401) ? [[AUTHENTICATED], unread] : [[AUTHENTICATED]]
     end
   end
+
+  AUTHZ_FIELD_401 = /\.(?:is_superuser|is_admin|is_staff|owner_id|roles?|permissions?)\b/
 
   # What the guard call a dependency's code opens with requires (see
   # `leading_guard_call`): the callee's refusals, read the same way.
