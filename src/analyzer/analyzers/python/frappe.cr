@@ -62,7 +62,7 @@ module Analyzer::Python
       endpoints
     end
 
-    BODY_CHECK = /(?m)^.*\b(?:frappe\.(?:only_for|has_permission|get_roles|check_permission)\s*\(|PermissionError\b).*$/
+    BODY_CHECK = /(?m)^.*(?:\bfrappe\.(?:only_for|get_roles)\s*\(|\.(?:has_permission|check_permission)\s*\(|\bfrappe\.session\.user\b|\bPermissionError\b).*$/
 
     # `frappe.is_whitelisted` refuses the Guest session a method not
     # whitelisted with `allow_guest=True`. A role or permission check in
