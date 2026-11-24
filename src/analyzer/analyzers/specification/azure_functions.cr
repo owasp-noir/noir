@@ -77,17 +77,19 @@ module Analyzer::Specification
           # reference, and the optimizer appends to it when merging.
           endpoint = Endpoint.new(compose_path(route_prefix, route), method, Details.new(PathInfo.new(path, trigger.line)))
           trigger.name.presence.try { |name| endpoint.add_tag(Tag.new("azure-function-name", name, "azure_functions_analyzer")) }
-          trigger.auth_level.try { |level| endpoint.add_tag(auth_level_tag(level)) }
+          trigger.auth_level.try { |level| endpoint.add_tag(auth_level_tag(level, trigger.auth_level_expression)) }
           @result << endpoint
         end
       end
     end
 
     # `function`, `admin` and `system` ask for a key, a credential noir
-    # cannot model as a role.
-    private def auth_level_tag(level : String) : Tag
-      source = "authLevel: #{level}"
-      atom = level.compare("anonymous", case_insensitive: true) == 0 ? Access::Atom.new(:anonymous) : Access::Atom.new(:unresolved, source)
+    # cannot model as a role. `expression`: the level is not one literal or
+    # member, so it may be any of them.
+    private def auth_level_tag(level : String, expression : String? = nil) : Tag
+      source = "authLevel: #{expression || level}"
+      open = expression.nil? && level.compare("anonymous", case_insensitive: true) == 0
+      atom = open ? Access::Atom.new(:anonymous) : Access::Atom.new(:unresolved, source)
       Tag.new("azure-auth-level", level, "azure_functions_analyzer", requires: [Access::Clause.new([atom], source)])
     end
 

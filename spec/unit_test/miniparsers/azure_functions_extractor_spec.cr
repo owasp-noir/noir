@@ -6,6 +6,44 @@ private def triggers(path : String, content : String)
 end
 
 describe Noir::AzureFunctionsExtractor do
+  # The last word of a ternary or a constant is not the level it holds.
+  it "keeps the text of a level that is not one literal or member" do
+    py = <<-PY
+      import os
+      import azure.functions as func
+      ANONYMOUS = func.AuthLevel.FUNCTION
+      app = func.FunctionApp(http_auth_level=ANONYMOUS)
+
+      @app.route(route="ternary", auth_level=func.AuthLevel.FUNCTION if os.getenv("PROD") else func.AuthLevel.ANONYMOUS)
+      def ternary(req): pass
+
+      @app.route(route="inherit")
+      def inherit(req): pass
+
+      @app.route(route="member", auth_level=func.AuthLevel.ANONYMOUS)
+      def member(req): pass
+
+      @app.route(route="literal", auth_level="Anonymous")
+      def literal(req): pass
+      PY
+    Noir::AzureFunctionsExtractor.extract("function_app.py", py).map { |t| {t.route, t.auth_level, t.auth_level_expression} }.should eq [
+      {"ternary", "anonymous", %(func.AuthLevel.FUNCTION if os.getenv("PROD") else func.AuthLevel.ANONYMOUS)},
+      {"inherit", "anonymous", "ANONYMOUS"},
+      {"member", "anonymous", nil},
+      {"literal", "anonymous", nil},
+    ]
+    cs = <<-CS
+      [Function("Cond")]
+      public R Cond([HttpTrigger(Dev ? AuthorizationLevel.Function : AuthorizationLevel.Anonymous, "get")] HttpRequestData r) => null;
+      [Function("Named")]
+      public R Named([HttpTrigger(AuthLevel = Microsoft.Azure.WebJobs.Extensions.Http.AuthorizationLevel.Anonymous)] HttpRequest r) => null;
+      CS
+    Noir::AzureFunctionsExtractor.extract("F.cs", cs).map { |t| {t.name, t.auth_level, t.auth_level_expression} }.should eq [
+      {"Cond", "anonymous", "Dev ? AuthorizationLevel.Function : AuthorizationLevel.Anonymous"},
+      {"Named", "anonymous", nil},
+    ]
+  end
+
   describe "C#" do
     it "reads positional methods, named Route and AuthLevel, and the function name" do
       triggers("F.cs", <<-CS).should eq [

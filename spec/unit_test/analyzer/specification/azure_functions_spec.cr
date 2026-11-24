@@ -1,4 +1,5 @@
 require "../../../spec_helper"
+require "file_utils"
 require "../../../../src/models/code_locator"
 require "../../../../src/analyzer/analyzers/specification/azure_functions"
 
@@ -60,6 +61,26 @@ describe "Azure Functions Analyzer" do
       endpoints = analyze_azure(%({"bindings": [{"type": "httpTrigger", "methods": ["get"], "authLevel": "#{level}"}]}))
       Access.of(endpoints[0]).map(&.to_s).should eq ["anonymous"]
     end
+  end
+
+  it "reads a level held in an expression as unresolved" do
+    dir = File.tempname("azure_code_first")
+    Dir.mkdir_p(dir)
+    path = File.join(dir, "function_app.py")
+    File.write(path, <<-PY)
+      import azure.functions as func
+      app = func.FunctionApp()
+
+      @app.route(route="dev", auth_level=func.AuthLevel.FUNCTION if PROD else func.AuthLevel.ANONYMOUS)
+      def dev(req): pass
+      PY
+    CodeLocator.instance.clear Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC
+    CodeLocator.instance.push Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC, path
+    endpoint = Analyzer::Specification::AzureFunctions.new(create_test_options).analyze[0]
+    tag_descriptions(endpoint, "azure-auth-level").should eq ["anonymous"]
+    Access.of(endpoint).map(&.any_of.map(&.to_s)).should eq [["unresolved"]]
+  ensure
+    FileUtils.rm_rf(dir) if dir
   end
 
   it "falls back to function folder name when route is absent" do
