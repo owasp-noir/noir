@@ -184,11 +184,13 @@ class ExpressAuthTagger < FrameworkTagger
   end
 
   # What every step of the route's chain asks of a caller, joined with AND.
-  # A guard step whose package call is not read keeps the default reading;
-  # a scope or claim check from a known package adds its own. Nil when no
-  # step reads more exactly than the default, when the endpoint has another
-  # registration (another chain may serve it), or when a step's scope was
-  # guessed for an unread mount prefix.
+  # A guard step whose package call is not read keeps the default reading.
+  # Every other step but the handler counts too: a known package's reading,
+  # nothing for one that provably hands every request on, and otherwise an
+  # unresolved clause, since it may refuse. Nil when no step reads more
+  # exactly than the default, when the endpoint has another registration
+  # (another chain may serve it), or when a step's scope was guessed for an
+  # unread mount prefix.
   private def chain_requires(endpoint : Endpoint, judged : Array({RouteMiddleware, GuardEvidence?})) : Array(Access::Clause)?
     return if endpoint.details.code_paths.count(&.route_middleware) > 1
     return if endpoint.url.includes?(Noir::JSMountPrefix::UNREAD)
@@ -196,16 +198,23 @@ class ExpressAuthTagger < FrameworkTagger
     return if judged.any? { |step, _| step.origin == :fallback }
     exact = false
     clauses = [] of Access::Clause
-    judged.each do |step, evidence|
+    judged.each_with_index do |(step, evidence), index|
       reading = step_reading(step)
       text = step_text(step.source)
+      read = !reading.nil? && !reading.empty?
       cnf = if evidence
-              reading || JsMiddlewareAccess.fallback(text)
-            elsif reading && reading.none? { |clause| clause.any?(&.kind.authenticated?) }
+              reading && !reading.empty? ? reading : JsMiddlewareAccess.fallback(text)
+            elsif index == judged.size - 1 && step.origin.in?(:route, :helper) && step.handler_position
+              next
+            elsif reading
               reading
+            elsif passes_through?(step)
+              next
+            else
+              JsMiddlewareAccess.unresolved(text)
             end
-      next unless cnf
-      exact ||= !reading.nil?
+      next if cnf.nil? || cnf.empty?
+      exact ||= read
       clauses.concat(Access.clauses(cnf, text, step.file))
     end
     return unless exact
@@ -219,24 +228,100 @@ class ExpressAuthTagger < FrameworkTagger
     text.size > 120 ? "#{text[0, 117]}..." : text
   end
 
+  @comment_free_sources = {} of String => String?
+  @package_imports = {} of String => JsMiddlewareAccess::Imports?
+
+  private def comment_free_source(file : String) : String?
+    @comment_free_sources.fetch(file) { @comment_free_sources[file] = read_file(file).try { |text| Noir::CComments.strip(text, quotes: %("'`)) } }
+  end
+
+  # `file`'s package imports, a commented-out import or a name the module
+  # declares itself left out.
+  private def package_imports(file : String) : JsMiddlewareAccess::Imports?
+    @package_imports.fetch(file) do
+      @package_imports[file] = comment_free_source(file).try { |code| JsMiddlewareAccess.package_imports(Noir::JSHandlerResolver.imports_of(code, file), code) }
+    end
+  end
+
   # The step as a call of a known package's middleware: written at the step,
   # or through a name the step's module binds once, and to nothing more, to
-  # such a call (`const auth = basicAuth({ … });`).
+  # such a call (`const auth = basicAuth({ … });`), or a method of such a
+  # binding when the package never refuses (`upload.single('f')` on a
+  # `multer(…)` instance).
   private def step_reading(step : RouteMiddleware) : Access::CNF?
-    content = read_file(step.file) || return
-    imports = Noir::JSHandlerResolver.imports_of(content, step.file)
-    text = step.source.strip
-    if text.matches?(BARE_IDENT) && !imports.has_key?(text)
-      return unless guard_binding_followed?(text, step.file)
-      code = Noir::CComments.strip(content, quotes: %("'`))
-      decl = code.match(/\b(?:const|let|var)\s+#{Regex.escape(text)}\s*=\s*/) || return
-      text = local_binding_expr(code, text) || return
-      return unless code.index(text, decl.end(0)) == decl.end(0)
-      return unless code[decl.end(0) + text.size..].matches?(/\A[ \t]*(?:;|\n|\z)/)
-      return if code[decl.end(0) + text.size..].lstrip.starts_with?('.')
-    end
-    JsMiddlewareAccess.parse(text, imports).try { |call| JsMiddlewareAccess.read(call) }
+    imports = package_imports(step.file) || return
+    text = Noir::CComments.strip(step.source, quotes: %("'`)).strip
+    head = text.match(/\A[A-Za-z_$][\w$]*/).try(&.[0]) || return
+    return JsMiddlewareAccess.parse(text, imports).try { |call| JsMiddlewareAccess.read(call, unrefusing_strategies) } if imports.has_key?(head)
+    bound = bound_call(head, step.file) || return
+    reading = JsMiddlewareAccess.parse(bound, imports).try { |call| JsMiddlewareAccess.read(call, unrefusing_strategies) } || return
+    return reading if text == head
+    reading if reading.empty? && text.matches?(/\A#{Regex.escape(head)}\s*\./)
   end
+
+  # The call a name is bound to, once, at module level, and to nothing more.
+  private def bound_call(name : String, file : String) : String?
+    return unless guard_binding_followed?(name, file)
+    code = comment_free_source(file) || return
+    decl = code.match(/\b(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*/) || return
+    expr = local_binding_expr(code, name) || return
+    return unless code.index(expr, decl.end(0)) == decl.end(0)
+    after = code[decl.end(0) + expr.size..]
+    return unless after.matches?(/\A[ \t]*(?:;|\n|\z)/)
+    expr unless after.lstrip.starts_with?('.')
+  end
+
+  # Whether the step is a function (inline, or a name defined in the scan)
+  # that always calls `next()` and can answer or refuse nobody.
+  private def passes_through?(step : RouteMiddleware) : Bool
+    text = step.source.strip
+    found = if text.matches?(BARE_IDENT)
+              content = read_file(step.file) || return false
+              handler = Noir::JSHandlerResolver.resolve(text, content, step.file) || return false
+              path, line = handler.path, handler.line
+              return false unless path && line
+              definition_parts(path, line)
+            else
+              JsMiddlewareAccess.function_parts(text)
+            end
+    found ? JsMiddlewareAccess.express_passes?(*found) : false
+  end
+
+  @definition_parts = {} of {String, Int32} => {Array(String), String}?
+
+  private def definition_parts(path : String, line : Int32) : {Array(String), String}?
+    @definition_parts.fetch({path, line}) do
+      @definition_parts[{path, line}] = read_file_lines(path).try do |lines|
+        JsMiddlewareAccess.function_parts(lines[line - 1, 400].join('\n'), whole: false) if 1 <= line <= lines.size
+      end
+    end
+  end
+
+  @unrefusing_strategies : Set(String)?
+
+  # Passport strategy names the scan registers as something other than a
+  # strategy from a package that refuses without its credential
+  # (`passport.use('bearer', new AnonymousStrategy())`, or an instance not
+  # built where it is registered).
+  private def unrefusing_strategies : Set(String)
+    @unrefusing_strategies ||= begin
+      refusing = {} of String => Bool
+      %w[.js .mjs .cjs .ts .mts .cts .jsx .tsx].each do |ext|
+        collect_files_by_extension(ext).each do |file|
+          next unless read_file(file).try(&.matches?(PASSPORT_NAMED_USE))
+          code = comment_free_source(file) || next
+          code.scan(PASSPORT_NAMED_USE) do |use|
+            strategy = code[use.end(0)..].match(/\A\s*new\s+([A-Za-z_$][\w$]*)/)
+            known = strategy && package_imports(file).try(&.[strategy[1]]?).try { |found| JsMiddlewareAccess::PASSPORT_REFUSING_PACKAGES.includes?(found[0]) }
+            refusing[use[1]] = refusing.fetch(use[1], true) && known == true
+          end
+        end
+      end
+      refusing.reject { |_, refuses| refuses }.keys.to_set
+    end
+  end
+
+  PASSPORT_NAMED_USE = /(?<![\w$.])[A-Za-z_$][\w$]*\s*\.\s*use\s*\(\s*['"]([^'"\/*]+)['"]\s*,/
 
   # Why `arg` (one argument of a registration, as written) guards the
   # route, or nil. Passport needs its strategy string; the inline and named

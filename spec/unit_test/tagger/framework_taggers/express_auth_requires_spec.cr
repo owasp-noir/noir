@@ -149,4 +149,48 @@ describe "ExpressAuthTagger requires" do
     tags["GET /twice"].should_not be_nil
     requirement(tags["GET /twice"]).should be_nil
   end
+
+  it "keeps every unread step of the chain, and drops only steps that refuse nobody" do
+    tags = express_requires({
+      "app.js" => <<-JS,
+        const express = require('express');
+        const cors = require('cors');
+        const passport = require('passport');
+        const { requireRole } = require('acl-kit');
+        const app = express();
+        function stamp(req, res, next) { req.at = Date.now(); next(); }
+        function requireAdmin(req, res, next) { if (req.user && req.user.role !== 'admin') return res.sendStatus(403); next(); }
+        app.get('/package', passport.authenticate('jwt', { session: false }), requireRole('admin'), (req, res) => res.json({}));
+        app.get('/inline', passport.authenticate('jwt', { session: false }), (req, res, next) => { if (!req.user.admin) throw new Error('no'); next(); }, (req, res) => res.json({}));
+        app.get('/presence', passport.authenticate('jwt', { session: false }), requireAdmin, (req, res) => res.json({}));
+        app.get('/quiet', cors(), express.json(), stamp, passport.authenticate('jwt', { session: false }), (req, res) => res.json({}));
+        app.use(function adminOnly(req, res, next) { if (!req.user.admin) return res.sendStatus(403); next(); });
+        app.get('/after-use', passport.authenticate('jwt', { session: false }), (req, res) => res.json({}));
+        JS
+    })
+    requirement(tags["GET /package"]).should eq("authenticated & unresolved:requireRole('admin')")
+    requirement(tags["GET /inline"]).should eq("authenticated & unresolved:(req, res, next) => { if (!req.user.admin) throw new Error('no'); next(); }")
+    requirement(tags["GET /presence"]).should eq("authenticated & unresolved:requireAdmin")
+    requirement(tags["GET /quiet"]).should eq("authenticated")
+    requirement(tags["GET /after-use"]).should eq("unresolved:function adminOnly(req, res, next) { if (!req.user.admin) return res.sendStatus(403); next(); } & authenticated")
+  end
+
+  it "reads a Passport strategy name by what the app registers under it" do
+    tags = express_requires({
+      "app.js" => <<-JS,
+        const express = require('express');
+        const passport = require('passport');
+        const AnonymousStrategy = require('passport-anonymous').Strategy;
+        const { Strategy: JwtStrategy } = require('passport-jwt');
+        passport.use('bearer', new AnonymousStrategy());
+        passport.use('jwt', new JwtStrategy({}, verify));
+        const app = express();
+        app.get('/bearer', passport.authenticate('bearer', { session: false }), (req, res) => res.json({}));
+        app.get('/jwt', passport.authenticate('jwt', { session: false }), (req, res) => res.json({}));
+        JS
+    })
+    tags["GET /bearer"].should_not be_nil
+    requirement(tags["GET /bearer"]).should be_nil
+    requirement(tags["GET /jwt"]).should eq("authenticated")
+  end
 end
