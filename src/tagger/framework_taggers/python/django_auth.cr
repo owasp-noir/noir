@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "./python_guard_definitions"
 require "./django_middleware_guard"
+require "./django_access"
 
 @[Noir::TaggerFor(key: "django_auth", name: "Django Auth Tagger", desc: "Identifies Django authentication patterns (decorators, mixins, DRF permissions)", order: 10)]
 class DjangoAuthTagger < FrameworkTagger
@@ -76,7 +77,7 @@ class DjangoAuthTagger < FrameworkTagger
     @drf_default_permissions = [] of String
     @permission_classes = {} of String => Array(PermissionClass)
     @method_def_res = {} of String => Regex
-    @dispatch_guards = {} of {String, Int32, String, Hash(String, String)} => String | Symbol?
+    @dispatch_guards = {} of {String, Int32, String, Hash(String, String)} => Guard | Symbol?
   end
 
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
@@ -203,15 +204,44 @@ class DjangoAuthTagger < FrameworkTagger
     nil
   end
 
-  # The view's own guards first; a project middleware refusing anonymous
-  # requests guards whatever the view leaves open.
+  # A guard one layer applies: the tag text it reports and what it requires.
+  private record Guard, description : String, requires : Array(Access::Clause)
+
+  # A guard is never open to anyone: a reader that disagrees with the
+  # verdict that tagged it reads nothing instead.
+  private def guard(description : String, cnf : Access::CNF, source : String = description) : Guard
+    cnf = DjangoAccess.unresolved(source) if cnf.empty?
+    Guard.new(description, Access.clauses(cnf, source))
+  end
+
+  # Layers that all run: the first one names the tag, each one's
+  # requirement holds.
+  private def joined(guards : Array(Guard)) : Guard?
+    first = guards.first? || return
+    Guard.new(first.description, guards.flat_map(&.requires).uniq!)
+  end
+
+  private def add_guard(endpoint : Endpoint, guard : Guard)
+    endpoint.add_tag(Tag.new("auth", guard.description, "django_auth", requires: guard.requires))
+  end
+
+  # The view's own guards, then a project middleware refusing anonymous
+  # requests. The middleware runs ahead of every view, so on a guarded view
+  # its requirement joins the view's tag, whose text stays.
   private def check_endpoint(endpoint : Endpoint)
-    tagged = endpoint.tags.size
     check_view_guards(endpoint)
-    return if endpoint.tags.size > tagged
-    if guard = middleware_guard(endpoint)
-      endpoint.add_tag(Tag.new("auth", guard, "django_auth"))
+    if description = middleware_guard(endpoint)
+      add_guard(endpoint, guard(description, middleware_access(description)))
     end
+  end
+
+  MIDDLEWARE_REFUSES = "settings.MIDDLEWARE refuses unauthenticated requests outside its exempt paths)"
+
+  # `middleware_guard` says in its text when a setting, or a test it could
+  # not read, may let the request through.
+  private def middleware_access(description : String) : Access::CNF
+    signed_in = [[Access::Atom.new(:authenticated)]]
+    description.ends_with?(MIDDLEWARE_REFUSES) ? signed_in : DjangoAccess.liftable(signed_in, description)
   end
 
   private def check_view_guards(endpoint : Endpoint)
@@ -221,7 +251,7 @@ class DjangoAuthTagger < FrameworkTagger
     # `AdminSite.admin_view` sends a caller who is not active staff to the
     # admin login; the index is what the mount itself serves.
     if !urlconf.empty? && urlconf.all? { |entry| urlconf_args(entry)[1]?.try(&.matches?(/\A(?:include\s*\(\s*)?admin\.site\.urls\b/)) }
-      endpoint.add_tag(Tag.new("auth", "Protected by Django admin site", "django_auth"))
+      add_guard(endpoint, guard("Protected by Django admin site", DjangoAccess::ADMIN_SITE))
       return
     end
     # A view served by a base class's method lists the view class itself
@@ -238,44 +268,28 @@ class DjangoAuthTagger < FrameworkTagger
 
       # Skip stale/out-of-range line refs: a line beyond the content we
       # read would crash the lines[idx] walks below with IndexError.
-      if line && line >= 1 && line <= lines.size
-        # Check decorators by walking backwards from endpoint line
-        description = check_decorators(lines, line, ctx.path)
-        if description
-          endpoint.add_tag(Tag.new("auth", description, "django_auth"))
-          return
-        end
-
-        # A function view refusing in its own body, or handing this verb to
-        # a function that is guarded.
-        if guard = body_guard(ctx.path, lines, line, endpoint.method, 0)
-          endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "django_auth"))
-          return
-        end
-
-        class_ctx = view_class || ctx
-        class_line = class_ctx.line || line
-
-        # Check enclosing class for mixins
-        description = check_enclosing_class_mixins(class_ctx.lines, class_line, class_ctx.path, endpoint.method, urlconf)
-        if description
-          endpoint.add_tag(Tag.new("auth", description, "django_auth"))
-          return
-        end
-
-        # DRF permission_classes (view, action, or settings default)
-        description = check_drf_permissions(lines, line, endpoint.method, endpoint.url, class_ctx.lines, class_line)
-        if description
-          endpoint.add_tag(Tag.new("auth", description, "django_auth")) unless description.empty?
-          return
-        end
-
-        # Django 5.1 LoginRequiredMiddleware: login-only unless opted out
-        if @login_required_middleware && !login_not_required?(lines, line)
-          endpoint.add_tag(Tag.new("auth", "Protected by Django LoginRequiredMiddleware", "django_auth"))
-          return
-        end
+      next unless line && line >= 1 && line <= lines.size
+      # Every layer runs, in this order: the handler's decorators, a
+      # function view's own body check, the class (its `as_view`,
+      # `dispatch` and mixins), DRF's permissions, then Django 5.1's
+      # LoginRequiredMiddleware unless the view opts out. The first one
+      # found names the tag.
+      guards = check_decorators(lines, line, ctx.path)
+      body_guard(ctx.path, lines, line, endpoint.method, 0).try { |found| guards << found }
+      class_ctx = view_class || ctx
+      class_line = class_ctx.line || line
+      guards.concat check_enclosing_class_mixins(class_ctx.lines, class_line, class_ctx.path, endpoint.method, urlconf)
+      # Empty text: a DRF view whose permissions leave this method open.
+      drf = check_drf_permissions(lines, line, endpoint.method, endpoint.url, class_ctx.lines, class_line)
+      guards << drf if drf && !drf.description.empty?
+      if drf.nil? && @login_required_middleware && !login_not_required?(lines, line)
+        guards << guard("Protected by Django LoginRequiredMiddleware", [[Access::Atom.new(:authenticated)]])
       end
+      if found = joined(guards)
+        add_guard(endpoint, found)
+        return
+      end
+      return if drf
     end
   end
 
@@ -335,11 +349,13 @@ class DjangoAuthTagger < FrameworkTagger
     kwargs
   end
 
-  private def check_decorators(lines : Array(String), endpoint_line : Int32, path : String) : String?
+  # The guards the decorators stacked above the `def` apply, nearest first:
+  # every one of them runs.
+  private def check_decorators(lines : Array(String), endpoint_line : Int32, path : String) : Array(Guard)
+    guards = [] of Guard
     # Walk backwards with no fixed limit — Python decorators stack directly above the def,
     # separated only by other decorators, so we stop at the first blank line or definition.
     idx = endpoint_line - 2 # 0-indexed, one line before
-    return if idx < 0
 
     while idx >= 0
       current = lines[idx].strip
@@ -347,30 +363,53 @@ class DjangoAuthTagger < FrameworkTagger
       break if current.empty?
       break if current.starts_with?("class ") || (current.starts_with?("def ") && idx < endpoint_line - 2)
 
-      if description = judge_decorator(current, path)
-        return description
+      # The decorator's arguments may wrap onto the lines below it.
+      if found = judge_decorator(current, path, lines[idx, 20].join('\n').lstrip)
+        guards << found
       end
 
       idx -= 1
     end
 
-    nil
+    guards
   end
 
   # The guard one decorator line applies: a Django one by name, a project
-  # one by what its definition does.
-  private def judge_decorator(current : String, path : String) : String?
+  # one by what its definition does. `full` is the source from the line on.
+  private def judge_decorator(current : String, path : String, full : String = current) : Guard?
     DECORATOR_PATTERNS.each do |pattern|
       if current.matches?(pattern)
         decorator_name = current.split("(").first.lstrip('@')
-        return "Protected by Django #{decorator_name} decorator"
+        description = "Protected by Django #{decorator_name} decorator"
+        if read = django_decorator(full, path)
+          return guard(description, read[0], read[1])
+        end
+        return guard(description, DjangoAccess.unread(description))
       end
     end
-    if description = method_decorator_auth(current, nil)
-      return description
+    if found = method_decorator_auth(current, nil, path, full)
+      return found
     end
     return unless current.starts_with?('@')
-    decorator_guard(current, path).try { |guard| "Protected by #{guard}" }
+    decorator_guard(current, path).try { |name| project_guard("Protected by #{name}") }
+  end
+
+  # A Django auth decorator's requirement and its call text; nil for a
+  # name that is not Django's own (`login_required_unless_debug`, a
+  # `login_required` the project defines).
+  private def django_decorator(text : String, path : String) : {Access::CNF, String}?
+    name, args, source = DjangoAccess.call(text) || return
+    return if resolve_def(path, name)
+    cnf = DjangoAccess.decorator(name, args, "@#{source}") || return
+    {cnf, "@#{source}"}
+  end
+
+  # A project guard is judged by whether it refuses an anonymous caller,
+  # not by what else it checks; one a setting can turn off may let anyone in.
+  private def project_guard(description : String) : Guard
+    cnf = DjangoAccess.unread(description)
+    cnf = DjangoAccess.liftable(cnf, description) if description.ends_with?("(a setting can make it public)")
+    guard(description, cnf)
   end
 
   # Library decorators are judged by `DECORATOR_PATTERNS` before this is
@@ -404,7 +443,7 @@ class DjangoAuthTagger < FrameworkTagger
   # guard on the function a dispatcher returns for this verb (`if
   # request.method == "POST": return create_check(request)`, a trailing
   # `return get_check(request)` for the verbs no branch took).
-  private def body_guard(path : String, lines : Array(String), def_line : Int32, method : String, depth : Int32) : String?
+  private def body_guard(path : String, lines : Array(String), def_line : Int32, method : String, depth : Int32) : Guard?
     def_idx = def_line - 1
     return unless (head = lines[def_idx]?) && head.lstrip.matches?(DEF_LINE)
     def_indent = head.size - head.lstrip.size
@@ -436,11 +475,11 @@ class DjangoAuthTagger < FrameworkTagger
       next if code.matches?(USER_ALIAS)
       block = body[(k + 1)..].take_while { |entry| entry[0] > level }
       if code.starts_with?("if ") && anonymous_test?(code.partition(':')[0], aliases)
-        return "Django request.user.is_authenticated check" if !written && refusing_block?(code.partition(':')[2].strip, block)
+        return identity_check if !written && refusing_block?(code.partition(':')[2].strip, block)
       elsif code.starts_with?("if ") && signed_in_test?(code.partition(':')[0], aliases)
         # `if request.user.is_authenticated: ... return` then a refusal: the
         # signed-in callers leave inside the block, the rest are refused.
-        return "Django request.user.is_authenticated check" if !written && exits?(code.partition(':')[2].strip, block) && refusal_follows?(body, k + 1 + block.size, level)
+        return identity_check if !written && exits?(code.partition(':')[2].strip, block) && refusal_follows?(body, k + 1 + block.size, level)
       elsif code.matches?(METHOD_TEST)
         test = code.split("request.method", 2)[1]
         next if test.matches?(/\A\s*(?:!=|not\s+in)/)
@@ -543,45 +582,122 @@ class DjangoAuthTagger < FrameworkTagger
 
   # The guard on function `name` as `path` refers to it: its decorators,
   # then its own body.
-  private def helper_guard(path : String, name : String, method : String) : String?
+  private def helper_guard(path : String, name : String, method : String) : Guard?
     site = python_definition_site(path, name) || return
     file, def_name = site
     lines = read_file_lines(file) || return
     def_re = /^(?:async\s+)?def\s+#{Regex.escape(def_name)}\s*\(/
     def_idx = lines.index(&.matches?(def_re)) || return
-    if guard = check_decorators(lines, def_idx + 1, file)
-      return "#{guard.lchop("Protected by ")} (via #{def_name})"
-    end
-    body_guard(file, lines, def_idx + 1, method, 1).try { |own| "#{own} (via #{def_name})" }
+    guards = check_decorators(lines, def_idx + 1, file)
+    body_guard(file, lines, def_idx + 1, method, 1).try { |own| guards << own }
+    found = joined(guards) || return
+    Guard.new("#{found.description} (via #{def_name})", found.requires)
+  end
+
+  private def identity_check : Guard
+    guard("Protected by Django request.user.is_authenticated check", [[Access::Atom.new(:authenticated)]])
   end
 
   private def check_enclosing_class_mixins(lines : Array(String), endpoint_line : Int32, path : String, method : String,
-                                           urlconf : Array(String)) : String?
-    idx = enclosing_class(lines, endpoint_line).try(&.[0]) || return
+                                           urlconf : Array(String)) : Array(Guard)
+    guards = [] of Guard
+    idx = enclosing_class(lines, endpoint_line).try(&.[0]) || return guards
     # `@method_decorator(..., name=...)` above the class decorates the
     # handler it names (or all of them, via `dispatch`).
     handler = lines[endpoint_line - 1].match(/\bdef\s+(\w+)/).try(&.[1])
-    if description = method_decorator_auth(decorator_text(lines, idx + 1), handler)
-      return description
-    end
-    if guard = as_view_guard(path, lines, idx)
-      return guard
-    end
+    method_decorator_auth(decorator_text(lines, idx + 1), handler, path).try { |found| guards << found }
+    as_view_guard(path, lines, idx).try { |found| guards << found }
     # Its bases, wherever the header wraps.
     header = class_header(lines, idx)
     kwargs = as_view_kwargs(urlconf, header.match(/\bclass\s+(\w+)/).try(&.[1]) || "")
     key = {path, idx, method.upcase, kwargs}
     verdict = @dispatch_guards.has_key?(key) ? @dispatch_guards[key] : (@dispatch_guards[key] = dispatch_guard(path, lines, idx, method.upcase, kwargs))
-    return "Protected by #{verdict}" if verdict.is_a?(String)
-    # The walk saw where the request is served without these mixins.
-    return if verdict == :stop
-    MIXIN_PATTERNS.each do |pattern|
-      if header.matches?(pattern)
-        mixin_name = pattern.source.gsub("\\", "")
-        return "Protected by Django #{mixin_name}"
+    if verdict.is_a?(Guard)
+      guards << verdict
+    elsif verdict != :stop
+      # The walk did not see where the request is served: the header's
+      # mixins are taken at their word.
+      bases = class_bases(header).map(&.rpartition('.')[2])
+      mro = class_mro(path, lines, idx)
+      MIXIN_PATTERNS.each do |pattern|
+        next unless header.matches?(pattern)
+        name = pattern.source.gsub("\\", "")
+        guards << mixin_guard(name, bases.includes?(name), mro, kwargs)
       end
     end
+    guards
+  end
+
+  # What one of the auth mixins in `MIXIN_PATTERNS` requires of the view
+  # whose MRO is `mro`; `exact` when the base is that mixin by name, not a
+  # class merely named like it.
+  private def mixin_guard(name : String, exact : Bool, mro : Array(MroClass), kwargs : Hash(String, String)) : Guard
+    description = "Protected by Django #{name}"
+    return guard(description, DjangoAccess.unread(description)) unless exact
+    cnf = case name
+          when "LoginRequiredMixin"       then [[Access::Atom.new(:authenticated)]]
+          when "StaffMemberRequiredMixin" then DjangoAccess::STAFF
+          when "PermissionRequiredMixin"  then permission_mixin_access(mro, kwargs)
+          else
+            # `test_func` runs on `AnonymousUser` too.
+            DjangoAccess.unresolved(test_func_text(mro))
+          end
+    guard(description, cnf, name)
+  end
+
+  # `PermissionRequiredMixin.dispatch` refuses unless `has_permission()`,
+  # which by default asks `has_perms(get_permission_required())`, and that
+  # returns `permission_required`.
+  private def permission_mixin_access(mro : Array(MroClass), kwargs : Hash(String, String)) : Access::CNF
+    if owner = defining_class(mro, "has_permission")
+      return DjangoAccess.unresolved("#{owner}.has_permission")
+    end
+    if owner = defining_class(mro, "get_permission_required")
+      return DjangoAccess.unread("#{owner}.get_permission_required")
+    end
+    value = view_attribute_text(mro, kwargs, "permission_required")
+    return DjangoAccess.unread("permission_required") if value.nil? || value.empty?
+    DjangoAccess.permission_required(value)
+  end
+
+  # The first project class in `mro` defining method `name`.
+  private def defining_class(mro : Array(MroClass), name : String) : String?
+    mro.each do |klass|
+      file = klass.path || next
+      class_lines = read_file_lines(file) || next
+      return klass.name if method_body(class_lines, klass.idx, name)
+    end
     nil
+  end
+
+  # The value of attribute `name` as the view reads it off `self`: an
+  # `as_view(name=...)` keyword, else the first class in `mro` setting it
+  # in its body, through a bracketed value's closing bracket. "" for a
+  # value not read; nil when no project class sets it.
+  private def view_attribute_text(mro : Array(MroClass), kwargs : Hash(String, String), name : String) : String?
+    return kwargs[name] if kwargs.has_key?(name)
+    mro.each do |klass|
+      file = klass.path || next
+      class_lines = read_file_lines(file) || next
+      value = class_attributes(class_lines, klass.idx)[name]? || next
+      return value unless value.starts_with?('(') || value.starts_with?('[')
+      return bracketed_after(class_body(class_lines, klass.idx), /\b#{name}\s*=(?!=)/) || ""
+    end
+    nil
+  end
+
+  # What a `UserPassesTestMixin` view tests: the expression a one-line
+  # `test_func` returns, else where the test is defined.
+  private def test_func_text(mro : Array(MroClass)) : String
+    mro.each do |klass|
+      file = klass.path || next
+      class_lines = read_file_lines(file) || next
+      body = method_body(class_lines, klass.idx, "test_func") || next
+      statements = body.lines.map { |line| Analyzer::Python::Helper.strip_python_comment(line).strip }.reject(&.empty?)
+      return statements[0].lchop("return").strip if statements.size == 1 && statements[0].starts_with?("return ")
+      return "#{klass.name}.test_func"
+    end
+    "UserPassesTestMixin.test_func"
   end
 
   # The `as_view` override pretix's permission mixins spell, and only that:
@@ -596,20 +712,20 @@ class DjangoAuthTagger < FrameworkTagger
   AS_VIEW_SUPER_ONLY     = /\A#{AS_VIEW_SUPER_CALL.source}\z/
   AS_VIEW_STATEMENT      = /\A(?:(\w+)\s*=(?!=)|return\b)\s*(.*)\z/
 
-  @as_view_guards = {} of {String, Int32} => String?
+  @as_view_guards = {} of {String, Int32} => Guard?
 
   # The decorator an `as_view` override in the view's MRO wraps the view
   # in, judged like one stacked on the handler. The first override is the
   # one Django calls; the walk follows it only through `super()`, and stops
   # at a framework view, whose `as_view` calls none, and at an override it
   # cannot read.
-  private def as_view_guard(path : String, lines : Array(String), class_idx : Int32) : String?
+  private def as_view_guard(path : String, lines : Array(String), class_idx : Int32) : Guard?
     key = {path, class_idx}
     return @as_view_guards[key] if @as_view_guards.has_key?(key)
     @as_view_guards[key] = compute_as_view_guard(path, lines, class_idx)
   end
 
-  private def compute_as_view_guard(path : String, lines : Array(String), class_idx : Int32) : String?
+  private def compute_as_view_guard(path : String, lines : Array(String), class_idx : Int32) : Guard?
     class_mro(path, lines, class_idx).each do |klass|
       # A base the scan does not hold may serve its own view: a framework
       # view always does, a library mixin may. Django's own mixins, `object`
@@ -623,13 +739,17 @@ class DjangoAuthTagger < FrameworkTagger
       decorators = as_view_wrappers(body, klass.name) || return
       # Outermost first. A wrapper that is no guard counts only when it is
       # one of Django's that hands every request on; any other may answer
-      # some itself before the guarded view inside it runs.
+      # some itself before the guarded view inside it runs. Past the first
+      # guard, every guard inside it runs too.
+      found = [] of Guard
       decorators.each do |decorator|
         if guard = as_view_decorator_guard(decorator, file)
-          return "#{guard} (via #{klass.name}.as_view)"
+          found << Guard.new("#{guard.description} (via #{klass.name}.as_view)", guard.requires)
+        elsif found.empty? && !decorator.rpartition('.')[2].matches?(PASS_THROUGH_DECORATOR)
+          return
         end
-        return unless decorator.rpartition('.')[2].matches?(PASS_THROUGH_DECORATOR)
       end
+      return joined(found) unless found.empty?
     end
     nil
   end
@@ -670,10 +790,10 @@ class DjangoAuthTagger < FrameworkTagger
 
   # A project decorator by its definition (a `login_required_unless_debug`
   # is not Django's), anything else as a decorator line is judged.
-  private def as_view_decorator_guard(decorator : String, file : String) : String?
+  private def as_view_decorator_guard(decorator : String, file : String) : Guard?
     line = "@#{decorator}("
     return judge_decorator(line, file) unless resolve_def(file, decorator)
-    decorator_guard(line, file).try { |guard| "Protected by #{guard}" }
+    decorator_guard(line, file).try { |name| project_guard("Protected by #{name}") }
   end
 
   # `super()` or `super(ThisClass, cls)`: the next class in the MRO.
@@ -704,7 +824,7 @@ class DjangoAuthTagger < FrameworkTagger
   # its name (`MIXIN_PATTERNS`), unless a class overrides
   # `handle_no_permission` with one that does not refuse.
   private def dispatch_guard(path : String, lines : Array(String), class_idx : Int32, method : String,
-                             kwargs : Hash(String, String)) : String | Symbol?
+                             kwargs : Hash(String, String)) : Guard | Symbol?
     mro = class_mro(path, lines, class_idx)
     soft = soft_no_permission?(mro)
     # The view's attributes as `dispatch` reads them off `self`: the first
@@ -715,22 +835,34 @@ class DjangoAuthTagger < FrameworkTagger
       class_lines = read_file_lines(file) || next
       class_attributes(class_lines, klass.idx).each { |name, value| attrs[name] = value unless attrs.has_key?(name) }
     end
+    # Each guard that passes the request on lets the next one run, so the
+    # walk goes on past the first guard to where the request is served.
+    guards = [] of Guard
+    stopped = false
     mro.each do |klass|
       unless file = klass.path
         if pattern = MIXIN_PATTERNS.find { |mixin| klass.name.matches?(mixin) }
-          return soft ? :stop : "Django #{pattern.source.gsub("\\", "")}"
+          stopped = soft
+          break if soft
+          name = pattern.source.gsub("\\", "")
+          guards << mixin_guard(name, klass.name == name, mro, kwargs)
+          next
         end
-        return :stop if klass.name.matches?(FRAMEWORK_VIEW)
+        stopped = klass.name.matches?(FRAMEWORK_VIEW)
+        break if stopped
         next
       end
       class_lines = read_file_lines(file) || next
       body = method_body(class_lines, klass.idx, "dispatch") || next
       if setting = dispatch_refusal(body, file, class_lines, klass.idx, method, soft, attrs)
-        return setting.empty? ? "#{klass.name}.dispatch" : "#{klass.name}.dispatch (settings.#{setting} decides; a setting can make it public)"
+        description = setting.empty? ? "Protected by #{klass.name}.dispatch" : "Protected by #{klass.name}.dispatch (settings.#{setting} decides; a setting can make it public)"
+        cnf = DjangoAccess.unread(description)
+        guards << guard(description, setting.empty? ? cnf : DjangoAccess.liftable(cnf, "settings.#{setting}"))
       end
-      return :stop unless body.matches?(/\bsuper\s*\(/)
+      stopped = !body.matches?(/\bsuper\s*\(/)
+      break if stopped
     end
-    nil
+    joined(guards) || (stopped ? :stop : nil)
   end
 
   # Whether the first `handle_no_permission` in the MRO is a project one
@@ -939,11 +1071,18 @@ class DjangoAuthTagger < FrameworkTagger
 
   # The auth decorator a `@method_decorator(...)` in `decorators` wraps, if
   # it reaches `handler`: a class-level one names the method it decorates.
-  private def method_decorator_auth(decorators : String, handler : String?) : String?
+  # `full` starts with `decorators` and runs on past it.
+  private def method_decorator_auth(decorators : String, handler : String?, path : String, full : String = decorators) : Guard?
     decorators.scan(METHOD_DECORATOR) do |m|
       next unless auth = m[1].match(METHOD_DECORATOR_AUTH)
       target = m[1].match(METHOD_DECORATOR_NAME).try(&.[1])
-      return "Protected by Django #{auth[1]} decorator" if target.nil? || target == "dispatch" || target == handler
+      next unless target.nil? || target == "dispatch" || target == handler
+      description = "Protected by Django #{auth[1]} decorator"
+      # Each decorator it applies, judged as if stacked on the handler.
+      wrapped = DjangoAccess.call(full[m.begin(0)..]).try(&.[1]).try { |args| DjangoAccess.method_decorator_targets(args) }
+      guards = wrapped.try(&.compact_map { |decorator| judge_decorator("@#{decorator}", path) }) || [] of Guard
+      return Guard.new(description, guards.flat_map(&.requires).uniq!) unless guards.empty?
+      return guard(description, DjangoAccess.unread(description))
     end
     nil
   end
@@ -1037,11 +1176,15 @@ class DjangoAuthTagger < FrameworkTagger
     found
   end
 
-  # The tag description; "" when the view is DRF but its permissions leave
-  # this method open (so nothing else may tag it); nil when DRF has nothing
-  # to say about the endpoint.
+  # The guard; one with empty text when the view is DRF but its
+  # permissions leave this method open (so nothing else may tag it); nil
+  # when DRF has nothing to say about the endpoint. DRF reads one list,
+  # each source replacing the next: `get_permissions`, then an action's or
+  # `@permission_classes`' list, then the view's `permission_classes`, then
+  # `DEFAULT_PERMISSION_CLASSES` (DRF API guide, Permissions: "Setting the
+  # permission policy").
   private def check_drf_permissions(lines : Array(String), endpoint_line : Int32, method : String, url : String,
-                                    class_lines : Array(String) = lines, class_line : Int32 = endpoint_line) : String?
+                                    class_lines : Array(String) = lines, class_line : Int32 = endpoint_line) : Guard?
     decorators = decorator_text(lines, endpoint_line)
     # `@action(..., permission_classes=[...])` / `@permission_classes([...])`
     own = bracketed_after(decorators, /permission_classes\s*[=(]/)
@@ -1080,21 +1223,30 @@ class DjangoAuthTagger < FrameworkTagger
     # A `get_permissions` override decides in place of `permission_classes`
     # for the actions it answers itself.
     if get_permissions && (listed = listed_permissions(get_permissions, action, method))
-      return drf_permission_desc(listed, method, "DRF get_permissions") || ""
+      return drf_guard(listed, method, "DRF get_permissions") || open_drf
     end
 
     if own
-      return drf_permission_desc(own, method, "DRF permission_classes") || (drf ? "" : nil)
+      return drf_guard(own, method, "DRF permission_classes") || (drf ? open_drf : nil)
     end
     return unless drf
     defaults = @drf_default_permissions
     verdicts = defaults.map { |perms| permissions_refusal(perms, method) }
     if !verdicts.empty? && verdicts.none?(Nil)
       setting = verdicts.compact.max_by(&.size)
-      setting.empty? ? "Protected by DRF DEFAULT_PERMISSION_CLASSES" : "Protected by DRF DEFAULT_PERMISSION_CLASSES (settings.#{setting} decides; a setting can make it public)"
+      description = setting.empty? ? "Protected by DRF DEFAULT_PERMISSION_CLASSES" : "Protected by DRF DEFAULT_PERMISSION_CLASSES (settings.#{setting} decides; a setting can make it public)"
+      cnfs = defaults.map { |perms| DjangoAccess.drf(perms, method) }.uniq!
+      # Which settings module runs is decided at deploy time: only what
+      # they all require is known.
+      cnf = cnfs.size == 1 ? cnfs[0] : cnfs.reduce { |left, right| left & right } + DjangoAccess.unresolved("DEFAULT_PERMISSION_CLASSES differs between settings modules")
+      guard(description, cnf, "DEFAULT_PERMISSION_CLASSES")
     else
-      ""
+      open_drf
     end
+  end
+
+  private def open_drf : Guard
+    Guard.new("", [] of Access::Clause)
   end
 
   DRF_WRITE_ACTIONS = {"POST" => "create", "PUT" => "update", "PATCH" => "partial_update", "DELETE" => "destroy"}
@@ -1197,9 +1349,11 @@ class DjangoAuthTagger < FrameworkTagger
     test[2] == "==" || test[2] == "in" ? holds : !holds
   end
 
-  private def drf_permission_desc(perms : String, method : String, source : String) : String?
+  # A setting decides only inside a project class, which reads as unresolved.
+  private def drf_guard(perms : String, method : String, source : String) : Guard?
     setting = permissions_refusal(perms, method) || return
-    setting.empty? ? "Protected by #{source}" : "Protected by #{source} (settings.#{setting} decides; a setting can make it public)"
+    description = setting.empty? ? "Protected by #{source}" : "Protected by #{source} (settings.#{setting} decides; a setting can make it public)"
+    guard(description, DjangoAccess.drf(perms, method), perms.gsub(/\s+/, " "))
   end
 
   # DRF checks every class in `permission_classes` and refuses when any
