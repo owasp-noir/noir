@@ -81,10 +81,22 @@ module Analyzer::Typescript
           next if path_names.includes?(field.name)
           endpoint.push_param(param_for(field, method))
         end
-        endpoint.add_tag(Tag.new("encore-access", config["expose"]? == "true" ? "public" : "private", TAGGER))
-        endpoint.add_tag(Tag.new("auth", "Encore auth endpoint", TAGGER)) if config["auth"]? == "true"
+        endpoint.add_tag(access_tag(config))
+        endpoint.add_tag(Tag.new("auth", "Encore auth endpoint", TAGGER, requires: [Access::Clause.new([Access::Atom.new(:authenticated)], "Encore auth endpoint")])) if config["auth"]? == "true"
         endpoint
       end
+    end
+
+    # `expose` and `auth` both default to false
+    # (https://encore.dev/docs/ts/primitives/defining-apis): a private API
+    # takes calls from other services only; `auth: true` answers 401 to a
+    # caller with no auth data. The clauses match the Go analyzer's for the
+    # same access, so one route declared in both merges into one tag.
+    private def access_tag(config : Hash(String, String)) : Tag
+      return Tag.new("encore-access", "private", TAGGER, requires: [Access::Clause.unresolved("private", "private")]) unless config["expose"]? == "true"
+      auth = config["auth"]?
+      atom = auth.nil? || auth.in?("true", "false") ? Access::Atom.new(:anonymous) : Access::Atom.new(:unresolved, "auth: #{auth}")
+      Tag.new("encore-access", "public", TAGGER, requires: [Access::Clause.new([atom], "public")])
     end
 
     private def imported_fields(path : String, name : String, specifier : String) : Array(Noir::EncoreExtractor::TsField)

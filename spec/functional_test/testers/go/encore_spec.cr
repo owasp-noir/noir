@@ -88,7 +88,7 @@ describe "Encore Go access requirements", tags: "functional" do
   it "reads public as open, auth as signed in, private as unread" do
     endpoints = scan.call("./spec/functional_test/fixtures/go/encore/")
     reading.call(endpoints, "GET", "/hello/:name").should eq ["anonymous"]
-    reading.call(endpoints, "GET", "/users").should eq ["authenticated"]
+    reading.call(endpoints, "GET", "/users").should eq ["anonymous", "authenticated"]
     reading.call(endpoints, "POST", "/users.Create").should eq ["unresolved"]
     endpoints.find! { |ep| ep.url == "/users.Create" }.tags.first.requires.not_nil!.first.any_of.first.value.should eq "private"
   end
@@ -121,11 +121,22 @@ describe "Encore Go access requirements", tags: "functional" do
       //encore:api auth tag:gated method=GET path=/me
       func Me(ctx context.Context) error { return nil }
       GO
+    Dir.mkdir_p(File.join(dir, "other"))
+    File.write(File.join(dir, "other", "other.go"), <<-GO)
+      package other
+
+      import "context"
+
+      //encore:api public tag:gated method=GET path=/other
+      func Other(ctx context.Context) error { return nil }
+      GO
     begin
       endpoints = scan.call(dir)
       reading.call(endpoints, "GET", "/open").should eq ["anonymous"]
       reading.call(endpoints, "GET", "/gated").should eq ["anonymous", "unresolved"]
-      reading.call(endpoints, "GET", "/me").should eq ["authenticated", "unresolved"]
+      reading.call(endpoints, "GET", "/me").should eq ["anonymous", "unresolved", "authenticated"]
+      # Not `global`: another service's endpoints run without it.
+      reading.call(endpoints, "GET", "/other").should eq ["anonymous"]
       clauses = Access.of(endpoints.find! { |ep| ep.url == "/gated" })
       Access.cell(clauses, Access::Atom.new(:anonymous)).should be_nil
     ensure
