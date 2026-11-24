@@ -349,6 +349,53 @@ describe "DjangoAuthTagger requires" do
     atoms(django_tags(files, "views.py", 7)[0]).should eq([["authenticated"], ["unresolved:#{statement}"]])
   end
 
+  it "joins every class-level method_decorator that reaches the handler" do
+    tags = django_tags({"views.py" => <<-PY}, "views.py", 6)
+      @method_decorator(login_required, name="dispatch")
+      @method_decorator(permission_required("app.manage"), name="dispatch")
+      class TwoMd(View):
+          template_name = "x.html"
+
+          def get(self, request):
+              pass
+      PY
+    tags[0].description.should eq("Protected by Django login_required decorator")
+    atoms(tags[0]).should eq([["authenticated"], ["authenticated"], ["permission:app.manage"]])
+  end
+
+  it "adds an unread clause for a refusing project decorator and body check the tagger does not judge" do
+    files = {
+      "decorators.py" => <<-PY,
+        from django.http import HttpResponseForbidden
+
+        def require_staff(view):
+            def inner(request, *args, **kwargs):
+                if not request.user.is_staff:
+                    return HttpResponseForbidden()
+                return view(request, *args, **kwargs)
+            return inner
+        PY
+      "views.py" => <<-PY,
+        from .decorators import require_staff
+
+        @login_required
+        @require_staff
+        def staff_view(request):
+            pass
+
+        @login_required
+        def body_view(request):
+            if not request.user.is_staff:
+                raise PermissionDenied
+            return HttpResponse("x")
+        PY
+    }
+    staff = django_tags(files, "views.py", 5)
+    staff[0].description.should eq("Protected by Django login_required decorator")
+    atoms(staff[0]).should eq([["unresolved:@require_staff"], ["authenticated"]])
+    atoms(django_tags(files, "views.py", 9)[0]).should eq([["authenticated"], ["unresolved:not request.user.is_staff"]])
+  end
+
   it "keeps a DRF view with no authenticators unread" do
     files = {"views.py" => "from rest_framework.permissions import IsAuthenticated\nfrom rest_framework.views import APIView\n\n" \
                            "class V(APIView):\n    authentication_classes = []\n    permission_classes = [IsAuthenticated]\n\n    def get(self, request):\n        pass\n"}

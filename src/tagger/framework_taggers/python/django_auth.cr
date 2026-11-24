@@ -214,10 +214,11 @@ class DjangoAuthTagger < FrameworkTagger
     Guard.new(description, Access.clauses(cnf, source))
   end
 
-  # Layers that all run: the first one names the tag, each one's
-  # requirement holds.
+  # Layers that all run: the first one with text names the tag, each
+  # one's requirement holds. A layer with no text is one the tagger does
+  # not judge a guard but that may refuse: it never makes a tag itself.
   private def joined(guards : Array(Guard)) : Guard?
-    first = guards.first? || return
+    first = guards.find { |found| !found.description.empty? } || return
     Guard.new(first.description, guards.flat_map(&.requires).uniq!)
   end
 
@@ -275,7 +276,9 @@ class DjangoAuthTagger < FrameworkTagger
       # LoginRequiredMiddleware unless the view opts out. The first one
       # found names the tag.
       guards = check_decorators(lines, line, ctx.path)
-      body_guard(ctx.path, lines, line, endpoint.method, 0).try { |found| guards << found }
+      refusals = [] of String
+      body_guard(ctx.path, lines, line, endpoint.method, 0, refusals).try { |found| guards << found }
+      refusals.each { |condition| guards << guard("", DjangoAccess.unresolved(condition), condition) }
       class_ctx = view_class || ctx
       class_line = class_ctx.line || line
       guards.concat check_enclosing_class_mixins(class_ctx.lines, class_line, class_ctx.path, endpoint.method, urlconf)
@@ -373,6 +376,8 @@ class DjangoAuthTagger < FrameworkTagger
       # The decorator's arguments may wrap onto the lines below it.
       if found = judge_decorator(current, path, lines[idx, 20].join('\n').lstrip)
         guards << found
+      elsif found = unjudged_refusal(current, path)
+        guards << found
       end
 
       idx -= 1
@@ -409,6 +414,16 @@ class DjangoAuthTagger < FrameworkTagger
     return if resolve_def(path, name)
     cnf = DjangoAccess.decorator(name, args, "@#{source}") || return
     {cnf, "@#{source}"}
+  end
+
+  # A project decorator that is not judged a guard but whose definition
+  # refuses some callers (`if not request.user.is_staff: return
+  # HttpResponseForbidden()`): a layer with no text and an unread check.
+  private def unjudged_refusal(current : String, path : String) : Guard?
+    name = current.match(DECORATOR_NAME).try(&.[1]) || return
+    file, def_name = resolve_def(path, name) || return
+    return unless python_defs(file)[def_name]?.try { |body| refusal?(body) }
+    guard("", DjangoAccess.unresolved("@#{name}"), "@#{name}")
   end
 
   # A project guard is judged by whether it refuses an anonymous caller,
@@ -450,7 +465,10 @@ class DjangoAuthTagger < FrameworkTagger
   # guard on the function a dispatcher returns for this verb (`if
   # request.method == "POST": return create_check(request)`, a trailing
   # `return get_check(request)` for the verbs no branch took).
-  private def body_guard(path : String, lines : Array(String), def_line : Int32, method : String, depth : Int32) : Guard?
+  # `refusals` collects the conditions of the other refusing `if` blocks it
+  # passes (`if not request.user.is_staff: raise PermissionDenied`).
+  private def body_guard(path : String, lines : Array(String), def_line : Int32, method : String, depth : Int32,
+                         refusals : Array(String)? = nil) : Guard?
     def_idx = def_line - 1
     return unless (head = lines[def_idx]?) && head.lstrip.matches?(DEF_LINE)
     def_indent = head.size - head.lstrip.size
@@ -487,6 +505,8 @@ class DjangoAuthTagger < FrameworkTagger
         # `if request.user.is_authenticated: ... return` then a refusal: the
         # signed-in callers leave inside the block, the rest are refused.
         return identity_check if !written && exits?(code.partition(':')[2].strip, block) && refusal_follows?(body, k + 1 + block.size, level)
+      elsif refusals && code.starts_with?("if ") && !code.matches?(METHOD_TEST) && refusing_block?(code.partition(':')[2].strip, block)
+        refusals << code.partition(':')[0].lchop("if ").strip
       elsif code.matches?(METHOD_TEST)
         test = code.split("request.method", 2)[1]
         next if test.matches?(/\A\s*(?:!=|not\s+in)/)
@@ -1078,8 +1098,10 @@ class DjangoAuthTagger < FrameworkTagger
 
   # The auth decorator a `@method_decorator(...)` in `decorators` wraps, if
   # it reaches `handler`: a class-level one names the method it decorates.
+  # Every one that reaches `handler` runs; the first names the guard.
   # `full` starts with `decorators` and runs on past it.
   private def method_decorator_auth(decorators : String, handler : String?, path : String, full : String = decorators) : Guard?
+    found = [] of Guard
     decorators.scan(METHOD_DECORATOR) do |m|
       next unless auth = m[1].match(METHOD_DECORATOR_AUTH)
       target = m[1].match(METHOD_DECORATOR_NAME).try(&.[1])
@@ -1088,10 +1110,9 @@ class DjangoAuthTagger < FrameworkTagger
       # Each decorator it applies, judged as if stacked on the handler.
       wrapped = DjangoAccess.call(full[m.begin(0)..]).try(&.[1]).try { |args| DjangoAccess.method_decorator_targets(args) }
       guards = wrapped.try(&.compact_map { |decorator| judge_decorator("@#{decorator}", path) }) || [] of Guard
-      return Guard.new(description, guards.flat_map(&.requires).uniq!) unless guards.empty?
-      return guard(description, DjangoAccess.unread(description))
+      found << (guards.empty? ? guard(description, DjangoAccess.unread(description)) : Guard.new(description, guards.flat_map(&.requires).uniq!))
     end
-    nil
+    joined(found)
   end
 
   # The `class` statement at `idx` through the line that closes its bases:
