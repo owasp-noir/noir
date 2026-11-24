@@ -711,7 +711,7 @@ module Analyzer::Python
       app_instances.each do |app_file, _|
         root = fastapi_project_root_for(app_file)
         roots << root unless roots.includes?(root)
-        legacy_root = Path.new(File.dirname(app_file)).parent.to_s
+        legacy_root = fastapi_legacy_root(app_file)
         roots << legacy_root unless roots.includes?(legacy_root)
       end
       # Prefer the shallow app root. Deep helper modules can also construct
@@ -721,8 +721,23 @@ module Analyzer::Python
       roots
     end
 
-    private def fastapi_project_root_for(app_file : ::String) : ::String
+    # The parent of the app file's directory, the root `from app.main import
+    # ...` resolves from when the app lives in `app/`. When that parent lies
+    # above the scan base (the scan is rooted at the package directory
+    # itself), the base stands in: what the parent would resolve lies under
+    # the base, and the import resolver reads `app.x` there as `x`.
+    private def fastapi_legacy_root(app_file : ::String) : ::String
       legacy_root = Path.new(File.dirname(app_file)).parent.to_s
+      base = import_boundary_for(app_file)
+      return legacy_root if base.empty?
+      normalized_base = Noir::PathScope.normalize_root(base)
+      normalized_root = Noir::PathScope.normalize_root(legacy_root)
+      return legacy_root if normalized_root == normalized_base || !Noir::PathScope.under_normalized_root?(normalized_base, normalized_root)
+      base
+    end
+
+    private def fastapi_project_root_for(app_file : ::String) : ::String
+      legacy_root = fastapi_legacy_root(app_file)
       root = python_project_root(app_file)
       unless Path.new(app_file).absolute?
         base = import_boundary_for(app_file)

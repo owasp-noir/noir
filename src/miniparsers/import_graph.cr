@@ -656,12 +656,15 @@ module Noir::ImportGraph::Python
   @@symbol_cache = Hash(Tuple(String, String, UInt64), Hash(String, Tuple(String, String))).new
   @@package_import_cache = Hash(Tuple(String, String), Hash(String, Tuple(String, String))).new
   @@symbol_mutex = Mutex.new
+  @@root_chains = Hash(String, Array(String)).new
+  @@root_chains_mutex = Mutex.new
 
   Noir::ExtractionResultCache.register_clearer do
     @@symbol_mutex.synchronize do
       @@symbol_cache.clear
       @@package_import_cache.clear
     end
+    @@root_chains_mutex.synchronize { @@root_chains.clear }
   end
 
   # Find every `import` and `from … import …` line in `content`
@@ -736,17 +739,31 @@ module Noir::ImportGraph::Python
         name, _, alias_name = spec.strip.partition(/\s+as\s+/)
         next if name.empty? || name == "*"
         local = alias_name.empty? ? name : alias_name.strip
-        if from_import.empty?
-          file = resolve_module_file(package_path, name)
-          symbols[local] = {file, ""} if file
-        elsif file = resolve_module_file(package_path, module_dotted.empty? ? name : "#{module_dotted}.#{name}")
-          symbols[local] = {file, ""}
-        elsif file = resolve_module_file(package_path, module_dotted)
-          symbols[local] = {file, name}
+        target = imported_symbol_target(package_path, module_dotted, from_import.empty?, name)
+        if target.nil? && !from_import.starts_with?(".") &&
+           (rest = root_package_relative(package_path, from_import.empty? ? name : module_dotted))
+          target = from_import.empty? ? imported_symbol_target(package_path, "", true, rest) : imported_symbol_target(package_path, rest, false, name)
         end
+        symbols[local] = target if target
       end
     end
     symbols
+  end
+
+  # `{file, original name}` for one name an import statement binds:
+  # `plain` is a bare `import name`; otherwise `name` comes from the
+  # `module_dotted` module (empty for `from . import name`).
+  private def self.imported_symbol_target(package_path : String, module_dotted : String,
+                                          plain : Bool, name : String) : Tuple(String, String)?
+    if plain
+      file = resolve_module_file(package_path, name)
+      return file ? {file, ""} : nil
+    end
+    if file = resolve_module_file(package_path, module_dotted.empty? ? name : "#{module_dotted}.#{name}")
+      {file, ""}
+    elsif file = resolve_module_file(package_path, module_dotted)
+      {file, name}
+    end
   end
 
   private def self.resolve_package_reexport(app_base_path : String,
@@ -773,6 +790,61 @@ module Noir::ImportGraph::Python
     return unless target
 
     resolve_package_reexport(app_base_path, target[0], target[1], depth + 1, visited) || target
+  end
+
+  # `dotted` relative to `base` when it names `base` through the package
+  # chain above it and that chain's parent lies outside the scan. A scan
+  # rooted at the package directory `myapp/` reads `from myapp.api.deps
+  # import X` as `api.deps`; one rooted at the subpackage `src/pkg/api/`
+  # reads `pkg.api.views` as `views`, since the directories where those
+  # names resolve were not scanned. `base` must be a package (hold an
+  # `__init__.py`): a plain directory that happens to be named `fastapi`
+  # says nothing about `fastapi.security`. Any tail of the chain counts
+  # (`api.views` too), longest first. Nil when no tail matches, when the
+  # parent is scanned (it resolves from there), or when `base` has an
+  # entry named like the first segment (it resolves as written). A bare
+  # `myapp` gives `""`, the package itself. Callers retry with the result
+  # only after the path failed as written, and keep it only if it resolves.
+  def self.root_package_relative(base : String, dotted : String) : String?
+    return if dotted.empty?
+    segments = dotted.split('.')
+    return if segments.any?(&.empty?)
+    candidate = File.join(base, segments[0])
+    return if python_directory?(candidate) || python_file?("#{candidate}.py")
+
+    chain = root_package_chain(base)
+    chain.size.times do |start|
+      tail = chain[start..]
+      next unless segments.size >= tail.size && segments[0, tail.size] == tail
+      return segments[tail.size..].join('.')
+    end
+    nil
+  end
+
+  # Package names from the outermost package above `base` down to `base`
+  # (`["pkg", "api"]` for `src/pkg/api/`), empty when `base` is not a
+  # package or its parent is scanned. The directories above the scan are
+  # only probed for `__init__.py`, never read.
+  private def self.root_package_chain(base : String) : Array(String)
+    normalized = Noir::PathScope.normalize_root(base)
+    key = "#{normalized}\0#{CodeLocator.instance.scan_base_paths.join('\0')}"
+    if cached = @@root_chains_mutex.synchronize { @@root_chains[key]? }
+      return cached
+    end
+
+    chain = [] of String
+    parent = File.dirname(normalized)
+    parent_scanned = CodeLocator.instance.scan_base_paths.any? { |scan_base| Noir::PathScope.under_root?(parent, scan_base) }
+    if !parent_scanned && python_file?(File.join(base, "__init__.py"))
+      dir = normalized
+      chain << File.basename(dir)
+      while parent != dir && File.file?(File.join(parent, "__init__.py"))
+        chain.unshift(File.basename(parent))
+        dir = parent
+        parent = File.dirname(dir)
+      end
+    end
+    @@root_chains_mutex.synchronize { @@root_chains[key] = chain }
   end
 
   # The `.py` file a dotted module path names under `package_path`: the
@@ -920,6 +992,7 @@ module Noir::ImportGraph::Python
                                       from_import : String,
                                       imports : String) : Nil
     package_path = app_base_path
+    absolute = !from_import.starts_with?(".")
     # `..` resolves to file's parent dir; `.` to file's dir. The parent is
     # taken lexically, not as `dir/..`: the resolved path is compared with
     # the scanned file paths, which never spell `..`.
@@ -943,6 +1016,16 @@ module Noir::ImportGraph::Python
       dotted_as_names = "#{from_import}.#{import}" unless from_import.empty?
 
       import_package_map = find_imported_package(package_path, dotted_as_names)
+      if import_package_map.empty? && absolute && !import.starts_with?(".") &&
+         (rest = root_package_relative(app_base_path, dotted_as_names))
+        import_package_map = rest.empty? ? import_package_map : find_imported_package(app_base_path, rest)
+        if import_package_map.empty? && !rest.includes?('.')
+          # `from myapp import app` / `import myapp`: a name the root package
+          # binds, reported with no file as a scan from the parent reports it.
+          bound, _, alias_name = (rest.empty? ? dotted_as_names : rest).partition(/\s+as\s+/)
+          import_package_map = [{alias_name.empty? ? bound.strip : alias_name.strip, "", PackageType::CODE}]
+        end
+      end
       next if import_package_map.empty?
       import_package_map.each do |name, filepath, package_type|
         import_map[name] = {filepath, package_type}

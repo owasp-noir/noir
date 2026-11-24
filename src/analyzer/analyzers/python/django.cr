@@ -437,7 +437,7 @@ module Analyzer::Python
             next if match.size != 2
             dotted_as_urlconf = match[1].split(".")
             resolve_root_urlconf_paths(file, dotted_as_urlconf, current_base_path).each do |filepath|
-              basepath = filepath.split("/")[..-(dotted_as_urlconf.size + 1)].join("/")
+              basepath = django_urlconf_base(filepath, dotted_as_urlconf.size, current_base_path)
               root_django_urls_list << DjangoUrls.new("", filepath, basepath, settings_file: file)
             end
           end
@@ -480,7 +480,44 @@ module Analyzer::Python
       # whole analysis phase; the index lookup is O(files named
       # `urls.py`) with no syscalls. See `get_files_by_relative_path`
       # for the (deliberate) scope difference on excluded subtrees.
-      get_files_by_relative_path(relative_path, search_dir)
+      found = get_files_by_relative_path(relative_path, search_dir)
+      return found unless found.empty?
+      # `ROOT_URLCONF = "shop.urls"` in a scan rooted at `shop/` itself.
+      rest = Noir::ImportGraph::Python.root_package_relative(search_dir, dotted_as_urlconf.join("."))
+      return found if rest.nil? || rest.empty?
+      candidate = File.join(search_dir, "#{rest.tr(".", "/")}.py")
+      CodeLocator.instance.source_file?(candidate) ? [candidate] : found
+    end
+
+    # The directory a root urlconf's dotted path is anchored at: `filepath`
+    # with one directory dropped per dotted segment. When that lies above
+    # the scan base (the scan is rooted at the project package itself), the
+    # base stands in, and dotted lookups read `shop.x` there as `x`.
+    private def django_urlconf_base(filepath : ::String, segments : Int32, scan_base : ::String) : ::String
+      base = filepath
+      segments.times { base = File.dirname(base) }
+      normalized_scan = Noir::PathScope.normalize_root(scan_base)
+      normalized_base = Noir::PathScope.normalize_root(base)
+      return base if normalized_base == normalized_scan || !Noir::PathScope.under_normalized_root?(normalized_scan, normalized_base)
+      scan_base
+    end
+
+    # The file the dotted module `dotted` names under `@django_base_path`:
+    # `a/b.py` or the package `a/b/__init__.py`, retried without the leading
+    # segment when that segment names the base package itself.
+    private def django_module_file(dotted : ::String) : ::String?
+      if found = django_module_candidates(dotted).find { |path| File.file?(path) }
+        return found
+      end
+      # The retried path lies under the scan base, so it must be a scanned file.
+      rest = Noir::ImportGraph::Python.root_package_relative(@django_base_path, dotted)
+      return if rest.nil? || rest.empty?
+      django_module_candidates(rest).find { |path| CodeLocator.instance.source_file?(path) }
+    end
+
+    private def django_module_candidates(dotted : ::String) : Array(::String)
+      relative = dotted.tr(".", "/")
+      ["#{relative}.py", "#{relative}/__init__.py"].map { |rel| File.join(@django_base_path, rel) }
     end
 
     # Extract endpoints from a Django URL configuration file
@@ -1737,9 +1774,8 @@ module Analyzer::Python
     private def resolve_dotted_include_target(view : ::String) : ::String?
       view.scan(REGEX_INCLUDE_URLS) do |match|
         next if match.size != 2
-        module_path = "#{@django_base_path}/#{match[1].gsub(".", "/")}"
-        {"#{module_path}.py", "#{module_path}/__init__.py"}.each do |candidate|
-          return candidate if File.file?(candidate)
+        if file = django_module_file(match[1])
+          return file
         end
       end
 
@@ -2834,8 +2870,7 @@ module Analyzer::Python
       return unless values.size == 1
       module_path, _, class_name = values.first.rpartition('.')
       return if module_path.empty?
-      relative = module_path.tr(".", "/")
-      file = {"#{relative}.py", "#{relative}/__init__.py"}.map { |rel| File.join(@django_base_path, rel) }.find { |path| File.file?(path) } || return
+      file = django_module_file(module_path) || return
       python_definition_site(file, class_name)
     end
 

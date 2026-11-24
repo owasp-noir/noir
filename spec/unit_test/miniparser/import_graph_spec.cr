@@ -566,6 +566,80 @@ describe Noir::ImportGraph::Python do
         result.has_key?("x").should be_true
       end
     end
+
+    it "resolves an import naming the scan root's own package from inside it" do
+      with_tmpdir do |root|
+        app = File.join(root, "myapp")
+        Dir.mkdir_p(File.join(app, "api"))
+        File.write(File.join(app, "__init__.py"), "")
+        File.write(File.join(app, "api", "__init__.py"), "")
+        deps = File.join(app, "api", "deps.py")
+        File.write(deps, "")
+        from_file = File.join(app, "main.py")
+        content = "from myapp.api.deps import AdminUser\nfrom myapp.api import deps as d\n"
+
+        modules = Noir::ImportGraph::Python.find_imported_modules(app, from_file, content)
+        modules["AdminUser"].should eq({deps, Noir::ImportGraph::Python::PackageType::CODE})
+        modules["d"][0].should eq(deps)
+        symbols = Noir::ImportGraph::Python.find_imported_symbols(app, from_file, content)
+        symbols["AdminUser"].should eq({deps, "AdminUser"})
+        symbols["d"].should eq({deps, ""})
+      end
+    end
+  end
+
+  describe "#root_package_relative" do
+    it "drops the leading segment only when it names the base and the base has no entry of that name" do
+      with_tmpdir do |root|
+        app = File.join(root, "myapp")
+        Dir.mkdir_p(File.join(app, "api"))
+        File.write(File.join(app, "__init__.py"), "")
+        Noir::ImportGraph::Python.root_package_relative(app, "myapp.api.deps").should eq("api.deps")
+        Noir::ImportGraph::Python.root_package_relative(app, "myapp").should eq("")
+        Noir::ImportGraph::Python.root_package_relative(app, "other.api").should be_nil
+        # `myapp/myapp/` resolves as written, so there is nothing to retry.
+        Dir.mkdir_p(File.join(app, "myapp"))
+        Noir::ImportGraph::Python.root_package_relative(app, "myapp.api.deps").should be_nil
+      end
+    end
+
+    it "strips the package chain above a subpackage base" do
+      with_tmpdir do |root|
+        api = File.join(root, "src", "pkg", "api")
+        Dir.mkdir_p(api)
+        File.write(File.join(root, "src", "pkg", "__init__.py"), "")
+        File.write(File.join(api, "__init__.py"), "")
+        Noir::ImportGraph::Python.root_package_relative(api, "pkg.api.views").should eq("views")
+        Noir::ImportGraph::Python.root_package_relative(api, "api.views").should eq("views")
+        # `src/` is not a package, so `src.pkg` names nothing Python imports.
+        Noir::ImportGraph::Python.root_package_relative(api, "src.pkg.api.views").should be_nil
+      end
+    end
+
+    it "leaves a base that is not a package alone" do
+      with_tmpdir do |root|
+        service = File.join(root, "fastapi")
+        Dir.mkdir_p(service)
+        File.write(File.join(service, "security.py"), "")
+        Noir::ImportGraph::Python.root_package_relative(service, "fastapi.security").should be_nil
+      end
+    end
+
+    it "leaves a base alone when its parent is scanned" do
+      with_tmpdir do |root|
+        app = File.join(root, "myapp")
+        Dir.mkdir_p(app)
+        File.write(File.join(app, "__init__.py"), "")
+        locator = CodeLocator.instance
+        previous = locator.scan_base_paths
+        begin
+          locator.scan_base_paths = [root]
+          Noir::ImportGraph::Python.root_package_relative(app, "myapp.api").should be_nil
+        ensure
+          locator.scan_base_paths = previous
+        end
+      end
+    end
   end
 
   describe "#find_imported_symbols" do
