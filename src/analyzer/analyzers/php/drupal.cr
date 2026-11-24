@@ -1,5 +1,6 @@
 require "../../engines/php_engine"
 require "./symfony_route_attributes"
+require "../../../tagger/framework_taggers/php/php_access"
 
 module Analyzer::Php
   # Drupal 8+ attack-surface extractor.
@@ -80,15 +81,19 @@ module Analyzer::Php
 
     # Tags the guard each access check in `requirements` imposes. Under
     # `options: _access_mode: ANY` one passing check is enough, so a route
-    # with any open check (or several) is left untagged.
+    # with any open check (or several) is left untagged. Otherwise every
+    # check must allow (`AccessManager::check` joins them with `andIf`), so
+    # the `authz` tags, merged into one, add up.
     private def tag_requirements(endpoint : Endpoint, requirements : Hash(String, String), any_mode : Bool = false)
       return if any_mode
       if requirements["_user_is_logged_in"]?.try(&.strip.upcase) == "TRUE"
-        endpoint.add_tag(Tag.new("auth", "Protected by Drupal _user_is_logged_in", TAGGER))
+        logged_in = Access::Clause.new([Access::Atom.new(:authenticated)], "_user_is_logged_in: TRUE")
+        endpoint.add_tag(Tag.new("auth", "Protected by Drupal _user_is_logged_in", TAGGER, requires: [logged_in]))
       end
       requirements.each do |key, value|
         next if !key.starts_with?('_') || NON_ACCESS_REQUIREMENTS.includes?(key)
-        endpoint.add_tag(Tag.new("authz", "Protected by Drupal #{key} (#{value})", TAGGER))
+        requires = Access.clauses(PhpAccess.drupal_requirement(key, value), "#{key}: #{value}")
+        endpoint.add_tag(Tag.new("authz", "Protected by Drupal #{key} (#{value})", TAGGER, requires: requires))
       end
     end
 

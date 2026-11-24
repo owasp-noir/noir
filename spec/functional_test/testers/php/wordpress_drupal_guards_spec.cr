@@ -22,6 +22,9 @@ describe "WordPress / Drupal routes and guards", tags: "functional" do
     ep = endpoints.find! { |e| e.method == method && e.url == url }
     ep.ai_context.try(&.guards.map(&.name)) || [] of String
   end
+  requires = ->(endpoints : Array(Endpoint), method : String, url : String) do
+    Access.of(endpoints.find! { |e| e.method == method && e.url == url }).map(&.to_s)
+  end
 
   it "resolves constructor-set REST namespaces per class and reads permission callbacks" do
     endpoints = scan.call("wordpress_rest_guards")
@@ -51,6 +54,11 @@ describe "WordPress / Drupal routes and guards", tags: "functional" do
     guards.call(endpoints, "GET", "/wp-json/demo/v1/children").should be_empty
     # A capability checked only under a further condition leaves the route open.
     guards.call(endpoints, "GET", "/wp-json/demo/v1/children/feed").should be_empty
+
+    requires.call(endpoints, "GET", "/wp-json/wp/v2/settings").should eq(["permission:manage_options"])
+    requires.call(endpoints, "POST", "/wp-json/demo/v1/items").should eq(["permission:edit_posts"])
+    requires.call(endpoints, "GET", "/wp-json/demo/v1/me").should eq(["authenticated"])
+    requires.call(endpoints, "POST", "/wp-admin/admin-ajax.php?action=demo_save").should eq(["authenticated"])
   end
 
   it "reads Drupal #[Route] attributes and requirements" do
@@ -64,5 +72,9 @@ describe "WordPress / Drupal routes and guards", tags: "functional" do
     guards.call(endpoints, "GET", "/demo/register").should be_empty
     guards.call(endpoints, "GET", "/demo/either").should be_empty
     endpoints.none?(&.url.==("/demo-prefix")).should be_true
+
+    requires.call(endpoints, "GET", "/admin/demo").should eq(["permission:administer site configuration"])
+    requires.call(endpoints, "GET", "/demo/mine").should eq(["authenticated"])
+    requires.call(endpoints, "GET", "/demo/{node}/edit").should eq(["unresolved"])
   end
 end
