@@ -18,12 +18,15 @@ module AspnetAccess
   LAMBDA        = /\A\(?\s*(\w+)\s*\)?\s*=>\s*(.+)\z/m
   BUILDER       = /\A\s*new\s+(?:[\w.]+\.)?AuthorizationPolicyBuilder\s*\(/
 
-  DEFAULT_POLICY = /\bDefaultPolicy\s*=(?![=>])[^;]*/
+  # `o.DefaultPolicy = ...`, `.SetDefaultPolicy(...)` (.NET 7+), or a
+  # policy provider's own `GetDefaultPolicyAsync()`.
+  DEFAULT_POLICY = /\bDefaultPolicy\s*=(?![=>])[^;]*|\bSetDefaultPolicy\s*\([^;]*|\bGetDefaultPolicyAsync\s*\(\s*\)\s*(?:=>|\{)/
 
-  # A `DefaultPolicy = ...` assignment in `code`, without the `)` of the
-  # call it sits in.
+  # Where `code` replaces the default policy, without the `)` of the call
+  # it sits in.
   def default_policy_assignment(code : String) : String?
     text = code.match(DEFAULT_POLICY).try(&.[0].strip) || return
+    return "GetDefaultPolicyAsync() of a custom IAuthorizationPolicyProvider" if text.starts_with?("GetDefaultPolicyAsync")
     while text.ends_with?(')') && text.count(')') > text.count('(')
       text = text.rchop(')').rstrip
     end
@@ -69,6 +72,30 @@ module AspnetAccess
     parts.flat_map { |part| requirement(part, default) }
   end
 
+  # The authorization in `.WithMetadata(...)` arguments: an
+  # `AuthorizeAttribute` read like `RequireAuthorization`, anything else
+  # naming authorization unread, other metadata nothing.
+  def metadata(args : String, default : Access::CNF = AUTHENTICATED) : Access::CNF
+    parts(args).flat_map do |part|
+      if part.matches?(NEW_AUTHORIZE)
+        requirement(part, default)
+      elsif part.matches?(/Authoriz|Anonymous/)
+        [[unresolved(part)]]
+      else
+        Access::CNF.new
+      end
+    end
+  end
+
+  METHOD_GROUP = /\A(?:@?[A-Za-z_]\w*\s*\.\s*)*@?[A-Za-z_]\w*\z/
+
+  # The handler of a `MapGet(...)` argument list when it is a method group
+  # (`Handlers.Secret`), whose attributes this does not read.
+  def method_group(args : String) : String?
+    handler = parts(args).last? || return
+    handler if handler.matches?(METHOD_GROUP)
+  end
+
   # An `AuthorizationPolicyBuilder` chain: `p.RequireRole("A")...` read from
   # its `receiver`, or `new AuthorizationPolicyBuilder().Require...()`. Each
   # requirement is a clause; one this does not know is unresolved.
@@ -90,7 +117,7 @@ module AspnetAccess
     cnf.empty? ? [[unresolved(source)]] : cnf
   end
 
-  FASTENDPOINTS_CALL = /\b(Roles|Permissions|PermissionsAll|Scopes|ScopesAll|Claims|ClaimsAll|Policies|Policy|AuthSchemes)\s*\(/
+  FASTENDPOINTS_CALL = /\b(Roles|Permissions|PermissionsAll|Scopes|ScopesAll|Claims|ClaimsAll|Policies|Policy|AuthSchemes|Options|Group\s*<[^<>();]*>)\s*\(/
 
   # A FastEndpoints `Configure()` body of an endpoint that does not allow
   # anonymous callers. Per FastEndpoints' `EndpointDefinition` and
@@ -99,7 +126,8 @@ module AspnetAccess
   # endpoint policy always requires an authenticated user, and roles, each
   # named policy and each policy builder apply on top of it. An endpoint
   # calling none of them gets a bare `RequireAuthorization()` from
-  # `EndpointRouteMapper`: the default policy.
+  # `EndpointRouteMapper`: the default policy. A `Group<T>()` or
+  # `Options(...)` can add more, so it stays unread.
   def fastendpoints(block : String, default : Access::CNF = AUTHENTICATED) : Access::CNF
     lexer = Noir::CSharpLexer.new(block)
     masked = lexer.masked_source
@@ -112,12 +140,16 @@ module AspnetAccess
     cnf = Access::CNF.new
     secured = false
     masked.scan(FASTENDPOINTS_CALL) do |call|
-      secured = true
       open = call.end(0) - 1
       close = lexer.matching_delimiter(open) || next
       name = call[1]
       args = block[open + 1...close]
+      # `EndpointExtensions.RequiresAuthorization`: a list that stays empty
+      # adds nothing.
+      secured ||= !parts(args).empty? unless name.starts_with?("Group") || name == "Options"
       case name
+      when .starts_with?("Group"), "Options"
+        cnf << [unresolved("#{name}(#{args})")]
       when "AuthSchemes"
       when "Roles"
         parts(args).each { |value| roles << atom(value, :role) }
@@ -150,6 +182,8 @@ module AspnetAccess
       authorize([found[1]?, found[2]?].compact.reject(&.blank?).join(", "), default)
     elsif found = part.match(LAMBDA)
       policy(found[2], found[1])
+    elsif part.matches?(BUILDER)
+      policy(part)
     else
       [[unresolved(part)]]
     end

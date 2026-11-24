@@ -63,6 +63,9 @@ describe AspnetAccess do
     it "reads the assignment without the call around it" do
       code = %(services.AddAuthorization(o => o.DefaultPolicy = new AuthorizationPolicyBuilder().RequireClaim("t").Build());)
       AspnetAccess.default_policy_assignment(code).should eq(%(DefaultPolicy = new AuthorizationPolicyBuilder().RequireClaim("t").Build()))
+      AspnetAccess.default_policy_assignment(%(builder.Services.AddAuthorizationBuilder()\n    .SetDefaultPolicy(new AuthorizationPolicyBuilder().RequireRole("Admin").Build());)).should eq(%(SetDefaultPolicy(new AuthorizationPolicyBuilder().RequireRole("Admin").Build())))
+      AspnetAccess.default_policy_assignment("public Task<AuthorizationPolicy> GetDefaultPolicyAsync() =>\n    Task.FromResult(policy);").should eq("GetDefaultPolicyAsync() of a custom IAuthorizationPolicyProvider")
+      AspnetAccess.default_policy_assignment("var p = await _fallback.GetDefaultPolicyAsync();").should be_nil
       AspnetAccess.default_policy_assignment("var p = options.DefaultPolicy;").should be_nil
       AspnetAccess.default_policy_assignment("if (o.DefaultPolicy == null) { }").should be_nil
     end
@@ -79,6 +82,7 @@ describe AspnetAccess do
       %(policy => policy.RequireClaim("scope", "api"))                 => [["unresolved"]],
       %(p => p.RequireRole("A").RequireAssertion(c => true))           => [["role:A"], ["unresolved"]],
       %(p => { p.RequireRole("A"); })                                  => [["unresolved"]],
+      %(new AuthorizationPolicyBuilder().RequireRole("BR").Build())    => [["role:BR"]],
       "adminPolicy"                                                    => [["unresolved"]],
       "Policies.Admin"                                                 => [["unresolved"]],
     }.each do |args, expected|
@@ -131,6 +135,9 @@ describe AspnetAccess do
       %(Policy(ConfigurePolicy);)                     => [["authenticated"], ["unresolved"]],
       %(Roles(Role.Admin, "Ops");)                    => [["authenticated"], ["role:Ops", "unresolved"]],
       %(Roles("Admin");\nPermissions("posts:write");) => [["authenticated"], ["role:Admin"], ["permission:posts:write"]],
+      %(Group<AdminGroup>();)                         => [["authenticated"], ["unresolved"]],
+      %(Options(x => x.RequireAuthorization("P"));)   => [["authenticated"], ["unresolved"]],
+      %(Roles();)                                     => [["authenticated"]],
     }.each do |block, expected|
       it "reads #{block.inspect}" do
         shown(AspnetAccess.fastendpoints(block)).should eq(expected)

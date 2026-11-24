@@ -1155,6 +1155,92 @@ describe "AspnetAuthTagger requires" do
     requires_of(tags[0]).should eq([["authenticated"]])
   end
 
+  it "does not take a namesake group declared outside the method for the route's" do
+    files = {"Program.cs" => <<-CS}
+      var app = builder.Build();
+      var group = app.MapGroup("/public").AllowAnonymous();
+      group.MapGet("/a", () => "a");
+      app.MapGroup("/admin").MapAdmin();
+      app.Run();
+
+      static class AdminRoutes
+      {
+          public static RouteGroupBuilder MapAdmin(this RouteGroupBuilder group)
+          {
+              group.MapGet("/users", () => "u").RequireAuthorization();
+              return group;
+          }
+      }
+      CS
+    tags = aspnet_tags(files, "Program.cs", 11, "cs_aspnet_core_minimal_api")
+    tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
+    requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
+    unread_of(tags[0]).should eq(["the conventions of group, a builder made outside this method"])
+  end
+
+  it "keeps a Carter module's conventions unread" do
+    files = {"AdminModule.cs" => <<-CS}
+      public class AdminModule : CarterModule
+      {
+          public AdminModule() : base("/admin")
+          {
+              this.RequireAuthorization("AdminPolicy");
+          }
+
+          public override void AddRoutes(IEndpointRouteBuilder app)
+          {
+              app.MapGet("/stats", () => "s").RequireAuthorization();
+          }
+      }
+      CS
+    tags = aspnet_tags(files, "AdminModule.cs", 10, "cs_carter")
+    requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "adds the layers a route takes from its handler, its metadata and its group's later conventions" do
+    files = {"Program.cs" => <<-CS}
+      var app = builder.Build();
+      app.MapGet("/methodgroup", Handlers.Secret).RequireAuthorization();
+      app.MapGet("/withmeta", () => "x").RequireAuthorization().WithMetadata(new AuthorizeAttribute { Roles = "M" });
+      var late = app.MapGroup("/late");
+      late.MapGet("/x", () => "x").RequireAuthorization();
+      late.RequireAuthorization("Late");
+      app.Run();
+      CS
+    method_group = aspnet_tags(files, "Program.cs", 2, "cs_aspnet_core_minimal_api")
+    requires_of(method_group[0]).should eq([["unresolved"], ["authenticated"]])
+    unread_of(method_group[0]).should eq(["attributes of the handler Handlers.Secret"])
+    requires_of(aspnet_tags(files, "Program.cs", 3, "cs_aspnet_core_minimal_api")[0]).should eq([["authenticated"], ["role:M"]])
+    late = aspnet_tags(files, "Program.cs", 5, "cs_aspnet_core_minimal_api")
+    unread_of(late[0]).should eq(["Policy=Late"])
+  end
+
+  it "keeps a TypeFilter next to [Authorize] unread" do
+    files = {"Controllers.cs" => <<-CS}
+      public class CController : ControllerBase
+      {
+          [Authorize]
+          [TypeFilter(typeof(AdminFilter))]
+          [HttpGet("typefilter")]
+          public IActionResult A() => Ok();
+      }
+      CS
+    tags = aspnet_tags(files, "Controllers.cs", 6)
+    requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
+    unread_of(tags[0]).should eq(["[TypeFilter(typeof(AdminFilter))]"])
+  end
+
+  it "reads nothing past the end of a statement that does not compile" do
+    files = {"Program.cs" => <<-CS}
+      var app = builder.Build();
+      app.MapGet("/u", () => "x").RequireAuthorization(p => p.RequireRole("U";
+      app.MapGet("/v", () => "x").RequireAuthorization(p => p.RequireRole("V"));
+      app.Run();
+      CS
+    tags = aspnet_tags(files, "Program.cs", 2, "cs_aspnet_core_minimal_api")
+    requires_of(tags[0]).should eq([["unresolved"]])
+  end
+
   it "reads an in-action refusal a permission setting can lift as unread only" do
     files = {"Controllers.cs" => <<-CS}
       public class ItemsController : Controller
