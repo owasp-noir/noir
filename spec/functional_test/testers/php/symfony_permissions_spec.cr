@@ -44,5 +44,16 @@ describe "Symfony permission strings / allow_if access_control", tags: "function
     guards.call(find.call("/mixed/x")).should eq(["Symfony access_control (ROLE_USER, @parts.read)#{note}"])
     guards.call(find.call("/maybe/info")).should be_empty
     guards.call(find.call("/open/info")).should be_empty
+
+    requires = ->(url : String) { Access.of(find.call(url)).map(&.to_s).uniq! }
+    # A voter attribute may be granted to anyone.
+    requires.call("/logs").should eq(["unresolved"])
+    requires.call("/voted").should eq(["unresolved"])
+    # `^/role` also covers `/rolecheck`; its allow_if adds to the body's refusal.
+    requires.call("/rolecheck").should eq(["role:ROLE_ADMIN", "authenticated"])
+    requires.call("/role/x").should eq(["role:ROLE_ADMIN", "authenticated"])
+    requires.call("/api/info").should eq(["unresolved", "authenticated"])
+    requires.call("/plain/x").should eq(["(role:ROLE_USER | authenticated)"])
+    requires.call("/mixed/x").should eq(["(role:ROLE_USER | unresolved)"])
   end
 end

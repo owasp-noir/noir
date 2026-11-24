@@ -91,4 +91,140 @@ describe "PhpAuthTagger requires" do
     tag.description.should eq("Protected by Laravel Gate authorization")
     atoms(tag).should eq([["authenticated"], ["unresolved"]])
   end
+
+  it "reads Yii access rules for a signed-in caller, keeping the ones it cannot read" do
+    source = [
+      "<?php",
+      "class PostController extends Controller",
+      "{",
+      "    public function behaviors()",
+      "    {",
+      "        return ['access' => ['class' => AccessControl::class, 'rules' => [",
+      "            ['actions' => ['login'], 'allow' => true, 'roles' => ['?']],",
+      "            ['actions' => ['edit'], 'allow' => true, 'roles' => ['editor', 'admin']],",
+      "            ['actions' => ['view'], 'allow' => true, 'roles' => ['@', User::ROLE_READER]],",
+      "            ['actions' => ['audit'], 'allow' => true, 'roles' => ['@'], 'matchCallback' => fn () => true],",
+      "        ]]];",
+      "    }",
+      "    public function actionEdit() {}",
+      "    public function actionView() {}",
+      "    public function actionAudit() {}",
+      "}",
+    ].join("\n")
+    atoms(php_auth_tag(source, 13, "php_yii")).should eq([["role:admin", "role:editor"]])
+    atoms(php_auth_tag(source, 14, "php_yii")).should eq([["authenticated"], ["unresolved"]])
+    atoms(php_auth_tag(source, 15, "php_yii")).should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "leaves a Yii filter with its own rule class unread" do
+    source = [
+      "<?php",
+      "class PostController extends Controller",
+      "{",
+      "    public function behaviors()",
+      "    {",
+      "        return ['access' => ['class' => AccessControl::class, 'ruleConfig' => ['class' => MyRule::class], 'rules' => [",
+      "            ['allow' => true, 'roles' => ['@']],",
+      "        ]]];",
+      "    }",
+      "    public function actionEdit() {}",
+      "}",
+    ].join("\n")
+    atoms(php_auth_tag(source, 10, "php_yii")).should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "adds nothing to the Symfony analyzer's tag for an attribute it already read" do
+    source = [
+      "<?php",
+      "class AdminController extends AbstractController",
+      "{",
+      "    #[Route('/x')]",
+      "    #[IsGranted('ROLE_ADMIN')]",
+      "    public function show() {}",
+      "}",
+    ].join("\n")
+    analyzer = Tag.new("auth", "Protected by Symfony #[IsGranted('ROLE_ADMIN')]", "php_auth", requires: [
+      Access::Clause.new([Access::Atom.new(:role, "ROLE_ADMIN")], "IsGranted('ROLE_ADMIN')"),
+    ])
+    tag = php_auth_tag(source, 6, "php_symfony", existing: analyzer).should_not be_nil
+    tag.description.should eq("Protected by Symfony #[IsGranted('ROLE_ADMIN')]")
+    atoms(tag).should eq([["role:ROLE_ADMIN"]])
+  end
+
+  it "keeps the unread one-line reading beside an access_control tag, and alone" do
+    source = [
+      "<?php",
+      "class AdminController extends AbstractController",
+      "{",
+      "    #[IsGranted('ROLE_ADMIN')]",
+      "    public function show() {}",
+      "}",
+    ].join("\n")
+    access_control = Tag.new("auth", "Protected by Symfony access_control (ROLE_USER)", "php_auth", requires: [
+      Access::Clause.new([Access::Atom.new(:role, "ROLE_USER")], "access_control (ROLE_USER)"),
+    ])
+    atoms(php_auth_tag(source, 5, "php_symfony", existing: access_control)).should eq([["role:ROLE_USER"], ["authenticated"], ["unresolved"]])
+    php_auth_tag(source, 5, "php_symfony").try(&.requires).should be_nil
+  end
+
+  it "leaves Yii rules unread when another filter or a spread entry also applies" do
+    two_filters = [
+      "<?php",
+      "class AdminController extends Controller",
+      "{",
+      "    public function behaviors()",
+      "    {",
+      "        return [",
+      "            'login' => ['class' => AccessControl::class, 'rules' => [['allow' => true, 'roles' => ['@']]]],",
+      "            'admin' => ['class' => AccessControl::class, 'rules' => [['allow' => true, 'roles' => ['admin']]]],",
+      "        ];",
+      "    }",
+      "    public function actionDelete() {}",
+      "}",
+    ].join("\n")
+    atoms(php_auth_tag(two_filters, 11, "php_yii")).should eq([["authenticated"], ["unresolved"]])
+    spread = [
+      "<?php",
+      "class SpreadController extends Controller",
+      "{",
+      "    public function behaviors()",
+      "    {",
+      "        return ['access' => ['class' => AccessControl::class, 'rules' => [['allow' => true, 'roles' => ['@'], ...$extra]]]];",
+      "    }",
+      "    public function actionView() {}",
+      "}",
+    ].join("\n")
+    atoms(php_auth_tag(spread, 8, "php_yii")).should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "keeps CakePHP's Authorization layer unread beside the identity check" do
+    tmpdir = File.tempname("php_cake_authz")
+    controllers = File.join(tmpdir, "src", "Controller")
+    Dir.mkdir_p(controllers)
+    Dir.mkdir_p(File.join(tmpdir, "config"))
+    routes = File.join(tmpdir, "config", "routes.php")
+    File.write(routes, "<?php\n$routes->connect('/articles/edit', ['controller' => 'Articles', 'action' => 'edit']);\n")
+    File.write(File.join(controllers, "ArticlesController.php"), <<-PHP)
+      <?php
+      class ArticlesController extends Controller
+      {
+          public function initialize(): void
+          {
+              $this->loadComponent('Authentication.Authentication');
+              $this->loadComponent('Authorization.Authorization');
+          }
+          public function edit($id) { $this->Authorization->authorize($this->Articles->get($id)); }
+      }
+      PHP
+    begin
+      options = create_test_options
+      options["base"] = YAML::Any.new(tmpdir)
+      details = Details.new(PathInfo.new(routes, 2))
+      details.technology = "php_cakephp"
+      endpoint = PhpAuthTagger.new(options).perform([Endpoint.new("/articles/edit", "GET", [] of Param, details)])[0]
+      atoms(endpoint.tags.find(&.tagger.==("php_auth"))).should eq([["authenticated"], ["unresolved"]])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end

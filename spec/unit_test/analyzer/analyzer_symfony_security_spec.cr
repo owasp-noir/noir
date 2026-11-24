@@ -47,4 +47,13 @@ describe Analyzer::Php::SymfonySecurity do
     Analyzer::Php::SymfonySecurity.voter_note("IS_AUTHENTICATED").should eq("")
     Analyzer::Php::SymfonySecurity.voter_note("IS_AUTHENTICATED_FULLY").should eq("")
   end
+
+  it "keeps the affirmative strategy unless the config names another" do
+    affirmative = ->(yaml : String) { Analyzer::Php::SymfonySecurity.config?("/app/config/packages/security.yaml") { yaml }.try(&.affirmative?) }
+    affirmative.call("security:\n  firewalls: {}\n").should be_true
+    affirmative.call("security:\n  access_decision_manager:\n    strategy: affirmative\n").should be_true
+    affirmative.call("security:\n  access_decision_manager:\n    allow_if_all_abstain: true\n").should be_true
+    affirmative.call("security:\n  access_decision_manager:\n    strategy: unanimous\n").should be_false
+    affirmative.call("security:\n  access_decision_manager:\n    service: App\\Security\\Manager\n").should be_false
+  end
 end

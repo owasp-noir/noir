@@ -1,5 +1,6 @@
 require "../../engines/php_engine"
 require "../../../utils/top_level_split"
+require "../../../tagger/framework_taggers/php/php_access"
 
 module Analyzer::Php
   # WordPress attack-surface extractor.
@@ -155,7 +156,7 @@ module Analyzer::Php
                 params << param unless params.any? { |known| known.name == param.name }
               end
               endpoint = Endpoint.new(full_path, method, params, details.dup)
-              guard.try { |(kind, name)| endpoint.add_tag(Tag.new(kind, "Protected by #{name}", TAGGER)) }
+              guard.try { |found| endpoint.add_tag(Tag.new(found.kind, "Protected by #{found.name}", TAGGER, requires: found.requires)) }
               endpoints << endpoint
             end
           end
@@ -169,8 +170,9 @@ module Analyzer::Php
       endpoints
     end
 
-    # `{tag name, guard name}` of a route's `permission_callback`.
-    alias Guard = Tuple(String, String)
+    # The tag name and guard name of a route's `permission_callback`, and
+    # what it requires when that was read.
+    record Guard, kind : String, name : String, requires : Array(Access::Clause)?
 
     # The verbs a route's third argument registers, each with the value
     # params its handler declares (`'args'`) or its callback reads, the header
@@ -198,10 +200,16 @@ module Analyzer::Php
           code.scan(FILE_PARAMS_RE) { |m| typed << Param.new(m[1], "", "file") }
         end
         guard = permission_guard(handler, src, klass)
+        if guard && (requires = guard.requires) && (check = callback.try(&.[0].match(HANDLER_CHECK_RE)))
+          guard = guard.copy_with(requires: requires + [Access::Clause.unresolved(check[0], value.to_s)])
+        end
         methods.each do |method|
           # A verb two handler groups register is guarded only when both are.
+          # `WP_REST_Server::match_request_to_handler` serves it with the
+          # first, so that one's callback says what it requires.
           known = result[method]?
-          result[method] = known ? {known[0] + names, known[1] + typed, known[2] && guard} : {names, typed, guard}
+          merged = (first = known.try(&.[2])) && guard.try(&.copy_with(requires: first.requires))
+          result[method] = known ? {known[0] + names, known[1] + typed, merged} : {names, typed, guard}
         end
       end
       result
@@ -238,6 +246,28 @@ module Analyzer::Php
       end
     end
 
+    # A check in a handler's own body that can refuse the caller; what it
+    # requires is not read.
+    HANDLER_CHECK_RE = /\b(?:current_user_can|user_can|is_super_admin|check_ajax_referer|check_admin_referer|wp_verify_nonce)\s*\(|\b40[13]\b/
+
+    # Whether `callable_code` finds the code `value` calls: a closure, a
+    # method of the route's own class, or a free function. It searches only
+    # that class, so any other receiver (`array( $this->policy, 'check' )`,
+    # `'Other::check'`) would borrow a same-named method.
+    OWN_RECEIVER_RE = /\A(?:array\s*\(|\[)\s*(?:\$this|self::class|static::class|__CLASS__|['"]?\\?(?:[\w\\]*\\)?(\w+)(?:::class|['"]))\s*,/i
+    STRING_CALLABLE = /\A['"](?:\\?(?:[\w\\]*\\)?(\w+)::)?(\w+)['"]\z/
+
+    private def own_callable?(value : String, src : Source, klass : ClassScope?) : Bool
+      return true if value.matches?(/\A(?:static\s+)?(?:function|fn)\b/)
+      if receiver = value.match(OWN_RECEIVER_RE)
+        return !klass.nil? && (receiver[1]?.nil? || receiver[1] == klass.name)
+      end
+      callable = value.match(STRING_CALLABLE) || return false
+      return !klass.nil? && callable[1] == klass.name if callable[1]?
+      decl = find_function(src, callable[2], klass)
+      !decl.nil? && src.classes.none?(&.range.includes?(decl.start))
+    end
+
     PERMISSION_KEY_RE = /\A['"]permission_callback['"]\s*=>\s*/
     # `array( $this, 'check' )` / `[ __CLASS__, 'check' ]` / `'check'` /
     # `'Class::check'`: the name of the method or function called.
@@ -262,10 +292,11 @@ module Analyzer::Php
     private def permission_guard(handler : String, src : Source, klass : ClassScope?) : Guard?
       value = array_value(handler, PERMISSION_KEY_RE) || return
       code = callable_code(value, src, klass).try(&.[0]) || return
+      requires = PhpAccess.wordpress_permission(code).try { |cnf| Access.clauses(cnf, value) } if own_callable?(value, src, klass)
       if m = code.match(CAPABILITY_CHECK_RE)
-        {"authz", "WordPress permission_callback #{m[1]? ? "current_user_can('#{m[1]}')" : "capability check"}"}
+        Guard.new("authz", "WordPress permission_callback #{m[1]? ? "current_user_can('#{m[1]}')" : "capability check"}", requires)
       elsif code.matches?(LOGIN_CHECK_RE)
-        {"auth", "WordPress permission_callback login check"}
+        Guard.new("auth", "WordPress permission_callback login check", requires)
       end
     end
 
@@ -485,7 +516,10 @@ module Analyzer::Php
           end
           endpoint = Endpoint.new(url, method, params, details.dup)
           unless @public_hook_urls.includes?(url)
-            endpoint.add_tag(Tag.new("auth", "Protected by WordPress #{match[1].downcase} hook (logged-in users only)", TAGGER))
+            # admin-ajax.php / admin-post.php run this hook only for a logged-in user.
+            requires = [Access::Clause.new([Access::Atom.new(:authenticated)], "#{match[1].downcase}#{action}")]
+            code.try(&.match(HANDLER_CHECK_RE)).try { |check| requires << Access::Clause.unresolved(check[0], "#{match[1].downcase}#{action}") }
+            endpoint.add_tag(Tag.new("auth", "Protected by WordPress #{match[1].downcase} hook (logged-in users only)", TAGGER, requires: requires))
           end
           endpoints << endpoint
         end

@@ -59,8 +59,10 @@ module Analyzer::Php::SymfonySecurity
   struct Config
     # Directory of the app the config belongs to: controllers under it use it.
     getter root : String
+    # Whether the access decision manager keeps the default affirmative strategy.
+    getter? affirmative : Bool
 
-    def initialize(@root : String, @firewalls : Array(Firewall), @rules : Array(Rule))
+    def initialize(@root : String, @firewalls : Array(Firewall), @rules : Array(Rule), @affirmative : Bool = true)
     end
 
     # Roles an anonymous caller of `method url` lacks, or nil when it gets
@@ -111,7 +113,12 @@ module Analyzer::Php::SymfonySecurity
 
     # `.../app/config/security.yml` serves `.../src`; `.../config/packages/` serves `.../src` too.
     root = dir.rchop("/packages").rchop("/config").rchop("/app")
-    Config.new(root, firewalls, rules)
+    manager = security[YAML::Any.new("access_decision_manager")]?.try(&.as_h?)
+    strategy = manager.try(&.[YAML::Any.new("strategy")]?).try(&.raw)
+    # A `service` / `strategy_service` replaces the strategy outright.
+    custom = manager.try { |h| h.has_key?(YAML::Any.new("service")) || h.has_key?(YAML::Any.new("strategy_service")) }
+    affirmative = (strategy.nil? || strategy == "affirmative") && !custom
+    Config.new(root, firewalls, rules, affirmative)
   rescue YAML::ParseException
     nil
   end

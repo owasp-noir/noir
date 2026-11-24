@@ -1,5 +1,6 @@
 require "../../engines/php_engine"
 require "../../../miniparsers/php_class_members"
+require "../../../tagger/framework_taggers/php/php_access"
 
 module Analyzer::Php
   # Nextcloud apps declare routes in `appinfo/routes.php`:
@@ -156,7 +157,8 @@ module Analyzer::Php
                 else
                   "login + admin (default)"
                 end
-        endpoint.add_tag(Tag.new("auth", "Protected by Nextcloud #{guard}", TAGGER))
+        requires = Access.clauses(PhpAccess.nextcloud(prelude), "Nextcloud #{guard}")
+        endpoint.add_tag(Tag.new("auth", "Protected by Nextcloud #{guard}", TAGGER, requires: requires))
       end
       if prelude.matches?(/\bNoCSRFRequired\b/)
         endpoint.add_tag(Tag.new("nextcloud-no-csrf", "Nextcloud NoCSRFRequired: CSRF check disabled", TAGGER))
