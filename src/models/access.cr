@@ -93,8 +93,19 @@ module Access
     a + b
   end
 
+  # Stops once the result is over the cap, where `clauses` turns it into one
+  # unresolved clause anyway: a fold over many alternatives would otherwise
+  # build the whole product first.
   def self.either(a : CNF, b : CNF) : CNF
-    a.flat_map { |left| b.map { |right| (left + right).uniq.sort! } }.uniq!
+    joined = CNF.new
+    a.each do |left|
+      b.each do |right|
+        clause = (left + right).uniq.sort!
+        joined << clause unless joined.includes?(clause)
+        return joined if joined.size > MAX_CLAUSES
+      end
+    end
+    joined
   end
 
   def self.clauses(cnf : CNF, source : String, path : String? = nil, line : Int32? = nil) : Array(Clause)
