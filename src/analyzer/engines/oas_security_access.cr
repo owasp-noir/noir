@@ -37,11 +37,12 @@ module OasSecurityAccess
   end
 
   private def scheme_cnf(name : String, scopes : Scopes, schemes) : Access::CNF
-    # A server checks no scheme the document leaves undefined.
-    return unresolved(name) unless schemes && schemes.has_key?(name)
+    # A server checks no scheme the document leaves undefined. A document
+    # with no registry at all still asks for a credential of unknown type.
+    return unresolved(name) if schemes && !schemes.has_key?(name)
     if scopes.is_a?(Array)
       return [[Access::Atom.new(:authenticated)]] if scopes.empty?
-      return scopes.map { |scope| [Access::Atom.new(:scope, scope)] } if SCOPED_TYPES.includes?(schemes[name])
+      return scopes.map { |scope| [Access::Atom.new(:scope, scope)] } if SCOPED_TYPES.includes?(schemes.try(&.[name]?))
     end
     # OAS 3.1 lets other scheme types list role names, which no type defines.
     [[Access::Atom.new(:authenticated)]] + unresolved("#{name}: #{scopes.is_a?(Array) ? scopes.join(", ") : scopes}")

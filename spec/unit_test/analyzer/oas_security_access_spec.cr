@@ -45,8 +45,9 @@ describe OasSecurityAccess do
       .should eq([["key: admin, ops"], ["nosuch"], ["oauth: \"read\""], ["\"bearer\""]])
   end
 
-  it "reads every scheme as undefined when the document defines none" do
-    read("[{oauth: [read]}, {key: []}]", nil).should eq([["unresolved", "unresolved"]])
+  it "still asks for a credential when the document defines no scheme at all" do
+    read("[{key: []}]", nil).should eq([["authenticated"]])
+    read("[{oauth: [read]}]", nil).should eq([["authenticated"], ["unresolved"]])
   end
 
   it "reads JSON and YAML documents into equal requirements" do
