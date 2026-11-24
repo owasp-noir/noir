@@ -152,9 +152,11 @@ class AspnetAuthTagger < FrameworkTagger
   #
   # A call site: its file, the line its statement starts on, whether it
   # authorizes the returned builder (`result`) and the `this` builder
-  # (`receiver`), and the line of the authorized declaration the receiver
-  # takes that from, if any.
-  record ExtensionSite, path : String, line : Int32, result : Bool, receiver : Bool, declaration : Int32?
+  # (`receiver`), the line of the authorized declaration the receiver takes
+  # that from, if any, and the lines of the authorizing statements on the
+  # variable the returned builder is assigned to.
+  record ExtensionSite, path : String, line : Int32, result : Bool, receiver : Bool, declaration : Int32?,
+    assignments : Array(Int32)
 
   private def collect_extension_auth
     @extension_sites.clear
@@ -190,15 +192,36 @@ class AspnetAuthTagger < FrameworkTagger
           anonymous = before.matches?(MINIMAL_API_ALLOW_ANON)
           before_auth = !anonymous && before.matches?(auth_call)
           declared = nil
+          variable = before.match(/\A\s*(?:var\s+|[\w.<>?]+\s+)?(\w+)\s*=(?![=>])/)
+          chain = variable ? before[variable.end(0)..] : before
           # `admin.MapGroup("/users").MapUsers()`: a child group takes `admin`'s conventions.
-          if !before_auth && !anonymous && (receiver = before.match(/\A\s*(\w+)\s*(?:\z|\.\s*MapGroup\s*\()/))
+          if !before_auth && !anonymous && (receiver = chain.match(/\A\s*(\w+)\s*(?:\z|\.\s*MapGroup\s*\()/))
             declaration = /\b#{Regex.escape(receiver[1])}\s*=[^=]/
             if found = statements.find { |s, _| s.matches?(declaration) && s.matches?(auth_call) && !s.matches?(MINIMAL_API_ALLOW_ANON) }
               before_auth = true
               declared = code[0, found[1]].count('\n')
             end
           end
-          site = ExtensionSite.new(path, code[0, start].count('\n'), before_auth || after.matches?(auth_call), before_auth, declared)
+          # `var api = app.MapOrders(); api.RequireAuthorization();`: a
+          # statement of its own on the variable holding the returned group,
+          # later in the same block.
+          assignments = [] of Int32
+          if variable
+            convention = Regex.new("\\A\\s*#{Regex.escape(variable[1])}\\s*#{auth_call.source}")
+            depth = 0
+            last = start
+            statements.each do |later, offset|
+              next if offset <= start
+              between = code[last...offset]
+              depth += between.count('{') - between.count('}')
+              last = offset
+              break if depth < 0
+              next if depth != 0 || !later.matches?(convention) || later.matches?(MINIMAL_API_ALLOW_ANON)
+              assignments << code[0, offset].count('\n')
+            end
+          end
+          result = before_auth || after.matches?(auth_call) || !assignments.empty?
+          site = ExtensionSite.new(path, code[0, start].count('\n'), result, before_auth, declared, assignments)
           (@extension_sites[m[1]] ||= [] of ExtensionSite) << site
         end
       end
@@ -1548,7 +1571,10 @@ class AspnetAuthTagger < FrameworkTagger
       clauses.concat(declared ? authorization_calls(site.path, declared, bounded(statement_at(masked, declared))) : authorization_calls(site.path, site.line, statement[0, call.begin(0)]))
     end
     # Blanked up to the call, so columns still line up with the source.
-    clauses.concat(authorization_calls(site.path, site.line, " " * call.end(0) + statement[call.end(0)..])) if result && site.result
+    if result && site.result
+      clauses.concat(authorization_calls(site.path, site.line, " " * call.end(0) + statement[call.end(0)..]))
+      site.assignments.each { |idx| clauses.concat(authorization_calls(site.path, idx, bounded(statement_at(masked, idx)))) }
+    end
     clauses.empty? ? unread : clauses
   end
 

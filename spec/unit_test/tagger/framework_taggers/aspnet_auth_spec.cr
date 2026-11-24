@@ -1307,6 +1307,21 @@ describe "AspnetAuthTagger requires" do
     requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
     unread_of(tags[0]).should eq(["the conventions of app, a builder made outside this method"])
 
+    assigned = {"Orders.cs" => orders, "Program.cs" => <<-CS}
+      var app = builder.Build();
+      var api = app.MapOrdersApi();
+      api.RequireAuthorization();
+      CS
+    tags = aspnet_tags(assigned, "Orders.cs", 6, "cs_aspnet_core_minimal_api")
+    tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization() (route group)"])
+    requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
+
+    conditional = {"Orders.cs" => orders, "Program.cs" => <<-CS}
+      var api = app.MapOrdersApi();
+      if (secure) { api.RequireAuthorization(); }
+      CS
+    aspnet_tags(conditional, "Orders.cs", 6, "cs_aspnet_core_minimal_api").should be_empty
+
     policy = {"Orders.cs" => orders, "Program.cs" => "app.MapOrdersApi().RequireAuthorization(\"Admins\");\n"}
     tags = aspnet_tags(policy, "Orders.cs", 6, "cs_aspnet_core_minimal_api")
     requires_of(tags[0]).sort.should eq([["authenticated"], ["unresolved"], ["unresolved"]])
