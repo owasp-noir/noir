@@ -11,7 +11,7 @@ private def quarkus_requires(source : Array(String), properties : Array(String),
   Dir.mkdir_p(resources)
   Dir.mkdir_p(sources)
   files = {File.join(resources, "application.properties") => properties.join("\n"), File.join(sources, "ItemResource.java") => source.join("\n")}
-  extra.each { |name, text| files[File.join(sources, name)] = text }
+  extra.each { |name, text| files[File.expand_path(name, sources)] = text }
   files.each do |file, text|
     File.write(file, text)
     CodeLocator.instance.register_path(file)
@@ -234,9 +234,9 @@ describe "QuarkusAuthTagger" do
       # `roles-allowed`: any signed-in caller) applies too.
       ["role:user", "(role:admin | role:root)", "authenticated"],
       ["authenticated"],
-      # An app `HttpSecurityPolicy` bean.
-      ["authenticated", "unresolved"],
-      ["authenticated", "deny", "anonymous"],
+      # An app `HttpSecurityPolicy` bean, then the shared `audit`.
+      ["unresolved", "authenticated"],
+      ["deny", "authenticated", "anonymous"],
       # `/api/posts` lists POST only: Quarkus refuses this GET unless
       # another permission admits it, which noir does not read.
       ["unresolved", "(role:admin | role:root)", "authenticated"],
@@ -283,5 +283,66 @@ describe "QuarkusAuthTagger" do
       # disabled `old` hides which permission applies.
       ["role:user", "unresolved", "unresolved", "unresolved"],
     ])
+  end
+
+  it "applies a shared permission in addition to the most specific unshared one" do
+    source = [
+      "@Path(\"/api\")",                       # 1
+      "public class ItemResource {",           # 2
+      "  @GET",                                # 3
+      "  @Path(\"/shared/x\")",                # 4
+      "  public String x() { return \"x\"; }", # 5
+      "}",                                     # 6
+    ]
+    shared = [
+      "quarkus.http.auth.permission.sh.paths=/api/shared/*",
+      "quarkus.http.auth.permission.sh.policy=authenticated",
+      "quarkus.http.auth.permission.sh.shared=true",
+    ]
+    quarkus_requires(source, ["quarkus.http.auth.permission.closed.paths=/api/*", "quarkus.http.auth.permission.closed.policy=deny"] + shared, {3 => "/api/shared/x"}).should eq([["deny", "authenticated"]])
+    quarkus_requires(source, shared, {3 => "/api/shared/x"}).should eq([["authenticated"]])
+  end
+
+  it "reads indexed roles-allowed, every annotation on one line, and the permissions behind a @PermitAll" do
+    quarkus_requires([
+      "@Path(\"/api\")",                                                                # 1
+      "public class ItemResource {",                                                    # 2
+      "  @GET",                                                                         # 3
+      "  @Path(\"/two\") @PermissionsAllowed(\"read\") @PermissionsAllowed(\"audit\")", # 4
+      "  public String two() { return \"two\"; }",                                      # 5
+      "  @GET",                                                                         # 6
+      "  @Path(\"/pub\")",                                                              # 7
+      "  @PermitAll",                                                                   # 8
+      "  public String pub() { return \"pub\"; }",                                      # 9
+      "}",                                                                              # 10
+    ], [
+      "quarkus.http.auth.permission.pub.paths=/api/pub",
+      "quarkus.http.auth.permission.pub.policy=permit",
+      "quarkus.http.auth.permission.staff.paths=/api/*",
+      "quarkus.http.auth.permission.staff.policy=staff",
+      "quarkus.http.auth.permission.staff.shared=true",
+      "quarkus.http.auth.policy.staff.roles-allowed[0]=staff",
+      "quarkus.http.auth.policy.staff.roles-allowed[1]=root",
+    ], {3 => "/api/two", 6 => "/api/pub"}).should eq([
+      ["permission:read", "permission:audit", "(role:root | role:staff)"],
+      # The `permit` winner adds no tag; the shared `staff` still applies.
+      ["(role:root | role:staff)"],
+    ])
+  end
+
+  it "keeps a config source it does not read, and a property expression, unread" do
+    source = [
+      "@Path(\"/api\")",                       # 1
+      "public class ItemResource {",           # 2
+      "  @GET",                                # 3
+      "  @Path(\"/x\")",                       # 4
+      "  @Authenticated",                      # 5
+      "  public String x() { return \"x\"; }", # 6
+      "}",                                     # 7
+    ]
+    yaml = {"../../../resources/application.yaml" => "quarkus:\n  http:\n    auth:\n      policy:\n        admins:\n          roles-allowed: admin\n"}
+    quarkus_requires(source, [] of String, {3 => "/api/x"}, yaml).should eq([["authenticated", "unresolved"]])
+    quarkus_requires(source, ["quarkus.http.auth.permission.closed.paths=${API_PATHS:/api/*}", "quarkus.http.auth.permission.closed.policy=deny"], {3 => "/api/x"}).should eq([["authenticated", "unresolved"]])
+    quarkus_requires(source, [] of String, {3 => "/api/x"}).should eq([["authenticated"]])
   end
 end
