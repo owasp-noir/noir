@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../miniparsers/php_block_parser"
+require "./laravel_access"
 
 @[Noir::TaggerFor(key: "php_auth", name: "PHP Auth Tagger", desc: "Identifies PHP authentication patterns (Laravel, Symfony, CakePHP)", order: 140)]
 class PhpAuthTagger < FrameworkTagger
@@ -130,15 +131,18 @@ class PhpAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @group_auth = Hash(String, Array(String?)).new
+    @group_auth = Hash(String, Array(Guard?)).new
   end
+
+  # A guard's description and, on a Laravel route, what it requires.
+  alias Guard = Tuple(String, Array(Access::Clause))
 
   # Per line of a routes file, the auth middleware of the innermost
   # `->group(function () {` closure enclosing it, tracked by brace depth.
-  private def group_auth_lines(path : String, lines : Array(String)) : Array(String?)
+  private def group_auth_lines(path : String, lines : Array(String)) : Array(Guard?)
     @group_auth[path] ||= begin
-      covered = Array(String?).new(lines.size, nil)
-      frames = [] of {Int32, String?}
+      covered = Array(Guard?).new(lines.size, nil)
+      frames = [] of {Int32, Guard?}
       depth = 0
       statement = ""
       lines.each_with_index do |line, idx|
@@ -146,9 +150,12 @@ class PhpAuthTagger < FrameworkTagger
         statement = "#{statement} #{code}"
         covered[idx] = frames.reverse_each.compact_map(&.[1]).first?
         if code.matches?(LARAVEL_GROUP_OPEN)
-          desc = LARAVEL_ROUTE_MIDDLEWARE.find { |pattern, _| statement.matches?(pattern) }.try(&.[1])
-          desc ||= "Laravel auth middleware" if statement.matches?(LARAVEL_GROUP_MIDDLEWARE)
-          frames << {depth, desc}
+          guard = LARAVEL_ROUTE_MIDDLEWARE.find { |pattern, _| statement.matches?(pattern) }.try { |(_, desc)| {desc, laravel_requires(desc, statement)} }
+          if guard.nil? && (group = statement.match(LARAVEL_GROUP_MIDDLEWARE))
+            name = group[0].match(/['"]([^'"]+)['"]\z/).try(&.[1]) || "auth"
+            guard = {"Laravel auth middleware", middleware_requires(name)}
+          end
+          frames << {depth, guard}
         end
         depth += code.count('{') - code.count('}')
         while (top = frames.last?) && depth <= top[0]
@@ -186,39 +193,62 @@ class PhpAuthTagger < FrameworkTagger
       unless check_patterns_near_line(lines, line_idx, LARAVEL_WITHOUT_AUTH, 10)
         # Check route-level middleware (Laravel + Slim groups etc.)
         route_patterns = LARAVEL_ROUTE_MIDDLEWARE + SLIM_YII_CI_PATTERNS
-        description = check_patterns_near_line(lines, line_idx, route_patterns, 3)
-        if description
-          endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
-          return
+        if found = check_patterns_near_line(lines, line_idx, route_patterns, 3)
+          return add_guard(endpoint, found[0], found[1])
         end
 
-        if description = group_auth_lines(path_info.path, lines)[line_idx]
-          endpoint.add_tag(Tag.new("auth", "Protected by #{description} (group)", "php_auth"))
-          return
+        if guard = group_auth_lines(path_info.path, lines)[line_idx]
+          return add_guard(endpoint, "#{guard[0]} (group)", guard[1])
         end
       end
 
-      # Check controller constructor middleware (walk back to find class)
-      description = check_controller_middleware(lines, line_idx)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
-        return
-      end
-
-      # Check Symfony attributes/annotations above the method
-      description = check_annotations_above(lines, line_idx)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
-        return
-      end
-
-      # Check method body for auth calls
-      description = check_method_body(lines, line_idx)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
-        return
+      # Check controller constructor middleware (walk back to find class),
+      # Symfony attributes/annotations above the method, then the method body.
+      if found = check_controller_middleware(lines, line_idx) || check_annotations_above(lines, line_idx) || check_method_body(lines, line_idx)
+        return add_guard(endpoint, found[0], found[1])
       end
     end
+  end
+
+  private def add_guard(endpoint : Endpoint, description : String, line : String) : Nil
+    add_guard(endpoint, description, laravel_requires(description, line))
+  end
+
+  # Only a Laravel route says what it requires: its analyzer tags it under
+  # this tagger name with `requires` set, and a tag without it merged into
+  # that one would lose its unknown.
+  private def add_guard(endpoint : Endpoint, description : String, requires : Array(Access::Clause)) : Nil
+    endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth", requires: (requires if endpoint.details.contributing_technologies.includes?("php_laravel"))))
+  end
+
+  LARAVEL_AUTH_GUARDS = Set{
+    "Laravel auth middleware", "Laravel auth:api middleware", "Laravel Sanctum auth",
+    "Laravel web auth", "Laravel controller auth middleware",
+  }
+  MIDDLEWARE_CALL = /middleware\s*\(/
+  AUTH_NAME       = /['"](auth(?::[\w,]+)?)['"]/
+  GATE_CALL_START = /\$this\s*->\s*authorize\s*\(|Gate::authorize\s*\(/
+
+  # What the guard `description` found on `line` requires. A check that does
+  # not itself turn a guest away (`Gate::allows`, `$request->user()`) or a
+  # pattern of another framework is unread.
+  private def laravel_requires(description : String, line : String) : Array(Access::Clause)
+    if description == "Laravel verified middleware"
+      middleware_requires("verified")
+    elsif LARAVEL_AUTH_GUARDS.includes?(description)
+      tail = line.index(MIDDLEWARE_CALL).try { |at| line[at..] } || line
+      middleware_requires(tail.match(AUTH_NAME).try(&.[1]) || "auth")
+    elsif start = line.index(GATE_CALL_START)
+      call = line[start..].strip.rchop(';').strip
+      Access.clauses(LaravelAccess.gate_call(call), call)
+    else
+      [Access::Clause.unresolved(line.strip, description)]
+    end
+  end
+
+  # `verified` is the one non-auth name this tagger reports as a guard.
+  private def middleware_requires(name : String) : Array(Access::Clause)
+    Access.clauses(LaravelAccess.middleware(name) || [[Access::Atom.new(:unresolved, name)]], name)
   end
 
   # CakePHP's AuthenticationComponent requires an identity on every action of
@@ -398,11 +428,11 @@ class PhpAuthTagger < FrameworkTagger
 
   private def check_patterns_near_line(lines : Array(String), line_idx : Int32,
                                        patterns : Array(Tuple(Regex, String)),
-                                       window : Int32) : String?
+                                       window : Int32) : Tuple(String, String)?
     (statement_start(lines, line_idx, window)..statement_end(lines, line_idx, window)).each do |idx|
       line = lines[idx]
       patterns.each do |pattern, desc|
-        return desc if line.matches?(pattern)
+        return {desc, line} if line.matches?(pattern)
       end
     end
 
@@ -453,14 +483,14 @@ class PhpAuthTagger < FrameworkTagger
     (line.count('(') + line.count('{')) - (line.count(')') + line.count('}'))
   end
 
-  private def check_controller_middleware(lines : Array(String), action_line : Int32) : String?
+  private def check_controller_middleware(lines : Array(String), action_line : Int32) : Tuple(String, String)?
     # Walk backwards to find __construct or class-level middleware
     idx = action_line
     while idx >= 0
       current = lines[idx].strip
 
       LARAVEL_CONTROLLER_MIDDLEWARE.each do |pattern, desc|
-        return desc if current.matches?(pattern)
+        return {desc, current} if current.matches?(pattern)
       end
 
       break if current.starts_with?("class ")
@@ -470,7 +500,7 @@ class PhpAuthTagger < FrameworkTagger
     nil
   end
 
-  private def check_annotations_above(lines : Array(String), method_line : Int32) : String?
+  private def check_annotations_above(lines : Array(String), method_line : Int32) : Tuple(String, String)?
     idx = method_line - 1
     while idx >= 0 && idx >= method_line - 8
       current = lines[idx].strip
@@ -481,7 +511,7 @@ class PhpAuthTagger < FrameworkTagger
 
       all_patterns = SYMFONY_PATTERNS
       all_patterns.each do |pattern, desc|
-        return desc if current.matches?(pattern)
+        return {desc, current} if current.matches?(pattern)
       end
 
       idx -= 1
@@ -490,7 +520,7 @@ class PhpAuthTagger < FrameworkTagger
     # `#[Route]` then `#[IsGranted]` is as protected as the reverse order.
     annotation_lines_below(lines, method_line, "#[").each do |below|
       SYMFONY_PATTERNS.each do |pattern, desc|
-        return desc if below.matches?(pattern)
+        return {desc, below} if below.matches?(pattern)
       end
     end
 
@@ -506,7 +536,7 @@ class PhpAuthTagger < FrameworkTagger
   # method's `$this->authorize(...)` was reported as this endpoint's guard.
   # Seed the depth from the signature line and stop as soon as the body it
   # opened closes again.
-  private def check_method_body(lines : Array(String), method_line : Int32) : String?
+  private def check_method_body(lines : Array(String), method_line : Int32) : Tuple(String, String)?
     idx = method_line + 1
     end_idx = [method_line + 15, lines.size - 1].min
     signature = lines[method_line]
@@ -526,7 +556,7 @@ class PhpAuthTagger < FrameworkTagger
 
       all_patterns = LARAVEL_AUTH_CHECKS + CAKEPHP_PATTERNS + GENERIC_PATTERNS + SLIM_YII_CI_PATTERNS
       all_patterns.each do |pattern, desc|
-        return desc if stripped.matches?(pattern)
+        return {desc, stripped} if stripped.matches?(pattern)
       end
 
       idx += 1
