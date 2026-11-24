@@ -239,10 +239,22 @@ class DjangoAuthTagger < FrameworkTagger
   MIDDLEWARE_REFUSES = "settings.MIDDLEWARE refuses unauthenticated requests outside its exempt paths)"
 
   # `middleware_guard` says in its text when a setting, or a test it could
-  # not read, may let the request through.
+  # not read, may let the request through. It reads the anonymous caller
+  # only: a refusal besides the login check, or a test of the user past
+  # signing in, may turn away a signed-in caller too.
   private def middleware_access(description : String) : Access::CNF
     signed_in = [[Access::Atom.new(:authenticated)]]
-    description.ends_with?(MIDDLEWARE_REFUSES) ? signed_in : DjangoAccess.liftable(signed_in, description)
+    return DjangoAccess.liftable(signed_in, description) unless description.ends_with?(MIDDLEWARE_REFUSES)
+    klass = @middlewares.find { |candidate| description.starts_with?("Protected by #{candidate.name} (") }
+    texts = klass ? mw_texts(klass.body) : [] of String
+    return signed_in if texts.count { |text| mw_refusal?(text) } == 1 && texts.none?(&.matches?(MW_OTHER_IDENTITY))
+    signed_in + DjangoAccess.unresolved(description)
+  end
+
+  MW_OTHER_IDENTITY = /\buser\.(?!is_authenticated\b|is_anonymous\b)\w+/
+
+  private def mw_texts(statements : Array(MwStmt)) : Array(String)
+    statements.flat_map { |statement| [statement.text] + mw_texts(statement.children) }
   end
 
   private def check_view_guards(endpoint : Endpoint)

@@ -363,6 +363,30 @@ describe "DjangoAuthTagger requires" do
     atoms(tags[0]).should eq([["authenticated"], ["authenticated"], ["permission:app.manage"]])
   end
 
+  it "keeps a middleware that tests more than signing in unread past the sign-in" do
+    files = {
+      "manage.py"         => "",
+      "proj/__init__.py"  => "",
+      "proj/urls.py"      => "urlpatterns = []\n",
+      "proj/settings.py"  => %(ROOT_URLCONF = "proj.urls"\nMIDDLEWARE = ["app.middleware.StaffWall"]\n),
+      "app/middleware.py" => <<-PY,
+        class StaffWall:
+            def __init__(self, get_response):
+                self.get_response = get_response
+
+            def __call__(self, request):
+                if not request.user.is_staff and request.user.is_authenticated:
+                    return HttpResponseForbidden()
+                if request.user.is_authenticated or request.path.startswith("/health/"):
+                    return self.get_response(request)
+                return HttpResponseRedirect("/login/")
+        PY
+      "app/views.py" => "def dash(request):\n    pass\n",
+    }
+    tags = django_tags(files, "app/views.py", 1, url: "/dash/")
+    atoms(tags[0]).should eq([["authenticated"], ["unresolved:#{tags[0].description}"]])
+  end
+
   it "adds an unread clause for a refusing project decorator and body check the tagger does not judge" do
     files = {
       "decorators.py" => <<-PY,
