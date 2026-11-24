@@ -1,6 +1,6 @@
 require "../../engines/go_engine"
 require "../../engines/oas_security_access"
-require "../../../utils/top_level_split"
+require "../../../miniparsers/huma_security"
 
 module Analyzer::Go
   # Huma (https://huma.rocks/) is an OpenAPI-first Go framework
@@ -217,7 +217,7 @@ module Analyzer::Go
             next unless depth == 0
             alternative = literal[open_at + 1 + start, idx - start + 1]
             alternatives << alternative.scan(/"([^"]+)"\s*:/).map(&.[1])
-            requirements << requirement(alternative)
+            requirements << HumaSecurity.requirement(alternative)
           end
         end
         tagger = Tag.declared_access_tagger("go_huma")
@@ -227,24 +227,6 @@ module Analyzer::Go
         # The scheme registry (`Components.SecuritySchemes`) is not read, so a
         # scope list reads as a credential plus the unread scopes.
         Tag.new("auth", description, tagger, requires: Access.clauses(OasSecurityAccess.cnf(requirements, nil, description), description))
-      end
-
-      # One `{"name": {"scope", ...}, ...}` alternative as OpenAPI reads it.
-      # A value that is not a list of string literals stays text, and so does
-      # an alternative with an entry whose name is not a literal.
-      private def requirement(alternative : String) : OasSecurityAccess::Requirement
-        entries = Noir::TopLevelSplit.split(alternative[1...-1], ',', Noir::TopLevelSplit::Rules.new(empties: Noir::TopLevelSplit::Empties::DropAll))
-        requirement = Hash(String, OasSecurityAccess::Scopes).new
-        entries.each do |entry|
-          found = entry.strip.match(/\A"([^"]+)"\s*:\s*(.+)\z/m) || return alternative
-          value = found[2].strip
-          scopes = value.match(/\A(?:\[\]string\s*)?\{(.*)\}\z/m).try do |list|
-            items = Noir::TopLevelSplit.split(list[1], ',', Noir::TopLevelSplit::Rules.new(empties: Noir::TopLevelSplit::Empties::DropAll))
-            items.map { |item| item.strip.match(/\A"([^"\\]*)"\z/).try(&.[1]) || break }
-          end
-          requirement[found[1]] = scopes || value
-        end
-        requirement
       end
     end
 

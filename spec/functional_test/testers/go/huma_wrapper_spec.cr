@@ -94,6 +94,7 @@ it "reads Huma operation security schemes and scopes like OpenAPI", tags: "funct
     	huma.Register(api, huma.Operation{Method: "GET", Path: "/scoped", Security: []map[string][]string{{"oauth": {"read", "write"}}, {"key": {}}}}, h)
     	huma.Register(api, huma.Operation{Method: "GET", Path: "/both", Security: []map[string][]string{{"a": {}, "b": {}}}}, h)
     	huma.Register(api, huma.Operation{Method: "GET", Path: "/var", Security: []map[string][]string{{"oauth": scopes}}}, h)
+    	huma.Register(api, huma.Operation{Method: "GET", Path: "/mixed", Security: []map[string][]string{{"a": {}, schemeB: {}}}}, h)
     }
     GO
   begin
@@ -111,6 +112,9 @@ it "reads Huma operation security schemes and scopes like OpenAPI", tags: "funct
     reading.call("/both").should eq ["authenticated"]
     reading.call("/var").should eq ["authenticated", "unresolved"]
     Access.of(app.endpoints.find! { |ep| ep.url == "/var" }).last.any_of.first.value.should eq "oauth: scopes"
+    # A scheme named by a constant still asks for a credential.
+    reading.call("/mixed").should eq ["authenticated", "unresolved"]
+    Access.cell(Access.of(app.endpoints.find! { |ep| ep.url == "/mixed" }), Access::Atom.new(:anonymous)).should be_false
   ensure
     FileUtils.rm_rf(dir)
   end
