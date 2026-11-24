@@ -65,7 +65,7 @@ describe "HonoAuthTagger requires" do
     requirement(tags["GET /y"]).should be_nil
   end
 
-  it "keeps the default wherever a use() scope also covers the route" do
+  it "reads a use() above the route on its own receiver, and keeps the default for a tag from a use() scope" do
     tags = hono_requires(<<-TS)
       import { Hono } from 'hono'
       import { bearerAuth } from 'hono/bearer-auth'
@@ -75,8 +75,7 @@ describe "HonoAuthTagger requires" do
       app.get('/admin/a', bearerAuth({ token: 't' }), (c) => c.json({}))
       app.get('/admin/b', (c) => c.json({}))
       TS
-    tags["GET /admin/a"].should_not be_nil
-    requirement(tags["GET /admin/a"]).should be_nil
+    requirement(tags["GET /admin/a"]).should eq("authenticated")
     tags["GET /admin/b"].should_not be_nil
     requirement(tags["GET /admin/b"]).should be_nil
   end
@@ -92,5 +91,49 @@ describe "HonoAuthTagger requires" do
     requirement(tags["GET /a"]).should eq("authenticated & unresolved:authMiddleware")
     tags["GET /b"].should_not be_nil
     requirement(tags["GET /b"]).should be_nil
+  end
+
+  it "keeps every unread middleware and every use() that may cover the route" do
+    tags = hono_requires(<<-TS)
+      import { Hono } from 'hono'
+      import { cors } from 'hono/cors'
+      import { jwt } from 'hono/jwt'
+      import { bearerAuth } from 'hono/bearer-auth'
+      import { requireRole } from './roles'
+      const app = new Hono()
+      const api = new Hono()
+      app.get('/role', jwt({ secret: 's' }), requireRole('admin'), (c) => c.json({}))
+      app.get('/inline', jwt({ secret: 's' }), async (c, next) => { if (c.get('jwtPayload').role !== 'admin') return c.text('no', 403); await next() }, (c) => c.json({}))
+      app.get('/quiet', cors(), async (c, next) => { c.set('at', Date.now()); await next() }, jwt({ secret: 's' }), (c) => c.json({}))
+      TS
+    requirement(tags["GET /role"]).should eq("authenticated & unresolved:requireRole('admin')")
+    requirement(tags["GET /inline"]).should eq("authenticated & unresolved:async (c, next) => { if (c.get('jwtPayload').role !== 'admin') return c.text('no', 403); await next() }")
+    requirement(tags["GET /quiet"]).should eq("authenticated")
+  end
+
+  it "keeps a use() on any receiver of the file that may cover the route" do
+    tags = hono_requires(<<-TS)
+      import { Hono } from 'hono'
+      import { bearerAuth } from 'hono/bearer-auth'
+      const app = new Hono()
+      const api = new Hono()
+      api.use('*', checkAdmin)
+      api.get('/x', bearerAuth({ token: 't' }), (c) => c.json({}))
+      app.route('/api', api)
+      app.use('/api/*', async (c, next) => { if (!c.req.header('x')) return c.text('no', 403); await next() })
+      TS
+    requirement(tags["GET /api/x"]).should eq("authenticated & unresolved:checkAdmin & unresolved:async (c, next) => { if (!c.req.header('x')) return c.text('no', 403); await next() }")
+  end
+
+  it "binds no package through a commented-out import" do
+    tags = hono_requires(<<-TS)
+      import { Hono } from 'hono'
+      // import { bearerAuth } from 'hono/bearer-auth'
+      const bearerAuth = (o: any) => async (c: any, next: any) => next()
+      const app = new Hono()
+      app.get('/x', bearerAuth({ token: 't' }), (c) => c.json({}))
+      TS
+    tags["GET /x"].should_not be_nil
+    requirement(tags["GET /x"]).should be_nil
   end
 end
