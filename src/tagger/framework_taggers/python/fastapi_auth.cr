@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../analyzer/analyzers/python/python_helper"
 require "./python_guard_definitions"
+require "./fastapi_access"
 require "./django_middleware_guard"
 
 @[Noir::TaggerFor(key: "fastapi_auth", name: "FastAPI Auth Tagger", desc: "Identifies FastAPI authentication patterns (Depends, Security, OAuth2)", order: 100)]
@@ -72,7 +73,9 @@ class FastAPIAuthTagger < FrameworkTagger
   CLASS_DEPENDENCY_ATTR      = /^\s*(\w+)\s*(?::[^=]+)?=\s*(?:Depends|Security)\s*\(/
   ANNOTATED_ALIAS_DEPENDENCY = /^\s*(\w+)\s*(?::\s*[\w.\[\]]+\s*)?=\s*Annotated\s*\[.*\bDepends\s*\(\s*([\w.]+)/
 
-  alias Condition = {Int32, Bool, Bool, Bool}
+  # {indent, reads a role / ownership field?, reads the caller?, skipped
+  # when the caller is None?, condition text}.
+  alias Condition = {Int32, Bool, Bool, Bool, String}
   BODY_401_CHECK = "FastAPI handler 401 check"
 
   def self.target_techs : Array(String)
@@ -104,6 +107,8 @@ class FastAPIAuthTagger < FrameworkTagger
     @mw_file = ""
     @mw_expansions = 0
     @mw_unknown_atom = nil.as(String?)
+    @alias_lines = Hash({String, String}, String).new
+    @pending = [] of {Endpoint, Proc(Array(Tag))}
   end
 
   # `parent.include_router(target, ..., dependencies=[...])` in `file`.
@@ -130,6 +135,8 @@ class FastAPIAuthTagger < FrameworkTagger
     @includes_by_site = nil
     @include_scopes.clear
     @http_middlewares.clear
+    @alias_lines.clear
+    @pending.clear
     authz_candidates = [] of {String, String}
     collect_files_by_extension(".py").each do |path|
       content = read_file(path)
@@ -142,6 +149,7 @@ class FastAPIAuthTagger < FrameworkTagger
           # `X = Annotated[\n    Subject, Depends(dep)\n]` read as one line.
           line = joined_statement(lines, idx) if line.count('[') > line.count(']')
           next unless m = line.match(ANNOTATED_ALIAS)
+          @alias_lines[{path, m[1]}] = line
           if desc = dependency_desc(m[2])
             @auth_aliases[m[1]] = desc
           end
@@ -159,7 +167,12 @@ class FastAPIAuthTagger < FrameworkTagger
     end
     # After the alias index: judging a caller dependency reads it.
     authz_candidates.each { |path, content| index_authz_dependencies(path, content) }
-    super
+    tagged = super
+    # Read only once every tag is decided: the reading asks for verdicts the
+    # tag decisions never did, and the verdict caches are shared.
+    @pending.each { |endpoint, build| build.call.each { |tag| endpoint.add_tag(tag) } }
+    @pending.clear
+    tagged
   end
 
   # Top-level `def`s whose body checks a role / ownership field, or
@@ -232,25 +245,309 @@ class FastAPIAuthTagger < FrameworkTagger
         description ||= auth_desc(text, file)
         authz ||= authz_desc(text, file)
       end
-      authz ||= body_authz_desc(lines, line_num - 1, path_info.path)
+      authz ||= body_authz_desc(lines, line_num - 1, path_info.path).try(&.[0])
       # Refusing a missing caller is authentication, not authorization.
       description, authz = (description || authz), nil if authz == BODY_401_CHECK
       next if description.nil? && authz.nil?
 
-      endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "fastapi_auth")) if description
-      endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "fastapi_auth")) if authz
+      route_path = path_info.path
+      @pending << {endpoint, -> { dependency_tags(description, authz, header, receiver, lines, line_num - 1, route_path) }}
       return
     end
-    if guard = http_middleware_guard(endpoint)
-      endpoint.add_tag(Tag.new("auth", guard, "fastapi_auth"))
+    if tag = http_middleware_guard(endpoint)
+      endpoint.add_tag(tag)
       return
     end
     if call = handler_guard_call(endpoint)
-      endpoint.add_tag(Tag.new("auth", "Protected by FastAPI handler call to #{call}", "fastapi_auth"))
+      text = "Protected by FastAPI handler call to #{call}"
+      endpoint.add_tag(Tag.new("auth", text, "fastapi_auth", requires: [Access::Clause.new([AUTHENTICATED], text), Access::Clause.unresolved(call, text)]))
       return
     end
     if soft = @soft_auth
       endpoint.add_tag(Tag.new("anonymous", "FastAPI Depends(#{soft}) admits anonymous callers: it returns None instead of refusing", "fastapi_auth"))
+    end
+  end
+
+  AUTHENTICATED = FastAPIAccess::AUTHENTICATED
+  NO_CLAUSES    = [] of Access::Clause
+
+  # The tags `check_endpoint` decided for a route, each with what it
+  # requires. Every layer applies, so each contributes, though the text
+  # names only the first guard found. With one tag emitted it carries all
+  # the clauses.
+  private def dependency_tags(description : String?, authz : String?, header : String, receiver : String?, lines : Array(String), idx : Int32, path : String) : Array(Tag)
+    own = [{header, path}]
+    own.concat(router_statement(lines, receiver, path, idx)) if receiver
+    own.concat(class_dependencies(lines, idx, path))
+    own.concat(own.flat_map { |text, file| dependency_variables(text, file, file == path ? {lines, idx} : nil) })
+    auth, guard = scope_requires(own)
+    if receiver
+      mounted_auth, mounted_guard = include_requires(path, receiver, 0)
+      auth += mounted_auth
+      guard += mounted_guard
+    end
+    if check = body_authz_desc(lines, idx, path)
+      desc, fragment = check
+      if desc == BODY_401_CHECK
+        auth += [Access::Clause.new([AUTHENTICATED], fragment, path)]
+        auth += [Access::Clause.unresolved(fragment, fragment, path)] unless FastAPIAccess.absence_test?(fragment)
+      else
+        guard += [Access::Clause.unresolved(fragment, fragment, path)]
+      end
+    end
+    tags = [] of Tag
+    if description
+      text = "Protected by #{description}"
+      tags << Tag.new("auth", text, "fastapi_auth", requires: or_unread(authz ? auth : auth + guard, text))
+    end
+    if authz
+      text = "Protected by #{authz}"
+      tags << Tag.new("authz", text, "fastapi_auth", requires: or_unread(description ? guard : auth + guard, text))
+    end
+    tags
+  end
+
+  # A guard tag never reads as open: with nothing read it is unresolved.
+  private def or_unread(clauses : Array(Access::Clause), description : String) : Array(Access::Clause)
+    clauses = clauses.uniq(&.any_of)
+    clauses.empty? ? [Access::Clause.unresolved(description, description)] : clauses
+  end
+
+  # `{auth, authz}` clauses of the dependencies declared in `scopes`. A
+  # scope the description logic reports a guard in always contributes.
+  private def scope_requires(scopes : Array({String, String})) : {Array(Access::Clause), Array(Access::Clause)}
+    auth = [] of Access::Clause
+    guard = [] of Access::Clause
+    scopes.each do |text, file|
+      found_auth, found_guard = text_requires(text, file, 0)
+      if found_auth.empty? && (desc = auth_desc(text, file))
+        found_auth = [Access::Clause.unresolved(desc, desc, file)]
+      end
+      if found_guard.empty? && (desc = authz_desc(text, file))
+        found_guard = [Access::Clause.unresolved(desc, desc, file)]
+      end
+      auth.concat(found_auth)
+      guard.concat(found_guard)
+    end
+    {auth, guard}
+  end
+
+  # The requirement of each mount chain of router `receiver`. FastAPI serves
+  # its routes under every mount, so with several the route requires one
+  # chain's dependencies or another's.
+  private def include_requires(path : String, receiver : String, depth : Int32) : {Array(Access::Clause), Array(Access::Clause)}
+    return {NO_CLAUSES, NO_CLAUSES} if depth > 6 || include_dependencies(path, receiver).empty?
+    chains = (includes_by_site[{path, receiver}]? || [] of IncludeCall).map do |call|
+      scopes = [] of {String, String}
+      call.dependencies.try { |dependencies| scopes << {dependencies, call.file} }
+      read_file_lines(call.file).try { |lines| scopes.concat(router_statement(lines, call.parent, call.file, call.line)) }
+      scopes.concat(scopes.flat_map { |text, file| dependency_variables(text, file) })
+      auth, guard = scope_requires(scopes)
+      parent_auth, parent_guard = include_requires(call.file, call.parent, depth + 1)
+      {auth + parent_auth, guard + parent_guard}
+    end
+    return {NO_CLAUSES, NO_CLAUSES} if chains.empty?
+    return chains[0] if chains.size == 1
+    cnf = chains.map { |auth, guard| (auth + guard).map(&.any_of) }.reduce { |left, right| Access.either(left, right) }
+    {Access.clauses(cnf, "#{receiver} mounted by #{chains.size} include_router calls", path), NO_CLAUSES}
+  end
+
+  # `{auth, authz}` clauses of each `Depends(...)` / `Security(...)`, each
+  # `Annotated` alias and each dependency factory call in `text`.
+  private def text_requires(text : String, file : String, depth : Int32) : {Array(Access::Clause), Array(Access::Clause)}
+    auth = [] of Access::Clause
+    guard = [] of Access::Clause
+    return {auth, guard} if depth > 4
+    text.scan(DEPENDENCY_CALL) do |m|
+      args = call_arguments(text[(m.begin(0) + (m[0].index('(') || 0))..])
+      source = "#{m[1]}(#{args.join(", ")})"
+      call = m.post_match.starts_with?('(') ? m.post_match : nil
+      found_auth, found_guard = dependency_requires(m[2], call, file, source, depth, m[1] == "Security")
+      auth.concat(found_auth)
+      guard.concat(found_guard)
+      declared = m[1] == "Security" ? security_scopes(args) : [] of Access::Atom
+      next if declared.empty?
+      auth.concat(Access.clauses(scope_cnf(m[2], call, file, declared, 0) || FastAPIAccess.unresolved(source), source, file))
+    end
+    names = text.scan(ALIAS_ANNOTATION).map(&.[1])
+    text.scan(/:\s*(\w+)\b/) { |m| names << m[1] if @auth_aliases.has_key?(m[1]) && !foreign_import?(file, m[1]) }
+    names.uniq.each do |name|
+      alias_path, callable = resolve_alias(name, file)
+      if callable && (line = @alias_lines[{alias_path, name.split('.').last}]?)
+        found_auth, found_guard = text_requires(line, alias_path, depth + 1)
+      elsif callable
+        found_auth, found_guard = dependency_requires(callable, nil, alias_path, "Depends(#{callable})", depth + 1, false)
+      elsif desc = @auth_aliases[name]?
+        found_auth, found_guard = [Access::Clause.unresolved(desc, desc, file)], NO_CLAUSES
+      else
+        next
+      end
+      auth.concat(found_auth)
+      guard.concat(found_guard)
+    end
+    if desc = factory_dependency_desc(text, file)
+      cnf = [[AUTHENTICATED]]
+      cnf = FastAPIAccess.liftable(cnf, "a setting can make #{desc} public") if desc.ends_with?(SETTING_NOTE)
+      auth.concat(Access.clauses(cnf, desc, file))
+    end
+    {auth, guard}
+  end
+
+  # `{auth, authz}` clauses of dependency `name` (`call` holding the
+  # argument list when the declaration calls it), and of the dependencies
+  # it declares in turn: they all run for the request.
+  private def dependency_requires(name : String, call : String?, file : String, source : String, depth : Int32, security : Bool) : {Array(Access::Clause), Array(Access::Clause)}
+    guard = [] of Access::Clause
+    body = check_body(name, call, file, 0)
+    authz_dependency = authz_dependency?(name, file)
+    if authz_dependency
+      guard.concat(Access.clauses(body.try { |found| refusal_cnf(found) } || FastAPIAccess.unresolved(source), source, file))
+    end
+    if args = scheme_args(name, call, file)
+      return {Access.clauses(FastAPIAccess.scheme(args, source), source, file), guard}
+    end
+    @configurable = false
+    verdict = call ? instance_refuses?("_ = #{name}#{call}", file, 0) : dependency_refuses?(name, file)
+    lifted = @configurable
+    return {NO_CLAUSES, guard} if verdict == false
+    nested_auth, nested_guard = body ? text_requires(body.text, body.file, depth + 1) : {NO_CLAUSES, NO_CLAUSES}
+    cnf = Access::CNF.new
+    # A def's verdict only says it raises a 401 or 403, maybe on a setting;
+    # a class's verdict turns on the caller (see `judge_class`).
+    cnf << [AUTHENTICATED] if verdict && body.try(&.instance)
+    if body && !authz_dependency
+      refusal_cnf(body).try { |found| cnf.concat(found) }
+      guard_call_cnf(body).try { |found| cnf.concat(found) }
+    end
+    if cnf.empty? && nested_auth.empty? && nested_guard.empty? && (verdict || security || auth_callable?(name.split('.').last))
+      cnf = FastAPIAccess.unresolved(source)
+    end
+    cnf = FastAPIAccess.liftable(cnf, "a setting can make #{source} public") if lifted
+    {Access.clauses(cnf, source, file) + nested_auth, guard + nested_guard}
+  end
+
+  # The scopes a `Security(dependency, scopes=[...])` argument list asks for.
+  private def security_scopes(args : Array(String)) : Array(Access::Atom)
+    value = args[1..]?.try(&.find(&.matches?(/\Ascopes\s*=/)).try(&.partition('=')[2])) ||
+            args[1]?.try { |arg| arg.matches?(FastAPIAccess::KEYWORD) ? nil : arg }
+    value ? FastAPIAccess.scope_atoms(value) : [] of Access::Atom
+  end
+
+  # What the scopes `declared` for dependency `name` require: FastAPI hands
+  # them, with those its own sub-dependencies declare, to every dependency
+  # below it, so the def that checks them may sit a few levels down. nil
+  # when no def in the chain checks every scope.
+  private def scope_cnf(name : String, call : String?, file : String, declared : Array(Access::Atom), depth : Int32) : Access::CNF?
+    return if depth > 4
+    body = check_body(name, call, file, 0) || return
+    return declared.map { |atom| [atom] } if FastAPIAccess.checks_every_scope?(body.text)
+    found = nil.as(Access::CNF?)
+    body.text.scan(DEPENDENCY_CALL) do |m|
+      args = call_arguments(body.text[(m.begin(0) + (m[0].index('(') || 0))..])
+      own = m[1] == "Security" ? security_scopes(args) : [] of Access::Atom
+      nested_call = m.post_match.starts_with?('(') ? m.post_match : nil
+      sub = scope_cnf(m[2], nested_call, body.file, declared + own, depth + 1)
+      sub ||= FastAPIAccess.unresolved("#{m[1]}(#{args.join(", ")})") unless own.empty?
+      found = (found || Access::CNF.new) + sub if sub
+    end
+    found
+  end
+
+  # The code a dependency runs for a request, with what its names are bound
+  # to: a `def`'s body under its defaults, the `__call__` of the instance a
+  # call or a module-level assignment builds, or a factory's body under the
+  # call's arguments.
+  private record CheckBody, text : String, file : String, env : Env, attrs : Hash(String, String?), instance : Bool
+
+  private def check_body(name : String, call : String?, file : String, depth : Int32) : CheckBody?
+    return if depth > 2
+    no_attrs = Hash(String, String?).new
+    unless call
+      site = callable_site(file, name)
+      # Defined inside an app factory, as `dependency_refuses?` reads it.
+      if site.nil? && !name.includes?('.') && (block = definition_block(file, /^\s+(?:async\s+)?def\s+#{Regex.escape(name)}\b/))
+        return CheckBody.new(block, file, def_env(block, file, nil, Env.new, file), no_attrs, false)
+      end
+      return unless site
+      if block = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/)
+        return CheckBody.new(block, site[0], def_env(block, site[0], nil, Env.new, file), no_attrs, false)
+      end
+      statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=\s*[\w.]+\s*\(/) || return
+      m = statement.match(INSTANCE_CALL) || return
+      return check_body(m[1], "(#{m.post_match}", site[0], depth + 1)
+    end
+    args = call_arguments(call)
+    if klass = class_site(file, name)
+      body = call_method(klass, 0) || return
+      return CheckBody.new(body, klass[0], Env.new, instance_attrs(klass, bind_arguments(init_signature(klass), args, Env.new, file, klass[0])), true)
+    end
+    site = callable_site(file, name) || return
+    block = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/) || return
+    bound = bind_arguments(def_params(block), args, Env.new, file, site[0])
+    if klass = factory_class(file, name)
+      body = call_method(klass, 0) || return
+      return CheckBody.new(body, klass[0], Env.new, instance_attrs(klass, bound), true)
+    end
+    CheckBody.new(block, site[0], def_env(block, site[0], bound, Env.new, file), no_attrs, false)
+  end
+
+  # What the refusals in a dependency's code require, one clause each: the
+  # request passes only when none fires. A 401 answers an unauthenticated
+  # caller whatever its condition; a 403 under a test that the caller's
+  # credential is absent does too. A 403 under one comparison of an injected
+  # caller's role with a value read here names the roles. Any other refusal
+  # is unresolved with its conditions. nil when it refuses nowhere.
+  private def refusal_cnf(body : CheckBody) : Access::CNF?
+    lines = body.text.lines
+    sites = refusal_sites(lines, body.file, REFUSAL_MARKER)
+    return if sites.empty?
+    unauthenticated = refusal_sites(lines, body.file, UNAUTHENTICATED_MARKER).map(&.[0]).to_set
+    sites.map do |idx, inline|
+      next [AUTHENTICATED] if unauthenticated.includes?(idx)
+      conds = governing_conditions(lines, idx)
+      conds << {inline, true} if inline
+      if conds.size == 1 && conds[0][1]
+        cond = conds[0][0]
+        next [AUTHENTICATED] if FastAPIAccess.absence_test?(cond) && credential_condition?(cond, Hash(String, String).new)
+        if (comparison = FastAPIAccess.role_comparison(cond)) && body.text.matches?(/[(,]\s*#{Regex.escape(comparison[0])}\s*[:=,)]/)
+          _, ref, collection = comparison
+          value = ref.starts_with?("self.") ? body.attrs[ref[5..]]? : eval_expr(ref, body.env, body.file, 0)
+          next FastAPIAccess.role_atoms(value, ref, collection)
+        end
+      end
+      [Access::Atom.new(:unresolved, conds.empty? ? lines[idx].strip : conds.map { |test, positive| positive ? test : "not (#{test})" }.join(" and "))]
+    end
+  end
+
+  # What the guard call a dependency's code opens with requires (see
+  # `leading_guard_call`): the callee's refusals, read the same way.
+  private def guard_call_cnf(body : CheckBody) : Access::CNF?
+    callee = leading_guard_call(body.text.lines, body.file, 0) || return
+    check_body(callee, nil, body.file, 0).try { |found| refusal_cnf(found) } ||
+      [[AUTHENTICATED], [Access::Atom.new(:unresolved, callee)]]
+  end
+
+  # The arguments a `fastapi.security` scheme instance named by a dependency
+  # is built with.
+  private def scheme_args(name : String, call : String?, file : String) : Array(String)?
+    if call
+      ctor, args, ctor_file = name, call_arguments(call), file
+    else
+      site = callable_site(file, name) || return
+      statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=\s*[\w.]+\s*\(/) || return
+      m = statement.match(INSTANCE_CALL) || return
+      ctor, args, ctor_file = m[1], call_arguments("(#{m.post_match}"), site[0]
+    end
+    args if FastAPIAccess.scheme?(ctor) && fastapi_name?(ctor_file, ctor)
+  end
+
+  FASTAPI_IMPORT = /^\s*from\s+fastapi(?:\.[\w.]+)?\s+import\s+(\([^)]*\)|[^\n]+)/m
+
+  # Whether `ctor` in `file` is FastAPI's own class, not a same-named one.
+  private def fastapi_name?(file : String, ctor : String) : Bool
+    return ctor.starts_with?("fastapi.") if ctor.includes?('.')
+    (read_file(file) || "").scan(FASTAPI_IMPORT).any? do |m|
+      m[1].gsub(/[()]/, " ").split(',').any? { |part| part.strip.split(/\s+as\s+/).last.strip == ctor }
     end
   end
 
@@ -833,8 +1130,10 @@ class FastAPIAuthTagger < FrameworkTagger
     truth == positive
   end
 
+  SETTING_NOTE = "(a setting can make it public)"
+
   private def setting_note(desc : String) : String
-    @configurable ? "#{desc} (a setting can make it public)" : desc
+    @configurable ? "#{desc} #{SETTING_NOTE}" : desc
   end
 
   # The body of method `name` in the class at `site`, or of the nearest base
@@ -1117,8 +1416,8 @@ class FastAPIAuthTagger < FrameworkTagger
   end
 
   # The handler's own body: from its `def` to the next line at or above
-  # the `def`'s indent.
-  private def body_authz_desc(lines : Array(String), start : Int32, path : String) : String?
+  # the `def`'s indent. `{description, the condition it refuses under}`.
+  private def body_authz_desc(lines : Array(String), start : Int32, path : String) : {String, String}?
     idx = start
     while idx < lines.size && idx < start + 60 && !lines[idx].lstrip.matches?(PYTHON_DEF)
       idx += 1
@@ -1167,7 +1466,7 @@ class FastAPIAuthTagger < FrameworkTagger
       if m = code.match(BODY_IF)
         frame = condition_frame(indent, m[2], callers)
         if m[1]? && (prior = chain[indent]?)
-          chain[indent] = {indent, prior[1] || frame[1], prior[2] || frame[2], false}
+          chain[indent] = {indent, prior[1] || frame[1], prior[2] || frame[2], false, "#{prior[4]} or #{frame[4]}"}
         else
           chain[indent] = frame
         end
@@ -1181,7 +1480,7 @@ class FastAPIAuthTagger < FrameworkTagger
         # The `else` of a check runs exactly when the check fails, so a
         # None caller reaches it whatever the `if` short-circuits on.
         prior = chain.delete(indent)
-        frames << {indent, prior.try(&.[1]) || false, prior.try(&.[2]) || false, false}
+        frames << {indent, prior.try(&.[1]) || false, prior.try(&.[2]) || false, false, prior ? "not (#{prior[4]})" : "else"}
         next
       else
         chain.delete(indent)
@@ -1189,13 +1488,13 @@ class FastAPIAuthTagger < FrameworkTagger
           frames << condition_frame(indent, m[1], callers)
           next
         elsif code.matches?(/^except\b/)
-          frames << {indent, false, false, false}
+          frames << {indent, false, false, false, "except"}
           next
         end
       end
       next unless statement.matches?(/^raise\b/) || statement.matches?(FORBIDDEN) || statement.matches?(UNAUTHORIZED_STATUS)
       if desc = refusal_desc(statement, conditions)
-        return desc
+        return {desc, conditions.empty? ? statement : conditions.map(&.[4]).join(" and ")}
       end
     end
     nil
@@ -1252,14 +1551,14 @@ class FastAPIAuthTagger < FrameworkTagger
     end
   end
 
-  # {indent, reads a role / ownership field?, reads the caller?, skipped
-  # when the caller is None?} for one condition. Only the caller decides
-  # the last: `if doc and doc.owner_id != user.id` still refuses anonymous.
+  # The `Condition` of one test. Only the caller decides whether a None
+  # caller skips it: `if doc and doc.owner_id != user.id` still refuses
+  # anonymous.
   private def condition_frame(indent : Int32, condition : String, callers : Set(String)) : Condition
     reads_caller = condition.scan(CALLER_REFERENCE).any? { |m| callers.includes?(m[0]) || m[0].starts_with?("request.") }
     admits_none = (subject = condition.match(NONE_SKIPPING_TEST).try(&.[1])) &&
                   (callers.includes?(subject) || subject.starts_with?("request."))
-    {indent, condition.matches?(AUTHZ_FIELD), reads_caller, !!admits_none}
+    {indent, condition.matches?(AUTHZ_FIELD), reads_caller, !!admits_none, condition}
   end
 
   CALLER_PARAM           = /(\w+)\s*(?::[^=,()]*(?:\[[^\]]*\][^=,()]*)?)?=\s*(Depends|Security)\s*\(\s*([\w.]*)/
@@ -1375,7 +1674,7 @@ class FastAPIAuthTagger < FrameworkTagger
         end
         next unless refusing_raise?(inner_lines.join('\n'), site[0])
         params = body_lines[0].match(/\(([^)]*)\)/).try(&.[1].split(',').map(&.split(/[:=]/, 2)[0].strip).reject(&.empty?)) || [] of String
-        return "FastAPI #{name}(...)#{" (a setting can make it public)" if setting_lifted?(inner_lines, params)}"
+        return "FastAPI #{name}(...)#{" #{SETTING_NOTE}" if setting_lifted?(inner_lines, params)}"
       end
     end
     nil
@@ -1672,7 +1971,7 @@ class FastAPIAuthTagger < FrameworkTagger
   # ponytail: `app.add_middleware(BaseHTTPMiddleware subclass)` is not
   # followed; a class middleware's `dispatch` would read the same way.
   # Starlette runs an http middleware for HTTP requests, never websockets.
-  private def http_middleware_guard(endpoint : Endpoint) : String?
+  private def http_middleware_guard(endpoint : Endpoint) : Tag?
     return if endpoint.protocol == "ws"
     # `{*name}` (a `:path` param) reaches every path below it, as `<path:name>` does.
     url = endpoint.url.sub(/\A[a-zA-Z][\w+.-]*:\/\/[^\/]*/, "").gsub(/\{\*(\w+)\}/, "<path:\\1>")
@@ -1692,7 +1991,7 @@ class FastAPIAuthTagger < FrameworkTagger
   # The guard of an http middleware registered on `receiver` in `file`, or
   # on every app or router that includes it (a router mounted on an open
   # app as well is served open there).
-  private def app_middleware_guard(file : String, receiver : String, sample : MwSample, depth : Int32) : String?
+  private def app_middleware_guard(file : String, receiver : String, sample : MwSample, depth : Int32) : Tag?
     return if depth > 6
     http_middlewares(file).each do |middleware|
       next unless middleware.receiver == receiver
@@ -1704,7 +2003,7 @@ class FastAPIAuthTagger < FrameworkTagger
     mounts.map { |call| app_middleware_guard(call.file, call.parent, sample, depth + 1) || return }.first?
   end
 
-  private def judge_http_middleware(middleware : HttpMiddleware, file : String, sample : MwSample) : String?
+  private def judge_http_middleware(middleware : HttpMiddleware, file : String, sample : MwSample) : Tag?
     @mw_locals, @mw_file, @mw_expansions = middleware.locals, file, 0
     @mw_unresolved = @mw_last_unknown = @mw_unknown_atom = nil
     outcomes = mw_block(middleware.klass.body, middleware.klass, sample, nil)
@@ -1712,9 +2011,11 @@ class FastAPIAuthTagger < FrameworkTagger
     name = middleware.klass.name
     if outcomes.includes?(MwOutcome::PassUnresolved)
       why = (@mw_unknown_atom || @mw_unresolved || "a condition")[0, 80]
-      return "Protected by FastAPI middleware #{name} (whether it lets the request through depends on `#{why}`, which this cannot tell)"
+      text = "Protected by FastAPI middleware #{name} (whether it lets the request through depends on `#{why}`, which this cannot tell)"
+      return Tag.new("auth", text, "fastapi_auth", requires: [Access::Clause.unresolved(why, text, file)])
     end
-    "Protected by FastAPI middleware #{name} (refuses unauthenticated requests outside its exempt paths)"
+    text = "Protected by FastAPI middleware #{name} (refuses unauthenticated requests outside its exempt paths)"
+    Tag.new("auth", text, "fastapi_auth", requires: [Access::Clause.new([AUTHENTICATED], text, file)])
   end
 
   private def http_middlewares(file : String) : Array(HttpMiddleware)
