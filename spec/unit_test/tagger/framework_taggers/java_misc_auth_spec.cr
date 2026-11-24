@@ -409,4 +409,73 @@ describe "JavaMiscAuthTagger" do
       "}",
     ], {3 => "/me"}).should eq([["Protected by Vert.x user() check"]])
   end
+
+  it "reads what the Vert.x handlers of every covering route require" do
+    tmpdir = File.tempname("vertx_requires")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "ApiRoutes.java")
+    File.write(file, [
+      "public class ApiRoutes {",
+      "  public void mount(Router router, JWTAuth jwt) {",
+      "    router.route(\"/api/*\").handler(JWTAuthHandler.create(jwt));",
+      "    router.route(\"/api/admin/*\").handler(AuthorizationHandler.create(RoleBasedAuthorization.create(\"admin\")));",
+      "    router.get(\"/api/admin/users\").handler(ctx -> ctx.response().end(\"users\"));",
+      "    router.get(\"/api/items\").handler(ctx -> ctx.response().end(\"items\"));",
+      "    router.route(\"/raw/*\").handler(JWTAuth.create(vertx, config));",
+      "    router.get(\"/raw/items\").handler(ctx -> ctx.response().end(\"raw\"));",
+      "  }",
+      "}",
+    ].join("\n"))
+    CodeLocator.instance.register_path(file)
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+    endpoints = {5 => "/api/admin/users", 6 => "/api/items", 8 => "/raw/items"}.map do |line, url|
+      details = Details.new(PathInfo.new(file, line))
+      details.technology = "java_vertx"
+      Endpoint.new(url, "GET", [] of Param, details)
+    end
+    JavaMiscAuthTagger.new(noir_options).perform(endpoints)
+    FileUtils.rm_rf(tmpdir)
+
+    endpoints.map { |endpoint| endpoint.tags.map(&.description) }.should eq([["Protected by Vert.x AuthHandler"], ["Protected by Vert.x AuthHandler"], ["Protected by Vert.x JWTAuth"]])
+    endpoints.map { |endpoint| Access.of(endpoint).map(&.to_s) }.should eq([
+      ["authenticated", "role:admin"],
+      ["authenticated"],
+      # `JWTAuth` builds a provider, which noir does not read as a handler.
+      ["authenticated", "unresolved"],
+    ])
+  end
+
+  it "keeps a covering route's handler it cannot name, and the route's own but its last, unread" do
+    requires = ->(guard : String?) do
+      tmpdir = File.tempname("vertx_unread")
+      Dir.mkdir_p(tmpdir)
+      file = File.join(tmpdir, "Routes.java")
+      File.write(file, [
+        "public class Routes {",
+        "  public void mount(Router router, JWTAuth jwt) {",
+        "    router.route(\"/admin/*\").handler(JWTAuthHandler.create(jwt));",
+        "    router.route(\"/admin/*\").handler(#{guard || "BodyHandler.create()"});",
+        "    router.get(\"/admin/x\").handler(ctx -> ctx.end(\"x\"));",
+        "    router.get(\"/own\").handler(JWTAuthHandler.create(jwt)).handler(#{guard || "LoggerHandler.create()"}).handler(ctx -> ctx.end(\"x\"));",
+        "  }",
+        "}",
+      ].join("\n"))
+      CodeLocator.instance.register_path(file)
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(tmpdir)
+      endpoints = {5 => "/admin/x", 6 => "/own"}.map do |line, url|
+        details = Details.new(PathInfo.new(file, line))
+        details.technology = "java_vertx"
+        Endpoint.new(url, "GET", [] of Param, details)
+      end
+      JavaMiscAuthTagger.new(noir_options).perform(endpoints)
+      FileUtils.rm_rf(tmpdir)
+      endpoints.map { |endpoint| Access.of(endpoint).map(&.to_s) }
+    end
+
+    requires.call("new TenantGuard()").should eq([["authenticated", "unresolved"], ["authenticated", "unresolved"]])
+    # vertx-web's body and logger handlers check no identity.
+    requires.call(nil).should eq([["authenticated"], ["authenticated"]])
+  end
 end

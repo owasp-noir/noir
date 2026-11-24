@@ -2,6 +2,7 @@ require "../../../miniparsers/kotlin_source_mask"
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../prefix_scope"
+require "./java_access"
 
 @[Noir::TaggerFor(key: "java_misc_auth", name: "Java Misc Auth Tagger", desc: "Identifies Vert.x/Armeria/JSP authentication patterns", order: 210)]
 class JavaMiscAuthTagger < FrameworkTagger
@@ -99,12 +100,13 @@ class JavaMiscAuthTagger < FrameworkTagger
 
       next if endpoint.details.technology == "java_armeria" && lines[line_idx].matches?(ARMERIA_BUILDER_ROUTE)
 
-      description = if endpoint.details.technology == "java_vertx"
-                      check_vertx(path_info.path, line_idx, endpoint.url)
-                    else
-                      check_route_auth(lines, line_idx) || check_handler_body(lines, line_idx)
-                    end
-      if description
+      if endpoint.details.technology == "java_vertx"
+        if found = check_vertx(path_info.path, line_idx, endpoint.url)
+          description = "Protected by #{found[0]}"
+          endpoint.add_tag(Tag.new("auth", description, "java_misc_auth", requires: JavaAccess.signed_in(found[1], description)))
+          return
+        end
+      elsif description = check_route_auth(lines, line_idx) || check_handler_body(lines, line_idx)
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "java_misc_auth"))
         return
       end
@@ -139,23 +141,113 @@ class JavaMiscAuthTagger < FrameworkTagger
   # after it, and no other. So the guard is read from those registrations'
   # statements and from the route's own, never from lines merely nearby (an
   # auth provider built there, `JWTAuth.create(..)`, guards nothing).
-  private def check_vertx(path : String, line_idx : Int32, url : String) : String?
+  #
+  # The tag names the first guard found. What the route requires comes from
+  # every handler those statements pass, one by one (`JavaAccess.vertx_handler`):
+  # all of a covering route's, and all of the route's own but the last
+  # (which serves the request) unless that one holds a guard the tag reads.
+  private def check_vertx(path : String, line_idx : Int32, url : String) : {String, Array(Access::Clause)}?
     source = vertx_source(path) || return
     return if line_idx >= source.code.size
-    source.registrations.each do |idx, route_path|
-      break if idx >= line_idx
-      next unless vertx_route_covers?(route_path, url)
-      if found = vertx_guard(source, idx, line_idx)
-        return found
+    found = nil
+    requires = [] of Access::Clause
+    statements = source.registrations.select { |idx, route_path| idx < line_idx && vertx_route_covers?(route_path, url) }.map { |idx, _| {idx, line_idx} }
+    statements << {line_idx, source.code.size}
+    own_router = router_of(source.code[line_idx])
+    statements.each do |from, stop|
+      found ||= vertx_pattern(vertx_guard_text(source, from, stop))
+      own = from == line_idx
+      label = source.code[from].strip
+      text = statement(source, from, stop)
+      args = handler_args(text)
+      # A Kotlin trailing-lambda handler (`.handler { .. }`) is read whole.
+      lambda = text.matches?(HANDLER_LAMBDA)
+      cnf = Access::CNF.new
+      args.each_with_index do |arg, index|
+        expression = handler_expression(source, arg, from)
+        cnf.concat(JavaAccess.vertx_handler(expression, own && !lambda && index == args.size - 1) { |rest| !vertx_pattern(rest).nil? })
       end
+      cnf << [Access::Atom.new(:unresolved, label)] if (args.empty? && vertx_pattern(text)) || (lambda && !own)
+      # A route registered on another router variable may not run before
+      # this one: a sub-router's routes see the parent's only where it is
+      # mounted, which is not read here.
+      router = router_of(label)
+      cnf = [[Access::Atom.new(:unresolved, label)]] if !own && !cnf.empty? && own_router && router && router != own_router
+      requires.concat(Access.clauses(cnf, label, path, from + 1))
     end
-    vertx_guard(source, line_idx, source.code.size)
+    found ? {found, requires} : nil
   end
 
-  # The guard named by the statement at `from` (ending before `stop`), with
-  # the declarations of the handler variables and the bodies of the handler
-  # methods it passes.
-  private def vertx_guard(source : VertxSource, from : Int32, stop : Int32) : String?
+  ROUTER_RECEIVER = /\A\s*([a-z_$][\w$]*)\s*\.\s*#{VERTX_VERB}\s*\(/
+  HANDLER_CALL    = /\.\s*(?:handler|blockingHandler)\s*\(/
+  HANDLER_LAMBDA  = /\.\s*(?:handler|blockingHandler)\s*\{/
+
+  private def router_of(line : String) : String?
+    line.match(ROUTER_RECEIVER).try(&.[1])
+  end
+
+  # The argument of each `.handler(..)` call of a statement, in order.
+  private def handler_args(text : String) : Array(String)
+    args = [] of String
+    pos = 0
+    while (call = text.match(HANDLER_CALL, pos)) && (close = Noir::JSLiteralScanner.find_matching_paren(text, call.end(0) - 1))
+      args << text[call.end(0)...close]
+      pos = close + 1
+    end
+    args
+  end
+
+  # A handler argument with a variable replaced by the value it is declared
+  # with, and a method reference by the method.
+  private def handler_expression(source : VertxSource, arg : String, at : Int32) : String
+    text = arg.strip
+    if text.matches?(/\A[a-z_$][\w$]*\z/)
+      declared = declaration_in_scope(source, text, at) || return text
+      initializer(statement(source, declared, source.code.size), text) || text
+    elsif (ref = text.match(/\A(?:this|[A-Z][\w$]*)?\s*::\s*([a-z_$][\w$]*)\z/)) && (head = source.methods[ref[1]]?)
+      statement(source, head, source.code.size)
+    else
+      text
+    end
+  end
+
+  # The expression `name` is declared with in `text`, up to the `;` or
+  # line end that closes it; nil for a declaration without one.
+  private def initializer(text : String, name : String) : String?
+    return unless found = text.match(/(?<![\w$.])#{Regex.escape(name)}\s*(?::\s*[\w$.<>?]+\s*)?=(?!=)/)
+    depth = 0
+    quote = nil.as(Char?)
+    index = found.end(0)
+    start = index
+    while index < text.size
+      char = text[index]
+      if open_quote = quote
+        index += 1 if char == '\\'
+        quote = nil if char == open_quote
+      elsif char == '"' || char == '\''
+        quote = char
+      elsif char.in?('(', '[', '{')
+        depth += 1
+      elsif char.in?(')', ']', '}')
+        break if (depth -= 1) < 0
+      elsif depth == 0 && (char == ';' || (char == '\n' && !text[(index + 1)..].lstrip.starts_with?('.')))
+        break
+      end
+      index += 1
+    end
+    text[start...index].strip
+  end
+
+  private def vertx_pattern(text : String) : String?
+    ALL_PATTERNS.each do |pattern, desc|
+      return desc if text.matches?(pattern)
+    end
+    nil
+  end
+
+  # The statement at `from` (ending before `stop`), with the declarations of
+  # the handler variables and the bodies of the handler methods it passes.
+  private def vertx_guard_text(source : VertxSource, from : Int32, stop : Int32) : String
     text = statement(source, from, stop)
     text.scan(HANDLER_VARIABLE) do |found|
       if declared = declaration_in_scope(source, found[1], from)
@@ -167,10 +259,7 @@ class JavaMiscAuthTagger < FrameworkTagger
         text += "\n#{statement(source, head, source.code.size)}"
       end
     end
-    ALL_PATTERNS.each do |pattern, desc|
-      return desc if text.matches?(pattern)
-    end
-    nil
+    text
   end
 
   # The statement starting on line `from`: the lines still inside a bracket

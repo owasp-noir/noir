@@ -56,5 +56,7 @@ describe "Dropwizard @Auth principal", tags: "functional" do
     # mentions `@io.dropwizard.auth.Auth`).
     taggers.call("GET", "/v1/custom").should be_empty
     taggers.call("GET", "/v1/audit").should be_empty
+
+    Access.of(tester.app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/v1/session/{id}" }).map(&.to_s).should eq ["authenticated"]
   end
 end

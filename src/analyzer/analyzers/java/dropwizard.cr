@@ -54,6 +54,24 @@ module Analyzer::Java
       !JavaEngine.type_resolves_to?(auth.type_name, "java.util.Optional", file, scope, unresolved: bare_is_jdk)
     end
 
+    ROLE_ANNOTATION = /@(?:[\w.]*\.)?(?:RolesAllowed|DenyAll)\b/
+
+    # The authenticator filter admits any caller with valid credentials.
+    # `AuthDynamicFeature` stops at `@Auth`, so a `@RolesAllowed` or
+    # `@DenyAll` is enforced only by Jersey's `RolesAllowedDynamicFeature`,
+    # if the app registers it.
+    # ponytail: one such annotation anywhere in the resource or principal's
+    # file leaves the endpoint unread; read the method's own annotations if
+    # that proves too coarse.
+    private def principal_requires(auth : Noir::TreeSitterJaxRsExtractor::AuthParam, auth_file : String, auth_source : String, route_file : String) : Array(Access::Clause)
+      requires = [Access::Clause.new([Access::Atom.new(:authenticated)], "@Auth #{auth.type_name}", auth_file)]
+      {auth_file => auth_source, route_file => (route_file == auth_file ? auth_source : read_file_content(route_file))}.each do |file, source|
+        next unless JavaEngine.strip_comments(source).matches?(ROLE_ANNOTATION)
+        requires << Access::Clause.unresolved("@RolesAllowed/@DenyAll in #{File.basename(file)}", "RolesAllowedDynamicFeature", file)
+      end
+      requires
+    end
+
     private struct DropwizardPathConfig
       getter application_context_path : String
       getter root_path : String
@@ -124,7 +142,7 @@ module Analyzer::Java
               auth_file = auth.file || path
               auth_source = auth_file == path ? content : read_file_content(auth_file)
               if required_dropwizard_principal?(auth, auth_file, auth_source, name_scopes)
-                endpoint.add_tag(Tag.new("auth", AUTH_PRINCIPAL_GUARD, TAGGER))
+                endpoint.add_tag(Tag.new("auth", AUTH_PRINCIPAL_GUARD, TAGGER, requires: principal_requires(auth, auth_file, auth_source, route_file)))
               end
             end
             @result << endpoint
