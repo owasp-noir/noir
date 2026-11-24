@@ -2,6 +2,38 @@ require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
+# The aspnet_auth tags of the endpoint at `line` of `file`, scanning `files`.
+private def aspnet_tags(files : Hash(String, String), file : String, line : Int32, technology = "cs_aspnet_core_mvc") : Array(Tag)
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("aspnet_requires")
+  files.each do |rel, body|
+    path = File.join(tmpdir, rel)
+    Dir.mkdir_p(File.dirname(path))
+    File.write(path, body)
+    CodeLocator.instance.register_path(path)
+  end
+  begin
+    options = create_test_options
+    options["base"] = YAML::Any.new(tmpdir)
+    details = Details.new(PathInfo.new(File.join(tmpdir, file), line))
+    details.technology = technology
+    endpoint = Endpoint.new("/x", "GET", [] of Param, details)
+    AspnetAuthTagger.new(options).perform([endpoint])
+    endpoint.tags
+  ensure
+    FileUtils.rm_rf(tmpdir)
+    CodeLocator.instance.clear_all
+  end
+end
+
+private def requires_of(tag : Tag) : Array(Array(String))
+  tag.requires.not_nil!.map(&.any_of.map(&.to_s))
+end
+
+private def unread_of(tag : Tag) : Array(String)
+  tag.requires.not_nil!.flat_map(&.any_of).select(&.kind.unresolved?).compact_map(&.value)
+end
+
 describe "AspnetAuthTagger" do
   fixture_base = File.expand_path("../../../functional_test/fixtures/csharp/aspnet_auth", __DIR__)
   controller_path = "#{fixture_base}/Controllers/PostsController.cs"
@@ -940,5 +972,315 @@ describe "AspnetAuthTagger" do
     it "ignores an attribute that derives neither" do
       tags_for.call("IActionResult Plain()").should be_empty
     end
+  end
+end
+
+describe "AspnetAuthTagger requires" do
+  it "adds every [Authorize] on the action, its class and its base class" do
+    files = {"Controllers.cs" => <<-CS}
+      [Authorize]
+      public abstract class SecureBase : ControllerBase { }
+
+      [Authorize(Policy = "CanExport")]
+      public class ReportsController : SecureBase
+      {
+          [Authorize(Roles = "Admin,Manager")]
+          [Authorize(Roles = RoleNames.Auditor)]
+          [HttpGet("export")]
+          public IActionResult Export() => Ok();
+      }
+      CS
+    tags = aspnet_tags(files, "Controllers.cs", 10)
+    tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)]"])
+    requires_of(tags[0]).sort.should eq([["authenticated"], ["role:Admin", "role:Manager"], ["unresolved"], ["unresolved"]])
+    unread_of(tags[0]).sort.should eq(["Policy=CanExport", "Roles = RoleNames.Auditor"])
+  end
+
+  it "keeps an attribute deriving AuthorizeAttribute next to a plain [Authorize]" do
+    files = {"Controllers.cs" => <<-CS}
+      public class ApiPermissionAttribute : AuthorizeAttribute
+      {
+          public ApiPermissionAttribute(string permission) { Policy = permission; }
+      }
+
+      [Authorize]
+      public class ItemsController : ControllerBase
+      {
+          [ApiPermission("items.read")]
+          [HttpGet("items")]
+          public IActionResult List() => Ok();
+      }
+      CS
+    tags = aspnet_tags(files, "Controllers.cs", 11)
+    tags.map(&.description).should eq(["Protected by ASP.NET [Authorize] (class-level)"])
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
+    unread_of(tags[0]).should eq([%([ApiPermission("items.read")])])
+  end
+
+  it "reads a derived attribute alone as signed in plus unread" do
+    files = {"Controllers.cs" => <<-CS}
+      public class ApiPermissionAttribute : AuthorizeAttribute { }
+
+      public class ItemsController : ControllerBase
+      {
+          [ApiPermission]
+          [HttpGet("items")]
+          public IActionResult List() => Ok();
+      }
+      CS
+    tags = aspnet_tags(files, "Controllers.cs", 7)
+    tags.map(&.description).should eq(["Protected by [ApiPermission] (derives AuthorizeAttribute)"])
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
+  end
+
+  it "adds a minimal API route's lambda attribute, its own and its group's RequireAuthorization" do
+    files = {"Program.cs" => <<-CS}
+      var app = builder.Build();
+      var api = app.MapGroup("/api").RequireAuthorization("Member");
+      api.MapGet("/x", [Authorize(Roles = "Admin")] () => 1).RequireAuthorization(p => p.RequireRole("Ops"));
+      app.Run();
+      CS
+    tags = aspnet_tags(files, "Program.cs", 3, "cs_aspnet_core_minimal_api")
+    tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)]"])
+    requires_of(tags[0]).sort.should eq([["authenticated"], ["role:Admin"], ["role:Ops"], ["unresolved"]])
+    unread_of(tags[0]).should eq(["Policy=Member"])
+  end
+
+  it "adds every RequireAuthorization statement of the route's group" do
+    files = {"Program.cs" => <<-CS}
+      var app = builder.Build();
+      var api = app.MapGroup("/api");
+      api.RequireAuthorization();
+      api.RequireAuthorization("Member");
+      api.MapGet("/x", () => 1);
+      app.Run();
+      CS
+    tags = aspnet_tags(files, "Program.cs", 5, "cs_aspnet_core_minimal_api")
+    tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization() (route group)"])
+    requires_of(tags[0]).sort.should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "reads AllowAnonymous on the route's group as open to anyone" do
+    files = {"Program.cs" => <<-CS}
+      var app = builder.Build();
+      var open = app.MapGroup("/open").AllowAnonymous();
+      open.MapGet("/x", () => 1).RequireAuthorization();
+      app.Run();
+      CS
+    tags = aspnet_tags(files, "Program.cs", 3, "cs_aspnet_core_minimal_api")
+    tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
+    requires_of(tags[0]).should eq([["anonymous"]])
+  end
+
+  it "keeps an authorizing helper unread" do
+    files = {"Program.cs" => <<-CS}
+      var app = builder.Build();
+      app.MapGet("/x", () => 1).WithApiDefaults();
+      app.Run();
+
+      public static class Defaults
+      {
+          public static RouteHandlerBuilder WithApiDefaults(this RouteGroupBuilder group)
+          {
+              group.RequireAuthorization("Member");
+              return group;
+          }
+      }
+      CS
+    tags = aspnet_tags(files, "Program.cs", 2, "cs_aspnet_core_minimal_api")
+    tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
+    unread_of(tags[0]).should eq([".WithApiDefaults()"])
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
+  end
+
+  it "reads a bare [Authorize] as signed in plus unread when the code replaces DefaultPolicy" do
+    files = {
+      "Program.cs"     => %(builder.Services.AddAuthorization(o => o.DefaultPolicy = new AuthorizationPolicyBuilder().RequireClaim("tenant").Build());),
+      "Controllers.cs" => <<-CS,
+        public class ItemsController : ControllerBase
+        {
+            [Authorize]
+            [HttpGet("items")]
+            public IActionResult List() => Ok();
+        }
+        CS
+    }
+    tags = aspnet_tags(files, "Controllers.cs", 5)
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
+    unread_of(tags[0]).should eq([%(DefaultPolicy = new AuthorizationPolicyBuilder().RequireClaim("tenant").Build())])
+  end
+
+  it "keeps an AuthorizeAttribute the project declares unread" do
+    files = {
+      "Auth/AuthorizeAttribute.cs" => <<-CS,
+        namespace App.Auth;
+        public class AuthorizeAttribute : Attribute, IAuthorizationFilter
+        {
+            public string Roles { get; set; }
+            public void OnAuthorization(AuthorizationFilterContext context) { }
+        }
+        CS
+      "Controllers.cs" => <<-CS,
+        using App.Auth;
+        public class ItemsController : ControllerBase
+        {
+            [Authorize(Roles = "Admin")]
+            [HttpGet("items")]
+            public IActionResult List() => Ok();
+        }
+        CS
+    }
+    tags = aspnet_tags(files, "Controllers.cs", 6)
+    tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)]"])
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
+    unread_of(tags[0]).should eq([%([Authorize(Roles = "Admin")])])
+  end
+
+  it "does not take a later route's AllowAnonymous for a controller action's" do
+    files = {"Controllers.cs" => <<-CS}
+      public class ItemsController : ControllerBase
+      {
+          [Authorize]
+          [HttpGet("a")]
+          public IActionResult A()
+          {
+              return Ok();
+          }
+
+          void Map(IEndpointRouteBuilder app) { app.MapGet("/x", () => 1).AllowAnonymous(); }
+      }
+      CS
+    tags = aspnet_tags(files, "Controllers.cs", 5)
+    tags.map(&.description).should eq(["Protected by ASP.NET [Authorize]"])
+    requires_of(tags[0]).should eq([["authenticated"]])
+  end
+
+  it "does not take a namesake group declared outside the method for the route's" do
+    files = {"Program.cs" => <<-CS}
+      var app = builder.Build();
+      var group = app.MapGroup("/public").AllowAnonymous();
+      group.MapGet("/a", () => "a");
+      app.MapGroup("/admin").MapAdmin();
+      app.Run();
+
+      static class AdminRoutes
+      {
+          public static RouteGroupBuilder MapAdmin(this RouteGroupBuilder group)
+          {
+              group.MapGet("/users", () => "u").RequireAuthorization();
+              return group;
+          }
+      }
+      CS
+    tags = aspnet_tags(files, "Program.cs", 11, "cs_aspnet_core_minimal_api")
+    tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
+    requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
+    unread_of(tags[0]).should eq(["the conventions of group, a builder made outside this method"])
+  end
+
+  it "keeps a Carter module's conventions unread" do
+    files = {"AdminModule.cs" => <<-CS}
+      public class AdminModule : CarterModule
+      {
+          public AdminModule() : base("/admin")
+          {
+              this.RequireAuthorization("AdminPolicy");
+          }
+
+          public override void AddRoutes(IEndpointRouteBuilder app)
+          {
+              app.MapGet("/stats", () => "s").RequireAuthorization();
+          }
+      }
+      CS
+    tags = aspnet_tags(files, "AdminModule.cs", 10, "cs_carter")
+    requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "adds the layers a route takes from its handler, its metadata and its group's later conventions" do
+    files = {"Program.cs" => <<-CS}
+      var app = builder.Build();
+      app.MapGet("/methodgroup", Handlers.Secret).RequireAuthorization();
+      app.MapGet("/withmeta", () => "x").RequireAuthorization().WithMetadata(new AuthorizeAttribute { Roles = "M" });
+      var late = app.MapGroup("/late");
+      late.MapGet("/x", () => "x").RequireAuthorization();
+      late.RequireAuthorization("Late");
+      app.Run();
+      CS
+    method_group = aspnet_tags(files, "Program.cs", 2, "cs_aspnet_core_minimal_api")
+    requires_of(method_group[0]).should eq([["unresolved"], ["authenticated"]])
+    unread_of(method_group[0]).should eq(["attributes of the handler Handlers.Secret"])
+    requires_of(aspnet_tags(files, "Program.cs", 3, "cs_aspnet_core_minimal_api")[0]).should eq([["authenticated"], ["role:M"]])
+    late = aspnet_tags(files, "Program.cs", 5, "cs_aspnet_core_minimal_api")
+    unread_of(late[0]).should eq(["Policy=Late"])
+  end
+
+  it "keeps a TypeFilter next to [Authorize] unread" do
+    files = {"Controllers.cs" => <<-CS}
+      public class CController : ControllerBase
+      {
+          [Authorize]
+          [TypeFilter(typeof(AdminFilter))]
+          [HttpGet("typefilter")]
+          public IActionResult A() => Ok();
+      }
+      CS
+    tags = aspnet_tags(files, "Controllers.cs", 6)
+    requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
+    unread_of(tags[0]).should eq(["[TypeFilter(typeof(AdminFilter))]"])
+  end
+
+  it "reads nothing past the end of a statement that does not compile" do
+    files = {"Program.cs" => <<-CS}
+      var app = builder.Build();
+      app.MapGet("/u", () => "x").RequireAuthorization(p => p.RequireRole("U";
+      app.MapGet("/v", () => "x").RequireAuthorization(p => p.RequireRole("V"));
+      app.Run();
+      CS
+    tags = aspnet_tags(files, "Program.cs", 2, "cs_aspnet_core_minimal_api")
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
+  end
+
+  it "reads an in-action refusal a permission setting can lift as unread only" do
+    files = {"Controllers.cs" => <<-CS}
+      public class ItemsController : Controller
+      {
+          public async Task<IActionResult> Admin()
+          {
+              if (!await _permissionService.AuthorizeAsync("AccessAdminPanel"))
+                  return Challenge();
+              return View();
+          }
+
+          public async Task<IActionResult> Me()
+          {
+              var user = await _userManager.GetUserAsync(User);
+              if (user == null)
+                  return Challenge();
+              return View();
+          }
+      }
+      CS
+    admin = aspnet_tags(files, "Controllers.cs", 3)
+    admin.map(&.name).should eq(["auth"])
+    requires_of(admin[0]).should eq([["unresolved"]])
+    me = aspnet_tags(files, "Controllers.cs", 10)
+    requires_of(me[0]).should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "reads a caller check beside some refusal as unread: it may turn away signed-in callers only" do
+    files = {"Controllers.cs" => <<-CS}
+      public class AccountController : Controller
+      {
+          public IActionResult Login()
+          {
+              if (User.Identity.IsAuthenticated) return Redirect("/");
+              return View();
+          }
+      }
+      CS
+    tags = aspnet_tags(files, "Controllers.cs", 3)
+    tags.map(&.description).should eq(["Protected by ASP.NET User.Identity.IsAuthenticated"])
+    requires_of(tags[0]).should eq([["unresolved"]])
   end
 end
