@@ -142,8 +142,10 @@ class JavaMiscAuthTagger < FrameworkTagger
   # statements and from the route's own, never from lines merely nearby (an
   # auth provider built there, `JWTAuth.create(..)`, guards nothing).
   #
-  # The tag names the first guard found; every covering statement and the
-  # route's own add what they require, an `AuthorizationHandler` included.
+  # The tag names the first guard found. What the route requires comes from
+  # every handler those statements pass, one by one (`JavaAccess.vertx_handler`):
+  # all of a covering route's, and all of the route's own but the last
+  # (which serves the request) unless that one holds a guard the tag reads.
   private def check_vertx(path : String, line_idx : Int32, url : String) : {String, Array(Access::Clause)}?
     source = vertx_source(path) || return
     return if line_idx >= source.code.size
@@ -151,15 +153,89 @@ class JavaMiscAuthTagger < FrameworkTagger
     requires = [] of Access::Clause
     statements = source.registrations.select { |idx, route_path| idx < line_idx && vertx_route_covers?(route_path, url) }.map { |idx, _| {idx, line_idx} }
     statements << {line_idx, source.code.size}
+    own_router = router_of(source.code[line_idx])
     statements.each do |from, stop|
-      text = vertx_guard_text(source, from, stop)
-      guard = vertx_pattern(text)
-      found ||= guard
-      next unless guard || text.matches?(JavaAccess::VERTX_HANDLER)
-      cnf = JavaAccess.vertx(text) { |rest| !vertx_pattern(rest).nil? }
-      requires.concat(Access.clauses(cnf, source.code[from].strip, path, from + 1))
+      found ||= vertx_pattern(vertx_guard_text(source, from, stop))
+      own = from == line_idx
+      label = source.code[from].strip
+      text = statement(source, from, stop)
+      args = handler_args(text)
+      # A Kotlin trailing-lambda handler (`.handler { .. }`) is read whole.
+      lambda = text.matches?(HANDLER_LAMBDA)
+      cnf = Access::CNF.new
+      args.each_with_index do |arg, index|
+        expression = handler_expression(source, arg, from)
+        cnf.concat(JavaAccess.vertx_handler(expression, own && !lambda && index == args.size - 1) { |rest| !vertx_pattern(rest).nil? })
+      end
+      cnf << [Access::Atom.new(:unresolved, label)] if (args.empty? && vertx_pattern(text)) || (lambda && !own)
+      # A route registered on another router variable may not run before
+      # this one: a sub-router's routes see the parent's only where it is
+      # mounted, which is not read here.
+      router = router_of(label)
+      cnf = [[Access::Atom.new(:unresolved, label)]] if !own && !cnf.empty? && own_router && router && router != own_router
+      requires.concat(Access.clauses(cnf, label, path, from + 1))
     end
     found ? {found, requires} : nil
+  end
+
+  ROUTER_RECEIVER = /\A\s*([a-z_$][\w$]*)\s*\.\s*#{VERTX_VERB}\s*\(/
+  HANDLER_CALL    = /\.\s*(?:handler|blockingHandler)\s*\(/
+  HANDLER_LAMBDA  = /\.\s*(?:handler|blockingHandler)\s*\{/
+
+  private def router_of(line : String) : String?
+    line.match(ROUTER_RECEIVER).try(&.[1])
+  end
+
+  # The argument of each `.handler(..)` call of a statement, in order.
+  private def handler_args(text : String) : Array(String)
+    args = [] of String
+    pos = 0
+    while (call = text.match(HANDLER_CALL, pos)) && (close = Noir::JSLiteralScanner.find_matching_paren(text, call.end(0) - 1))
+      args << text[call.end(0)...close]
+      pos = close + 1
+    end
+    args
+  end
+
+  # A handler argument with a variable replaced by the value it is declared
+  # with, and a method reference by the method.
+  private def handler_expression(source : VertxSource, arg : String, at : Int32) : String
+    text = arg.strip
+    if text.matches?(/\A[a-z_$][\w$]*\z/)
+      declared = declaration_in_scope(source, text, at) || return text
+      initializer(statement(source, declared, source.code.size), text) || text
+    elsif (ref = text.match(/\A(?:this|[A-Z][\w$]*)?\s*::\s*([a-z_$][\w$]*)\z/)) && (head = source.methods[ref[1]]?)
+      statement(source, head, source.code.size)
+    else
+      text
+    end
+  end
+
+  # The expression `name` is declared with in `text`, up to the `;` or
+  # line end that closes it; nil for a declaration without one.
+  private def initializer(text : String, name : String) : String?
+    return unless found = text.match(/(?<![\w$.])#{Regex.escape(name)}\s*(?::\s*[\w$.<>?]+\s*)?=(?!=)/)
+    depth = 0
+    quote = nil.as(Char?)
+    index = found.end(0)
+    start = index
+    while index < text.size
+      char = text[index]
+      if open_quote = quote
+        index += 1 if char == '\\'
+        quote = nil if char == open_quote
+      elsif char == '"' || char == '\''
+        quote = char
+      elsif char.in?('(', '[', '{')
+        depth += 1
+      elsif char.in?(')', ']', '}')
+        break if (depth -= 1) < 0
+      elsif depth == 0 && (char == ';' || (char == '\n' && !text[(index + 1)..].lstrip.starts_with?('.')))
+        break
+      end
+      index += 1
+    end
+    text[start...index].strip
   end
 
   private def vertx_pattern(text : String) : String?

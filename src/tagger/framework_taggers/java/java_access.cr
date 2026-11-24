@@ -17,12 +17,13 @@ module JavaAccess
   LITERAL = /\A\s*"((?:[^"\\]|\\.)*)"\s*\z/m
   NAMED   = /\A\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.*)\z/m
 
-  # The `@name` annotation written on `lines[idx]`, its arguments read up to
-  # the balanced `)` across the following lines. nil when it is not on that
-  # line, or when its parenthesis never closes.
-  def annotation_in(lines : Array(String), idx : Int32, name : String) : Annotation?
+  # The `@name` annotation written on `lines[idx]` at or after column
+  # `from`, its arguments read up to the balanced `)` across the following
+  # lines. nil when it is not on that line, or when its parenthesis never
+  # closes.
+  def annotation_in(lines : Array(String), idx : Int32, name : String, from : Int32 = 0) : Annotation?
     return unless line = lines[idx]?
-    return unless found = line.match(/@(?:[\w.]*\.)?#{name}\b/)
+    return unless found = line.match(/@(?:[\w.]*\.)?#{name}\b/, from)
     text = lines[idx, 40].join('\n')
     rest = found.end(0)
     while rest < text.size && text[rest].whitespace?
@@ -60,7 +61,7 @@ module JavaAccess
     _, named = arguments(args)
     inclusive = named["inclusive"]?
     return unresolved(ann.text) unless (named.keys - ["value", "inclusive"]).empty? && inclusive.in?(nil, "true", "false")
-    cnf = list(ann) do |value|
+    cnf = list(ann, ["inclusive"]) do |value|
       checkers.try(&.includes?(value)) == false ? Access::Atom.new(:permission, value) : Access::Atom.new(:unresolved, value)
     end
     inclusive == "true" ? cnf.flat_map { |atoms| atoms.map { |atom| [atom] } } : cnf
@@ -102,19 +103,25 @@ module JavaAccess
     [atoms.compact]
   end
 
-  # nil for `IS_ANONYMOUS`, which every caller holds.
+  # nil for `IS_ANONYMOUS`, which every caller holds. The `SecurityRule`
+  # constants hold `"isAnonymous()"`, `"isAuthenticated()"` and
+  # `"denyAll()"`; a literal `"IS_ANONYMOUS"` is a role name like any other.
   private def micronaut_atom(value : String) : Access::Atom?
-    text = literal(value) || value.strip.sub(/\A(?:[\w.]*\.)?SecurityRule\s*\.\s*/, "")
-    case text
-    when "IS_ANONYMOUS", "isAnonymous()"         then nil
-    when "IS_AUTHENTICATED", "isAuthenticated()" then Access::Atom.new(:authenticated)
-    when "DENY_ALL", "denyAll()"                 then Access::Atom.new(:deny)
-    else
-      # `#{...}` is an evaluated expression, not a role.
-      if literal(value) && !text.starts_with?("\#{")
-        Access::Atom.new(:role, text)
+    if text = literal(value)
+      case text
+      when "isAnonymous()"     then nil
+      when "isAuthenticated()" then Access::Atom.new(:authenticated)
+      when "denyAll()"         then Access::Atom.new(:deny)
       else
-        Access::Atom.new(:unresolved, value.strip)
+        # `#{...}` is an evaluated expression, not a role.
+        text.starts_with?("\#{") ? Access::Atom.new(:unresolved, value.strip) : Access::Atom.new(:role, text)
+      end
+    else
+      case value.strip.sub(/\A(?:[\w.]*\.)?SecurityRule\s*\.\s*/, "")
+      when "IS_ANONYMOUS"     then nil
+      when "IS_AUTHENTICATED" then Access::Atom.new(:authenticated)
+      when "DENY_ALL"         then Access::Atom.new(:deny)
+      else                         Access::Atom.new(:unresolved, value.strip)
       end
     end
   end
@@ -135,53 +142,66 @@ module JavaAccess
     [[Access::Atom.new(:authenticated)]] if names.includes?("PermitAll")
   end
 
-  VERTX_HANDLER = /\b((?:[A-Z][\w$]*)?(?:AuthHandler|AuthenticationHandler|AuthorizationHandler))\s*\.\s*create\s*\(/
-  VERTX_GRANT   = /\A\s*(RoleBasedAuthorization|PermissionBasedAuthorization)\s*\.\s*create\s*\(\s*("(?:[^"\\]|\\.)*")\s*\)\s*\z/
-  # `Type name =` and Kotlin `val name: Type =` in front of a handler: the
-  # declared type names a handler kind, not another guard.
-  DECLARED_TYPE = /\b[A-Z][\w$.]*(?:<[^;=()]*>)?\s+[a-z_$][\w$]*\s*=(?!=)|\b(?:val|var)\s+[a-z_$][\w$]*\s*:\s*[A-Z][\w$.]*\??\s*=(?!=)/
+  VERTX_GRANT  = /\A\s*(RoleBasedAuthorization|PermissionBasedAuthorization)\s*\.\s*create\s*\(\s*("(?:[^"\\]|\\.)*")\s*\)\s*\z/
+  VERTX_CREATE = /\A([A-Z][\w$]*)\s*\.\s*create\s*\(/
+  # vertx-web's authentication handlers: each refuses a caller without
+  # valid credentials and checks nothing else unless configured further.
+  VERTX_AUTHN = Set{"JWTAuthHandler", "BasicAuthHandler", "DigestAuthHandler", "OAuth2AuthHandler", "RedirectAuthHandler",
+                    "APIKeyHandler", "WebAuthn4JHandler", "WebAuthnHandler", "OtpAuthHandler", "SimpleAuthenticationHandler"}
+  # vertx-web handlers that check no identity.
+  VERTX_PASSIVE = Set{"BodyHandler", "CorsHandler", "LoggerHandler", "StaticHandler", "SessionHandler", "TimeoutHandler",
+                      "ResponseTimeHandler", "ResponseContentTypeHandler", "FaviconHandler", "ErrorHandler", "CSRFHandler",
+                      "HSTSHandler", "CSPHandler", "XFrameHandler", "MethodOverrideHandler", "TemplateHandler"}
 
-  # The Vert.x handlers created in `text`: an authentication handler needs a
-  # signed-in caller; `AuthorizationHandler.create(RoleBasedAuthorization
-  # .create("x"))` a role (a permission for `PermissionBasedAuthorization`).
-  # A call chained on a handler, a non-literal authorization, and any guard
-  # `unread` still finds in what is left stay unread.
-  def vertx(text : String, &unread : String -> Bool) : Access::CNF
-    cnf = Access::CNF.new
-    residual = text
-    pos = 0
-    while found = text.match(VERTX_HANDLER, pos)
-      open = found.end(0) - 1
-      break unless close = Noir::JSLiteralScanner.find_matching_paren(text, open)
-      finish = close
-      chain = [] of String
-      while (call = text[(finish + 1)..].match(/\A\s*\.\s*([A-Za-z_$][\w$]*)\s*\(/)) &&
-            (call_close = Noir::JSLiteralScanner.find_matching_paren(text, finish + call.end(0)))
-        chain << text[(finish + 1)..call_close].strip
-        finish = call_close
-      end
-      if found[1] == "AuthorizationHandler"
-        args = text[(open + 1)...close]
-        if (grant = args.match(VERTX_GRANT)) && (value = literal(grant[2]))
-          cnf << [Access::Atom.new(grant[1] == "RoleBasedAuthorization" ? Access::Kind::Role : Access::Kind::Permission, value)]
-        else
-          cnf << [Access::Atom.new(:unresolved, args.strip)]
-        end
+  # What one Vert.x handler requires. vertx-web's authentication handlers
+  # need a signed-in caller; `AuthorizationHandler.create(RoleBasedAuthorization
+  # .create("x"))` a role (a permission for `PermissionBasedAuthorization`);
+  # the handlers in VERTX_PASSIVE nothing. A call chained on a handler, a
+  # non-literal authorization and any other handler are unread, except a
+  # route's own `last` handler that `unread` finds no guard in: it serves
+  # the request.
+  def vertx_handler(expression : String, last : Bool, &unread : String -> Bool) : Access::CNF
+    text = expression.strip
+    if (call = text.match(VERTX_CREATE)) && (close = Noir::JSLiteralScanner.find_matching_paren(text, call.end(0) - 1))
+      name = call[1]
+      chain = chained_calls(text, close)
+      return Access::CNF.new if VERTX_PASSIVE.includes?(name)
+      if name == "AuthorizationHandler"
+        args = text[call.end(0)...close]
+        grant = args.match(VERTX_GRANT)
+        value = grant.try { |found| literal(found[2]) }
+        cnf = if grant && value
+                [[Access::Atom.new(grant[1] == "RoleBasedAuthorization" ? Access::Kind::Role : Access::Kind::Permission, value)]]
+              else
+                [[Access::Atom.new(:unresolved, args.strip)]]
+              end
         # Providers say who holds an authorization, not what is required.
         chain.reject!(&.starts_with?(".addAuthorizationProvider"))
-      else
-        cnf << [Access::Atom.new(:authenticated)]
+      elsif VERTX_AUTHN.includes?(name)
+        cnf = [[Access::Atom.new(:authenticated)]]
       end
-      cnf << [Access::Atom.new(:unresolved, chain.join)] unless chain.empty?
-      residual = residual.sub(text[found.begin(0)..finish], " ")
-      pos = finish + 1
+      if cnf
+        cnf << [Access::Atom.new(:unresolved, chain.join)] unless chain.empty?
+        return cnf
+      end
     end
-    residual = residual.gsub(DECLARED_TYPE, " ")
-    if unread.call(residual)
-      line = residual.lines.find { |item| unread.call(item) } || residual
-      cnf << [Access::Atom.new(:unresolved, line.strip)]
+    return Access::CNF.new if last && !unread.call(text)
+    unresolved(text.lines.find { |line| unread.call(line) }.try(&.strip) || text.lines.first?.try(&.strip) || text)
+  end
+
+  # The `.name(..)` calls chained after the `)` at `close`.
+  private def chained_calls(text : String, close : Int32) : Array(String)
+    chain = [] of String
+    finish = close
+    while (call = text[(finish + 1)..].match(/\A\s*\.\s*[A-Za-z_$][\w$]*\s*\(/)) &&
+          (call_close = Noir::JSLiteralScanner.find_matching_paren(text, finish + call.end(0)))
+      chain << text[(finish + 1)..call_close].strip
+      finish = call_close
     end
-    cnf
+    # A chain that does not parse to the end is kept whole.
+    rest = text[(finish + 1)..].strip.rchop(';').strip
+    chain << rest unless rest.empty?
+    chain
   end
 
   # `clauses` with a signed-in clause added when none of them already
@@ -196,16 +216,18 @@ module JavaAccess
 
   # One clause over the values of the annotation's array element, each
   # literal mapped by the block; any other value is an unresolved atom.
-  private def list(ann : Annotation, & : String -> Access::Atom) : Access::CNF
-    return unresolved(ann.text) unless (args = ann.args) && (values = values(args)) && values.present?
+  private def list(ann : Annotation, keys : Array(String) = [] of String, & : String -> Access::Atom) : Access::CNF
+    return unresolved(ann.text) unless (args = ann.args) && (values = values(args, keys)) && values.present?
     [values.map { |value| (text = literal(value)) ? yield(text) : Access::Atom.new(:unresolved, value.strip) }]
   end
 
   # The elements of the annotation's `value`: positional (Kotlin varargs
   # included) or `value = ...`, an array written `{..}`, `[..]` or
-  # `arrayOf(..)` fanned out. nil when the value is given twice.
-  private def values(args : String) : Array(String)?
+  # `arrayOf(..)` fanned out. nil when the value is given twice, or when an
+  # element other than `value` and `keys` is given.
+  private def values(args : String, keys : Array(String) = [] of String) : Array(String)?
     positional, named = arguments(args)
+    return unless (named.keys - ["value"] - keys).empty?
     if value = named["value"]?
       return unless positional.empty?
       positional = [value]

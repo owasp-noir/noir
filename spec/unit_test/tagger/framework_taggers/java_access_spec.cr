@@ -10,8 +10,8 @@ private def written(source : String) : JavaAccess::Annotation
   JavaAccess.annotation_in(source.split('\n'), 0, name).not_nil!
 end
 
-private def vertx(text : String) : Array(Array(String))
-  strings(JavaAccess.vertx(text) { |rest| rest.matches?(/AuthHandler|AuthenticationHandler|JWTAuth|routingContext\.user\(\)/) }).not_nil!
+private def vertx(text : String, last : Bool) : Array(Array(String))
+  strings(JavaAccess.vertx_handler(text, last) { |rest| rest.matches?(/AuthHandler|AuthenticationHandler|JWTAuth|routingContext\.user\(\)/) }).not_nil!
 end
 
 describe JavaAccess do
@@ -39,6 +39,7 @@ describe JavaAccess do
       "@RolesAllowed(\"user\")"                                          => [["role:user"]],
       "@RolesAllowed({\"a\", \"ROLE_b\"})"                               => [["role:ROLE_b", "role:a"]],
       "@RolesAllowed(value = {\"a\"})"                                   => [["role:a"]],
+      "@RolesAllowed(value = \"a\", other = \"b\")"                      => [["unresolved"]],
       "@RolesAllowed(\"a\", \"b\")"                                      => [["role:a", "role:b"]],
       "@RolesAllowed([\"a\", \"b\"])"                                    => [["role:a", "role:b"]],
       "@RolesAllowed(arrayOf(\"a\"))"                                    => [["role:a"]],
@@ -82,9 +83,12 @@ describe JavaAccess do
 
   describe ".micronaut" do
     {
-      "@Secured(SecurityRule.IS_AUTHENTICATED)"                   => [["authenticated"]],
-      "@Secured(\"isAuthenticated()\")"                           => [["authenticated"]],
-      "@Secured(IS_AUTHENTICATED)"                                => [["authenticated"]],
+      "@Secured(SecurityRule.IS_AUTHENTICATED)" => [["authenticated"]],
+      "@Secured(\"isAuthenticated()\")"         => [["authenticated"]],
+      "@Secured(IS_AUTHENTICATED)"              => [["authenticated"]],
+      # The constants hold `"isAuthenticated()"`; this literal names a role.
+      "@Secured(\"IS_AUTHENTICATED\")"                            => [["role:IS_AUTHENTICATED"]],
+      "@Secured(\"IS_ANONYMOUS\")"                                => [["role:IS_ANONYMOUS"]],
       "@Secured(SecurityRule.IS_ANONYMOUS)"                       => [] of Array(String),
       "@Secured({\"ROLE_X\", SecurityRule.IS_ANONYMOUS})"         => [] of Array(String),
       "@Secured(SecurityRule.DENY_ALL)"                           => [["deny"]],
@@ -119,21 +123,29 @@ describe JavaAccess do
     end
   end
 
-  describe ".vertx" do
+  describe ".vertx_handler" do
     {
-      "router.route(\"/api/*\").handler(JWTAuthHandler.create(jwt));"                                                                                            => [["authenticated"]],
-      "router.route().handler(BasicAuthHandler.create(provider))"                                                                                                => [["authenticated"]],
-      "router.route(\"/a/*\").handler(JWTAuthHandler.create(jwt).withScope(\"read\"))"                                                                           => [["authenticated"], ["unresolved"]],
-      "router.route(\"/a/*\").handler(AuthorizationHandler.create(RoleBasedAuthorization.create(\"admin\")))"                                                    => [["role:admin"]],
-      "router.route(\"/a/*\").handler(AuthorizationHandler.create(PermissionBasedAuthorization.create(\"posts:write\"))\n  .addAuthorizationProvider(provider))" => [["permission:posts:write"]],
-      "router.route(\"/a/*\").handler(AuthorizationHandler.create(RoleBasedAuthorization.create(role)))"                                                         => [["unresolved"]],
-      "router.route(\"/a/*\").handler(authHandler)\nAuthenticationHandler authHandler = JWTAuthHandler.create(jwt);"                                             => [["authenticated"]],
-      "router.route(\"/a/*\").handler(JWTAuth.create(vertx, config));"                                                                                           => [["unresolved"]],
-      "router.get(\"/p\").handler(ctx -> { if (routingContext.user() == null) ctx.fail(401); })"                                                                 => [["unresolved"]],
-      "router.route(\"/a/*\").handler(ChainAuthHandler.any().add(JWTAuthHandler.create(jwt)))"                                                                   => [["authenticated"], ["unresolved"]],
-    }.each do |text, expected|
-      it "reads #{text.lines.first}" do
-        vertx(text).should eq(expected)
+      {"JWTAuthHandler.create(jwt)", false}                                                                                        => [["authenticated"]],
+      {"BasicAuthHandler.create(provider)", true}                                                                                  => [["authenticated"]],
+      {"JWTAuthHandler.create(jwt).withScope(\"read\")", false}                                                                    => [["authenticated"], ["unresolved"]],
+      {"AuthorizationHandler.create(RoleBasedAuthorization.create(\"admin\"))", false}                                             => [["role:admin"]],
+      {"AuthorizationHandler.create(PermissionBasedAuthorization.create(\"posts:write\"))\n  .addAuthorizationProvider(p)", false} => [["permission:posts:write"]],
+      {"AuthorizationHandler.create(\n  RoleBasedAuthorization.create(\"admin\"))", false}                                         => [["role:admin"]],
+      {"AuthorizationHandler.create(RoleBasedAuthorization.create(role))", false}                                                  => [["unresolved"]],
+      {"JWTAuth.create(vertx, config)", false}                                                                                     => [["unresolved"]],
+      # Not one of vertx-web's handlers: what it checks is the app's.
+      {"AdminAuthHandler.create(\"admin\")", false}                     => [["unresolved"]],
+      {"buildAdminGuard()", false}                                      => [["unresolved"]],
+      {"new TenantGuard()", false}                                      => [["unresolved"]],
+      {"ChainAuthHandler.any().add(JWTAuthHandler.create(jwt))", false} => [["unresolved"]],
+      {"BodyHandler.create().setBodyLimit(1024)", false}                => [] of Array(String),
+      {"ctx -> ctx.next()", false}                                      => [["unresolved"]],
+      # A route's own last handler serves the request, unless it holds a guard the tag reads.
+      {"ctx -> ctx.end(\"x\")", true}                                        => [] of Array(String),
+      {"ctx -> { if (routingContext.user() == null) ctx.fail(401); }", true} => [["unresolved"]],
+    }.each do |(text, last), expected|
+      it "reads #{text.lines.first}#{last ? " as the last handler" : ""}" do
+        vertx(text, last).should eq(expected)
       end
     end
   end
