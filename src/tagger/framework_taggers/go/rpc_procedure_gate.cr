@@ -454,7 +454,14 @@ module GoRpcProcedureGate
           fn_end = fn_start + rpc_function_text(lines, fn_start).lines.size - 1
           if later_row = ((block_end + 1)..fn_end).find { |row| lines[row]?.try { |l| code_only(l).strip.matches?(RPC_REFUSAL) } }
             later = {file, block_end, later_row}
-            note = Tag.new("anonymous", "Listed in #{name} (#{where}), so #{holder} lets anonymous callers through, but a later check in #{holder} (#{checker}:#{later_row + 1}) can still refuse them: a setting can require credentials", "go_auth", file, later_row + 1)
+            description = "Listed in #{name} (#{where}), so #{holder} lets anonymous callers through, but a later check in #{holder} (#{checker}:#{later_row + 1}) can still refuse them: a setting can require credentials"
+            # Without `requires` the tag reads open, which the later check
+            # can withdraw.
+            refusal = code_only(lines[later_row]).strip
+            above = code_only(lines[later_row - 1]).strip if later_row - 1 > block_end
+            check = above.try(&.starts_with?("if ")) ? "#{above} #{refusal} }" : refusal
+            later_check = Access::Clause.unresolved(check, description, file, later_row + 1)
+            note = Tag.new("anonymous", description, "go_auth", file, later_row + 1, requires: [later_check])
           end
         end
         gates << ProcedureGate.new(procedures, packages, allow, kinds.includes?(:stream), exempt_prefixes, exempt, tag, later, note)

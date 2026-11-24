@@ -17,11 +17,15 @@ module Analyzer::Go
     TAGGER        = "encore_analyzer"
     QUERY_METHODS = %w[GET HEAD DELETE]
     TAG_RE        = /(\w+):"([^"]*)"/
+    MIDDLEWARE    = /^[ \t]*\/\/encore:middleware\b[^\n]*/m
 
     def analyze
       sources = read_package_file_contents
       dirs = sources.compact_map { |path, content| File.dirname(path) if content.includes?(Noir::EncoreExtractor::GO_DIRECTIVE) }.to_set
       paths = sources.keys.select { |path| dirs.includes?(File.dirname(path)) }
+      middleware = sources.flat_map do |path, content|
+        content.scan(MIDDLEWARE).map { |m| Middleware.new(m[0].strip, path, content.byte_slice(0, m.byte_begin(0)).count('\n') + 1) }
+      end
 
       parsed = ordered_parallel_analyze(paths) { |path| {path, Noir::EncoreExtractor.extract_go(sources[path])} }
       structs = Hash(String, Hash(String, Array(Noir::EncoreExtractor::GoField))).new
@@ -32,13 +36,14 @@ module Analyzer::Go
 
       parsed.each do |path, file|
         package_name = file.package || File.basename(File.dirname(path))
-        file.apis.each { |api| emit(api, path, package_name, structs[File.dirname(path)], result) }
+        file.apis.each { |api| emit(api, path, package_name, structs[File.dirname(path)], middleware, result) }
       end
       result
     end
 
     private def emit(api : Noir::EncoreExtractor::GoApi, path : String, package_name : String,
-                     structs : Hash(String, Array(Noir::EncoreExtractor::GoField)), result : Array(Endpoint))
+                     structs : Hash(String, Array(Noir::EncoreExtractor::GoField)), middleware : Array(Middleware),
+                     result : Array(Endpoint))
       raw = api.options.includes?("raw")
       access = api.options.find(&.in?("public", "private", "auth")) || "private"
       url, path_names = Noir::EncoreExtractor.route(api.fields["path"]? || "/#{package_name}.#{api.name}")
@@ -48,16 +53,43 @@ module Analyzer::Go
       has_request = !raw && api.params.size > path_names.size + 1
       request = structs[api.params.last.lchop('*')]? if has_request
 
+      access_requires = requires(access, api, path, middleware)
       methods = api.fields["method"]?.try(&.split(',')) || (raw ? ["*"] : (has_request ? ["POST"] : ["GET", "POST"]))
       methods.each do |method|
         method = "ANY" if method == "*"
         endpoint = Endpoint.new(url, method, Details.new(PathInfo.new(path, api.line)))
         path_names.each { |name| endpoint.push_param(Param.new(name, "", "path")) }
         request.try &.each { |field| push_field(endpoint, field) }
-        endpoint.add_tag(Tag.new("encore-access", access == "private" ? "private" : "public", TAGGER))
-        endpoint.add_tag(Tag.new("auth", "Encore auth endpoint", TAGGER)) if access == "auth"
+        endpoint.add_tag(Tag.new("encore-access", access == "private" ? "private" : "public", TAGGER, requires: access_requires))
+        if access == "auth"
+          endpoint.add_tag(Tag.new("auth", "Encore auth endpoint", TAGGER, requires: [Access::Clause.new([Access::Atom.new(:authenticated)], "Encore auth endpoint")]))
+        end
         result << endpoint
       end
+    end
+
+    record Middleware, directive : String, path : String, line : Int32
+
+    # `public` and `auth` APIs are exposed (the auth tag says `auth` asks for
+    # a signed-in caller); `private` is reachable only from the app's own
+    # services. The clauses match the Encore.ts analyzer's for the same
+    # access, so one route declared in both merges into one tag. A
+    # `//encore:middleware` whose target selects the endpoint (`all`, or a
+    # `tag:` the directive lists), global or in the endpoint's service, runs
+    # after that and may refuse anyone.
+    private def requires(access : String, api : Noir::EncoreExtractor::GoApi, path : String, middleware : Array(Middleware)) : Array(Access::Clause)
+      clause = if access == "private"
+                 Access::Clause.unresolved("private", "private")
+               else
+                 Access::Clause.new([Access::Atom.new(:anonymous)], "public")
+               end
+      applied = middleware.select do |mw|
+        targets = mw.directive.match(/\btarget=(\S+)/).try(&.[1].split(',')) || ["all"]
+        service = File.dirname(mw.path)
+        (mw.directive.split.includes?("global") || File.dirname(path) == service || path.starts_with?("#{service}/")) &&
+          targets.any? { |target| target == "all" || api.options.includes?(target) }
+      end
+      [clause] + applied.map { |mw| Access::Clause.unresolved(mw.directive, mw.directive, mw.path, mw.line) }
     end
 
     # Encore's request encoding: a `header`/`query`/`qs` tag places the

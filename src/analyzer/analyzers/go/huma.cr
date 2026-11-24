@@ -1,4 +1,5 @@
 require "../../engines/go_engine"
+require "../../../miniparsers/huma_security"
 
 module Analyzer::Go
   # Huma (https://huma.rocks/) is an OpenAPI-first Go framework
@@ -103,11 +104,15 @@ module Analyzer::Go
       # Function taking a `huma.Operation` -> {that parameter, its body}.
       getter forwarders = Hash(String, {String, String}).new
       @defaults = Set(String).new
+      # Assignments per identifier: a security variable assigned more than
+      # once is not read.
+      @assignments = Hash(String, Int32).new(0)
       @server : {String?, String?}? = nil
 
       def read(path : String, raw : String) : Nil
         content = GoEngine.strip_comments(raw)
         content.scan(SECURITY_VAR) { |m| @security_vars[m[1]] ||= m[2] }
+        content.scan(/(?<![.\w])(\w+)\s*:?=(?!=)/) { |m| @assignments[m[1]] += 1 }
         openapi_vars = content.scan(OPENAPI_VAR).map(&.[1]).to_set
         content.scan(DEFAULT_SECURITY) do |m|
           @defaults << m[3] if m[1]? || (m[2]?.try { |name| openapi_vars.includes?(name) })
@@ -211,13 +216,26 @@ module Analyzer::Go
             depth += 1
           elsif char == '}'
             depth -= 1
-            alternatives << literal[open_at + 1 + start, idx - start + 1].scan(/"([^"]+)"\s*:/).map(&.[1]) if depth == 0
+            next unless depth == 0
+            alternative = literal[open_at + 1 + start, idx - start + 1]
+            alternatives << alternative.scan(/"([^"]+)"\s*:/).map(&.[1])
           end
         end
         tagger = Tag.declared_access_tagger("go_huma")
-        return Tag.new("anonymous", "Huma operation security admits anonymous callers", tagger) if alternatives.empty? || alternatives.any?(&.empty?)
+        # Read apart from the name scan above, which sees neither a scheme
+        # named by a constant nor a list element held in a variable.
+        read = if @security_vars.has_key?(value.to_s) && @assignments[value.to_s] > 1
+                 [[Access::Atom.new(:unresolved, value.to_s)]]
+               else
+                 HumaSecurity.cnf(literal)
+               end
+        if alternatives.empty? || alternatives.any?(&.empty?)
+          description = "Huma operation security admits anonymous callers"
+          return Tag.new("anonymous", description, tagger, requires: read.try { |cnf| Access.clauses(cnf, description) })
+        end
         origin = inherited ? " (inherited from the API's default security)" : ""
-        Tag.new("auth", "Protected by Huma operation security #{alternatives.map(&.join(" + ")).join(" or ")}#{origin}", tagger)
+        description = "Protected by Huma operation security #{alternatives.map(&.join(" + ")).join(" or ")}#{origin}"
+        Tag.new("auth", description, tagger, requires: read.try { |cnf| Access.clauses(cnf, description) })
       end
     end
 

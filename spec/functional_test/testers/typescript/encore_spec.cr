@@ -56,6 +56,11 @@ describe "Encore.ts endpoint flags", tags: "functional" do
     tags.call("GET", "/hello/:name").should eq [{"encore-access", "public"}]
     tags.call("POST", "/greeter.create").should contain({"auth", "Encore auth endpoint"})
     tags.call("GET", "/admin/stats").should eq [{"encore-access", "private"}]
+    reading = ->(method : String, url : String) { Access.of(find.call(method, url)).map(&.to_s) }
+    reading.call("GET", "/hello/:name").should eq ["anonymous"]
+    reading.call("POST", "/greeter.create").should contain("authenticated")
+    # Reachable from other services only: no caller noir models.
+    reading.call("GET", "/admin/stats").should eq ["unresolved"]
     find.call("GET", "/chat").protocol.should eq "ws"
     find.call("GET", "/ticker").protocol.should eq "ws"
     find.call("GET", "/search").protocol.should eq "http"
