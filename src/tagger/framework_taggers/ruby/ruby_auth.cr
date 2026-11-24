@@ -229,6 +229,18 @@ class RubyAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
+    # The routing blocks around the route run before any controller callback.
+    routes = [] of Access::Clause
+    if endpoint.details.technology == "ruby_rails"
+      locations = guard_locations(endpoint)
+      locations.each do |path, line_num|
+        next unless line_num > 0 && (route_lines = read_file_lines(path)) && line_num <= route_lines.size
+        routes.concat(route_block_clauses(path, route_lines, line_num - 1))
+      end
+      if locations.none?(&.[0].includes?("/config/routes")) && (handler_path = locations.first?.try(&.[0]))
+        routes.concat(unplaced_route_blocks(handler_path))
+      end
+    end
     guard_locations(endpoint).each do |path, line_num|
       lines = read_file_lines(path)
       next if lines.nil?
@@ -252,6 +264,9 @@ class RubyAuthTagger < FrameworkTagger
       # skips count only as far as that chain carries them.
       dispatch = endpoint.handler.try(&.dispatch_path).try { |dispatch_path| rails_chain.controller_in(dispatch_path) } if endpoint.handler.try(&.path) == path
       skipped = opted_out = false
+      walk_leaf : Noir::RailsCallbackChain::Klass? = nil
+      # A skip of the authentication callback removes that callback only.
+      unskipped = [] of Access::Clause
       if dispatch
         routed = chain_guards(dispatch, action)
         authn = routed[:authn]
@@ -263,11 +278,16 @@ class RubyAuthTagger < FrameworkTagger
         authz = controller[:authz]
         skipped = controller[:skipped]
         opted_out = controller[:opted_out]
+        walk_leaf = controller[:class_idx].try { |class_idx| rails_chain.classes[{path, class_idx}]? }
+        if skipped && walk_leaf
+          rest = chain_guards(walk_leaf, action)
+          [rest[:authn], rest[:authz]].each { |found| found.try { |kept| unskipped.concat(kept.requires) } }
+        end
         # skip_before_action only suppresses authentication callbacks — not
         # independent authorize / CanCanCan checks in the action body.
         unless skipped
           authn = controller[:authn]
-          if leaf = controller[:class_idx].try { |class_idx| rails_chain.classes[{path, class_idx}]? }
+          if leaf = walk_leaf
             # Every callback of the chain runs, so its guards all add to the
             # requirement; the text still names the guard the class body
             # shows unless only a parent or concern registers one.
@@ -290,7 +310,9 @@ class RubyAuthTagger < FrameworkTagger
       body = check_action_body_auth(path, lines, line_idx, action, routed_paths, endpoint.details.technology == "ruby_rails")
       authz = first(authz, body[:authz])
       authz ||= routed_leaf.try { |cancan_leaf| cancan_refuses(cancan_leaf, action, endpoint.url.scan(/:(\w+)/).map(&.[1])) }
-      extras = routed_leaf.try { |klass| chain_extras(klass, resolution) } || [] of Access::Clause
+      extras_leaf = dispatch || walk_leaf || routed_leaf
+      extras = extras_leaf.try { |klass| chain_extras(klass, extras_leaf == routed_leaf ? resolution : rails_chain.resolve(klass, action), action) } || [] of Access::Clause
+      extras = (extras + unskipped + routes).uniq
 
       # add_tag dedupes by (name, tagger), so authn/authz need distinct names.
       if authn
@@ -312,7 +334,7 @@ class RubyAuthTagger < FrameworkTagger
 
       if tech == "ruby_rails" && (block = devise_route_block(path, lines, line_idx))
         helper, statement = block
-        requires = Access.clauses(RubyAccess.devise_route(helper, statement), statement)
+        requires = (Access.clauses(RubyAccess.devise_route(helper, statement), statement) + routes).uniq
         endpoint.add_tag(Tag.new("auth", "Protected by Devise `#{helper}` routes block", "ruby_auth", requires: requires))
         return
       end
@@ -407,8 +429,14 @@ class RubyAuthTagger < FrameworkTagger
         exemption = current.match(Noir::RailsCallbackChain::LIFT_OPTION).try(&.[0])
         Noir::RailsCallbackChain.before_action_callbacks(current).each do |callback|
           next if skipped_callbacks.includes?(callback) || lifted_callbacks.includes?(callback) || exits_for?(callback, leaf)
-          authn = stronger(authn, exempted(callback_guard(callback, chain), exemption)) unless skipped
-          authz = first(authz, exempted(callback_authz(callback, action_name, chain.try(&.paths) || [] of String), exemption))
+          # A lift the walk cannot see (a skip below the action, a concern's,
+          # `allow_unauthenticated_access if:`, a splatted `except:`) still
+          # lifts this guard's requirement; its text stays the walk's.
+          lift = chain.try(&.lifted[callback]?)
+          guard = exempted(callback_guard(callback, chain), exemption)
+          gate = exempted(callback_authz(callback, action_name, chain.try(&.paths) || [] of String), exemption)
+          authn = stronger(authn, lift ? guard.try(&.lifted(lift)) : guard) unless skipped
+          authz = first(authz, lift ? gate.try(&.lifted(lift)) : gate)
         end
       end
 
@@ -486,19 +514,37 @@ class RubyAuthTagger < FrameworkTagger
   # controllers, which the chain of an app controller never reaches.
   private def exempted(guard : Guard?, condition : String?) : Guard?
     return guard unless guard && condition && condition.matches?(/\A(?:unless:|:unless\s*=>)/)
-    return guard if condition.matches?(/\A(?:unless:|:unless\s*=>)\s*:devise_controller\?\z/)
+    return guard if condition.matches?(/\A(?:unless:|:unless\s*=>)\s*:devise_controller\?\s*(?:,|\z)/)
     guard.lifted(condition)
   end
 
   # What the routed class's chain applies beyond its callbacks: CanCanCan's
-  # `authorize_resource` macros, which run `authorize!` for the action, and a
-  # parent class outside the scan, whose callbacks noir cannot read.
+  # `authorize_resource` macros, which run `authorize!` for the action (also
+  # under `if:` / `unless:`), a block callback that runs more than the one
+  # method the chain keeps, and a parent class or included module outside
+  # the scan, whose callbacks noir cannot read.
   FRAMEWORK_BASES = {"ActionController::Base", "ActionController::API", "ActionController::Metal"}
+  # Modules apps include that register no `before_action`.
+  QUIET_MODULES = Set{"Pundit", "Pundit::Authorization", "CanCan::ControllerAdditions", "Devise::Controllers::Helpers",
+                      "ActionController::MimeResponds", "ActionController::Cookies", "ActionController::Helpers",
+                      "ActionController::HttpAuthentication::Basic::ControllerMethods",
+                      "ActionController::HttpAuthentication::Token::ControllerMethods",
+                      "ActionController::HttpAuthentication::Digest::ControllerMethods"}
+  # `before_action -> { a! && b! }`, `before_action do ... end`.
+  COMPOUND_BLOCK = /\bbefore_action\b.*(?:(?:->|lambda|proc|\{).*(?:&&|\|\||;|\band\b|\bor\b)|\bdo\s*(?:\|[^|]*\|)?\s*\z)/
 
-  private def chain_extras(leaf : Noir::RailsCallbackChain::Klass, resolution : Noir::RailsCallbackChain::Resolution?) : Array(Access::Clause)
+  private def chain_extras(leaf : Noir::RailsCallbackChain::Klass, resolution : Noir::RailsCallbackChain::Resolution?, action : String?) : Array(Access::Clause)
     clauses = (resolution.try(&.cancan) || [] of String).flat_map { |line| Access.clauses(RubyAccess.unresolved(line), line) }
+    (resolution.try(&.paths) || [] of String).each do |file|
+      read_file_lines(file).try &.each do |source|
+        text = source.strip
+        clauses.concat(Access.clauses(RubyAccess.unresolved(text), text)) if !text.starts_with?('#') && text.matches?(COMPOUND_BLOCK)
+      end
+    end
+    seen = Set(String).new
     klass = leaf
     16.times do
+      unread_includes(klass, action, clauses, seen)
       break unless parent = klass.parent
       if found = rails_chain.lookup(parent, klass.namespace, klass)
         klass = found
@@ -510,6 +556,62 @@ class RubyAuthTagger < FrameworkTagger
         clauses.concat(Access.clauses(RubyAccess.unresolved(text), "class #{klass.name} < #{parent}"))
       end
       break
+    end
+    clauses
+  end
+
+  private def unread_includes(klass : Noir::RailsCallbackChain::Klass, action : String?, clauses : Array(Access::Clause), seen : Set(String)) : Nil
+    return unless seen.add?("#{klass.path}|#{klass.name}")
+    klass.callbacks.each do |line|
+      if line.starts_with?("include")
+        line.scan(/[A-Z][\w:]*/) do |m|
+          if mod = rails_chain.lookup(m[0], klass.namespace)
+            unread_includes(mod, action, clauses, seen)
+          elsif !QUIET_MODULES.includes?(m[0].lchop("::"))
+            clauses.concat(Access.clauses(RubyAccess.unresolved("callbacks of #{m[0]}, an included module noir did not read"), line))
+          end
+        end
+      elsif line.matches?(Noir::RailsCallbackChain::CANCAN_LINE) && !line.starts_with?("skip_") &&
+            line.matches?(Noir::RailsCallbackChain::LIFT_OPTION) && Noir::RailsCallbackChain.applies_to_action?(line, action)
+        clauses.concat(Access.clauses(RubyAccess.unresolved(line), line))
+      end
+    end
+  end
+
+  @route_blocks = Hash(String, Array(Access::Clause)).new
+
+  # A route that reaches the tagger without its routes-file line
+  # (`resources :users`): a block of that app's routes files may wrap it.
+  private def unplaced_route_blocks(handler_path : String) : Array(Access::Clause)
+    return [] of Access::Clause unless idx = handler_path.rindex("/app/controllers/")
+    root = handler_path[0, idx + 1]
+    @route_blocks.put_if_absent(root) do
+      collect_files_by_extension(".rb").select(&.starts_with?("#{root}config/routes")).flat_map do |file|
+        header = read_file_lines(file).try(&.map(&.strip).find { |text| route_block?(text) })
+        header ? Access.clauses(RubyAccess.unresolved("a block of #{File.basename(file)} may wrap this route: #{header}"), header) : [] of Access::Clause
+      end
+    end
+  end
+
+  private def route_block?(statement : String) : Bool
+    statement.matches?(DEVISE_ROUTE_BLOCK) || (statement.matches?(/\Aconstraints?\b|\bconstraints:/) && statement.matches?(/\bdo\b/))
+  end
+
+  # Every block around a route of a `config/routes` file that decides who
+  # reaches it: Devise's `authenticate` / `authenticated` as `devise_route`
+  # reads them, any other constraint unresolved.
+  private def route_block_clauses(path : String, lines : Array(String), route_line : Int32) : Array(Access::Clause)
+    clauses = [] of Access::Clause
+    return clauses unless path.includes?("/config/routes")
+    index = scope_lines(path, lines)
+    idx = route_line
+    while (idx = index.prev_shallower[idx]) >= 0
+      statement = index.stripped[idx]
+      if m = statement.match(DEVISE_ROUTE_BLOCK)
+        clauses.concat(Access.clauses(RubyAccess.devise_route(m[1], statement), statement))
+      elsif route_block?(statement)
+        clauses.concat(Access.clauses(RubyAccess.unresolved(statement), statement))
+      end
     end
     clauses
   end
@@ -1272,7 +1374,14 @@ class RubyAuthTagger < FrameworkTagger
       break if current.starts_with?("def ") && idx > action_line
 
       # The policy class, and the ability a helper's `authorize!` asks, are the app's.
-      found = ->(desc : String, cnf : Access::CNF) { {authz: Guard.new(desc, Access.clauses(cnf, raw, path, idx + 1)), anonymous: nil} }
+      found = ->(desc : String, cnf : Access::CNF) do
+        clauses = Access.clauses(cnf, raw, path, idx + 1)
+        later_checks(lines, action_line, idx, paths).each do |k|
+          text = lines[k].strip
+          clauses.concat(Access.clauses(RubyAccess.unresolved(text), text, path, k + 1))
+        end
+        {authz: Guard.new(desc, clauses), anonymous: nil}
+      end
       if current.matches?(PUNDIT_AUTHORIZE) && !credential_present_modifier?(current)
         verdict, policy = pundit_verdict(current, action)
         case verdict
@@ -1289,7 +1398,7 @@ class RubyAuthTagger < FrameworkTagger
         next unless current.matches?(pattern)
         # Its symbol is read only from a statement every request reaches: at
         # the body's own level, with no modifier and no answer above it.
-        reached = body_indent && line_indent(lines[idx]) == body_indent && !current.matches?(CONDITION_MODIFIER) &&
+        reached = body_indent && line_indent(lines[idx]) == body_indent && current.starts_with?("authorize!") && !current.matches?(CONDITION_MODIFIER) &&
                   ((action_line + 1)...idx).none? { |k| code_only(lines[k].strip).matches?(/\b(?:return|render|redirect_to|redirect_back|head|respond_with)\b/) }
         # CanCanCan's own method only: an app (or a Grape/Roda API) may define one.
         cancan = desc == "CanCanCan authorize!" && reached && rails && !rails_chain.defs.has_key?("authorize!")
@@ -1306,6 +1415,23 @@ class RubyAuthTagger < FrameworkTagger
     end
 
     {authz: nil, anonymous: anonymous}
+  end
+
+  # Rows of the action's body after `from` that make another authorization
+  # check: each runs too, and none is read.
+  LATER_CHECK = /(?<![.\w])authorize!?(?![\w?])|\bload_and_authorize_resource\b/
+
+  private def later_checks(lines : Array(String), action_line : Int32, from : Int32, paths : Array(String)) : Array(Int32)
+    indent = line_indent(lines[action_line])
+    rows = [] of Int32
+    ((from + 1)...lines.size).each do |k|
+      text = lines[k].strip
+      next if text.empty? || text.starts_with?('#')
+      break if line_indent(lines[k]) <= indent
+      code = code_only(text)
+      rows << k if code.matches?(LATER_CHECK) || called_names(code).any? { |name| authorizing_helper?(name, paths) }
+    end
+    rows
   end
 
   # The quote still open after `line` (a string literal that runs onto the
@@ -1521,13 +1647,10 @@ class RubyAuthTagger < FrameworkTagger
   # Whether every ability `current_ability` builds grants the action of
   # `authorize! :read, @post` on its subject to no nil user.
   private def cancan_guest_refused?(code : String, path : String, paths : Array(String)) : Bool
-    return false unless m = code.match(/\bauthorize!\s*\(?\s*:(\w+[?!]?)\s*,\s*(@?)([A-Za-z_][\w:]*)\s*(?:\)|\z)/)
-    # A record in an instance variable, or a class; a local could be either.
-    return false if m[2].empty? && !m[3][0].ascii_uppercase?
-    subject = m[3].camelcase
+    return false unless m = code.match(RubyAccess::CANCAN_CLASS)
     abilities = cancan_ability_classes(paths)
     readers = abilities.compact_map { |name| cancan_ability(name, path) }
-    !readers.empty? && readers.size == abilities.size && readers.all?(&.verdict(m[1], subject, !m[2].empty?).no?)
+    !readers.empty? && readers.size == abilities.size && readers.all?(&.verdict(m[1], m[2].lchop("::")).no?)
   end
 
   # The ability classes the controller's `current_ability` builds

@@ -196,7 +196,7 @@ describe "RubyAuthTagger requires" do
     requirement(previews["auth"]).should eq([["authenticated", "unresolved:if: -> { Flipper.enabled?(:public_previews) }"]])
   end
 
-  it "reads a CanCanCan symbol action only from a statement every request reaches, beside a guest's grant" do
+  it "reads a CanCanCan action on a class only from a statement every request reaches, beside a guest's grant" do
     tagged = tag_app({
       "app/controllers/application_controller.rb" => APP_BASE,
       "app/models/ability.rb"                     => <<-RB,
@@ -214,33 +214,158 @@ describe "RubyAuthTagger requires" do
         RB
       "app/controllers/posts_controller.rb" => <<-RB,
         class PostsController < ApplicationController
-          def show
-            @post = Post.find(params[:id])
-            authorize! :read, @post
+          def index
+            authorize! :read, Post
           end
 
           def edit
             return redirect_to(root_path) if params[:preview]
-            authorize! :update, @post
+            authorize! :update, Post
           end
 
           def destroy
-            authorize! :destroy, @post if @post.locked?
+            Post.open? || authorize!(:destroy, Post)
           end
 
           def publish
-            authorize! :publish, @post
+            authorize! :publish, Post
+          end
+
+          def show
+            @post = Post.find(params[:id])
+            authorize! :read, @post
           end
         end
         RB
-    }, [{"app/controllers/posts_controller.rb", 2}, {"app/controllers/posts_controller.rb", 7}, {"app/controllers/posts_controller.rb", 12}, {"app/controllers/posts_controller.rb", 16}])
-    show, edit, destroy, publish = tagged
+    }, [{"app/controllers/posts_controller.rb", 2}, {"app/controllers/posts_controller.rb", 6}, {"app/controllers/posts_controller.rb", 11}, {"app/controllers/posts_controller.rb", 15}, {"app/controllers/posts_controller.rb", 19}])
+    index, edit, destroy, publish, show = tagged
 
-    requirement(show["authz"]).should eq([["permission:read", "unresolved:whether the ability grants :read to a guest"]])
-    requirement(publish["authz"]).should eq([["permission:publish"]])
-    show["authz"].requires.not_nil!.first.source.should eq("authorize! :read, @post")
-    requirement(edit["authz"]).should eq([["unresolved:authorize! :update, @post"]])
-    requirement(destroy["authz"]).should eq([["unresolved:authorize! :destroy, @post if @post.locked?"]])
+    requirement(index["authz"]).should eq([["permission:read:Post", "unresolved:whether the ability grants :read on Post to a guest"]])
+    index["authz"].requires.not_nil!.first.source.should eq("authorize! :read, Post")
+    requirement(publish["authz"]).should eq([["permission:publish:Post"]])
+    requirement(edit["authz"]).should eq([["unresolved:authorize! :update, Post"]])
+    requirement(destroy["authz"]).should eq([["unresolved:Post.open? || authorize!(:destroy, Post)"]])
+    # A record is checked by its runtime class.
+    requirement(show["authz"]).should eq([["unresolved:authorize! :read, @post"]])
+  end
+
+  it "keeps every later check of the action body" do
+    tags = tag_app({
+      "app/controllers/docs_controller.rb" => <<-RB,
+        class DocsController < ActionController::Base
+          def update
+            authorize! :read, Doc
+            @doc = Doc.find(params[:id])
+            if @doc.locked?
+              authorize! :unlock, @doc
+            end
+            authorize(
+              @doc
+            )
+          end
+        end
+        RB
+    }, [{"app/controllers/docs_controller.rb", 2}]).first
+
+    requirement(tags["authz"]).should eq([
+      ["permission:read:Doc", "unresolved:whether the ability grants :read on Doc to a guest"],
+      ["unresolved:authorize! :unlock, @doc"],
+      ["unresolved:authorize("],
+    ])
+  end
+
+  it "keeps a parent's other callbacks when the authentication callback is skipped" do
+    tags = tag_app({
+      "app/controllers/application_controller.rb" => <<-RB,
+        class ApplicationController < ActionController::Base
+          before_action :authenticate_user!
+          before_action :require_admin
+
+          def require_admin
+            head :forbidden unless current_user && current_user.has_role?(:admin)
+          end
+        end
+        RB
+      "app/controllers/posts_controller.rb" => <<-RB,
+        class PostsController < ApplicationController
+          skip_before_action :authenticate_user!, only: [:show]
+
+          def show
+            authorize! :read, Post
+          end
+        end
+        RB
+    }, [{"app/controllers/posts_controller.rb", 4}]).first
+
+    tags.has_key?("auth").should be_false
+    requirement(tags["authz"]).should contain(["role:admin"])
+  end
+
+  it "keeps what the chain cannot see unresolved: an unread module, a compound block, a conditional macro" do
+    tagged = tag_app({
+      "app/controllers/reports_controller.rb" => <<-RB,
+        class ReportsController < ActionController::Base
+          include AdminOnly
+          include Pundit::Authorization
+          before_action :authenticate_user!
+
+          def index
+          end
+        end
+        RB
+      "app/controllers/admin_controller.rb" => <<-RB,
+        class AdminController < ActionController::Base
+          before_action -> { authenticate_user! && authorize!(:manage, :all) }
+          load_and_authorize_resource unless: :preview?
+
+          def index
+          end
+        end
+        RB
+    }, [{"app/controllers/reports_controller.rb", 6}, {"app/controllers/admin_controller.rb", 5}])
+    reports, admin = tagged
+
+    requirement(reports["auth"]).should eq([["authenticated"], ["unresolved:callbacks of AdminOnly, an included module noir did not read"]])
+    requirement(admin["auth"]).should eq([
+      ["authenticated"],
+      ["unresolved:before_action -> { authenticate_user! && authorize!(:manage, :all) }"],
+      ["unresolved:load_and_authorize_resource unless: :preview?"],
+    ])
+  end
+
+  it "reads the chain of the class the action is in, not the file's first one" do
+    tags = tag_app({
+      "app/controllers/multi_controller.rb" => <<-RB,
+        class OpenController < Vendor::Base
+          def index
+          end
+        end
+
+        class MultiController < ActionController::Base
+          before_action :authenticate_user!, unless: :devise_controller?, only: [:index]
+
+          def index
+          end
+        end
+        RB
+    }, [{"app/controllers/multi_controller.rb", 9}]).first
+
+    requirement(tags["auth"]).should eq([["authenticated"]])
+  end
+
+  it "lifts the walk's own guard by a lift only the chain sees" do
+    tags = tag_app({
+      "app/controllers/posts_controller.rb" => <<-RB,
+        class PostsController < ActionController::Base
+          before_action :authenticate_user!, except: [*public_actions]
+
+          def show
+          end
+        end
+        RB
+    }, [{"app/controllers/posts_controller.rb", 4}]).first
+
+    requirement(tags["auth"]).should eq([["authenticated", "unresolved:except: with a splat it cannot read"]])
   end
 
   it "keeps a CanCanCan resource macro and a parent outside the scan unresolved" do
@@ -299,5 +424,32 @@ describe "RubyAuthTagger requires" do
       ["unresolved:authenticated :admin, ->(u) { u.super? }"],
       ["unresolved:authenticated (a routing constraint: other callers fall through to the next matching route)"],
     ])
+  end
+
+  it "adds every routing block around a route, and keeps a block it cannot place unresolved" do
+    tagged = tag_app({
+      "config/routes.rb" => <<-RB,
+        Rails.application.routes.draw do
+          constraints AdminConstraint.new do
+            authenticate :user do
+              get "/cons", to: "dash#cons"
+            end
+          end
+          resources :users, only: [:index]
+        end
+        RB
+      "app/controllers/users_controller.rb" => <<-RB,
+        class UsersController < ActionController::Base
+          before_action :authenticate_user!
+
+          def index
+          end
+        end
+        RB
+    }, [{"config/routes.rb", 4}, {"app/controllers/users_controller.rb", 4}])
+    cons, users = tagged
+
+    requirement(cons["auth"]).should eq([["authenticated"], ["unresolved:constraints AdminConstraint.new do"]])
+    requirement(users["auth"]).should eq([["authenticated"], ["unresolved:a block of routes.rb may wrap this route: constraints AdminConstraint.new do"]])
   end
 end

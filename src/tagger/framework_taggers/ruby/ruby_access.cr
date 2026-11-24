@@ -63,17 +63,18 @@ module RubyAccess
   end
 
   # CanCanCan's `authorize!(action, subject)` raises `AccessDenied` unless
-  # the ability grants that action on that subject. A symbol action names the
-  # permission; the subject stays in the clause source. The ability is built
-  # for a guest too (the documented `user ||= User.new`, then `can :read,
-  # :all`), so unless `guest_refused` the guest may hold it as well.
-  CANCAN_ACTION = /\bauthorize!\s*\(?\s*:(\w+[?!]?)\s*(?:,|\)|\z)/
+  # the ability grants that action on that subject: `authorize! :read, Doc`
+  # asks `read:Doc`. A record (`@post`) is checked by its runtime class,
+  # which its name does not settle, so that call stays unresolved. The
+  # ability is built for a guest too (the documented `user ||= User.new`,
+  # then `can :read, :all`), so unless `guest_refused` a guest may hold it.
+  CANCAN_CLASS = /\Aauthorize!\s*\(?\s*:(\w+[?!]?)\s*,\s*((?:::)?[A-Z][\w:]*)\s*\)?\z/
 
   def cancan_authorize(call : String, guest_refused : Bool) : Access::CNF
-    return unresolved(call) unless m = call.match(CANCAN_ACTION)
-    permission = Access::Atom.new(:permission, m[1])
+    return unresolved(call) unless m = call.strip.match(CANCAN_CLASS)
+    permission = Access::Atom.new(:permission, "#{m[1]}:#{m[2].lchop("::")}")
     return [[permission]] if guest_refused
-    [[permission, Access::Atom.new(:unresolved, "whether the ability grants :#{m[1]} to a guest")]]
+    [[permission, Access::Atom.new(:unresolved, "whether the ability grants :#{m[1]} on #{m[2].lchop("::")} to a guest")]]
   end
 
   # Devise's `authenticate scope, block` and `authenticated scope, block`

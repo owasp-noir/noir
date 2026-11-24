@@ -42,10 +42,12 @@ describe RubyAccess do
 
   describe ".cancan_authorize" do
     {
-      "authorize! :read, @post"          => [["permission:read"]],
-      "authorize!(:update, Post)"        => [["permission:update"]],
-      "authorize! action_name.to_sym, x" => [["unresolved:authorize! action_name.to_sym, x"]],
-      "authorize! \"read\", @post"       => [["unresolved:authorize! \"read\", @post"]],
+      "authorize! :read, Post"           => [["permission:read:Post"]],
+      "authorize!(:update, Admin::Post)" => [["permission:update:Admin::Post"]],
+      "authorize! :read, @post"          => [["unresolved:authorize! :read, @post"]],
+      "authorize! action_name.to_sym, X" => [["unresolved:authorize! action_name.to_sym, X"]],
+      "authorize! \"read\", Post"        => [["unresolved:authorize! \"read\", Post"]],
+      "x || authorize!(:read, Post)"     => [["unresolved:x || authorize!(:read, Post)"]],
     }.each do |call, expected|
       it "reads #{call}" do
         shown(RubyAccess.cancan_authorize(call, guest_refused: true)).should eq(expected)
@@ -53,8 +55,8 @@ describe RubyAccess do
     end
 
     it "keeps a guest's grant unresolved beside the permission" do
-      shown(RubyAccess.cancan_authorize("authorize! :read, @post", guest_refused: false))
-        .should eq([["permission:read", "unresolved:whether the ability grants :read to a guest"]])
+      shown(RubyAccess.cancan_authorize("authorize! :read, Post", guest_refused: false))
+        .should eq([["permission:read:Post", "unresolved:whether the ability grants :read on Post to a guest"]])
     end
   end
 
