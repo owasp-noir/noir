@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../miniparsers/php_block_parser"
 require "./laravel_access"
+require "./php_access"
 
 @[Noir::TaggerFor(key: "php_auth", name: "PHP Auth Tagger", desc: "Identifies PHP authentication patterns (Laravel, Symfony, CakePHP)", order: 140)]
 class PhpAuthTagger < FrameworkTagger
@@ -180,11 +181,13 @@ class PhpAuthTagger < FrameworkTagger
       line_idx = line_num - 1
 
       if endpoint.details.technology == "php_cakephp" && (description = cakephp_guard(path_info.path, lines, line_idx))
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
+        # AuthenticationComponent::doIdentityCheck refuses a request without an identity.
+        identity = Access::Clause.new([Access::Atom.new(:authenticated)], description)
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth", requires: [identity]))
         return
       end
-      if endpoint.details.technology == "php_yii" && (description = yii_guard(path_info.path, lines, line_idx))
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth"))
+      if endpoint.details.technology == "php_yii" && (guard = yii_guard(path_info.path, lines, line_idx))
+        endpoint.add_tag(Tag.new("auth", "Protected by #{guard[0]}", "php_auth", requires: guard[1]))
         return
       end
 
@@ -210,8 +213,19 @@ class PhpAuthTagger < FrameworkTagger
     end
   end
 
+  SYMFONY_ATTRIBUTE_GUARDS = Set{"Symfony #[IsGranted]", "Symfony #[Security]", "Symfony @Security annotation", "Symfony @IsGranted annotation"}
+
   private def add_guard(endpoint : Endpoint, description : String, line : String) : Nil
+    # The Symfony analyzer read every security attribute of this action and
+    # its class into its own tag under this tagger name: the one line read
+    # here would only add an unknown to it.
+    return if SYMFONY_ATTRIBUTE_GUARDS.includes?(description) && endpoint.tags.any? { |tag| symfony_action_tag?(tag) }
     add_guard(endpoint, description, laravel_requires(description, line))
+  end
+
+  private def symfony_action_tag?(tag : Tag) : Bool
+    tag.name == "auth" && tag.tagger == "php_auth" && !tag.requires.nil? &&
+      tag.description.starts_with?("Protected by Symfony ") && !tag.description.starts_with?("Protected by Symfony access_control")
   end
 
   # Only a Laravel route says what it requires: its analyzer tags it under
@@ -370,7 +384,7 @@ class PhpAuthTagger < FrameworkTagger
 
   @php_parsers = Hash(String, Noir::PhpBlockParser).new
 
-  private def yii_guard(path : String, lines : Array(String), line_idx : Int32) : String?
+  private def yii_guard(path : String, lines : Array(String), line_idx : Int32) : {String, Array(Access::Clause)}?
     name = lines[line_idx].match(/\bfunction\s+action([A-Z]\w*)\s*\(/).try(&.[1]) || return
     action = name.gsub(/(?<=[a-z0-9])[A-Z]/) { |upper| "-#{upper}" }.downcase
     content = read_file(path) || return
@@ -400,9 +414,43 @@ class PhpAuthTagger < FrameworkTagger
         return if allow
         break
       end
-      return "Yii AccessControl (no rule admits a guest)"
+      description = "Yii AccessControl (no rule admits a guest)"
+      return {description, yii_requires(parser, filter, rules, action, description)}
     end
     nil
+  end
+
+  YII_FILTER_KEYS = Set{"class", "only", "except", "rules", "denyCallback"}
+  YII_RULE_KEYS   = Set{"allow", "actions", "roles", "denyCallback"}
+
+  # What a signed-in caller needs under the filter's rules. A filter key
+  # such as `ruleConfig` (another rule class) or `user` leaves them unread.
+  private def yii_requires(parser : Noir::PhpBlockParser, filter : Hash(String, Range(Int32, Int32)),
+                           rules : Array(Noir::PhpBlockParser::ArrayEntry), action : String, description : String) : Array(Access::Clause)
+    lexer = parser.lexer
+    if key = filter.keys.find { |name| !YII_FILTER_KEYS.includes?(name) }
+      return Access.clauses([[Access::Atom.new(:authenticated)], [Access::Atom.new(:unresolved, "#{key} => #{lexer.source(filter[key])}")]], description)
+    end
+    read = rules.map do |entry|
+      source = lexer.source(entry.value).gsub(/\s+/, " ")
+      open = array_open(lexer, entry.value)
+      next PhpAccess::YiiRule.new(source, false, nil, nil, false) unless open
+      rule = yii_entries(parser, open)
+      actions = rule["actions"]?.try { |range| yii_literals(parser, range) }
+      roles = rule["roles"]?.try { |range| yii_literals(parser, range) }
+      allow = rule["allow"]?.try { |range| lexer.source(range).strip.downcase }
+      readable = rule.keys.all? { |name| YII_RULE_KEYS.includes?(name) } && (allow.nil? || allow == "true" || allow == "false") &&
+                 (!rule.has_key?("actions") || actions) && (!rule.has_key?("roles") || roles)
+      PhpAccess::YiiRule.new(source, allow == "true", actions, roles, !!readable)
+    end
+    Access.clauses(PhpAccess.yii_signed_in(read, action), description)
+  end
+
+  # The entries of the array literal spanning `range`, when every one is a
+  # string literal.
+  private def yii_literals(parser : Noir::PhpBlockParser, range : Range(Int32, Int32)) : Array(String)?
+    entries = parser.array_entries(array_open(parser.lexer, range) || return) || return
+    entries.map { |entry| (LaravelAccess.literal(parser.lexer.source(entry.value)) unless entry.key) || return }
   end
 
   # The `[` (or `array(`'s `(`) of the innermost array literal holding `pos`.

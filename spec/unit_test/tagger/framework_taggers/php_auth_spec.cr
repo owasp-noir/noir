@@ -443,6 +443,8 @@ describe "PhpAuthTagger (expanded targets)" do
       PhpAuthTagger.new(noir_options).perform(endpoints.values)
 
       endpoints.select { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys.should eq([:add, :view, :admin])
+      # doIdentityCheck refuses a request without an identity, and asks nothing else.
+      endpoints[:add].tags[0].requires.try(&.map(&.to_s)).should eq(["authenticated"])
     ensure
       FileUtils.rm_rf(tmpdir)
     end
@@ -649,6 +651,10 @@ describe "PhpAuthTagger (expanded targets)" do
 
       # A guest matches no rule for `logout` or `report` (`'@'` is not a guest), so both are denied.
       endpoints.select { |_, endpoint| endpoint.tags.any?(&.name.== "auth") }.keys.should eq([:logout, :list_users, :report])
+      endpoints[:logout].tags[0].requires.try(&.map(&.to_s)).should eq(["authenticated"])
+      endpoints[:list_users].tags[0].requires.try(&.map(&.to_s)).should eq(["authenticated"])
+      # No rule names `report`, so a signed-in caller is denied too.
+      endpoints[:report].tags[0].requires.try(&.map(&.to_s)).should eq(["deny"])
     ensure
       FileUtils.rm_rf(tmpdir)
     end

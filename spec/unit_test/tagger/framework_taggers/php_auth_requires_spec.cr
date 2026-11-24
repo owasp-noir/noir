@@ -91,4 +91,79 @@ describe "PhpAuthTagger requires" do
     tag.description.should eq("Protected by Laravel Gate authorization")
     atoms(tag).should eq([["authenticated"], ["unresolved"]])
   end
+
+  it "reads Yii access rules for a signed-in caller, keeping the ones it cannot read" do
+    source = [
+      "<?php",
+      "class PostController extends Controller",
+      "{",
+      "    public function behaviors()",
+      "    {",
+      "        return ['access' => ['class' => AccessControl::class, 'rules' => [",
+      "            ['actions' => ['login'], 'allow' => true, 'roles' => ['?']],",
+      "            ['actions' => ['edit'], 'allow' => true, 'roles' => ['editor', 'admin']],",
+      "            ['actions' => ['view'], 'allow' => true, 'roles' => ['@', User::ROLE_READER]],",
+      "            ['actions' => ['audit'], 'allow' => true, 'roles' => ['@'], 'matchCallback' => fn () => true],",
+      "        ]]];",
+      "    }",
+      "    public function actionEdit() {}",
+      "    public function actionView() {}",
+      "    public function actionAudit() {}",
+      "}",
+    ].join("\n")
+    atoms(php_auth_tag(source, 13, "php_yii")).should eq([["role:admin", "role:editor"]])
+    atoms(php_auth_tag(source, 14, "php_yii")).should eq([["authenticated"], ["unresolved"]])
+    atoms(php_auth_tag(source, 15, "php_yii")).should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "leaves a Yii filter with its own rule class unread" do
+    source = [
+      "<?php",
+      "class PostController extends Controller",
+      "{",
+      "    public function behaviors()",
+      "    {",
+      "        return ['access' => ['class' => AccessControl::class, 'ruleConfig' => ['class' => MyRule::class], 'rules' => [",
+      "            ['allow' => true, 'roles' => ['@']],",
+      "        ]]];",
+      "    }",
+      "    public function actionEdit() {}",
+      "}",
+    ].join("\n")
+    atoms(php_auth_tag(source, 10, "php_yii")).should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "adds nothing to the Symfony analyzer's tag for an attribute it already read" do
+    source = [
+      "<?php",
+      "class AdminController extends AbstractController",
+      "{",
+      "    #[Route('/x')]",
+      "    #[IsGranted('ROLE_ADMIN')]",
+      "    public function show() {}",
+      "}",
+    ].join("\n")
+    analyzer = Tag.new("auth", "Protected by Symfony #[IsGranted('ROLE_ADMIN')]", "php_auth", requires: [
+      Access::Clause.new([Access::Atom.new(:role, "ROLE_ADMIN")], "IsGranted('ROLE_ADMIN')"),
+    ])
+    tag = php_auth_tag(source, 6, "php_symfony", existing: analyzer).should_not be_nil
+    tag.description.should eq("Protected by Symfony #[IsGranted('ROLE_ADMIN')]")
+    atoms(tag).should eq([["role:ROLE_ADMIN"]])
+  end
+
+  it "keeps the unread one-line reading beside an access_control tag, and alone" do
+    source = [
+      "<?php",
+      "class AdminController extends AbstractController",
+      "{",
+      "    #[IsGranted('ROLE_ADMIN')]",
+      "    public function show() {}",
+      "}",
+    ].join("\n")
+    access_control = Tag.new("auth", "Protected by Symfony access_control (ROLE_USER)", "php_auth", requires: [
+      Access::Clause.new([Access::Atom.new(:role, "ROLE_USER")], "access_control (ROLE_USER)"),
+    ])
+    atoms(php_auth_tag(source, 5, "php_symfony", existing: access_control)).should eq([["role:ROLE_USER"], ["authenticated"], ["unresolved"]])
+    php_auth_tag(source, 5, "php_symfony").try(&.requires).should be_nil
+  end
 end
