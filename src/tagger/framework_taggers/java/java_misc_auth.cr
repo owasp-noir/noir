@@ -2,6 +2,7 @@ require "../../../miniparsers/kotlin_source_mask"
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../prefix_scope"
+require "./java_access"
 
 @[Noir::TaggerFor(key: "java_misc_auth", name: "Java Misc Auth Tagger", desc: "Identifies Vert.x/Armeria/JSP authentication patterns", order: 210)]
 class JavaMiscAuthTagger < FrameworkTagger
@@ -99,12 +100,13 @@ class JavaMiscAuthTagger < FrameworkTagger
 
       next if endpoint.details.technology == "java_armeria" && lines[line_idx].matches?(ARMERIA_BUILDER_ROUTE)
 
-      description = if endpoint.details.technology == "java_vertx"
-                      check_vertx(path_info.path, line_idx, endpoint.url)
-                    else
-                      check_route_auth(lines, line_idx) || check_handler_body(lines, line_idx)
-                    end
-      if description
+      if endpoint.details.technology == "java_vertx"
+        if found = check_vertx(path_info.path, line_idx, endpoint.url)
+          description = "Protected by #{found[0]}"
+          endpoint.add_tag(Tag.new("auth", description, "java_misc_auth", requires: JavaAccess.signed_in(found[1], description)))
+          return
+        end
+      elsif description = check_route_auth(lines, line_idx) || check_handler_body(lines, line_idx)
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "java_misc_auth"))
         return
       end
@@ -139,23 +141,37 @@ class JavaMiscAuthTagger < FrameworkTagger
   # after it, and no other. So the guard is read from those registrations'
   # statements and from the route's own, never from lines merely nearby (an
   # auth provider built there, `JWTAuth.create(..)`, guards nothing).
-  private def check_vertx(path : String, line_idx : Int32, url : String) : String?
+  #
+  # The tag names the first guard found; every covering statement and the
+  # route's own add what they require, an `AuthorizationHandler` included.
+  private def check_vertx(path : String, line_idx : Int32, url : String) : {String, Array(Access::Clause)}?
     source = vertx_source(path) || return
     return if line_idx >= source.code.size
-    source.registrations.each do |idx, route_path|
-      break if idx >= line_idx
-      next unless vertx_route_covers?(route_path, url)
-      if found = vertx_guard(source, idx, line_idx)
-        return found
-      end
+    found = nil
+    requires = [] of Access::Clause
+    statements = source.registrations.select { |idx, route_path| idx < line_idx && vertx_route_covers?(route_path, url) }.map { |idx, _| {idx, line_idx} }
+    statements << {line_idx, source.code.size}
+    statements.each do |from, stop|
+      text = vertx_guard_text(source, from, stop)
+      guard = vertx_pattern(text)
+      found ||= guard
+      next unless guard || text.matches?(JavaAccess::VERTX_HANDLER)
+      cnf = JavaAccess.vertx(text) { |rest| !vertx_pattern(rest).nil? }
+      requires.concat(Access.clauses(cnf, source.code[from].strip, path, from + 1))
     end
-    vertx_guard(source, line_idx, source.code.size)
+    found ? {found, requires} : nil
   end
 
-  # The guard named by the statement at `from` (ending before `stop`), with
-  # the declarations of the handler variables and the bodies of the handler
-  # methods it passes.
-  private def vertx_guard(source : VertxSource, from : Int32, stop : Int32) : String?
+  private def vertx_pattern(text : String) : String?
+    ALL_PATTERNS.each do |pattern, desc|
+      return desc if text.matches?(pattern)
+    end
+    nil
+  end
+
+  # The statement at `from` (ending before `stop`), with the declarations of
+  # the handler variables and the bodies of the handler methods it passes.
+  private def vertx_guard_text(source : VertxSource, from : Int32, stop : Int32) : String
     text = statement(source, from, stop)
     text.scan(HANDLER_VARIABLE) do |found|
       if declared = declaration_in_scope(source, found[1], from)
@@ -167,10 +183,7 @@ class JavaMiscAuthTagger < FrameworkTagger
         text += "\n#{statement(source, head, source.code.size)}"
       end
     end
-    ALL_PATTERNS.each do |pattern, desc|
-      return desc if text.matches?(pattern)
-    end
-    nil
+    text
   end
 
   # The statement starting on line `from`: the lines still inside a bracket
