@@ -1,6 +1,7 @@
 require "json"
 require "../../engines/php_engine"
 require "../../../miniparsers/php_block_parser"
+require "../../../tagger/framework_taggers/php/laravel_access"
 
 # Laravel middleware groups and aliases, read from where the app defines
 # them, judged by what their `handle()` does.
@@ -21,8 +22,7 @@ module Analyzer::Php
       "Illuminate\\Auth\\Middleware\\Authenticate",
       "Illuminate\\Auth\\Middleware\\AuthenticateWithBasicAuth",
     }
-    # The built-in `auth` / `auth:sanctum` / `auth.basic` aliases.
-    AUTH_ALIAS_RE = /\Aauth(?:\.basic)?(?::|\z)/
+    AUTH_ALIAS_RE = LaravelAccess::AUTH_ALIAS
 
     # What a `handle()` that can refuse the caller does: abort / throw / answer
     # with 401 or 403, throw an auth exception, authenticate (which throws
@@ -65,10 +65,61 @@ module Analyzer::Php
 
     # Middleware names a route-wiring group's prelude applies.
     # Class entries (`Foo::class`) are qualified through `imports`.
+    # The names the guard is chosen from come first; the marked entries
+    # `requires` is read from follow (see `ACCESS_ENTRY`).
     private def middleware_names(prelude : String, imports : Hash(String, String) = EMPTY_IMPORTS) : Array(String)
       names = [] of String
-      prelude.scan(MIDDLEWARE_ARG_RE) { |m| names.concat(middleware_entries(m[1], imports, nil)) }
-      names
+      prelude.scan(MIDDLEWARE_ARG_RE) { |m| names.concat(guard_entries(m[1], imports, nil)) }
+      names.concat(access_entries(prelude, imports))
+    end
+
+    # Marks on entries carried beside the guard names, through the same
+    # arrays (route file, groups, controller): a middleware entry as written
+    # (`Foo::class . ':a'` reads `App\Foo:a`), an element that is not a
+    # literal (`config('x')`, `$mw`) as its text, and a withdrawal. No guard
+    # rule matches a marked entry. The guard names keep their old reading
+    # (a quoted argument of a call reads as a name), so tags stay as they were.
+    ACCESS_ENTRY   = '\u0001'
+    UNREAD_ENTRY   = '\u0002'
+    WITHDRAW_ENTRY = '\u0003'
+    ACCESS_CALL_RE = /(?:(?:->|::)\s*(middleware|withoutMiddleware)|->\s*(can))\s*\(|['"](middleware|excluded_middleware)['"]\s*=>\s*/
+
+    # The marked entries of every `->middleware(...)`, `->withoutMiddleware(...)`,
+    # `->can(...)` and `'middleware' =>` in `text`.
+    private def access_entries(text : String, imports : Hash(String, String), namespace : String? = nil) : Array(String)
+      entries = [] of String
+      text.scan(ACCESS_CALL_RE) do |m|
+        kind = m[1]? || m[2]? || m[3]?
+        withdraw = kind.in?("withoutMiddleware", "excluded_middleware") ? WITHDRAW_ENTRY.to_s : ""
+        elements = if m[0].ends_with?('(')
+                     LaravelAccess.arguments(text, m.end(0) - 1).try &.flat_map { |arg| LaravelAccess.elements(arg) }
+                   else
+                     LaravelAccess.elements(LaravelAccess.value_at(text, m.end(0)))
+                   end
+        snippet = text[m.begin(0), 80].lines.first? || ""
+        unless elements
+          # A list that never closes runs into the next statement.
+          entries << "#{withdraw}#{UNREAD_ENTRY}#{snippet}"
+          break
+        end
+        if kind == "can"
+          abilities = elements.map { |arg| LaravelAccess.literal(arg) }
+          entries << (abilities.all? && !abilities.empty? ? "#{ACCESS_ENTRY}can:#{abilities.compact.join(',')}" : "#{UNREAD_ENTRY}#{snippet}")
+          next
+        end
+        # `->withoutMiddleware()` names nothing it could be matched against.
+        entries << "#{withdraw}#{UNREAD_ENTRY}#{snippet}" if elements.empty? && !withdraw.empty?
+        elements.each { |element| entries << withdraw + access_entry(element, imports, namespace) }
+      end
+      entries
+    end
+
+    private def access_entry(element : String, imports : Hash(String, String), namespace : String?) : String
+      if entry = LaravelAccess.entry(element) { |name| qualify_class(name, imports, namespace) }
+        "#{ACCESS_ENTRY}#{entry}"
+      else
+        "#{UNREAD_ENTRY}#{element.gsub(/\s+/, " ")[0, 120]}"
+      end
     end
 
     # The guard among `names`: the first that is a known auth alias, a
@@ -98,6 +149,11 @@ module Analyzer::Php
       lifted
     end
 
+    # Per project root, filled with `@middleware_guards`: alias -> class, and
+    # group -> what each member requires.
+    @middleware_aliases = {} of String => Hash(String, String)
+    @middleware_group_requires = {} of String => Hash(String, Array(NameClauses))
+
     @class_middleware_refusals = {} of String => String?
     @class_middleware_mutex = Mutex.new
 
@@ -117,7 +173,7 @@ module Analyzer::Php
       group = path.ends_with?("/routes/api.php") ? "api" : (path.ends_with?("/routes/web.php") ? "web" : nil)
       return [] of String unless group
       root = File.dirname(File.dirname(path))
-      File.exists?(File.join(root, "artisan")) || File.exists?(File.join(root, "bootstrap", "app.php")) ? [group] : [] of String
+      File.exists?(File.join(root, "artisan")) || File.exists?(File.join(root, "bootstrap", "app.php")) ? [group, "#{ACCESS_ENTRY}#{group}"] : [] of String
     end
 
     WITHOUT_MIDDLEWARE_RE = /->\s*withoutMiddleware\s*\(\s*(\[[^\]]*\]|['"][^'"]+['"])?/
@@ -138,13 +194,155 @@ module Analyzer::Php
       end
       found = candidates.compact
       guard = found.find { |desc| !lifted?(desc) } || found.first?
-      endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "php_auth")) if guard
       # `can:` is the `Authorize` middleware: `Gate::authorize` answers 403
       # when the ability is denied.
       # ponytail: a `->withoutMiddleware('can:...')` on the route is not subtracted.
       ability = (names + firm).find(&.starts_with?("can:"))
       ability ||= middleware_names(statement, imports).find(&.starts_with?("can:")) if statement.includes?("can:")
-      endpoint.add_tag(Tag.new("authz", "Protected by Laravel #{ability} middleware", "php_auth")) if ability
+      return unless guard || ability
+
+      requires = route_requires(path, names + firm + middleware_names(statement, imports), check, controller)
+      # The authz tag carries the `can:` entries; the auth tag, when there is
+      # one, everything else.
+      can, other = guard && ability ? requires.partition(&.[0].starts_with?("can:")) : {requires, requires}
+      if guard
+        description = "Protected by #{guard}"
+        endpoint.add_tag(Tag.new("auth", description, "php_auth", requires: LaravelAccess.floor(guard_requires(other, description), description)))
+      end
+      if ability
+        description = "Protected by Laravel #{ability} middleware"
+        endpoint.add_tag(Tag.new("authz", description, "php_auth", requires: guard_requires(can, description)))
+      end
+    end
+
+    # One middleware entry (or the handler check) and the clauses it adds.
+    alias NameClauses = Tuple(String, Array(Access::Clause))
+    NO_ALIASES           = {} of String => String
+    WITHDRAWN_NOTE       = "->withoutMiddleware(...) may withdraw it"
+    POLICY_CHECK_DESC_RE = /\ALaravel handler policy check \((.*); #{Regex.escape(POLICY_NOTE)}\)\z/m
+
+    # Never empty: an empty list reads as open to anyone.
+    private def guard_requires(entries : Array(NameClauses), description : String) : Array(Access::Clause)
+      clauses = entries.flat_map(&.[1]).uniq!(&.any_of)
+      clauses.empty? ? [Access::Clause.unresolved(description, description)] : clauses
+    end
+
+    # Every middleware entry the route is loaded under, adds, or gets from its
+    # controller (the marked ones in `names`), each with what it requires,
+    # plus the handler's own check. An entry a withdrawal in scope may take
+    # away holds only liftably.
+    private def route_requires(path : String, names : Array(String), check : String?, controller : Array(CtorName)) : Array(NameClauses)
+      root = composer_project_root(path)
+      withdrawals = names.compact_map(&.lchop?(WITHDRAW_ENTRY))
+      list = [] of NameClauses
+      names.uniq.each do |name|
+        next unless name.starts_with?(ACCESS_ENTRY) || name.starts_with?(UNREAD_ENTRY)
+        middleware_requires(path, root, name).each do |(member, clauses)|
+          withdrawn = withdrawals.any? { |withdrawal| withdraws?(withdrawal, name.lchop, member, root) }
+          list << {name.lchop, withdrawn ? LaravelAccess.liftable(clauses, WITHDRAWN_NOTE) : clauses}
+        end
+      end
+      controller.each do |(name, note)|
+        next unless note
+        middleware_requires(path, root, name).each { |(_, clauses)| list << {name.lchop, LaravelAccess.liftable(clauses, note)} }
+      end
+      list << {check, check_requires(check)} if check
+      list
+    end
+
+    # Whether withdrawing `withdrawal` may take away `member` (an entry, or a
+    # member of the group `entry`). Laravel withdraws after expanding groups
+    # and aliases (`Router::gatherRouteMiddleware`): an entry with parameters
+    # goes only by its exact string; one without, also when its class is the
+    # withdrawn class or a subclass of it.
+    private def withdraws?(withdrawal : String, entry : String, member : String, root : String) : Bool
+      return true if withdrawal.starts_with?(UNREAD_ENTRY)
+      withdrawal = withdrawal.lchop(ACCESS_ENTRY)
+      return true if withdrawal == entry || withdrawal == member
+      if members = @middleware_group_requires[root]?.try(&.[withdrawal]?)
+        return members.any? { |(withdrawn, _)| withdrawn == member }
+      end
+      return false if member.includes?(':') || withdrawal.includes?(':')
+      aliases = @middleware_aliases[root]? || NO_ALIASES
+      withdrawn_class = alias_class(withdrawal, aliases) || LaravelAccess::BUILTIN_CLASSES[withdrawal]?
+      member_class = alias_class(member, aliases) || LaravelAccess::BUILTIN_CLASSES[member]?
+      return true unless withdrawn_class && member_class
+      withdrawn_class = withdrawn_class.lchop('\\')
+      member_class = member_class.lchop('\\')
+      # A framework class subclasses none of the app's.
+      withdrawn_class == member_class || !member_class.starts_with?("Illuminate\\")
+    end
+
+    # A refusing handler check turns guests away; a policy check asks the gate.
+    private def check_requires(check : String) : Array(Access::Clause)
+      if call = check.match(POLICY_CHECK_DESC_RE).try(&.[1])
+        Access.clauses(LaravelAccess.gate_call(call), call)
+      else
+        [Access::Clause.new([Access::Atom.new(:authenticated)], check)]
+      end
+    end
+
+    # What the marked entry `name` adds: an element that is not a literal is
+    # unread; a group adds its members' (each under the member's name).
+    private def middleware_requires(path : String, root : String, name : String) : Array(NameClauses)
+      if text = name.lchop?(UNREAD_ENTRY)
+        return [{text, [Access::Clause.unresolved(text, text)]}]
+      end
+      return [] of NameClauses unless entry = name.lchop?(ACCESS_ENTRY)
+      if members = @middleware_group_requires[root]?.try(&.[entry]?)
+        return members
+      end
+      guards = @middleware_guards[root]?
+      cnf = entry_requires(entry, root, @middleware_aliases[root]? || NO_ALIASES) do
+        route_guard(path, [entry]) || guards.try(&.[entry.split(':', 2)[0]]?)
+      end
+      cnf ? [{entry, Access.clauses(cnf, entry)}] : [] of NameClauses
+    end
+
+    # What one middleware entry requires, nil when it is known not to decide
+    # who may call. `judged` gives the existing guard judgement of it: such
+    # a guard refuses guests by some check noir did not name. Anything else
+    # noir did not read (an alias it cannot find, a vendor class it does not
+    # know) is unread.
+    private def entry_requires(entry : String, root : String, aliases : Hash(String, String), & : -> String?) : Access::CNF?
+      klass = alias_class(entry, aliases)
+      if cnf = LaravelAccess.middleware(entry, klass)
+        cnf
+      elsif yield
+        [[Access::Atom.new(:authenticated)], [Access::Atom.new(:unresolved, entry)]]
+      elsif LaravelAccess.non_access?(entry, klass)
+        nil
+      elsif (outside = decided_outside(klass, root)) == ""
+        nil
+      elsif outside
+        LaravelAccess.middleware(entry, outside) || (LaravelAccess.non_access?(entry, outside) ? nil : [[Access::Atom.new(:unresolved, entry)]])
+      else
+        [[Access::Atom.new(:unresolved, entry)]]
+      end
+    end
+
+    # Where an app middleware class's check lives: "" when noir read it in
+    # the app's own code (a `handle()` that does not defer to its parent),
+    # else the first ancestor outside the app, which it inherits `handle()`
+    # from. Nil when the class is not an app class noir can open.
+    private def decided_outside(klass : String?, root : String, depth : Int32 = 0) : String?
+      return unless klass && depth < 4
+      fqcn = klass.partition(':')[0].lchop('\\')
+      path = app_class_path(fqcn, root)
+      return (depth > 0 ? fqcn : nil) unless path && File.exists?(path)
+      content = php_code(read_file_content(path))
+      handle = declared_method(Noir::PhpBlockParser.new(content), "handle")
+      return "" if handle && !handle.includes?("parent::handle")
+      parent = content.match(/\bclass\s+\w+\s+extends\s+(\\?[\w\\]+)/).try do |m|
+        qualify_class(m[1], parse_use_imports(content), content.match(/\bnamespace\s+([\w\\]+)\s*;/).try(&.[1]))
+      end
+      parent ? decided_outside(parent, root, depth + 1) : ""
+    end
+
+    # The class an alias entry (`role:admin`) or class entry names.
+    private def alias_class(entry : String, aliases : Hash(String, String)) : String?
+      name = entry.split(':', 2)[0]
+      aliases[name]? || (name.includes?('\\') ? name : nil)
     end
 
     # A guard a setting or a condition can lift: it may not stand.
@@ -477,6 +675,19 @@ module Analyzer::Php
           imports = parse_use_imports(content)
           namespace = content.match(/\bnamespace\s+([\w\\]+)\s*;/).try(&.[1])
           groups, aliases = middleware_definitions(content, imports, namespace)
+          (@middleware_aliases[root] ||= {} of String => String).merge!(aliases)
+          group_requires = @middleware_group_requires[root] ||= {} of String => Array(NameClauses)
+          groups.each do |name, entries|
+            members = entries.compact_map do |marked|
+              if text = marked.lchop?(UNREAD_ENTRY)
+                next {text, [Access::Clause.unresolved(text, text)]}
+              end
+              next unless entry = marked.lchop?(ACCESS_ENTRY)
+              cnf = entry_requires(entry, root, aliases) { entry_guard(entry, root, aliases) }
+              {entry, Access.clauses(cnf, entry)} if cnf
+            end
+            (group_requires[name] ||= [] of NameClauses).concat(members)
+          end
           guards = result[root] ||= MiddlewareGuards.new
           aliases.each do |name, klass|
             next unless note = middleware_refusal(klass, root)
@@ -528,7 +739,12 @@ module Analyzer::Php
       {groups, aliases}
     end
 
+    # The guard names of a middleware list, then its marked entries.
     private def middleware_entries(text : String, imports : Hash(String, String), namespace : String?) : Array(String)
+      guard_entries(text, imports, namespace) + LaravelAccess.elements(text).map { |element| access_entry(element, imports, namespace) }
+    end
+
+    private def guard_entries(text : String, imports : Hash(String, String), namespace : String?) : Array(String)
       text.scan(MIDDLEWARE_ENTRY_RE).map { |m| m[1]? || qualify_class(m[2], imports, namespace) }
     end
 
