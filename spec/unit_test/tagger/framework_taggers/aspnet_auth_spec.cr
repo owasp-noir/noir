@@ -1283,4 +1283,33 @@ describe "AspnetAuthTagger requires" do
     tags.map(&.description).should eq(["Protected by ASP.NET User.Identity.IsAuthenticated"])
     requires_of(tags[0]).should eq([["unresolved"]])
   end
+
+  it "reads the RequireAuthorization chained on the group a route-builder extension returns" do
+    orders = <<-CS
+      public static class OrdersApi
+      {
+          public static RouteGroupBuilder MapOrdersApi(this IEndpointRouteBuilder app)
+          {
+              var api = app.MapGroup("api/orders");
+              api.MapGet("/", () => "x");
+              return api;
+          }
+      }
+      CS
+    plain = {"Orders.cs" => orders, "Program.cs" => <<-CS}
+      var app = builder.Build();
+      var orders = app.NewVersionedApi("Orders");
+      orders.MapOrdersApi()
+            .RequireAuthorization();
+      CS
+    tags = aspnet_tags(plain, "Orders.cs", 6, "cs_aspnet_core_minimal_api")
+    tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization() (route group)"])
+    requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
+    unread_of(tags[0]).should eq(["the conventions of app, a builder made outside this method"])
+
+    policy = {"Orders.cs" => orders, "Program.cs" => "app.MapOrdersApi().RequireAuthorization(\"Admins\");\n"}
+    tags = aspnet_tags(policy, "Orders.cs", 6, "cs_aspnet_core_minimal_api")
+    requires_of(tags[0]).sort.should eq([["authenticated"], ["unresolved"], ["unresolved"]])
+    unread_of(tags[0]).sort.should eq(["Policy=Admins", "the conventions of app, a builder made outside this method"])
+  end
 end

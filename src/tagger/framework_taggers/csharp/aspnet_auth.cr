@@ -69,7 +69,7 @@ class AspnetAuthTagger < FrameworkTagger
     super
     @fallback_roots = Set(String?).new
     @controllers_global_roots = Set(String?).new
-    @extension_auth = Hash(String, Tuple(Bool, Bool)).new
+    @extension_sites = Hash(String, Array(ExtensionSite)).new
     @default_policy = nil.as(String?)
   end
 
@@ -149,8 +149,15 @@ class AspnetAuthTagger < FrameworkTagger
   # A convention on a group applies to every group made from it, so a
   # `.RequireAuthorization()` ahead of the call covers everything the
   # extension maps; one after it covers only the builder it returns.
+  #
+  # A call site: its file, the line its statement starts on, whether it
+  # authorizes the returned builder (`result`) and the `this` builder
+  # (`receiver`), and the line of the authorized declaration the receiver
+  # takes that from, if any.
+  record ExtensionSite, path : String, line : Int32, result : Bool, receiver : Bool, declaration : Int32?
+
   private def collect_extension_auth
-    @extension_auth.clear
+    @extension_sites.clear
     @helper_roots.clear
     @call_patterns.clear
     sources = [] of Tuple(String, String)
@@ -168,13 +175,13 @@ class AspnetAuthTagger < FrameworkTagger
     return if names.empty?
     collect_authorizing_helpers(sources.map(&.[0]))
 
-    sites = Hash(String, Array(Tuple(Bool, Bool))).new
     call_re = /\.\s*(#{names.map { |n| Regex.escape(n) }.join('|')})\s*\(/
     sources.each do |path, code|
       next unless code.matches?(call_re)
       auth_call = call_patterns(path)[0]
-      statements = code.split(/[;{}]/)
-      statements.each do |statement|
+      # Each statement with the offset of its first non-blank character.
+      statements = code.scan(/[^;{}]+/).map { |m| {m[0], m.begin(0) + (m[0].size - m[0].lstrip.size)} }
+      statements.each do |statement, start|
         statement.scan(call_re) do |m|
           before = statement[0...m.begin]
           after = statement[m.end..]
@@ -182,17 +189,19 @@ class AspnetAuthTagger < FrameworkTagger
           # `.AllowAnonymous()` on the chain lifts the authorization it inherits.
           anonymous = before.matches?(MINIMAL_API_ALLOW_ANON)
           before_auth = !anonymous && before.matches?(auth_call)
+          declared = nil
           # `admin.MapGroup("/users").MapUsers()`: a child group takes `admin`'s conventions.
           if !before_auth && !anonymous && (receiver = before.match(/\A\s*(\w+)\s*(?:\z|\.\s*MapGroup\s*\()/))
             declaration = /\b#{Regex.escape(receiver[1])}\s*=[^=]/
-            before_auth = statements.any? { |s| s.matches?(declaration) && s.matches?(auth_call) && !s.matches?(MINIMAL_API_ALLOW_ANON) }
+            if found = statements.find { |s, _| s.matches?(declaration) && s.matches?(auth_call) && !s.matches?(MINIMAL_API_ALLOW_ANON) }
+              before_auth = true
+              declared = code[0, found[1]].count('\n')
+            end
           end
-          (sites[m[1]] ||= [] of Tuple(Bool, Bool)) << {before_auth || after.matches?(auth_call), before_auth}
+          site = ExtensionSite.new(path, code[0, start].count('\n'), before_auth || after.matches?(auth_call), before_auth, declared)
+          (@extension_sites[m[1]] ||= [] of ExtensionSite) << site
         end
       end
-    end
-    sites.each do |name, calls|
-      @extension_auth[name] = {calls.all?(&.[0]), calls.all?(&.[1])}
     end
   end
 
@@ -612,20 +621,24 @@ class AspnetAuthTagger < FrameworkTagger
   # same method, up the chain. A builder made elsewhere (a parameter, a
   # field) carries conventions this does not see. False when a level allows
   # anonymous callers.
-  private def fluent_requires(path : String, lines : Array(String), route_line : Int32, clauses : Array(Access::Clause), depth : Int32 = 0) : Bool
+  private def fluent_requires(path : String, lines : Array(String), route_line : Int32, clauses : Array(Access::Clause),
+                              depth : Int32 = 0, chain : Array(String) = [] of String, origin : Int32 = route_line) : Bool
     statement = bounded(statement_at(lines, route_line))
     return false if statement.matches?(MINIMAL_API_ALLOW_ANON)
     clauses.concat(authorization_calls(path, route_line, statement))
     return true if depth >= 5
     receiver = (statement.match(MINIMAL_API_RECEIVER) || statement.match(GROUP_DECLARATION_RECEIVER)).try(&.[1]) || return true
+    chain << receiver
     index = fluent_index(path, lines)
     group_statement_lines(index, route_line, receiver, later: true).each do |idx|
       clauses.concat(authorization_calls(path, idx, bounded(statement_at(lines, idx))))
     end
     member = nearest_before(index.members, route_line) { |idx| index.depth[idx] < index.depth[route_line] }
     if declaration = nearest_before(index.groups[receiver]?, route_line) { |idx| member.nil? || idx > member }
-      return fluent_requires(path, lines, declaration, clauses, depth + 1)
+      return fluent_requires(path, lines, declaration, clauses, depth + 1, chain, origin)
     end
+    # Inside a route-builder extension, its call site's authorization.
+    clauses.concat(extension_clauses(path, lines, origin, chain))
     unless app_builder?(path, lines, receiver, member, route_line)
       source = "the conventions of #{receiver}, a builder made outside this method"
       clauses << Access::Clause.unresolved(source, source, path, route_line + 1)
@@ -1442,10 +1455,49 @@ class AspnetAuthTagger < FrameworkTagger
   # root builder last) inherits from the call sites of the route-builder
   # extension method enclosing `route_line`.
   private def extension_auth(lines : Array(String), route_line : Int32, chain : Array(String)) : String?
-    return if @extension_auth.empty?
+    name, receiver, result = extension_reach(lines, route_line, chain) || return
+    sites = @extension_sites[name]
+    "ASP.NET .RequireAuthorization() (route group)" if (receiver && sites.all?(&.receiver)) || (result && sites.all?(&.result))
+  end
+
+  # What the call sites of the extension enclosing `route_line` add to a
+  # route mapped through `chain`: the authorization calls read from the one
+  # call site, or, for several, one unread clause, since the route is
+  # served once per call site.
+  private def extension_clauses(path : String, lines : Array(String), route_line : Int32, chain : Array(String)) : Array(Access::Clause)
+    name, receiver, result = extension_reach(lines, route_line, chain) || return [] of Access::Clause
+    sites = @extension_sites[name]
+    applying = sites.select { |site| (receiver && site.receiver) || (result && site.result) }
+    return [] of Access::Clause if applying.empty?
+    if sites.size > 1
+      source = "the authorization of #{sites.size} call sites of #{name}"
+      cnf = [[Access::Atom.new(:unresolved, source)]]
+      return Access.clauses(applying.size == sites.size ? AspnetAccess.floor(cnf) : cnf, source, path, route_line + 1)
+    end
+    site = sites.first
+    source = "the authorization at the call site of #{name}"
+    unread = Access.clauses(AspnetAccess.floor([[Access::Atom.new(:unresolved, source)]]), source, site.path, site.line + 1)
+    masked = lexer_for(site.path).try(&.masked_lines) || return unread
+    statement = bounded(statement_at(masked, site.line))
+    call = statement.match(/\.\s*#{Regex.escape(name)}\s*\(/) || return unread
+    clauses = [] of Access::Clause
+    if receiver && site.receiver
+      declared = site.declaration
+      clauses.concat(declared ? authorization_calls(site.path, declared, bounded(statement_at(masked, declared))) : authorization_calls(site.path, site.line, statement[0, call.begin(0)]))
+    end
+    # Blanked up to the call, so columns still line up with the source.
+    clauses.concat(authorization_calls(site.path, site.line, " " * call.end(0) + statement[call.end(0)..])) if result && site.result
+    clauses.empty? ? unread : clauses
+  end
+
+  # `{extension name, whether the route's root builder is its this-builder,
+  # whether the route's chain reaches the builder it returns}` for the
+  # route-builder extension method enclosing `route_line`.
+  private def extension_reach(lines : Array(String), route_line : Int32, chain : Array(String)) : Tuple(String, Bool, Bool)?
+    return if @extension_sites.empty?
     decl_idx = (0..route_line).reverse_each.find { |idx| lines[idx].includes?("this") && lines[idx].matches?(ROUTE_BUILDER_EXTENSION) } || return
     decl = lines[decl_idx].match(ROUTE_BUILDER_EXTENSION) || return
-    result_auth, receiver_auth = @extension_auth[decl[1]]? || return
+    return unless @extension_sites.has_key?(decl[1])
 
     # The route must sit inside the method body, and the `return x;` of
     # that body names the builder the call sites' chain applies to.
@@ -1462,10 +1514,7 @@ class AspnetAuthTagger < FrameworkTagger
       break if opened && depth <= 0
     end
 
-    root = chain.last
-    if (receiver_auth && root == decl[2]) || (result_auth && returned && chain.includes?(returned))
-      "ASP.NET .RequireAuthorization() (route group)"
-    end
+    {decl[1], chain.last? == decl[2], !returned.nil? && chain.includes?(returned)}
   end
 
   # A minimal API route carries its attributes on the handler lambda inside
