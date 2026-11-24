@@ -24,10 +24,11 @@ module Noir
     # that condition's text, and the CanCanCan `authorize_resource` /
     # `load_and_authorize_resource` statements left active for the action,
     # and the class macros (`requires_login`) the class's own body calls for
-    # the action, which may set what a callback reads off `self.class`.
+    # the action, which may set what a callback reads off `self.class`, and
+    # the `if:` / `unless:` text each active callback was registered with.
     record Resolution, callbacks : Array(String), paths : Array(String), conditional : Set(String),
       lifted : Hash(String, String) = Hash(String, String).new, cancan : Array(String) = [] of String,
-      settings : Set(String) = Set(String).new
+      settings : Set(String) = Set(String).new, conditions : Hash(String, String) = Hash(String, String).new
 
     # Class-body lines that change the callback chain a subclass inherits.
     CALLBACK_LINE = /^(?:include|(?:prepend_|skip_)?before_action|allow_unauthenticated_access|(?:skip_)?(?:load_and_)?authorize_resource)\b/
@@ -389,6 +390,7 @@ module Noir
               active.delete(name[1])
               resolution.conditional.delete(name[1])
               resolution.lifted.delete(name[1])
+              resolution.conditions.delete(name[1])
             end
           end
         elsif !line.matches?(CALLBACK_LINE) && (macro_name = line[/\A[a-z_]\w*[!?]?/]?) && depth < 16 &&
@@ -428,6 +430,11 @@ module Noir
               resolution.conditional << callback
             else
               resolution.conditional.delete(callback)
+            end
+            if condition = line.match(LIFT_OPTION).try(&.[0])
+              resolution.conditions[callback] = condition
+            else
+              resolution.conditions.delete(callback)
             end
             resolution.lifted.delete(callback)
             resolution.lifted[callback] = MAYBE_EXCEPTED if RailsCallbackChain.maybe_excepted?(line, action)
