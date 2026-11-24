@@ -138,6 +138,7 @@ describe "OAS3 Analyzer" do
           securitySchemes:
             bearerAuth: {type: http, scheme: bearer}
             apiKey: {type: apiKey, in: header, name: X-API-Key}
+            oauth: {type: oauth2, flows: {}}
         paths:
           /items:
             post:
@@ -174,6 +175,13 @@ describe "OAS3 Analyzer" do
                   nosuch: []
                 - apiKey: []
               responses: {'200': {description: ok}}
+          /scoped:
+            put:
+              security:
+                - oauth: [items:read, items:write]
+                  apiKey: []
+                - oauth: [admin]
+              responses: {'200': {description: ok}}
         YAML
       File.write(File.join(dir, "openapi.yaml"), yaml)
       File.write(File.join(dir, "openapi.json"), YAML.parse(yaml).to_json)
@@ -184,22 +192,29 @@ describe "OAS3 Analyzer" do
       options["base"] = YAML::Any.new([YAML::Any.new(dir)])
 
       endpoints = Analyzer::Specification::Oas3.new(options).analyze
-      endpoints.size.should eq(12)
+      endpoints.size.should eq(14)
       endpoints.each do |endpoint|
         details = endpoint.details
         details.technology = "oas3"
         endpoint.details = details
       end
-      tags = endpoints.map { |e| {e.url, e.tags.map { |t| {t.name, t.description} }} }.uniq!
+      # The JSON and YAML copies read into equal tags, so the optimizer's
+      # merge keeps one of each.
+      tags = endpoints.map { |e| {e.url, e.tags.map { |t| {t.name, t.description, Access.of(t).map(&.to_s)} }} }.uniq!
       tags.should eq([
-        {"/items", [{"auth", "Protected by OAS security bearerAuth (inherited from the spec's root security)"}]},
-        {"/items/{item_id}", [{"auth", "Protected by OAS security bearerAuth + apiKey or apiKey"}]},
-        {"/public/feedback", [{"anonymous", "OAS security admits anonymous callers"}]},
-        {"/maybe", [{"anonymous", "OAS security admits anonymous callers"}]},
+        {"/items", [{"auth", "Protected by OAS security bearerAuth (inherited from the spec's root security)", ["authenticated"]}]},
+        {"/items/{item_id}", [{"auth", "Protected by OAS security bearerAuth + apiKey or apiKey", ["authenticated"]}]},
+        {"/public/feedback", [{"anonymous", "OAS security admits anonymous callers", ["anonymous"]}]},
+        {"/maybe", [{"anonymous", "OAS security admits anonymous callers", ["anonymous"]}]},
         # A scheme the document never defines guards nothing.
-        {"/undefined", [] of Tuple(String, String)},
-        {"/partly-undefined", [{"auth", "Protected by OAS security apiKey"}]},
+        {"/undefined", [] of Tuple(String, String, Array(String))},
+        # The alternatives naming it stay in the requirement, unread.
+        {"/partly-undefined", [{"auth", "Protected by OAS security apiKey", ["(authenticated | unresolved)"]}]},
+        {"/scoped", [{"auth", "Protected by OAS security oauth + apiKey or oauth", [
+          "(scope:admin | scope:items:read)", "(scope:admin | scope:items:write)", "(scope:admin | authenticated)",
+        ]}]},
       ])
+      endpoints.select(&.url.==("/scoped")).map(&.tags).uniq!.size.should eq(1)
 
       signals = NoirAIContext.apply(endpoints[0, 4]).to_h do |endpoint|
         context = endpoint.ai_context.should_not be_nil
@@ -221,12 +236,12 @@ describe "OAS3 Analyzer" do
     options = create_test_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/specification/oas2_security")])
 
-    tags = Analyzer::Specification::Oas2.new(options).analyze.map { |e| {e.method, e.url, e.tags.map(&.description)} }
+    tags = Analyzer::Specification::Oas2.new(options).analyze.map { |e| {e.method, e.url, e.tags.map { |t| {t.description, Access.of(t).map(&.to_s)} }} }
     tags.should eq([
-      {"GET", "/v1/items", ["Protected by OAS security ApiKeyHeader (inherited from the spec's root security)"]},
-      {"POST", "/v1/items", ["Protected by OAS security BasicAuth"]},
-      {"GET", "/v1/public", ["OAS security admits anonymous callers"]},
-      {"GET", "/v1/search", ["Protected by OAS security ApiKeyQuery"]},
+      {"GET", "/v1/items", [{"Protected by OAS security ApiKeyHeader (inherited from the spec's root security)", ["authenticated"]}]},
+      {"POST", "/v1/items", [{"Protected by OAS security BasicAuth", ["authenticated"]}]},
+      {"GET", "/v1/public", [{"OAS security admits anonymous callers", ["anonymous"]}]},
+      {"GET", "/v1/search", [{"Protected by OAS security ApiKeyQuery", ["authenticated"]}]},
     ])
   ensure
     CodeLocator.instance.clear_all

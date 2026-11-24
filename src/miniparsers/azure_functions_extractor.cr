@@ -13,13 +13,17 @@ module Noir
     extend self
 
     # `route` nil means "not declared": the host serves the trigger on the
-    # function name. `methods` empty means every verb.
+    # function name. `methods` empty means every verb. `auth_level` is the
+    # level's last word; `auth_level_expression` holds the source text when
+    # it is not one literal or one `AuthLevel.X` member (a ternary, a
+    # constant), so the level may be another one.
     record Trigger,
       name : String?,
       route : String?,
       methods : Array(String),
       auth_level : String?,
-      line : Int32
+      line : Int32,
+      auth_level_expression : String? = nil
 
     # Any binding trigger (`TimerTrigger`, `QueueTrigger`, ...): every function
     # has exactly one, so they delimit which `[Function]` belongs to which.
@@ -52,6 +56,7 @@ module Noir
     KEYWORD_ARG   = /\A(\w+)\s*[:=]\s*(.*)\z/m
     JS_KEY        = /\A["'`]?(\w+)["'`]?\s*:\s*(.*)\z/m
     STRING_TOKENS = /(["'`])((?:(?!\1)[^\\]|\\.)*)\1/
+    EXACT_LEVEL   = /\A\s*(?:(["'])\w+\1|(?:[\w.]*\.)?(?:AuthLevel|AuthorizationLevel)\s*\.\s*\w+)\s*\z/
 
     # Whether the file declares at least one HTTP trigger in a code-first
     # programming model. A cheap substring gate runs before each regex.
@@ -105,6 +110,7 @@ module Noir
         route = nil
         methods = [] of String
         auth_level = nil
+        level_source = nil
         unresolved = false
 
         args.each do |arg|
@@ -120,18 +126,20 @@ module Noir
               kw[2].scan(STRING_TOKENS) { |s| methods << s[2].upcase }
             when "authlevel"
               auth_level = last_identifier(kw[2])
+              level_source = kw[2]
             end
           elsif value = literal(arg)
             methods << value.upcase
           elsif arg.includes?("AuthorizationLevel")
             auth_level = last_identifier(arg)
+            level_source = arg
           end
         end
         # A route held in a constant cannot be resolved here, and the
         # function-name fallback would report a path the host never serves.
         next if unresolved
 
-        triggers << Trigger.new(name, route, methods, auth_level.try(&.downcase), line_at(newlines, m))
+        triggers << Trigger.new(name, route, methods, auth_level.try(&.downcase), line_at(newlines, m), unread_level(level_source))
       end
 
       triggers
@@ -211,7 +219,7 @@ module Noir
       end
     end
 
-    # Receiver name => app-level `http_auth_level` for every
+    # Receiver name => app-level `http_auth_level` source text for every
     # `FunctionApp` / `Blueprint` / `DFApp` assignment. Only decorators on
     # these count: a Flask app in the same module also spells its routes
     # `@app.route(...)`.
@@ -227,7 +235,7 @@ module Noir
         positional, keywords = python_args(right, source)
         # Flask and Sanic blueprints take a name; Azure's takes none.
         next if klass[1] == "Blueprint" && !positional.empty?
-        apps[TreeSitter.node_text(left, source)] = keywords["http_auth_level"]?.try { |v| last_identifier(v) }
+        apps[TreeSitter.node_text(left, source)] = keywords["http_auth_level"]?
       end
       apps
     end
@@ -264,8 +272,13 @@ module Noir
 
         methods = [] of String
         keywords["methods"]?.try &.scan(PY_METHOD) { |s| methods << (s[2]? || s[3]).upcase }
-        auth_level = keywords["auth_level"]?.try { |v| literal(v) || last_identifier(v) } || apps[receiver]
-        triggers << Trigger.new(name, route, methods, auth_level.try(&.downcase), line)
+        level_source = keywords["auth_level"]?
+        auth_level = level_source.try { |v| literal(v) || last_identifier(v) }
+        unless auth_level
+          level_source = apps[receiver]
+          auth_level = level_source.try { |v| last_identifier(v) }
+        end
+        triggers << Trigger.new(name, route, methods, auth_level.try(&.downcase), line, unread_level(level_source))
       end
     end
 
@@ -314,6 +327,10 @@ module Noir
       return if m[2] == "`" && body.includes?("${")
       return if m[1].matches?(/[$fF]/) && body.includes?('{')
       body
+    end
+
+    private def unread_level(source : String?) : String?
+      source.strip unless source.nil? || source.matches?(EXACT_LEVEL)
     end
 
     private def last_identifier(value : String) : String?

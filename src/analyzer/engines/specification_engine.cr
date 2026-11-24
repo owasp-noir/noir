@@ -11,6 +11,7 @@ require "../../models/locator_keys"
 require "../../utils/media_filter"
 require "../../utils/spec_line_index"
 require "../../utils/yaml"
+require "./oas_security_access"
 
 module Analyzer::Specification
   # A parsed specification document together with the path it was read from.
@@ -825,8 +826,9 @@ module Analyzer::Specification
 
     # The guard a declaration states for its own route; see
     # `Tag.declared_access_tagger` for why the tagger names the technology.
-    protected def declared_access_tag(description : String, path : String? = nil, line : Int32? = nil) : Tag
-      Tag.new("auth", description, Tag.declared_access_tagger(tech), path, line)
+    protected def declared_access_tag(description : String, path : String? = nil, line : Int32? = nil,
+                                      requires : Array(Access::Clause)? = nil) : Tag
+      Tag.new("auth", description, Tag.declared_access_tagger(tech), path, line, requires)
     end
 
     # OAS2/OAS3: what the effective `security` says about anonymous callers.
@@ -841,28 +843,32 @@ module Analyzer::Specification
     # anyone, so it is not evidence of a guard. `inherited`: the operation
     # took the root `security` rather than stating its own, which the
     # description says, since generators set that default for every route.
-    protected def security_access_tag(effective, inherited : Bool, defined_schemes : Set(String)?) : Tag?
-      return unless requirements = effective.try(&.as_a?)
+    protected def security_access_tag(effective, inherited : Bool, defined_schemes : Hash(String, String?)?) : Tag?
+      return unless nodes = effective.try(&.as_a?)
 
-      alternatives = requirements.compact_map do |requirement|
-        requirement.as_h?.try(&.keys.map(&.to_s))
-      end
+      requirements = nodes.map { |node| OasSecurityAccess.requirement(node) }
+      alternatives = requirements.compact_map { |requirement| requirement.keys if requirement.is_a?(Hash) }
       if defined_schemes
-        alternatives.select!(&.all? { |scheme| defined_schemes.includes?(scheme) })
+        alternatives.select!(&.all? { |scheme| defined_schemes.has_key?(scheme) })
       end
       return if alternatives.empty? && !requirements.empty?
       if alternatives.empty? || alternatives.any?(&.empty?)
-        return Tag.new("anonymous", "OAS security admits anonymous callers", Tag.declared_access_tagger(tech))
+        description = "OAS security admits anonymous callers"
+        return Tag.new("anonymous", description, Tag.declared_access_tagger(tech),
+          requires: [Access::Clause.new([Access::Atom.new(:anonymous)], description)])
       end
 
       origin = " (inherited from the spec's root security)" if inherited
-      declared_access_tag("Protected by OAS security #{alternatives.map(&.join(" + ")).join(" or ")}#{origin}")
+      description = "Protected by OAS security #{alternatives.map(&.join(" + ")).join(" or ")}#{origin}"
+      # The description names the alternatives a server can check; the
+      # requirement keeps the others as unread alternatives.
+      declared_access_tag(description, requires: Access.clauses(OasSecurityAccess.cnf(requirements, defined_schemes, description), description))
     end
 
-    # OAS2/OAS3: the scheme names a `securitySchemes` / `securityDefinitions`
-    # mapping defines, or nil when the document has none.
-    protected def defined_security_schemes(registry) : Set(String)?
-      registry.try(&.as_h?).try(&.keys.map(&.to_s).to_set)
+    # OAS2/OAS3: each scheme a `securitySchemes` / `securityDefinitions`
+    # mapping defines, with its `type`, or nil when the document has none.
+    protected def defined_security_schemes(registry) : Hash(String, String?)?
+      registry.try(&.as_h?).try &.to_h { |name, scheme| {name.to_s, scheme.as_h?.try(&.["type"]?).try(&.as_s?)} }
     end
 
     # OAS2/OAS3: whether the operation states its own `security`.
@@ -877,7 +883,7 @@ module Analyzer::Specification
     # OAS2/OAS3: records one operation, with what its effective `security`
     # says about anonymous callers.
     protected def push_operation(url : String, method : String, params : Array(Param), details : Details,
-                                 effective_security, inherited : Bool, defined_schemes : Set(String)?) : Nil
+                                 effective_security, inherited : Bool, defined_schemes : Hash(String, String?)?) : Nil
       endpoint = params.empty? ? Endpoint.new(url, method, details) : Endpoint.new(url, method, params, details)
       security_access_tag(effective_security, inherited, defined_schemes).try { |tag| endpoint.add_tag(tag) }
       @result << endpoint

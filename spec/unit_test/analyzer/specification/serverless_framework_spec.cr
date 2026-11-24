@@ -127,6 +127,12 @@ describe "Serverless Framework Analyzer" do
     tag_descriptions(endpoint, "serverless-cors").should eq ["true"]
     tag_descriptions(endpoint, "serverless-private").should eq ["true"]
     tag_descriptions(endpoint, "serverless-auth").should eq ["customAuth"]
+    # An API key and an authorizer are both checks noir cannot read.
+    Access.of(endpoint).map { |clause| clause.any_of.map(&.to_s) + [clause.source] }.should eq([
+      ["unresolved", "authorizer: customAuth"],
+      ["unresolved", "private: true"],
+    ])
+    endpoint.tags.reject(&.name.in?("serverless-auth", "serverless-private")).map(&.requires).uniq!.should eq([nil])
   end
 
   it "parses serverless.json variants" do
