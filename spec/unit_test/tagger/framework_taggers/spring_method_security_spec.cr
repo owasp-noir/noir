@@ -741,33 +741,93 @@ describe "SpringAuthTagger method-security modes and order (#3814)" do
       tag_atoms(other_tags[0]).should eq([["role:USER"]])
     end
 
-    it "treats negated permitAll / anonymous / anyRequest rules as unreadable guards" do
+    it "derives what negated chain rules admit instead of marking every .not().X() as a guard" do
+      negated_controller = <<-JAVA
+        package com.example;
+
+        import org.springframework.web.bind.annotation.GetMapping;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        public class NegatedController {
+            @GetMapping("/register")
+            public String register() { return ""; }
+
+            @GetMapping("/not-full")
+            public String notFull() { return ""; }
+
+            @GetMapping("/not-remember")
+            public String notRemember() { return ""; }
+
+            @GetMapping("/open")
+            public String open() { return ""; }
+
+            @GetMapping("/closed")
+            public String closed() { return ""; }
+
+            @GetMapping("/signed-in")
+            public String signedIn() { return ""; }
+
+            @GetMapping("/other")
+            public String other() { return ""; }
+        }
+        JAVA
+
       rules = <<-JAVA
-        .requestMatchers("/legacy/**").not().permitAll()
-        .requestMatchers("/internal/**").not().anonymous()
+        .requestMatchers("/register").not().authenticated()
+        .requestMatchers("/not-full").not().fullyAuthenticated()
+        .requestMatchers("/not-remember").not().rememberMe()
+        .requestMatchers("/open").not().denyAll()
+        .requestMatchers("/closed").not().permitAll()
+        .requestMatchers("/signed-in").not().anonymous()
         .anyRequest().not().hasRole("BANNED")
         JAVA
 
       rows = run_method_security_analyzer(Analyzer::Java::Spring, {
-        "src/main/java/com/example/SecurityConfig.java"  => filter_chain_config(rules),
-        "src/main/java/com/example/ChainController.java" => controller,
+        "src/main/java/com/example/SecurityConfig.java"    => filter_chain_config(rules),
+        "src/main/java/com/example/NegatedController.java" => negated_controller,
       })
 
-      legacy = spring_auth_tags(rows["GET /legacy/x"])
-      legacy.map(&.name).should eq(["auth"])
-      legacy[0].description.should eq(%(Protected by Spring Security not().permitAll via requestMatchers("/legacy/**")))
-      tag_atoms(legacy[0]).should eq([["unresolved"]])
+      spring_auth_tags(rows["GET /register"]).should be_empty
+      spring_auth_tags(rows["GET /not-full"]).should be_empty
+      spring_auth_tags(rows["GET /not-remember"]).should be_empty
+      spring_auth_tags(rows["GET /open"]).should be_empty
 
-      internal = spring_auth_tags(rows["GET /internal/metrics"])
-      internal.map(&.name).should eq(["auth"])
-      internal[0].description.should eq(%(Protected by Spring Security not().anonymous via requestMatchers("/internal/**")))
-      tag_atoms(internal[0]).should eq([["unresolved"]])
+      closed = spring_auth_tags(rows["GET /closed"])
+      closed.map(&.name).should eq(["denied"])
+      closed[0].description.should eq(%(Denied by Spring Security not().permitAll via requestMatchers("/closed")))
+      tag_atoms(closed[0]).should eq([["deny"]])
+
+      signed_in = spring_auth_tags(rows["GET /signed-in"])
+      signed_in.map(&.name).should eq(["auth"])
+      signed_in[0].description.should eq(%(Protected by Spring Security not().anonymous via requestMatchers("/signed-in")))
+      tag_atoms(signed_in[0]).should eq([["unresolved"]])
 
       other = spring_auth_tags(rows["GET /other"])
       other.map(&.name).should eq(["auth"])
       other[0].description.should eq("Protected by Spring Security not().hasRole via anyRequest()")
       tag_atoms(other[0]).should eq([["unresolved"]])
       other[0].requires.not_nil![0].any_of[0].value.should eq(%(not().hasRole("BANNED")))
+
+      # Verify negated anyRequest() forms too.
+      any_open = run_method_security_analyzer(Analyzer::Java::Spring, {
+        "src/main/java/com/example/SecurityConfig.java"    => filter_chain_config(".anyRequest().not().authenticated()"),
+        "src/main/java/com/example/NegatedController.java" => negated_controller,
+      })
+      spring_auth_tags(any_open["GET /other"]).should be_empty
+
+      any_permit = run_method_security_analyzer(Analyzer::Java::Spring, {
+        "src/main/java/com/example/SecurityConfig.java"    => filter_chain_config(".anyRequest().not().denyAll()"),
+        "src/main/java/com/example/NegatedController.java" => negated_controller,
+      })
+      spring_auth_tags(any_permit["GET /other"]).should be_empty
+
+      any_denied = run_method_security_analyzer(Analyzer::Java::Spring, {
+        "src/main/java/com/example/SecurityConfig.java"    => filter_chain_config(".anyRequest().not().permitAll()"),
+        "src/main/java/com/example/NegatedController.java" => negated_controller,
+      })
+      spring_auth_tags(any_denied["GET /other"]).map(&.name).should eq(["denied"])
+      tag_atoms(spring_auth_tags(any_denied["GET /other"])[0]).should eq([["deny"]])
     end
 
     it "reads hasIpAddress and rememberMe in the Kotlin DSL" do
@@ -831,6 +891,335 @@ describe "SpringAuthTagger method-security modes and order (#3814)" do
 
       other = spring_auth_tags(rows["GET /other"])
       tag_atoms(other[0]).should eq([["role:USER"]])
+    end
+  end
+
+  describe "review edge cases" do
+    it "clears denies_all when an uncertain override widens a certain denyAll annotation" do
+      base = <<-JAVA
+        package com.example;
+
+        import org.springframework.security.access.prepost.PreAuthorize;
+
+        public class Base<T> {
+            @PreAuthorize("hasRole('USER')")
+            public String save(T item) { return ""; }
+        }
+        JAVA
+
+      controller = <<-JAVA
+        package com.example;
+
+        import org.springframework.security.access.prepost.PreAuthorize;
+        import org.springframework.web.bind.annotation.PostMapping;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        @PreAuthorize("denyAll()")
+        public class LockedController extends Base<String> {
+            @PostMapping("/save")
+            public String save(String item) { return ""; }
+        }
+        JAVA
+
+      rows = run_method_security_analyzer(Analyzer::Java::Spring, {
+        "src/main/java/com/example/MethodSecurityConfig.java" => enable_config("@EnableMethodSecurity"),
+        "src/main/java/com/example/Base.java"                 => base,
+        "src/main/java/com/example/LockedController.java"     => controller,
+      })
+
+      save_tags = spring_auth_tags(rows["POST /save"])
+      save_tags.map(&.name).should eq(["auth"])
+      tag_atoms(save_tags[0]).should eq([["role:USER", "deny"], ["unresolved"]])
+      Access.cell(Access.of(rows["POST /save"]), Access::Atom.new(:anonymous)).should be_false
+      Access.cell(Access.of(rows["POST /save"]), Access::Atom.new(:role, "USER")).should be_nil
+    end
+
+    it "keeps JSR-250 annotations active on java_jaxrs endpoints even when Spring @EnableMethodSecurity leaves jsr250Enabled false" do
+      CodeLocator.instance.clear_all
+      tmpdir = File.tempname("spring_jaxrs_jsr250")
+      dir = File.join(tmpdir, "src/main/java/com/example")
+      Dir.mkdir_p(dir)
+      config_path = File.join(dir, "MethodSecurityConfig.java")
+      resource_path = File.join(dir, "AdminResource.java")
+      File.write(config_path, enable_config("@EnableMethodSecurity"))
+      File.write(resource_path, <<-JAVA)
+        package com.example;
+        import jakarta.annotation.security.RolesAllowed;
+        import jakarta.ws.rs.GET;
+        import jakarta.ws.rs.Path;
+        @Path("/jaxrs")
+        public class AdminResource {
+            @GET
+            @RolesAllowed("admin")
+            public String admin() { return ""; }
+        }
+        JAVA
+      CodeLocator.instance.register_path(config_path)
+      CodeLocator.instance.register_path(resource_path)
+
+      options = create_test_options
+      options["base"] = YAML::Any.new(tmpdir)
+      details = Details.new(PathInfo.new(resource_path, 9))
+      details.technology = "java_jaxrs"
+      endpoint = SpringAuthTagger.new(options).perform([Endpoint.new("/jaxrs", "GET", [] of Param, details)])[0]
+      tags = spring_auth_tags(endpoint)
+      tags.map(&.name).should eq(["auth"])
+      tag_atoms(tags[0]).should eq([["role:admin"]])
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(tmpdir) if tmpdir
+    end
+
+    it "ANDs Shiro annotations with Spring method-security decisions instead of hiding Shiro behind a public Spring annotation" do
+      controller = <<-JAVA
+        package com.example;
+
+        import org.apache.shiro.authz.annotation.RequiresRoles;
+        import org.springframework.security.access.prepost.PreAuthorize;
+        import org.springframework.web.bind.annotation.GetMapping;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        public class HybridController {
+            @PreAuthorize("permitAll()")
+            @RequiresRoles("admin")
+            @GetMapping("/shiro-over-public")
+            public String shiroOverPublic() { return ""; }
+
+            @PreAuthorize("hasRole('USER')")
+            @RequiresRoles("admin")
+            @GetMapping("/both")
+            public String both() { return ""; }
+        }
+        JAVA
+
+      rows = run_method_security_analyzer(Analyzer::Java::Spring, {
+        "src/main/java/com/example/MethodSecurityConfig.java" => enable_config("@EnableMethodSecurity"),
+        "src/main/java/com/example/HybridController.java"     => controller,
+      })
+
+      pub_tags = spring_auth_tags(rows["GET /shiro-over-public"])
+      pub_tags.map(&.name).should eq(["auth"])
+      pub_tags[0].description.should eq("Protected by Shiro @RequiresRoles")
+      tag_atoms(pub_tags[0]).should eq([["unresolved"]])
+
+      both_tags = spring_auth_tags(rows["GET /both"])
+      both_tags.map(&.name).should eq(["auth"])
+      tag_atoms(both_tags[0]).should eq([["role:USER"], ["unresolved"]])
+    end
+
+    it "indexes deep cross-file fallback inheritance chains iteratively without stack overflow" do
+      CodeLocator.instance.clear_all
+      tmpdir = File.tempname("spring_deep_fallback")
+      dir = File.join(tmpdir, "src/main/java/com/example")
+      Dir.mkdir_p(dir)
+
+      config_path = File.join(dir, "MethodSecurityConfig.java")
+      File.write(config_path, enable_config("@EnableMethodSecurity"))
+      CodeLocator.instance.register_path(config_path)
+
+      depth = 120
+      root_path = File.join(dir, "I0.java")
+      File.write(root_path, "package com.example;\npublic interface I0 {\n    @PreAuthorize(\"hasRole('ROOT')\")\n    String work();\n}\n")
+      CodeLocator.instance.register_path(root_path)
+
+      (1..depth).each do |n|
+        path = File.join(dir, "I#{n}.java")
+        File.write(path, "package com.example;\npublic interface I#{n} extends I#{n - 1} {}\n")
+        CodeLocator.instance.register_path(path)
+      end
+
+      ctrl_path = File.join(dir, "DeepController.java")
+      File.write(ctrl_path, "package com.example;\n@RestController\npublic class DeepController implements I#{depth} {\n    @GetMapping(\"/deep\")\n    public String work() { return \"\"; }\n}\n")
+      CodeLocator.instance.register_path(ctrl_path)
+
+      options = create_test_options
+      options["base"] = YAML::Any.new(tmpdir)
+      details = Details.new(PathInfo.new(ctrl_path, 5))
+      details.technology = "java_spring"
+      endpoint = SpringAuthTagger.new(options).perform([Endpoint.new("/deep", "GET", [] of Param, details)])[0]
+      tags = spring_auth_tags(endpoint)
+      tags.map(&.name).should eq(["auth"])
+      tag_atoms(tags[0]).should eq([["role:ROOT"]])
+    ensure
+      CodeLocator.instance.clear_all
+      FileUtils.rm_rf(tmpdir) if tmpdir
+    end
+
+    it "treats XML <method-security>, meta-annotated @EnableMethodSecurity and @EnableReactiveMethodSecurity as unreadable configs" do
+      secured_controller = <<-JAVA
+        package com.example;
+
+        import org.springframework.security.access.annotation.Secured;
+        import org.springframework.web.bind.annotation.GetMapping;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        public class SecuredOnlyController {
+            @Secured("ROLE_ADMIN")
+            @GetMapping("/admin")
+            public String admin() { return ""; }
+        }
+        JAVA
+
+      unread_forms = [
+        {
+          "src/main/resources/security.xml" => <<-XML,
+            <beans xmlns="http://www.springframework.org/schema/beans"
+                   xmlns:sec="http://www.springframework.org/schema/security">
+              <sec:method-security secured-enabled="true"/>
+            </beans>
+            XML
+        },
+        {
+          "src/main/java/com/example/EnableAppMethodSecurity.java" => <<-JAVA,
+            package com.example;
+            @EnableMethodSecurity(securedEnabled = true)
+            public @interface EnableAppMethodSecurity {}
+            JAVA
+        },
+        {
+          "src/main/java/com/example/ReactiveSecurityConfig.java" => <<-JAVA,
+            package com.example;
+            @Configuration
+            @EnableReactiveMethodSecurity
+            public class ReactiveSecurityConfig {}
+            JAVA
+        },
+      ]
+
+      unread_forms.each do |extra|
+        rows = run_method_security_analyzer(Analyzer::Java::Spring, extra.merge({
+          "src/main/java/com/example/MethodSecurityConfig.java"  => enable_config("@EnableMethodSecurity"),
+          "src/main/java/com/example/SecuredOnlyController.java" => secured_controller,
+        }))
+
+        tags = spring_auth_tags(rows["GET /admin"])
+        tags.map(&.name).should eq(["auth"])
+        tags[0].description.should eq("Protected by Spring @Secured")
+        tag_atoms(tags[0]).should eq([["role:ADMIN"]])
+      end
+    end
+
+    it "stops after PrePost in @EnableGlobalMethodSecurity when a certain @PostAuthorize shadows Secured despite an uncertain @PreAuthorize" do
+      base = <<-JAVA
+        package com.example;
+
+        import org.springframework.security.access.prepost.PreAuthorize;
+
+        public class Base<T> {
+            @PreAuthorize("hasRole('STAFF')")
+            public String save(T item) { return ""; }
+        }
+        JAVA
+
+      controller = <<-JAVA
+        package com.example;
+
+        import org.springframework.security.access.annotation.Secured;
+        import org.springframework.security.access.prepost.PostAuthorize;
+        import org.springframework.web.bind.annotation.PostMapping;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @RestController
+        @Secured("ROLE_X")
+        public class ShadowedController extends Base<String> {
+            @PostAuthorize("hasRole('AUDITOR')")
+            @PostMapping("/save")
+            public String save(String item) { return ""; }
+        }
+        JAVA
+
+      rows = run_method_security_analyzer(Analyzer::Java::Spring, {
+        "src/main/java/com/example/MethodSecurityConfig.java" => enable_config("@EnableGlobalMethodSecurity(prePostEnabled = true, securedEnabled = true)"),
+        "src/main/java/com/example/Base.java"                 => base,
+        "src/main/java/com/example/ShadowedController.java"   => controller,
+      })
+
+      save_tags = spring_auth_tags(rows["POST /save"])
+      save_tags.map(&.name).should eq(["auth"])
+      save_tags[0].description.should eq("Protected by Spring @PreAuthorize")
+      tag_atoms(save_tags[0]).should eq([["role:STAFF"]])
+      rows["POST /save"].resolution.should eq({"guard" => Endpoint::RESOLUTION_HEURISTIC})
+    end
+
+    it "passes a handler permit marker to filter-chain layering identically with and without @EnableMethodSecurity" do
+      marker_annotation = <<-JAVA
+        package com.example;
+        public @interface PublicApi {}
+        JAVA
+
+      collector = <<-JAVA
+        package com.example;
+        import java.util.*;
+        public class AnonUrls {
+            public static Set<String> getUrls(RequestMappingHandlerMapping mapping) {
+                Set<String> urls = new HashSet<>();
+                for (var entry : mapping.getHandlerMethods().entrySet()) {
+                    if (entry.getValue().getMethodAnnotation(PublicApi.class) != null) {
+                        urls.addAll(entry.getKey().getPatternValues());
+                    }
+                }
+                return urls;
+            }
+        }
+        JAVA
+
+      chain_cfg = <<-JAVA
+        package com.example;
+        import org.springframework.context.annotation.Bean;
+        import org.springframework.context.annotation.Configuration;
+        import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+        import org.springframework.security.web.SecurityFilterChain;
+        @Configuration
+        public class SecurityConfig {
+            @Bean
+            public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+                http.authorizeHttpRequests(auth -> auth
+                    .requestMatchers(AnonUrls.getUrls(mapping)).permitAll()
+                    .anyRequest().authenticated()
+                );
+                return http.build();
+            }
+        }
+        JAVA
+
+      controller = <<-JAVA
+        package com.example;
+        import org.springframework.security.access.prepost.PreAuthorize;
+        import org.springframework.web.bind.annotation.GetMapping;
+        import org.springframework.web.bind.annotation.RestController;
+        @RestController
+        public class MarkerController {
+            @PublicApi
+            @PreAuthorize("hasRole('ADMIN')")
+            @GetMapping("/both")
+            public String both() { return ""; }
+        }
+        JAVA
+
+      base_files = {
+        "src/main/java/com/example/PublicApi.java"        => marker_annotation,
+        "src/main/java/com/example/AnonUrls.java"         => collector,
+        "src/main/java/com/example/SecurityConfig.java"   => chain_cfg,
+        "src/main/java/com/example/MarkerController.java" => controller,
+      }
+
+      without_mode = run_method_security_analyzer(Analyzer::Java::Spring, base_files)
+      with_mode = run_method_security_analyzer(Analyzer::Java::Spring, base_files.merge({
+        "src/main/java/com/example/MethodSecurityConfig.java" => enable_config("@EnableMethodSecurity"),
+      }))
+
+      no_mode_tags = spring_auth_tags(without_mode["GET /both"])
+      with_mode_tags = spring_auth_tags(with_mode["GET /both"])
+
+      no_mode_tags.map { |t| {t.name, t.description, tag_atoms(t)} }.should eq([
+        {"auth", "Protected by Spring @PreAuthorize", [["role:ADMIN"]]},
+      ])
+      with_mode_tags.map { |t| {t.name, t.description, tag_atoms(t)} }.should eq(
+        no_mode_tags.map { |t| {t.name, t.description, tag_atoms(t)} }
+      )
     end
   end
 end

@@ -109,9 +109,9 @@ class SpringAuthTagger < FrameworkTagger
   AUTHORIZATION_DSL          = /\b(?:authorizeHttpRequests|authorizeRequests|authorizeExchange)\b/
   # Spring Security switched on without a chain of the app's own: its
   # default chain authenticates every request.
-  ENABLE_SECURITY            = /@Enable(?:Web|WebFlux|RSocket)Security\b/
-  ENABLE_METHOD_SECURITY     = /@(?:[\w.]*\.)?(EnableMethodSecurity|EnableGlobalMethodSecurity)\b/
-  XML_GLOBAL_METHOD_SECURITY = /<(?:[\w-]+:)?global-method-security[\s\/>]/
+  ENABLE_SECURITY        = /@Enable(?:Web|WebFlux|RSocket)Security\b/
+  ENABLE_METHOD_SECURITY = /@(?:[\w.]*\.)?(EnableMethodSecurity|EnableGlobalMethodSecurity|EnableReactiveMethodSecurity)\b/
+  XML_METHOD_SECURITY    = /<(?:[\w-]+:)?(?:global-)?method-security[\s\/>]/
   # Boot's default chain comes from this auto-configuration, not from the
   # dependency: an app that excludes it (`@SpringBootApplication(exclude =
   # SecurityAutoConfiguration.class)`, `spring.autoconfigure.exclude`) has none.
@@ -345,7 +345,7 @@ class SpringAuthTagger < FrameworkTagger
             end
           end
           @security_enabled << module_dir if content.matches?(ENABLE_SECURITY) && Noir::CComments.strip(content).matches?(ENABLE_SECURITY)
-          if content.includes?("EnableMethodSecurity") || content.includes?("EnableGlobalMethodSecurity")
+          if content.includes?("EnableMethodSecurity") || content.includes?("EnableGlobalMethodSecurity") || content.includes?("EnableReactiveMethodSecurity")
             scan_method_security_config(content, module_dir)
           end
           @security_autoconfig_off[module_dir] = true if module_dir && content.includes?("SecurityAutoConfiguration") && excludes_security_autoconfig?(content)
@@ -380,7 +380,7 @@ class SpringAuthTagger < FrameworkTagger
       next if test_source?(file)
       next unless (content = read_file(file)) && content.includes?(XML_SECURITY_NAMESPACE)
       xml = Noir::XmlComments.strip(content)
-      if xml.matches?(XML_GLOBAL_METHOD_SECURITY)
+      if xml.matches?(XML_METHOD_SECURITY)
         @method_security_configs << MethodSecurityConfig.new(
           mode: :global_method_security,
           pre_post: false,
@@ -404,26 +404,49 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   private def index_annotation_source(path : String)
-    return if @fallback_annotations.indexed?(path)
-    return unless content = read_file(path)
-    base = @base_paths.find { |root| Noir::PathScope.under_root?(path, root) } || @base_path
-    @fallback_annotations.read(path, content, base, build_module(path) || base)
-    @fallback_annotations.resolve_references do |name|
-      @fallback_type_candidates.delete(name).try &.each do |candidate|
-        index_annotation_source(candidate)
+    queue = [path]
+    cursor = 0
+    while cursor < queue.size
+      current = queue[cursor]
+      cursor += 1
+      next if @fallback_annotations.indexed?(current)
+      begin
+        next unless content = read_file(current)
+        base = @base_paths.find { |root| Noir::PathScope.under_root?(current, root) } || @base_path
+        @fallback_annotations.read(current, content, base, build_module(current) || base)
+      rescue ex
+        @logger.debug "Could not read Spring annotations in #{current}: #{ex.message}"
+        next
+      end
+      @fallback_annotations.resolve_references do |name|
+        @fallback_type_candidates.delete(name).try &.each do |candidate|
+          queue << candidate unless @fallback_annotations.indexed?(candidate)
+        end
       end
     end
-  rescue ex
-    @logger.debug "Could not read Spring annotations in #{path}: #{ex.message}"
   end
 
   # Reads `@EnableMethodSecurity` (Spring Security 6; `prePostEnabled` defaults
   # to true) and `@EnableGlobalMethodSecurity` (Spring Security 5; all three
   # flags default to false). Non-literal flag values, `@Profile` /
-  # `@ConditionalOn…` guards or custom metadata sources mark the mode unreadable.
+  # `@ConditionalOn…` guards, custom metadata sources, meta-annotated enabling
+  # annotations and `@EnableReactiveMethodSecurity` mark the mode unreadable.
   private def scan_method_security_config(content : String, module_dir : String?)
     masked = mask_strings(ascii_only(Noir::CComments.strip(content)))
     masked.scan(ENABLE_METHOD_SECURITY) do |match|
+      if match[1] == "EnableReactiveMethodSecurity"
+        @method_security_configs << MethodSecurityConfig.new(
+          mode: :method_security,
+          pre_post: false,
+          secured: false,
+          jsr250: false,
+          module_dir: module_dir,
+          conditional: false,
+          readable: false
+        )
+        next
+      end
+
       mode = match[1] == "EnableMethodSecurity" ? :method_security : :global_method_security
       pre_post = mode == :method_security
       secured = false
@@ -443,7 +466,18 @@ class SpringAuthTagger < FrameworkTagger
       end
 
       between, is_meta, body_open = scan_annotation_target(masked, pos)
-      next if is_meta
+      if is_meta
+        @method_security_configs << MethodSecurityConfig.new(
+          mode: mode,
+          pre_post: false,
+          secured: false,
+          jsr250: false,
+          module_dir: module_dir,
+          conditional: false,
+          readable: false
+        )
+        next
+      end
 
       if args && !args.blank?
         Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules.new).each do |part|
@@ -2042,10 +2076,8 @@ class SpringAuthTagger < FrameworkTagger
       negated = !rule[1]?.nil?
       auth_type = rule[2]
       rule_name = negated ? "not().#{auth_type}" : auth_type
-      is_anonymous = !negated && (auth_type == "anonymous" ||
-                                  (auth_type == "hasRole" && after_call.matches?(/\A\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
-                                  (auth_type == "hasAuthority" && after_call.matches?(/\A\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)))
-      protected_rule = negated || (auth_type != "permitAll" && auth_type != "denyAll" && !is_anonymous)
+      anonymous_role = (auth_type == "hasRole" && after_call.matches?(/\A\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
+                       (auth_type == "hasAuthority" && after_call.matches?(/\A\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
       # An inline `access((authentication, context) -> ..)` that admits only
       # signed-out callers (`!isAuthenticated`) is a public page, not a guard.
       access_verdict = nil
@@ -2054,10 +2086,7 @@ class SpringAuthTagger < FrameworkTagger
           access_verdict = access_lambda(block.byte_slice(paren + 1, access_close - paren - 1))
         end
       end
-      if access_verdict == :open
-        protected_rule = false
-        is_anonymous = true
-      end
+      protected_rule, is_anonymous, denies_all = classify_chain_rule(auth_type, negated, anonymous_role, access_verdict)
       matcher_method = request_matcher_method(args)
       config_keys = [] of String
       in_scope = loops_enclosing(loops, open)
@@ -2070,7 +2099,7 @@ class SpringAuthTagger < FrameworkTagger
         end
       patterns = matcher_patterns(args, strings, arrays, loops: in_scope, config_keys: config_keys, java_source: java_source, builders: builders).uniq
       unread_matcher ||= patterns.empty? && config_keys.empty?
-      if patterns.empty? && config_keys.empty? && !protected_rule && java_source
+      if patterns.empty? && config_keys.empty? && !protected_rule && !denies_all && java_source
         # A matcher fed by a method that collects URLs from annotated
         # handlers: a rule keyed to that method, resolved per endpoint.
         permit_source_methods(args, block, java_source).each do |key|
@@ -2082,11 +2111,11 @@ class SpringAuthTagger < FrameworkTagger
           if protected_rule
             "Protected by Spring Security #{rule_name} via #{match[1]}(\"#{url_pattern}\")#{ACCESS_NOTE if !negated && auth_type == "access" && access_verdict.nil?}"
           elsif is_anonymous
-            "Public by Spring Security anonymous via #{match[1]}(\"#{url_pattern}\")"
-          elsif auth_type == "denyAll"
-            "Denied by Spring Security denyAll via #{match[1]}(\"#{url_pattern}\")"
+            "Public by Spring Security #{negated ? rule_name : "anonymous"} via #{match[1]}(\"#{url_pattern}\")"
+          elsif denies_all
+            "Denied by Spring Security #{rule_name} via #{match[1]}(\"#{url_pattern}\")"
           else
-            "Public by Spring Security permitAll via #{match[1]}(\"#{url_pattern}\")"
+            "Public by Spring Security #{negated ? rule_name : "permitAll"} via #{match[1]}(\"#{url_pattern}\")"
           end
         rules << {pattern: url_pattern, method: matcher_method, description: description, protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: rule_line, requires: requires}
       end
@@ -2142,10 +2171,9 @@ class SpringAuthTagger < FrameworkTagger
         rule_name = negated ? "not().#{auth_type}" : auth_type
         len = Math.min(160, block.bytesize - match.byte_begin(0))
         slice = block.byte_slice(match.byte_begin(0), len)
-        is_anonymous = !negated && (auth_type == "anonymous" ||
-                                    (auth_type == "hasRole" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
-                                    (auth_type == "hasAuthority" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)))
-        protected_rule = negated || (auth_type != "permitAll" && auth_type != "denyAll" && !is_anonymous)
+        anonymous_role = (auth_type == "hasRole" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
+                         (auth_type == "hasAuthority" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
+        protected_rule, is_anonymous, denies_all = classify_chain_rule(auth_type, negated, anonymous_role, nil)
         line_pos = match[1]? ? match.begin(1) : match.begin(2)
         rule_line = block_start_line + block[0, line_pos].count('\n')
         any_call = slice.includes?("anyExchange") ? "anyExchange()" : "anyRequest()"
@@ -2153,11 +2181,11 @@ class SpringAuthTagger < FrameworkTagger
           if protected_rule
             "Protected by Spring Security #{rule_name} via #{any_call}"
           elsif is_anonymous
-            "Public by Spring Security anonymous via #{any_call}"
-          elsif auth_type == "denyAll"
-            "Denied by Spring Security denyAll via #{any_call}"
+            "Public by Spring Security #{negated ? rule_name : "anonymous"} via #{any_call}"
+          elsif denies_all
+            "Denied by Spring Security #{rule_name} via #{any_call}"
           else
-            "Public by Spring Security permitAll via #{any_call}"
+            "Public by Spring Security #{negated ? rule_name : "permitAll"} via #{any_call}"
           end
         requires = rule_requires(block, auth_type, match.byte_end(0) - 1, file_path, rule_line, negated: negated)
         rules << {pattern: "/**", method: nil, description: description, protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: rule_line, requires: requires}
@@ -2398,10 +2426,36 @@ class SpringAuthTagger < FrameworkTagger
     bound
   end
 
+  # Classifies a chain rule into `{protected_rule, is_anonymous, denies_all}`.
+  # Negated rules that admit anonymous callers (`not().authenticated()`,
+  # `not().fullyAuthenticated()`, `not().rememberMe()`, `not().denyAll()`) are
+  # public; `not().permitAll()` denies every caller; other negated rules are
+  # guards noir cannot read.
+  private def classify_chain_rule(auth_type : String, negated : Bool, anonymous_role : Bool, access_verdict : Symbol?) : {Bool, Bool, Bool}
+    if negated
+      case auth_type
+      when "permitAll"
+        {false, false, true}
+      when "denyAll"
+        {false, false, false}
+      when "authenticated", "fullyAuthenticated", "rememberMe"
+        {false, true, false}
+      else
+        {true, false, false}
+      end
+    else
+      is_anonymous = auth_type == "anonymous" || anonymous_role || access_verdict == :open
+      denies_all = auth_type == "denyAll"
+      protected_rule = !denies_all && auth_type != "permitAll" && !is_anonymous
+      {protected_rule, is_anonymous, denies_all}
+    end
+  end
+
   # What the authorization call `name` requires. Its argument list opens at
   # byte `open` of `text`, past any spaces; a list that never closes leaves
   # the bare name, which reads as unresolved unless it takes no arguments.
-  # A negated rule (`.not().hasRole(...)`) is always left unresolved.
+  # Negated `permitAll` denies all and negated `denyAll` permits all; every
+  # other negated rule stays unresolved.
   private def rule_requires(text : String, name : String, open : Int32, path : String, line : Int32, negated : Bool = false) : Array(Access::Clause)
     while open < text.bytesize && text.byte_at(open).unsafe_chr.ascii_whitespace?
       open += 1
@@ -2412,6 +2466,8 @@ class SpringAuthTagger < FrameworkTagger
     end
     if negated
       negated_call = "not().#{call}"
+      return [Access::Clause.new([DENY], negated_call, path, line)] if name == "permitAll"
+      return [] of Access::Clause if name == "denyAll"
       return [Access::Clause.unresolved(negated_call, negated_call, path, line)]
     end
     Access.clauses(SpringAccess.expression(call), call, path, line)
@@ -2769,9 +2825,12 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   # Effective method-security configuration for `endpoint`, scoped by the
-  # serving app's classpath. Returns nil when no configuration is found, any
-  # config in scope is conditional or unreadable, or configs disagree.
+  # serving app's classpath. Returns nil for JAX-RS endpoints (where
+  # Jersey/RESTEasy enforce JSR-250 independently of Spring), when no
+  # configuration is found, any config in scope is conditional or unreadable,
+  # or configs disagree.
   private def method_security_mode(endpoint : Endpoint) : MethodSecurityMode?
+    return if endpoint.details.technology == "java_jaxrs"
     return if @method_security_configs.empty?
     modules = endpoint_modules(endpoint)
     return resolve_method_security_configs(@method_security_configs) if modules.empty?
@@ -2811,21 +2870,20 @@ class SpringAuthTagger < FrameworkTagger
       evidence = @fallback_annotations.at(location) || return {nil, nil}
     end
 
-    return check_annotations_with_mode(evidence, method, mode) if mode
+    marker = find_permit_marker(evidence)
+    return check_annotations_with_mode(evidence, method, mode, marker) if mode
 
     evidence.chunk(&.level).each do |level, annotations|
       decisions = annotations.compact_map { |ann| judge_annotation(ann, method) }
       if picked = pick_security_annotation(decisions)
         decision = picked.merge(requires: decisions.flat_map(&.[:requires]) + unsettled_annotations(evidence, level, annotations))
-        marker = decision[:public_access] ? decision[:description].match(PERMIT_MARKER_DESCRIPTION).try(&.[1]) : nil
         return {decision, marker}
       end
     end
-    {nil, nil}
+    {nil, marker}
   end
 
-  private def check_annotations_with_mode(evidence : Array(RouteAnnotation), method : String, mode : MethodSecurityMode) : {SecurityAnnotation?, String?}
-    marker = find_permit_marker(evidence)
+  private def check_annotations_with_mode(evidence : Array(RouteAnnotation), method : String, mode : MethodSecurityMode, marker : String?) : {SecurityAnnotation?, String?}
     by_kind = Hash(Symbol, Array(RouteAnnotation)).new
     shiro = [] of RouteAnnotation
 
@@ -2838,21 +2896,26 @@ class SpringAuthTagger < FrameworkTagger
       end
     end
 
-    decision = case mode.mode
-               when :method_security
-                 combine_method_security(by_kind, method)
-               else
-                 combine_global_method_security(by_kind, method, mode)
-               end
-    return {decision, marker} if decision
+    spring_decision = case mode.mode
+                      when :method_security
+                        combine_method_security(by_kind, method)
+                      else
+                        combine_global_method_security(by_kind, method, mode)
+                      end
 
+    shiro_decision = nil.as(SecurityAnnotation?)
     unless shiro.empty?
       shiro.chunk(&.level).each do |level, annotations|
         decisions = annotations.compact_map { |ann| judge_annotation(ann, method) }
         if picked = pick_security_annotation(decisions)
-          return {picked.merge(requires: decisions.flat_map(&.[:requires]) + unsettled_annotations(shiro, level, annotations)), marker}
+          shiro_decision = picked.merge(requires: decisions.flat_map(&.[:requires]) + unsettled_annotations(shiro, level, annotations))
+          break
         end
       end
+    end
+
+    if combined = combine_active_decisions([spring_decision, shiro_decision].compact)
+      return {combined, marker}
     end
 
     if marker
@@ -2930,7 +2993,8 @@ class SpringAuthTagger < FrameworkTagger
     end
     base = certain[:requires].first?
     combined = Access.clauses(cnf, base.try(&.source) || certain[:description], base.try(&.path), base.try(&.line)) + unresolved
-    certain.merge(requires: combined.uniq!)
+    still_denies_all = certain[:denies_all] && cnf == [[DENY]]
+    certain.merge(denies_all: still_denies_all, requires: combined.uniq!)
   end
 
   # `@EnableMethodSecurity` (Spring Security 6): each kind has its own
@@ -2988,9 +3052,8 @@ class SpringAuthTagger < FrameworkTagger
           return uncertain_earlier.empty? ? result.decision : combine_with_uncertain(result.decision, uncertain_earlier)
         end
         uncertain_earlier << result.decision
-      elsif shadows_without_guard
-        return uncertain_earlier.first?
       end
+      break if shadows_without_guard
     end
 
     return if uncertain_earlier.empty?
