@@ -1,4 +1,5 @@
 require "../../func_spec.cr"
+require "file_utils"
 
 # vikunja registers every /api/v2 operation through its own generic
 # `Register(api, huma.Operation{...}, handler)` wrapper, under the base path
@@ -67,4 +68,50 @@ it "names the handler and reads the declared operation security", tags: "functio
   access.call("GET /api/v2/filled/own").should eq ["anonymous"]
   by_key["GET /api/v2/filled/unset"].tags.find!(&.name.==("auth")).description.should contain("AdminKey")
   access.call("GET /api/v2/open/sub/x").should eq ["anonymous"]
+  # Read like OpenAPI `security`: either alternative's credential.
+  Access.of(by_key["GET /api/v2/labels/{id}"]).map(&.to_s).should eq ["authenticated"]
+  Access.of(by_key["POST /api/v2/login"]).map(&.to_s).should eq ["anonymous"]
+end
+
+it "reads Huma operation security schemes and scopes like OpenAPI", tags: "functional" do
+  dir = File.tempname("huma_security")
+  Dir.mkdir_p(dir)
+  File.write(File.join(dir, "go.mod"), "module example.com/h\n\nrequire github.com/danielgtaylor/huma/v2 v2.19.0\n")
+  File.write(File.join(dir, "main.go"), <<-GO)
+    package main
+
+    import (
+    	"context"
+
+    	"github.com/danielgtaylor/huma/v2"
+    )
+
+    type Out struct{}
+
+    func h(ctx context.Context, in *struct{}) (*Out, error) { return nil, nil }
+
+    func routes(api huma.API, scopes []string) {
+    	huma.Register(api, huma.Operation{Method: "GET", Path: "/scoped", Security: []map[string][]string{{"oauth": {"read", "write"}}, {"key": {}}}}, h)
+    	huma.Register(api, huma.Operation{Method: "GET", Path: "/both", Security: []map[string][]string{{"a": {}, "b": {}}}}, h)
+    	huma.Register(api, huma.Operation{Method: "GET", Path: "/var", Security: []map[string][]string{{"oauth": scopes}}}, h)
+    }
+    GO
+  begin
+    CodeLocator.instance.clear_all
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new(dir)])
+    options["nolog"] = YAML::Any.new(true)
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+    reading = ->(url : String) { Access.of(app.endpoints.find! { |ep| ep.url == url }).map(&.to_s) }
+    # The scheme registry is not read, so the scopes stay unread; the key
+    # alternative still admits any caller holding a credential.
+    reading.call("/scoped").should eq ["authenticated", "(authenticated | unresolved)"]
+    reading.call("/both").should eq ["authenticated"]
+    reading.call("/var").should eq ["authenticated", "unresolved"]
+    Access.of(app.endpoints.find! { |ep| ep.url == "/var" }).last.any_of.first.value.should eq "oauth: scopes"
+  ensure
+    FileUtils.rm_rf(dir)
+  end
 end

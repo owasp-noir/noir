@@ -1,4 +1,6 @@
 require "../../engines/go_engine"
+require "../../engines/oas_security_access"
+require "../../../utils/top_level_split"
 
 module Analyzer::Go
   # Huma (https://huma.rocks/) is an OpenAPI-first Go framework
@@ -203,6 +205,7 @@ module Analyzer::Go
         return unless literal && literal.matches?(/\A\[\]map\[string\]\[\]string\s*\{/)
         open_at = literal.index!('{')
         alternatives = [] of Array(String)
+        requirements = [] of OasSecurityAccess::Requirement
         depth = 0
         start = 0
         literal[open_at + 1...literal.rindex!('}')].each_char_with_index do |char, idx|
@@ -211,13 +214,37 @@ module Analyzer::Go
             depth += 1
           elsif char == '}'
             depth -= 1
-            alternatives << literal[open_at + 1 + start, idx - start + 1].scan(/"([^"]+)"\s*:/).map(&.[1]) if depth == 0
+            next unless depth == 0
+            alternative = literal[open_at + 1 + start, idx - start + 1]
+            alternatives << alternative.scan(/"([^"]+)"\s*:/).map(&.[1])
+            requirements << requirement(alternative)
           end
         end
         tagger = Tag.declared_access_tagger("go_huma")
         return Tag.new("anonymous", "Huma operation security admits anonymous callers", tagger) if alternatives.empty? || alternatives.any?(&.empty?)
         origin = inherited ? " (inherited from the API's default security)" : ""
-        Tag.new("auth", "Protected by Huma operation security #{alternatives.map(&.join(" + ")).join(" or ")}#{origin}", tagger)
+        description = "Protected by Huma operation security #{alternatives.map(&.join(" + ")).join(" or ")}#{origin}"
+        # The scheme registry (`Components.SecuritySchemes`) is not read, so a
+        # scope list reads as a credential plus the unread scopes.
+        Tag.new("auth", description, tagger, requires: Access.clauses(OasSecurityAccess.cnf(requirements, nil, description), description))
+      end
+
+      # One `{"name": {"scope", ...}, ...}` alternative as OpenAPI reads it.
+      # A value that is not a list of string literals stays text, and so does
+      # an alternative with an entry whose name is not a literal.
+      private def requirement(alternative : String) : OasSecurityAccess::Requirement
+        entries = Noir::TopLevelSplit.split(alternative[1...-1], ',', Noir::TopLevelSplit::Rules.new(empties: Noir::TopLevelSplit::Empties::DropAll))
+        requirement = Hash(String, OasSecurityAccess::Scopes).new
+        entries.each do |entry|
+          found = entry.strip.match(/\A"([^"]+)"\s*:\s*(.+)\z/m) || return alternative
+          value = found[2].strip
+          scopes = value.match(/\A(?:\[\]string\s*)?\{(.*)\}\z/m).try do |list|
+            items = Noir::TopLevelSplit.split(list[1], ',', Noir::TopLevelSplit::Rules.new(empties: Noir::TopLevelSplit::Empties::DropAll))
+            items.map { |item| item.strip.match(/\A"([^"\\]*)"\z/).try(&.[1]) || break }
+          end
+          requirement[found[1]] = scopes || value
+        end
+        requirement
       end
     end
 
