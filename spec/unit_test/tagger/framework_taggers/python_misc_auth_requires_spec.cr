@@ -55,7 +55,33 @@ describe "PythonMiscAuthTagger requires" do
           def get(self):
               pass
       PY
-    atoms(tags[0]).should eq([["authenticated"], ["unresolved:Tornado @authenticated"]])
+    # BaseHandler is not in the scan, so its `prepare` is not read either.
+    atoms(tags[0]).should eq([["authenticated"], ["unresolved:Tornado @authenticated"], ["unresolved:base BaseHandler of H"]])
+  end
+
+  it "keeps a decorator it does not read and a base's prepare unresolved" do
+    files = {
+      "app.py" => <<-PY,
+        import tornado.web
+        from base import AdminBase
+
+        class H(AdminBase):
+            @tornado.web.authenticated
+            @admin_required
+            def get(self):
+                pass
+        PY
+      "base.py" => <<-PY,
+        import tornado.web
+
+        class AdminBase(tornado.web.RequestHandler):
+            def prepare(self):
+                raise tornado.web.HTTPError(403)
+        PY
+    }
+    tags = misc_tags(files, "app.py", 7, "python_tornado", 7)
+    tags[0].description.should eq("Protected by Tornado @authenticated decorator")
+    atoms(tags[0]).should eq([["unresolved:admin_required"], ["authenticated"], ["unresolved:AdminBase.prepare"]])
   end
 
   it "joins sanic-jwt protected and scoped stacked under the route" do

@@ -32,7 +32,9 @@ class PythonMiscAuthTagger < FrameworkTagger
     # A Tornado route sits in a handler list; the method it dispatches to,
     # when the analyzer resolved it, carries the decorators.
     if endpoint.details.technology == "python_tornado" && (handler = endpoint.handler)
-      add_decorator_guards(endpoint, handler_decorator_guards(handler), handler.path.to_s)
+      found = handler_decorator_guards(handler)
+      tornado_class_layers(handler).each { |fragment| found << {nil, fragment} } if found.any?(&.[0])
+      add_decorator_guards(endpoint, found, handler.path.to_s)
       return
     end
     endpoint.details.code_paths.each do |path_info|
@@ -60,21 +62,61 @@ class PythonMiscAuthTagger < FrameworkTagger
 
       # Check decorators above function/method
       found = check_decorators(lines, line_idx)
-      unless found.empty?
+      if found.any?(&.[0])
         add_decorator_guards(endpoint, found, path_info.path)
         return
       end
     end
   end
 
-  # The guard lines found, as `{description, line}`: the first names the
-  # tag and every one adds what it requires.
-  private def add_decorator_guards(endpoint : Endpoint, found : Array({String, String}), file : String)
-    return if found.empty?
+  # The layers found, as `{description, line}`: the first guard names the
+  # tag and every layer adds what it requires. A layer with no description
+  # is one the tagger does not judge (another decorator, a `prepare`): what
+  # it checks is unread.
+  private def add_decorator_guards(endpoint : Endpoint, found : Array({String?, String}), file : String)
+    first = found.compact_map(&.[0]).first? || return
     requires = found.flat_map do |description, line|
-      Access.clauses(line_access(line, description, file, endpoint.method), line.lchop('@'))
+      cnf = description ? line_access(line, description, file, endpoint.method) : PythonAuthAccess.unresolved(line.lchop('@'))
+      Access.clauses(cnf, line.lchop('@'))
     end
-    endpoint.add_tag(Tag.new("auth", "Protected by #{found[0][0]}", "python_misc_auth", requires: requires.uniq!))
+    endpoint.add_tag(Tag.new("auth", "Protected by #{first}", "python_misc_auth", requires: requires.uniq!))
+  end
+
+  TORNADO_HANDLER_BASE = /\A(?:tornado\.)?(?:web\.)?RequestHandler\z/
+
+  # The handler class and the project bases it inherits: an overridden
+  # `prepare` or `initialize` runs ahead of every verb method, and a base
+  # the scan does not hold is not read either way.
+  private def tornado_class_layers(handler : Handler) : Array(String)
+    found = [] of String
+    queue = [{handler.path.to_s, handler.name.rpartition('.')[0]}]
+    seen = Set(Tuple(String, String)).new
+    while (node = queue.shift?) && seen.size < 8
+      next if node[1].empty? || !seen.add?(node)
+      file, name = node
+      lines = read_file_lines(file) || [] of String
+      header = lines.index { |line| line.match(/\Aclass\s+([A-Za-z_]\w*)/).try(&.[1]) == name }
+      unless header
+        found << "class #{name}"
+        next
+      end
+      lines[(header + 1)..].each do |line|
+        break unless line.blank? || line[0].ascii_whitespace?
+        if m = line.match(/\A\s+(?:async\s+)?def\s+(prepare|initialize)\b/)
+          found << "#{name}.#{m[1]}"
+        end
+      end
+      bases = lines[header].match(/\Aclass\s+\w+\s*\(([^)]*)\)/).try(&.[1]).to_s.split(',').map(&.strip)
+      bases.each do |base|
+        next if base.empty? || base.includes?('=') || base.matches?(TORNADO_HANDLER_BASE)
+        if site = python_definition_site(file, base)
+          queue << site
+        else
+          found << "base #{base} of #{name}"
+        end
+      end
+    end
+    found
   end
 
   # What a matched line requires: Tornado's `authenticated` and sanic-jwt's
@@ -120,8 +162,8 @@ class PythonMiscAuthTagger < FrameworkTagger
 
   # The decorators stacked above the handler's `def`, read upward past a
   # comment line or a decorator's wrapped arguments.
-  private def handler_decorator_guards(handler : Handler) : Array({String, String})
-    found = [] of {String, String}
+  private def handler_decorator_guards(handler : Handler) : Array({String?, String})
+    found = [] of {String?, String}
     lines = read_file_lines(handler.path || return found) || return found
     idx = (handler.line || return found) - 2
     open = 0
@@ -132,23 +174,24 @@ class PythonMiscAuthTagger < FrameworkTagger
       open -= bracket_balance(current)
       next if open > 0
       break unless current.starts_with?('@')
-      TORNADO_PATTERNS.each do |pattern, desc|
-        next unless current.matches?(pattern)
-        found << {desc, current}
-        break
-      end
+      found << (matched(TORNADO_PATTERNS, current) || {nil, current})
     end
     found
   end
 
   # The guard lines of the first window that holds one: the decorators
   # below the route line, else the lines above it.
-  private def check_decorators(lines : Array(String), func_line : Int32) : Array({String, String})
+  # Below the route line every decorator wraps the handler, so one that is
+  # not a guard pattern nor another route is kept as unread.
+  private def check_decorators(lines : Array(String), func_line : Int32) : Array({String?, String})
     all_patterns = SANIC_PATTERNS + TORNADO_PATTERNS
     # A Sanic route's line is its `@app.route` decorator, and the auth
     # decorators that wrap the handler (`@protected()`) sit below it.
-    found = annotation_lines_below(lines, func_line, "@").compact_map { |current| matched(all_patterns, current) }
-    return found unless found.empty?
+    found = annotation_lines_below(lines, func_line, "@").compact_map do |current|
+      matched(all_patterns, current) || ({nil, current} if current.starts_with?('@') && !current.matches?(SANIC_ROUTE))
+    end
+    return found if found.any?(&.[0])
+    found.clear
 
     idx = func_line - 1
     while idx >= 0 && idx >= func_line - 5
@@ -162,7 +205,9 @@ class PythonMiscAuthTagger < FrameworkTagger
     found
   end
 
-  private def matched(patterns : Array({Regex, String}), line : String) : {String, String}?
+  SANIC_ROUTE = /\A@[\w.]+\.(?:route|get|post|put|patch|delete|head|options|websocket)\s*\(/
+
+  private def matched(patterns : Array({Regex, String}), line : String) : {String?, String}?
     patterns.each { |pattern, desc| return {desc, line} if line.matches?(pattern) }
     nil
   end
