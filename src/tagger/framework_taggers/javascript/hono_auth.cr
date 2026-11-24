@@ -3,7 +3,9 @@ require "../../../models/endpoint"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/js_handler_resolver"
 require "../prefix_scope"
+require "./js_middleware_access"
 
 @[Noir::TaggerFor(key: "hono_auth", name: "Hono Auth Tagger", desc: "Identifies Hono authentication patterns (bearerAuth, jwt, basicAuth, custom middleware)", order: 250)]
 class HonoAuthTagger < FrameworkTagger
@@ -119,8 +121,10 @@ class HonoAuthTagger < FrameworkTagger
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
       if middleware = path_info.route_middleware
-        if description = middleware.find_value { |step| middleware_description(code_only(step.source)) }
-          endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "hono_auth"))
+        if step = middleware.find { |candidate| middleware_description(code_only(candidate.source)) }
+          description = middleware_description(code_only(step.source))
+          requires = middleware.size == 1 && (read_file(step.file) || "").includes?(step.source) ? route_requires(endpoint, middleware_elements(step.source), step.file) : nil
+          endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "hono_auth", requires: requires))
           return
         end
         next
@@ -137,7 +141,8 @@ class HonoAuthTagger < FrameworkTagger
       # Check route definition + small surrounding window for chained middleware
       description = check_route_and_nearby(lines, line_idx)
       if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "hono_auth"))
+        requires = route_middleware_args(lines, line_idx).try { |args| route_requires(endpoint, args, path_info.path) }
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "hono_auth", requires: requires))
         return
       end
     end
@@ -163,6 +168,57 @@ class HonoAuthTagger < FrameworkTagger
         return
       end
     end
+  end
+
+  MAX_ROUTE_CALL_LINES = 400
+  ROUTE_VERB_CALL      = /\.\s*(?:get|post|put|patch|delete|options|head|all)\s*\(/
+
+  # What the route's own middleware asks of a caller, joined with AND: a
+  # `hono/*` guard imported in `file` reads as signed in, any other
+  # auth-named one keeps the default reading. Nil unless one reads more
+  # exactly, and nil whenever a `use()` scope may also cover the route: the
+  # pre-scan matches those by path alone, whatever app, file or order
+  # registered them.
+  private def route_requires(endpoint : Endpoint, args : Array(String), file : String) : Array(Access::Clause)?
+    return if endpoint.details.code_paths.size > 1
+    return if endpoint.resolution.try { |found| found.values.includes?(Endpoint::RESOLUTION_UNRESOLVED) }
+    return if check_use_scopes(endpoint)
+    content = read_file(file) || return
+    imports = Noir::JSHandlerResolver.imports_of(content, file)
+    exact = false
+    clauses = [] of Access::Clause
+    args.each do |arg|
+      text = arg.gsub(/\s+/, " ").strip
+      reading = JsMiddlewareAccess.parse(arg, imports).try { |call| JsMiddlewareAccess.read(call) }
+      cnf = reading || (JsMiddlewareAccess.fallback(text) if middleware_description(code_only(arg)))
+      next unless cnf
+      exact ||= !reading.nil?
+      clauses.concat(Access.clauses(cnf, text, file))
+    end
+    return unless exact
+    clauses.uniq!(&.any_of)
+    clauses unless clauses.size > Access::MAX_CLAUSES
+  end
+
+  # `[a, b]` as its elements; anything else is one middleware.
+  private def middleware_elements(source : String) : Array(String)
+    text = Noir::CComments.strip(source, quotes: %("'`)).strip
+    return [text] unless text.starts_with?('[') && Noir::JSLiteralScanner.find_matching_bracket(text, 0) == text.size - 1
+    Noir::TopLevelSplit.split(text[1...-1], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).reject(&.empty?)
+  end
+
+  # The arguments between the path and the handler of the verb call that
+  # opens the route statement at `line_idx`; nil when it cannot be read, or
+  # when that line opens another route too: which one this is is not read.
+  private def route_middleware_args(lines : Array(String), line_idx : Int32) : Array(String)?
+    start = statement_start(lines, line_idx)
+    text = Noir::CComments.strip(lines[start, MAX_ROUTE_CALL_LINES].join('\n'), quotes: %("'`))
+    head = text.match(ROUTE_VERB_CALL) || return
+    first_line = Noir::JSLiteralScanner.blank_literals(text.partition('\n')[0])
+    return if text[0, head.begin(0)].includes?('\n') || first_line.scan(ROUTE_DECLARATION).size > 1
+    close = Noir::JSLiteralScanner.find_matching_paren(text, head.end(0) - 1) || return
+    args = Noir::TopLevelSplit.split(text[head.end(0)...close], ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS).map(&.strip).reject(&.empty?)
+    args.size >= 3 ? args[1...-1] : nil
   end
 
   private def check_route_and_nearby(lines : Array(String), line_idx : Int32) : String?
