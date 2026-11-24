@@ -35,9 +35,10 @@ module RubyAccess
 
   # Rolify's `has_role?(name)` with no resource holds when the user has a
   # role of that name (lib/rolify/role.rb). A role named by anything but a
-  # literal, a resource argument or another check is the app's.
-  ROLIFY = /\A(?:@?current_user|@?user)\s*&?\.\s*has_role\?\s*\(?\s*(?::(\w+)|"(\w+)"|'(\w+)')\s*\)?\z/
-  CALLER = /\A(?:@?current_user|user_signed_in\?|signed_in\?|logged_in\?)\z/
+  # literal, a resource argument or another check is the app's. Only
+  # `current_user` is the caller: `@user` is as often a loaded record.
+  ROLIFY = /\Acurrent_user\s*&?\.\s*has_role\?\s*\(?\s*(?::(\w+)|"(\w+)"|'(\w+)')\s*\)?\z/
+  CALLER = /\A(?:current_user|user_signed_in\?|signed_in\?|logged_in\?)\z/
 
   # The role check a callback refuses on: `raise ... unless current_user &&
   # current_user.has_role?(:admin)` refuses unless every conjunct holds.
@@ -63,11 +64,16 @@ module RubyAccess
 
   # CanCanCan's `authorize!(action, subject)` raises `AccessDenied` unless
   # the ability grants that action on that subject. A symbol action names the
-  # permission; the subject stays in the clause source.
+  # permission; the subject stays in the clause source. The ability is built
+  # for a guest too (the documented `user ||= User.new`, then `can :read,
+  # :all`), so unless `guest_refused` the guest may hold it as well.
   CANCAN_ACTION = /\bauthorize!\s*\(?\s*:(\w+[?!]?)\s*(?:,|\)|\z)/
 
-  def cancan_authorize(call : String) : Access::CNF
-    (m = call.match(CANCAN_ACTION)) ? [[Access::Atom.new(:permission, m[1])]] : unresolved(call)
+  def cancan_authorize(call : String, guest_refused : Bool) : Access::CNF
+    return unresolved(call) unless m = call.match(CANCAN_ACTION)
+    permission = Access::Atom.new(:permission, m[1])
+    return [[permission]] if guest_refused
+    [[permission, Access::Atom.new(:unresolved, "whether the ability grants :#{m[1]} to a guest")]]
   end
 
   # Devise's `authenticate scope, block` and `authenticated scope, block`

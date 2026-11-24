@@ -30,6 +30,7 @@ describe RubyAccess do
       {"current_user.role == 'admin'", false}                   => [["unresolved:current_user.role == 'admin'"]],
       {"current_user.has_role?(:admin, @org)", false}           => [["unresolved:current_user.has_role?(:admin, @org)"]],
       {"current_user.has_role?(ROLE)", false}                   => [["unresolved:current_user.has_role?(ROLE)"]],
+      {"@user && @user.has_role?(:admin)", false}               => [["unresolved:@user"], ["unresolved:@user.has_role?(:admin)"]],
       {"admin? || current_user.has_role?(:admin)", false}       => [["unresolved:admin? || current_user.has_role?(:admin)"]],
       {"current_user.has_role?(:admin)", true}                  => [["unresolved:current_user.has_role?(:admin)"]],
     }.each do |(condition, when_true), expected|
@@ -47,8 +48,13 @@ describe RubyAccess do
       "authorize! \"read\", @post"       => [["unresolved:authorize! \"read\", @post"]],
     }.each do |call, expected|
       it "reads #{call}" do
-        shown(RubyAccess.cancan_authorize(call)).should eq(expected)
+        shown(RubyAccess.cancan_authorize(call, guest_refused: true)).should eq(expected)
       end
+    end
+
+    it "keeps a guest's grant unresolved beside the permission" do
+      shown(RubyAccess.cancan_authorize("authorize! :read, @post", guest_refused: false))
+        .should eq([["permission:read", "unresolved:whether the ability grants :read to a guest"]])
     end
   end
 

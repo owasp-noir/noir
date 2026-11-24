@@ -287,7 +287,7 @@ class RubyAuthTagger < FrameworkTagger
       routed_leaf = dispatch || rails_chain.controller_in(path)
       resolution = routed_leaf.try { |klass| rails_chain.resolve(klass, action) }
       routed_paths = resolution.try(&.paths) || [] of String
-      body = check_action_body_auth(path, lines, line_idx, action, routed_paths)
+      body = check_action_body_auth(path, lines, line_idx, action, routed_paths, endpoint.details.technology == "ruby_rails")
       authz = first(authz, body[:authz])
       authz ||= routed_leaf.try { |cancan_leaf| cancan_refuses(cancan_leaf, action, endpoint.url.scan(/:(\w+)/).map(&.[1])) }
       extras = routed_leaf.try { |klass| chain_extras(klass, resolution) } || [] of Access::Clause
@@ -485,8 +485,8 @@ class RubyAuthTagger < FrameworkTagger
   # unresolved. Devise's `devise_controller?` holds only in Devise's own
   # controllers, which the chain of an app controller never reaches.
   private def exempted(guard : Guard?, condition : String?) : Guard?
-    return guard unless guard && condition && condition.starts_with?("unless")
-    return guard if condition.matches?(/\Aunless:\s*:devise_controller\?\z/)
+    return guard unless guard && condition && condition.matches?(/\A(?:unless:|:unless\s*=>)/)
+    return guard if condition.matches?(/\A(?:unless:|:unless\s*=>)\s*:devise_controller\?\z/)
     guard.lifted(condition)
   end
 
@@ -1245,7 +1245,7 @@ class RubyAuthTagger < FrameworkTagger
     false
   end
 
-  private def check_action_body_auth(path : String, lines : Array(String), action_line : Int32, action : String?, paths : Array(String)) : NamedTuple(authz: Guard?, anonymous: String?)
+  private def check_action_body_auth(path : String, lines : Array(String), action_line : Int32, action : String?, paths : Array(String), rails : Bool) : NamedTuple(authz: Guard?, anonymous: String?)
     # Scan forward from the action definition for auth calls
     idx = action_line + 1
     end_idx = [action_line + 20, lines.size - 1].min
@@ -1291,7 +1291,9 @@ class RubyAuthTagger < FrameworkTagger
         # the body's own level, with no modifier and no answer above it.
         reached = body_indent && line_indent(lines[idx]) == body_indent && !current.matches?(CONDITION_MODIFIER) &&
                   ((action_line + 1)...idx).none? { |k| code_only(lines[k].strip).matches?(/\b(?:return|render|redirect_to|redirect_back|head|respond_with)\b/) }
-        return found.call(desc, desc == "CanCanCan authorize!" && reached ? RubyAccess.cancan_authorize(current) : RubyAccess.unresolved(raw))
+        # CanCanCan's own method only: an app (or a Grape/Roda API) may define one.
+        cancan = desc == "CanCanCan authorize!" && reached && rails && !rails_chain.defs.has_key?("authorize!")
+        return found.call(desc, cancan ? RubyAccess.cancan_authorize(current, cancan_guest_refused?(current, path, paths)) : RubyAccess.unresolved(raw))
       end
       # `load_and_authorize(:group)`: an app helper whose body calls `authorize!`.
       if body_indent && line_indent(lines[idx]) == body_indent && !current.matches?(CONDITION_MODIFIER) && !current.matches?(/\boptional:\s*(?!false\b)\S/)
@@ -1514,6 +1516,18 @@ class RubyAuthTagger < FrameworkTagger
     return {subject, "show", "#{name || singular}_id"} if parent
     id_key = line.match(/(?:\bid_param:|:id_param\s*=>)\s*:(\w+)/).try(&.[1]) || "id"
     {subject, action, action.in?("index", "new", "create") ? nil : id_key}
+  end
+
+  # Whether every ability `current_ability` builds grants the action of
+  # `authorize! :read, @post` on its subject to no nil user.
+  private def cancan_guest_refused?(code : String, path : String, paths : Array(String)) : Bool
+    return false unless m = code.match(/\bauthorize!\s*\(?\s*:(\w+[?!]?)\s*,\s*(@?)([A-Za-z_][\w:]*)\s*(?:\)|\z)/)
+    # A record in an instance variable, or a class; a local could be either.
+    return false if m[2].empty? && !m[3][0].ascii_uppercase?
+    subject = m[3].camelcase
+    abilities = cancan_ability_classes(paths)
+    readers = abilities.compact_map { |name| cancan_ability(name, path) }
+    !readers.empty? && readers.size == abilities.size && readers.all?(&.verdict(m[1], subject, !m[2].empty?).no?)
   end
 
   # The ability classes the controller's `current_ability` builds

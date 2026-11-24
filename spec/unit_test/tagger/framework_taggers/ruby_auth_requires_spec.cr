@@ -196,10 +196,23 @@ describe "RubyAuthTagger requires" do
     requirement(previews["auth"]).should eq([["authenticated", "unresolved:if: -> { Flipper.enabled?(:public_previews) }"]])
   end
 
-  it "reads a CanCanCan symbol action only from a statement every request reaches" do
+  it "reads a CanCanCan symbol action only from a statement every request reaches, beside a guest's grant" do
     tagged = tag_app({
       "app/controllers/application_controller.rb" => APP_BASE,
-      "app/controllers/posts_controller.rb"       => <<-RB,
+      "app/models/ability.rb"                     => <<-RB,
+        class Ability
+          include CanCan::Ability
+
+          def initialize(user)
+            can :read, Post
+
+            if user&.active?
+              can :publish, Post
+            end
+          end
+        end
+        RB
+      "app/controllers/posts_controller.rb" => <<-RB,
         class PostsController < ApplicationController
           def show
             @post = Post.find(params[:id])
@@ -214,12 +227,17 @@ describe "RubyAuthTagger requires" do
           def destroy
             authorize! :destroy, @post if @post.locked?
           end
+
+          def publish
+            authorize! :publish, @post
+          end
         end
         RB
-    }, [{"app/controllers/posts_controller.rb", 2}, {"app/controllers/posts_controller.rb", 7}, {"app/controllers/posts_controller.rb", 12}])
-    show, edit, destroy = tagged
+    }, [{"app/controllers/posts_controller.rb", 2}, {"app/controllers/posts_controller.rb", 7}, {"app/controllers/posts_controller.rb", 12}, {"app/controllers/posts_controller.rb", 16}])
+    show, edit, destroy, publish = tagged
 
-    requirement(show["authz"]).should eq([["permission:read"]])
+    requirement(show["authz"]).should eq([["permission:read", "unresolved:whether the ability grants :read to a guest"]])
+    requirement(publish["authz"]).should eq([["permission:publish"]])
     show["authz"].requires.not_nil!.first.source.should eq("authorize! :read, @post")
     requirement(edit["authz"]).should eq([["unresolved:authorize! :update, @post"]])
     requirement(destroy["authz"]).should eq([["unresolved:authorize! :destroy, @post if @post.locked?"]])
