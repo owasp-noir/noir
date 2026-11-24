@@ -1283,4 +1283,376 @@ describe "AspnetAuthTagger requires" do
     tags.map(&.description).should eq(["Protected by ASP.NET User.Identity.IsAuthenticated"])
     requires_of(tags[0]).should eq([["unresolved"]])
   end
+
+  it "reads the RequireAuthorization chained on the group a route-builder extension returns" do
+    orders = <<-CS
+      public static class OrdersApi
+      {
+          public static RouteGroupBuilder MapOrdersApi(this IEndpointRouteBuilder app)
+          {
+              var api = app.MapGroup("api/orders");
+              api.MapGet("/", () => "x");
+              return api;
+          }
+      }
+      CS
+    plain = {"Orders.cs" => orders, "Program.cs" => <<-CS}
+      var app = builder.Build();
+      var orders = app.NewVersionedApi("Orders");
+      orders.MapOrdersApi()
+            .RequireAuthorization();
+      CS
+    tags = aspnet_tags(plain, "Orders.cs", 6, "cs_aspnet_core_minimal_api")
+    tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization() (route group)"])
+    requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
+    unread_of(tags[0]).should eq(["the conventions of app, a builder made outside this method"])
+
+    assigned = {"Orders.cs" => orders, "Program.cs" => <<-CS}
+      var app = builder.Build();
+      var api = app.MapOrdersApi();
+      api.RequireAuthorization();
+      CS
+    tags = aspnet_tags(assigned, "Orders.cs", 6, "cs_aspnet_core_minimal_api")
+    tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization() (route group)"])
+    requires_of(tags[0]).should eq([["authenticated"], ["unresolved"]])
+
+    conditional = {"Orders.cs" => orders, "Program.cs" => <<-CS}
+      var api = app.MapOrdersApi();
+      if (secure) { api.RequireAuthorization(); }
+      CS
+    aspnet_tags(conditional, "Orders.cs", 6, "cs_aspnet_core_minimal_api").should be_empty
+
+    policy = {"Orders.cs" => orders, "Program.cs" => "app.MapOrdersApi().RequireAuthorization(\"Admins\");\n"}
+    tags = aspnet_tags(policy, "Orders.cs", 6, "cs_aspnet_core_minimal_api")
+    requires_of(tags[0]).sort.should eq([["authenticated"], ["unresolved"], ["unresolved"]])
+    unread_of(tags[0]).sort.should eq(["Policy=Admins", "the conventions of app, a builder made outside this method"])
+  end
+
+  it "reads the attributes of a method-group handler the scan declares once" do
+    files = {"Handlers.cs" => <<-CS, "Program.cs" => <<-CS}
+      public static class Handlers
+      {
+          public static string Plain() => "x";
+          [Authorize(Roles = "Admin")]
+          public static string Admin() => "x";
+          [AllowAnonymous]
+          public static string Open() => "x";
+          public static string Over() => "a";
+          public static string Over(int id) => "b";
+      }
+      CS
+      var app = builder.Build();
+      app.MapGet("/plain", Handlers.Plain).RequireAuthorization();
+      app.MapGet("/admin", Handlers.Admin).RequireAuthorization();
+      app.MapGet("/open", Handlers.Open).RequireAuthorization();
+      app.MapGet("/over", Handlers.Over).RequireAuthorization();
+      app.MapGet("/missing", Elsewhere.Get).RequireAuthorization();
+      app.Run();
+      CS
+    requires_of(aspnet_tags(files, "Program.cs", 2, "cs_aspnet_core_minimal_api")[0]).should eq([["authenticated"]])
+    requires_of(aspnet_tags(files, "Program.cs", 3, "cs_aspnet_core_minimal_api")[0]).sort.should eq([["authenticated"], ["role:Admin"]])
+    requires_of(aspnet_tags(files, "Program.cs", 4, "cs_aspnet_core_minimal_api")[0]).should eq([["anonymous"]])
+    unread_of(aspnet_tags(files, "Program.cs", 5, "cs_aspnet_core_minimal_api")[0]).should eq(["attributes of the handler Handlers.Over"])
+    unread_of(aspnet_tags(files, "Program.cs", 6, "cs_aspnet_core_minimal_api")[0]).should eq(["attributes of the handler Elsewhere.Get"])
+  end
+
+  it "finds a bare method-group handler in the class mapping the route, unless a local function shadows it" do
+    files = {"Orders.cs" => <<-CS}
+      public static class OrdersApi
+      {
+          public static void MapOrders(WebApplication app)
+          {
+              app.MapGet("/a", GetOrders).RequireAuthorization();
+              app.MapGet("/b", Local).RequireAuthorization();
+              static string Local() => "x";
+          }
+          public static string GetOrders() => "x";
+          public static string Local() => "y";
+      }
+      CS
+    requires_of(aspnet_tags(files, "Orders.cs", 5, "cs_aspnet_core_minimal_api")[0]).should eq([["authenticated"]])
+    unread_of(aspnet_tags(files, "Orders.cs", 6, "cs_aspnet_core_minimal_api")[0]).should eq(["attributes of the handler Local"])
+  end
+end
+
+describe "AspnetAuthTagger Razor Pages and Blazor components" do
+  csproj = %(<Project Sdk="Microsoft.NET.Sdk.Web"></Project>)
+
+  it "reads the attributes of the @model page model, not of a code-behind the page does not bind" do
+    files = {
+      "App.csproj"                  => csproj,
+      "Pages/Admin/Index.cshtml"    => "@page\n@model IndexModel\n<h1>Admin</h1>\n",
+      "Pages/Admin/Index.cshtml.cs" => "[Authorize(Roles = \"Admin\")]\npublic class IndexModel : PageModel { public void OnGet() {} }\n",
+      "Pages/Admin/Other.cshtml"    => "@page\n<h1>Other</h1>\n",
+      "Pages/Admin/Other.cshtml.cs" => "[Authorize(Roles = \"Admin\")]\npublic class OtherModel : PageModel { }\n",
+      "Pages/Help.cshtml"           => "@page\n@attribute [Authorize(Policy = \"Readers\")]\n",
+    }
+    tags = aspnet_tags(files, "Pages/Admin/Index.cshtml", 1, "cs_razor")
+    tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)] (PageModel)"])
+    requires_of(tags[0]).should eq([["role:Admin"]])
+    aspnet_tags(files, "Pages/Admin/Other.cshtml", 1, "cs_razor").should be_empty
+    help = aspnet_tags(files, "Pages/Help.cshtml", 1, "cs_razor")
+    help.map(&.description).should eq(["Protected by ASP.NET [Authorize(Policy)] (page)"])
+    unread_of(help[0]).should eq(["Policy=Readers"])
+  end
+
+  it "does not take a @model class from another project of the scan" do
+    files = {
+      "Web/Web.csproj"           => csproj,
+      "Web/Pages/Index.cshtml"   => "@page\n@model IndexModel\n",
+      "Admin/Admin.csproj"       => csproj,
+      "Admin/Pages/Models.cs"    => "[Authorize(Roles = \"Admin\")]\npublic class IndexModel : PageModel { }\n",
+      "Admin/Pages/Index.cshtml" => "@page\n@model IndexModel\n",
+    }
+    aspnet_tags(files, "Web/Pages/Index.cshtml", 1, "cs_razor").should be_empty
+    requires_of(aspnet_tags(files, "Admin/Pages/Index.cshtml", 1, "cs_razor")[0]).should eq([["role:Admin"]])
+  end
+
+  it "takes [Authorize] from a page model's base class and lets [AllowAnonymous] lift it" do
+    files = {
+      "App.csproj"                      => csproj,
+      "Pages/SecurePageModel.cs"        => "[Authorize]\npublic abstract class SecurePageModel : PageModel { }\n",
+      "Pages/Account/Profile.cshtml"    => "@page\n@model ProfileModel\n",
+      "Pages/Account/Profile.cshtml.cs" => "public class ProfileModel : SecurePageModel { }\n",
+      "Pages/Account/Login.cshtml"      => "@page\n@model LoginModel\n",
+      "Pages/Account/Login.cshtml.cs"   => "[AllowAnonymous]\npublic class LoginModel : SecurePageModel { }\n",
+    }
+    tags = aspnet_tags(files, "Pages/Account/Profile.cshtml", 1, "cs_razor")
+    tags.map(&.description).should eq(["Protected by ASP.NET [Authorize] (inherited from SecurePageModel)"])
+    requires_of(tags[0]).should eq([["authenticated"]])
+    aspnet_tags(files, "Pages/Account/Login.cshtml", 1, "cs_razor").should be_empty
+  end
+
+  it "reads RazorPagesOptions conventions for the page or folder they name" do
+    files = {
+      "App.csproj" => csproj,
+      "Program.cs" => <<-CS,
+        builder.Services.AddRazorPages(options =>
+        {
+            options.Conventions.AuthorizePage("/Basket/Checkout");
+            options.Conventions.AuthorizeFolder("/reports", "ReportReaders")
+                .AllowAnonymousToPage("/Reports/Public");
+            options.Conventions.AuthorizeAreaFolder("Identity", "/Manage");
+            options.Conventions.AuthorizeFolder(adminFolder);
+        });
+        CS
+      "Pages/Basket/Checkout.cshtml"             => "@page\n",
+      "Pages/Basket/Index.cshtml"                => "@page\n",
+      "Pages/Reports/Index.cshtml"               => "@page\n",
+      "Pages/Reports/Public.cshtml"              => "@page\n",
+      "Areas/Identity/Pages/Manage/Index.cshtml" => "@page\n",
+      "Pages/Manage/Index.cshtml"                => "@page\n",
+    }
+    checkout = aspnet_tags(files, "Pages/Basket/Checkout.cshtml", 1, "cs_razor")
+    checkout.map(&.description).should eq([%(Protected by ASP.NET Razor Pages convention AuthorizePage("/Basket/Checkout"))])
+    requires_of(checkout[0]).should eq([["authenticated"]])
+    aspnet_tags(files, "Pages/Basket/Index.cshtml", 1, "cs_razor").should be_empty
+    reports = aspnet_tags(files, "Pages/Reports/Index.cshtml", 1, "cs_razor")
+    requires_of(reports[0]).sort.should eq([["authenticated"], ["unresolved"]])
+    unread_of(reports[0]).should eq(["Policy=ReportReaders"])
+    aspnet_tags(files, "Pages/Reports/Public.cshtml", 1, "cs_razor").should be_empty
+    requires_of(aspnet_tags(files, "Areas/Identity/Pages/Manage/Index.cshtml", 1, "cs_razor")[0]).should eq([["authenticated"]])
+    aspnet_tags(files, "Pages/Manage/Index.cshtml", 1, "cs_razor").should be_empty
+  end
+
+  it "joins a page model's [Authorize] with a convention, and keeps an unplaced AllowAnonymousTo* beside them" do
+    files = {
+      "App.csproj"               => csproj,
+      "Program.cs"               => "options.Conventions.AuthorizePage(\"/Checkout\", \"Buyers\").AllowAnonymousToPage(openPage);\n",
+      "Pages/Checkout.cshtml"    => "@page\n@model CheckoutModel\n",
+      "Pages/Checkout.cshtml.cs" => "[Authorize(Roles = \"Customer\")]\npublic class CheckoutModel : PageModel { }\n",
+    }
+    tags = aspnet_tags(files, "Pages/Checkout.cshtml", 1, "cs_razor")
+    tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)] (PageModel)"])
+    requires_of(tags[0]).sort.should eq([["authenticated", "unresolved"], ["role:Customer", "unresolved"], ["unresolved", "unresolved"]])
+    unread_of(tags[0]).sort.should eq(["AllowAnonymousToPage(openPage)", "AllowAnonymousToPage(openPage)", "AllowAnonymousToPage(openPage)", "Policy=Buyers"])
+  end
+
+  it "reads a routable component's @attribute, code-behind and _Imports.razor when a server maps components" do
+    files = {
+      "App.csproj"                             => csproj,
+      "Program.cs"                             => "app.MapRazorComponents<App>();\n",
+      "Components/Pages/Cart.razor"            => "@page \"/cart\"\n@attribute [Authorize]\n",
+      "Components/Pages/Orders.razor"          => "@page \"/orders\"\n",
+      "Components/Pages/Orders.razor.cs"       => "[Authorize(Policy = \"Buyers\")]\npublic partial class Orders { }\n",
+      "Components/Pages/Admin/_Imports.razor"  => "@attribute [Authorize(Roles = \"Admin, Ops\")]\n",
+      "Components/Pages/Admin/Dashboard.razor" => "@page \"/admin\"\n",
+      "Components/Pages/Admin/Help.razor"      => "@page \"/admin/help\"\n@attribute [AllowAnonymous]\n",
+      "Components/Pages/Admin/Commented.razor" => "@page \"/admin/c\"\n@* @attribute [AllowAnonymous] *@\n",
+    }
+    cart = aspnet_tags(files, "Components/Pages/Cart.razor", 1, "cs_razor")
+    cart.map(&.description).should eq(["Protected by ASP.NET [Authorize] (Blazor component)"])
+    requires_of(cart[0]).should eq([["authenticated"]])
+    orders = aspnet_tags(files, "Components/Pages/Orders.razor", 1, "cs_razor")
+    orders.map(&.description).should eq(["Protected by ASP.NET [Authorize(Policy)] (Blazor component)"])
+    unread_of(orders[0]).should eq(["Policy=Buyers"])
+    admin = aspnet_tags(files, "Components/Pages/Admin/Dashboard.razor", 1, "cs_razor")
+    admin.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)] (_Imports.razor)"])
+    requires_of(admin[0]).should eq([["role:Admin", "role:Ops"]])
+    aspnet_tags(files, "Components/Pages/Admin/Help.razor", 1, "cs_razor").should be_empty
+    aspnet_tags(files, "Components/Pages/Admin/Commented.razor", 1, "cs_razor").size.should eq(1)
+  end
+
+  it "leaves a component no server maps untagged: its [Authorize] runs in the client" do
+    files = {
+      "App.csproj"       => %(<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly"></Project>),
+      "Program.cs"       => "await builder.Build().RunAsync();\n",
+      "Pages/Cart.razor" => "@page \"/cart\"\n@attribute [Authorize]\n",
+    }
+    aspnet_tags(files, "Pages/Cart.razor", 1, "cs_razor").should be_empty
+  end
+end
+
+# Shapes where a guard used to be read on a route that is open.
+describe "AspnetAuthTagger open routes" do
+  ext = ->(names : Array(String)) do
+    body = names.map do |name|
+      "    public static RouteGroupBuilder Map#{name}(this IEndpointRouteBuilder app)\n    {\n        var api = app.MapGroup(\"api/#{name.downcase}\");\n        api.MapGet(\"/\", () => \"x\");\n        return api;\n    }\n"
+    end
+    "public static class Ext\n{\n#{body.join}}\n"
+  end
+  # Line (1-based) of `api.MapGet` in the n-th extension of `ext`.
+  route = ->(n : Int32) { 6 + 6 * n }
+  minimal = "cs_aspnet_core_minimal_api"
+
+  it "does not read a variable assigned again, or opened, after the extension call" do
+    files = {"Ext.cs" => ext.call(["R", "S"]), "Program.cs" => <<-CS}
+      var r = app.MapR();
+      r = app.MapGroup("/other");
+      r.RequireAuthorization();
+      var s = app.MapS();
+      s.RequireAuthorization();
+      s.AllowAnonymous();
+      CS
+    aspnet_tags(files, "Ext.cs", route.call(0), minimal).should be_empty
+    aspnet_tags(files, "Ext.cs", route.call(1), minimal).should be_empty
+  end
+
+  it "takes a receiver's conventions only from its nearest declaration in scope" do
+    files = {"Ext.cs" => ext.call(["X", "Y"]), "Setup.cs" => <<-CS}
+      public static class Setup
+      {
+          public static void Admin(WebApplication app)
+          {
+              var grp = app.MapGroup("/admin").RequireAuthorization("AdminOnly");
+          }
+          public static void Public(WebApplication app)
+          {
+              var grp = app.MapGroup("/public");
+              var x = grp.MapX();
+              grp.MapY();
+          }
+      }
+      CS
+    aspnet_tags(files, "Ext.cs", route.call(0), minimal).should be_empty
+    aspnet_tags(files, "Ext.cs", route.call(1), minimal).should be_empty
+  end
+
+  it "credits a convention after a later Map call to that route alone" do
+    files = {"Ext.cs" => ext.call(["A"]), "Program.cs" => "app.MapA().MapGet(\"/only\", () => \"y\").RequireAuthorization();\n"}
+    aspnet_tags(files, "Ext.cs", route.call(0), minimal).should be_empty
+  end
+
+  it "keeps call sites per declaring project and reads a static call or a conditional one as unread" do
+    a_ext = ext.call(["Orders"])
+    files = {
+      "A/A.csproj"   => "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>",
+      "A/Ext.cs"     => a_ext,
+      "A/Program.cs" => "app.MapOrders().RequireAuthorization(\"AdminOnly\");\nvoid Again() { MapOrders(app); }\n",
+      "B/B.csproj"   => "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>",
+      "B/Ext.cs"     => a_ext,
+      "B/Program.cs" => "Ext.MapOrders(app);\n",
+      "C/C.csproj"   => "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>",
+      "C/Ext.cs"     => a_ext,
+      "C/Program.cs" => "if (prod)\n{\n    app.MapOrders().RequireAuthorization();\n}\n",
+    }
+    a = aspnet_tags(files, "A/Ext.cs", route.call(0), minimal)
+    requires_of(a[0]).sort.should eq([["unresolved"], ["unresolved"]])
+    aspnet_tags(files, "B/Ext.cs", route.call(0), minimal).should be_empty
+    c = aspnet_tags(files, "C/Ext.cs", route.call(0), minimal)
+    requires_of(c[0]).sort.should eq([["unresolved"], ["unresolved"]])
+  end
+
+  it "does not resolve a namespace-qualified or parameter-shadowed method group" do
+    files = {
+      "Pub.cs"   => "namespace App.Pub;\npublic static class H { [AllowAnonymous] public static string Open() => \"o\"; }\n",
+      "Admin.cs" => "namespace App.Admin;\npublic static class H { public static string Open() => \"o\"; }\n",
+      "Api.cs"   => <<-CS,
+        using App.Pub;
+        public static class Api
+        {
+            public static void Map(WebApplication app, Delegate Get)
+            {
+                app.MapGet("/x", Get).RequireAuthorization();
+            }
+            public static void Map2(WebApplication app)
+            {
+                app.MapGet("/y", App.Admin.H.Open).RequireAuthorization();
+            }
+            [AllowAnonymous] public static string Get() => "open";
+        }
+        CS
+    }
+    unread_of(aspnet_tags(files, "Api.cs", 6, minimal)[0]).should eq(["attributes of the handler Get"])
+    unread_of(aspnet_tags(files, "Api.cs", 10, minimal)[0]).should eq(["attributes of the handler App.Admin.H.Open"])
+  end
+
+  csproj = %(<Project Sdk="Microsoft.NET.Sdk.Web"></Project>)
+
+  it "serves only the host's components and the assemblies it adds" do
+    files = {
+      "Host/Host.csproj"           => %(<Project Sdk="Microsoft.NET.Sdk.Web"><ItemGroup><ProjectReference Include="..\\Client\\Client.csproj" /><ProjectReference Include="..\\Lib\\Lib.csproj" /></ItemGroup></Project>),
+      "Host/Program.cs"            => "app.MapRazorComponents<App>().AddAdditionalAssemblies(typeof(Client._Imports).Assembly);\n",
+      "Client/Client.csproj"       => %(<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly"></Project>),
+      "Client/Pages/Secret.razor"  => "@page \"/client-secret\"\n@attribute [Authorize]\n",
+      "Lib/Lib.csproj"             => %(<Project Sdk="Microsoft.NET.Sdk.Razor"></Project>),
+      "Lib/Pages/Lib.razor"        => "@page \"/lib\"\n@attribute [Authorize]\n",
+      "Host/Components/Home.razor" => "@page \"/home\"\n@attribute [Authorize]\n",
+    }
+    aspnet_tags(files, "Host/Components/Home.razor", 1, "cs_razor").size.should eq(1)
+    aspnet_tags(files, "Client/Pages/Secret.razor", 1, "cs_razor").size.should eq(1)
+    aspnet_tags(files, "Lib/Pages/Lib.razor", 1, "cs_razor").should be_empty
+  end
+
+  it "reads a conditional convention, or one under a moved pages root, as unread beside its requirement" do
+    files = {
+      "App.csproj"                         => csproj,
+      "Program.cs"                         => "builder.Services.AddRazorPages(options =>\n{\n    if (!dev)\n    {\n        options.Conventions.AuthorizeFolder(\"/Ops\");\n    }\n});\n",
+      "Pages/Ops/Index.cshtml"             => "@page\n",
+      "Moved/Moved.csproj"                 => csproj,
+      "Moved/Program.cs"                   => "o.RootDirectory = \"/Content\"; o.Conventions.AuthorizeFolder(\"/Admin\");\n",
+      "Moved/Content/Pages/Admin/Z.cshtml" => "@page\n",
+    }
+    requires_of(aspnet_tags(files, "Pages/Ops/Index.cshtml", 1, "cs_razor")[0]).should eq([["authenticated", "unresolved"]])
+    requires_of(aspnet_tags(files, "Moved/Content/Pages/Admin/Z.cshtml", 1, "cs_razor")[0]).should eq([["authenticated", "unresolved"]])
+  end
+
+  it "lets a trailing-slash folder, an unclosed comment, an @inherits base and named arguments read as ASP.NET does" do
+    files = {
+      "App.csproj"                      => csproj,
+      "Program.cs"                      => "options.Conventions.AuthorizeFolder(\"/Admin\").AllowAnonymousToFolder(\"/Admin/Public/\");\noptions.Conventions.AuthorizePage(policy: \"P\", pageName: \"/Named\");\n",
+      "Pages/Admin/Public/Index.cshtml" => "@page\n",
+      "Pages/Named.cshtml"              => "@page\n",
+      "Pages/Weird.cshtml"              => "@page\n@* never closed\n@attribute [Authorize]\n",
+      "Program2.cs"                     => "app.MapRazorComponents<App>();\n",
+      "Components/Admin.razor"          => "@page \"/admin\"\n@inherits OpenBase\n@attribute [Authorize]\n",
+      "Components/Admin.razor.cs"       => "public partial class Admin { }\n",
+      "Components/OpenBase.cs"          => "[AllowAnonymous]\npublic abstract class OpenBase : ComponentBase { }\n",
+    }
+    aspnet_tags(files, "Pages/Admin/Public/Index.cshtml", 1, "cs_razor").should be_empty
+    aspnet_tags(files, "Pages/Named.cshtml", 1, "cs_razor").should be_empty
+    aspnet_tags(files, "Pages/Weird.cshtml", 1, "cs_razor").should be_empty
+    aspnet_tags(files, "Components/Admin.razor", 1, "cs_razor").should be_empty
+  end
+
+  it "stops a page model's base chain at a project the page does not reference" do
+    files = {
+      "Web/Web.csproj"            => csproj,
+      "Web/Pages/Index.cshtml"    => "@page\n@model IndexModel\n",
+      "Web/Pages/Index.cshtml.cs" => "public class IndexModel : BasePageModel { }\n",
+      "Admin/Admin.csproj"        => csproj,
+      "Admin/BasePageModel.cs"    => "[Authorize(Roles = \"Admin\")]\npublic abstract class BasePageModel : PageModel { }\n",
+    }
+    aspnet_tags(files, "Web/Pages/Index.cshtml", 1, "cs_razor").should be_empty
+  end
 end

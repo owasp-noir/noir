@@ -1,0 +1,13 @@
+# Blazor routable components: `@attribute [Authorize]`, a code-behind
+# partial class, `_Imports.razor`, `[AllowAnonymous]`, and a WebAssembly
+# project no server maps. Tags are asserted in
+# spec/unit_test/tagger/framework_taggers/aspnet_auth_spec.cr.
+fixture: fixtures/csharp/blazor_auth/
+counts: {techs: 1, endpoints: 6}
+endpoints:
+  - {url: "/secret", method: "GET", params: []}
+  - {url: "/admin", method: "GET", params: []}
+  - {url: "/admin/help", method: "GET", params: []}
+  - {url: "/cart", method: "GET", params: []}
+  - {url: "/", method: "GET", params: []}
+  - {url: "/orders", method: "GET", params: []}
