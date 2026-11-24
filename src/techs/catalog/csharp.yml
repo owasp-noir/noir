@@ -115,6 +115,7 @@ cs_razor:
     params: {query: true, path: true, body: true, header: false, cookie: false}
     static_path: false
     websocket: false
+  context: {guards: true}
 
 cs_servicestack:
   framework: "ServiceStack"

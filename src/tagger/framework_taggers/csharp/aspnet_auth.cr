@@ -62,7 +62,7 @@ class AspnetAuthTagger < FrameworkTagger
   ROUTE_BUILDER_EXTENSION = /\bstatic\s[^;{}()=]*?\b(\w+)\s*(?:<[^<>()]*>\s*)?\(\s*this\s+(?:RouteGroupBuilder|IEndpointRouteBuilder|WebApplication)\s+(\w+)/
 
   def self.target_techs : Array(String)
-    ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter", "cs_wolverine", "cs_signalr"]
+    ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter", "cs_wolverine", "cs_signalr", "cs_razor"]
   end
 
   def initialize(options : Hash(String, YAML::Any))
@@ -393,6 +393,8 @@ class AspnetAuthTagger < FrameworkTagger
   end
 
   private def check_endpoint(endpoint : Endpoint)
+    # Razor markup is read by `check_razor_endpoint`, never as C#.
+    return check_razor_endpoint(endpoint) if endpoint.details.technology == "cs_razor"
     endpoint.details.code_paths.each do |path_info|
       # Strings and comments blanked: a commented-out `[Authorize]` or a
       # `}` inside a literal reads as nothing.
@@ -543,22 +545,7 @@ class AspnetAuthTagger < FrameworkTagger
   private def layered_requires(path : String, lines : Array(String), line_idx : Int32, action_attrs : Array(Attr),
                                chain : Array(ClassDecl), project_file : String, technology : String?) : Array(Access::Clause)
     default = default_policy
-    clauses = [] of Access::Clause
-    layers = [{action_attrs, path}] + chain.map { |decl| {decl.attributes, decl.path} }
-    layers.each do |attrs, file|
-      attrs.each do |attr|
-        clauses.concat(authorize_clauses(attr, file, default))
-        if attr.name.in?("TypeFilter", "ServiceFilter")
-          source = "[#{attr.text}]"
-          clauses << Access::Clause.unresolved(source, source, file, attr.line + 1)
-        end
-      end
-    end
-    each_filter_guard(layers.map(&.[0]), anonymous: false) do |attr, description, configurable|
-      source = "[#{attr.text}] (#{description})"
-      clauses << Access::Clause.new([Access::Atom.new(:authenticated)], source) unless configurable
-      clauses << Access::Clause.unresolved("[#{attr.text}]", source)
-    end
+    clauses = attribute_clauses([{action_attrs, path}] + chain.map { |decl| {decl.attributes, decl.path} }, default)
     statement = minimal_api_statement(lines, line_idx).try { |text| bounded(text) }
     if statement
       clauses.concat(statement_authorize(path, line_idx, statement, default))
@@ -602,6 +589,28 @@ class AspnetAuthTagger < FrameworkTagger
       end
     end
     statement
+  end
+
+  # The authorization attribute layers of an MVC action or a Razor page,
+  # each attribute list with its file: `[Authorize]`, a `TypeFilter` /
+  # `ServiceFilter` (unread), and a filter whose definition refuses callers.
+  private def attribute_clauses(layers : Array(Tuple(Array(Attr), String)), default : Access::CNF) : Array(Access::Clause)
+    clauses = [] of Access::Clause
+    layers.each do |attrs, file|
+      attrs.each do |attr|
+        clauses.concat(authorize_clauses(attr, file, default))
+        if attr.name.in?("TypeFilter", "ServiceFilter")
+          source = "[#{attr.text}]"
+          clauses << Access::Clause.unresolved(source, source, file, attr.line + 1)
+        end
+      end
+    end
+    each_filter_guard(layers.map(&.[0]), anonymous: false) do |attr, description, configurable|
+      source = "[#{attr.text}] (#{description})"
+      clauses << Access::Clause.new([Access::Atom.new(:authenticated)], source) unless configurable
+      clauses << Access::Clause.unresolved("[#{attr.text}]", source)
+    end
+    clauses
   end
 
   # `[Authorize]`, or an attribute deriving `AuthorizeAttribute`, as one
@@ -953,10 +962,13 @@ class AspnetAuthTagger < FrameworkTagger
     # `[Authorize]` on one part of a `partial` controller governs the actions
     # declared in its other parts.
     merged_partial(type, path).try { |merged| own << merged } if type.partial?
-    chain = own.dup
-    base = own.compact_map(&.base).first?
-    from = path
-    seen = Set{name}
+    own + ancestors(own.compact_map(&.base).first?, path, Set{name})
+  end
+
+  # Base class `base` as the scan declares it from `from`, then its own
+  # bases, nearest first; `seen` stops a cycle.
+  private def ancestors(base : String?, from : String, seen : Set(String)) : Array(ClassDecl)
+    chain = [] of ClassDecl
     8.times do
       break unless base && seen.add?(base)
       decls = class_decls(base, from)

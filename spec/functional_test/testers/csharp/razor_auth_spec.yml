@@ -1,0 +1,17 @@
+# Razor Pages authorization: `@model` page models (own, inherited and
+# `[AllowAnonymous]`), a code-behind no `@model` binds, a page `@attribute`,
+# and `RazorPagesOptions.Conventions`. Tags are asserted in
+# spec/unit_test/tagger/framework_taggers/aspnet_auth_spec.cr.
+fixture: fixtures/csharp/razor_auth/
+counts: {techs: 1, endpoints: 10}
+endpoints:
+  - {url: "/Identity/Manage", method: "GET", params: []}
+  - {url: "/Account/Login", method: "GET", params: []}
+  - {url: "/Account/Profile", method: "GET", params: []}
+  - {url: "/Admin", method: "GET", params: []}
+  - {url: "/Admin/Unbound", method: "GET", params: []}
+  - {url: "/Basket/Checkout", method: "GET", params: []}
+  - {url: "/Basket/Checkout", method: "POST", params: []}
+  - {url: "/Basket/Success", method: "GET", params: []}
+  - {url: "/Reports", method: "GET", params: []}
+  - {url: "/Reports/Public", method: "GET", params: []}
