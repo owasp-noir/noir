@@ -4,6 +4,8 @@ require "../../../miniparsers/js_handler_resolver"
 require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
 require "./js_object_literal"
+require "./js_middleware_access"
+require "../../../miniparsers/js_mount_prefix"
 require "../../../models/code_locator"
 
 @[Noir::TaggerFor(key: "express_auth", name: "Express Auth Tagger", desc: "Identifies Express.js authentication patterns (Passport, JWT, auth middleware)", order: 40)]
@@ -119,18 +121,22 @@ class ExpressAuthTagger < FrameworkTagger
 
   private def check_route(endpoint : Endpoint) : Endpoint
     scoped_description = nil
+    scoped_steps = nil.as(Array({RouteMiddleware, GuardEvidence?})?)
     handler_inline = false
     handler_direct = false
 
     endpoint.details.code_paths.each do |location|
       chain = location.route_middleware || next
       direct = nil.as(String?)
+      judged = [] of {RouteMiddleware, GuardEvidence?}
       chain.each do |step|
         local = step.origin.in?(:route, :helper)
         inline = step.source.matches?(Noir::JSRouteExtractor::INLINE_FUNCTION_RE)
         handler_direct ||= step.origin == :route
         handler_inline ||= step.origin == :route && step.handler_position && inline
-        evidence = judge_step(step) || next
+        evidence = judge_step(step)
+        judged << {step, evidence}
+        next unless evidence
         if local
           @guard_followed ||= evidence.followed && step.origin == :route
           next if direct
@@ -142,16 +148,17 @@ class ExpressAuthTagger < FrameworkTagger
           via = step.prefix && step.verb == "use" ? "app.use()" : "#{step.receiver}.#{step.verb}()"
           scoped_description = "#{evidence.description} via #{via}"
           scoped_description += " on #{step.prefix}" if step.prefix
+          scoped_steps = judged
         end
       end
       if direct
-        endpoint.add_tag(Tag.new("auth", direct, "express_auth"))
+        endpoint.add_tag(Tag.new("auth", direct, "express_auth", requires: chain_requires(endpoint, judged)))
         return endpoint
       end
     end
 
     if scoped_description
-      endpoint.add_tag(Tag.new("auth", scoped_description, "express_auth"))
+      endpoint.add_tag(Tag.new("auth", scoped_description, "express_auth", requires: scoped_steps.try { |steps| chain_requires(endpoint, steps) }))
     elsif evidence = handler_caller_check(endpoint)
       endpoint.add_tag(Tag.new("auth", evidence.description, "express_auth"))
       handler = endpoint.handler
@@ -174,6 +181,61 @@ class ExpressAuthTagger < FrameworkTagger
     guard_description(step.source, step.file, handler_position: step.handler_position)
   ensure
     @method, @url = method, url
+  end
+
+  # What every step of the route's chain asks of a caller, joined with AND.
+  # A guard step whose package call is not read keeps the default reading;
+  # a scope or claim check from a known package adds its own. Nil when no
+  # step reads more exactly than the default, when the endpoint has another
+  # registration (another chain may serve it), or when a step's scope was
+  # guessed for an unread mount prefix.
+  private def chain_requires(endpoint : Endpoint, judged : Array({RouteMiddleware, GuardEvidence?})) : Array(Access::Clause)?
+    return if endpoint.details.code_paths.count(&.route_middleware) > 1
+    return if endpoint.url.includes?(Noir::JSMountPrefix::UNREAD)
+    return if endpoint.resolution.try { |found| found.values.includes?(Endpoint::RESOLUTION_UNRESOLVED) }
+    return if judged.any? { |step, _| step.origin == :fallback }
+    exact = false
+    clauses = [] of Access::Clause
+    judged.each do |step, evidence|
+      reading = step_reading(step)
+      text = step_text(step.source)
+      cnf = if evidence
+              reading || JsMiddlewareAccess.fallback(text)
+            elsif reading && reading.none? { |clause| clause.any?(&.kind.authenticated?) }
+              reading
+            end
+      next unless cnf
+      exact ||= !reading.nil?
+      clauses.concat(Access.clauses(cnf, text, step.file))
+    end
+    return unless exact
+    clauses.uniq!(&.any_of)
+    clauses unless clauses.size > Access::MAX_CLAUSES
+  end
+
+  # An inline function step is its whole body.
+  private def step_text(source : String) : String
+    text = source.gsub(/\s+/, " ").strip
+    text.size > 120 ? "#{text[0, 117]}..." : text
+  end
+
+  # The step as a call of a known package's middleware: written at the step,
+  # or through a name the step's module binds once, and to nothing more, to
+  # such a call (`const auth = basicAuth({ … });`).
+  private def step_reading(step : RouteMiddleware) : Access::CNF?
+    content = read_file(step.file) || return
+    imports = Noir::JSHandlerResolver.imports_of(content, step.file)
+    text = step.source.strip
+    if text.matches?(BARE_IDENT) && !imports.has_key?(text)
+      return unless guard_binding_followed?(text, step.file)
+      code = Noir::CComments.strip(content, quotes: %("'`))
+      decl = code.match(/\b(?:const|let|var)\s+#{Regex.escape(text)}\s*=\s*/) || return
+      text = local_binding_expr(code, text) || return
+      return unless code.index(text, decl.end(0)) == decl.end(0)
+      return unless code[decl.end(0) + text.size..].matches?(/\A[ \t]*(?:;|\n|\z)/)
+      return if code[decl.end(0) + text.size..].lstrip.starts_with?('.')
+    end
+    JsMiddlewareAccess.parse(text, imports).try { |call| JsMiddlewareAccess.read(call) }
   end
 
   # Why `arg` (one argument of a registration, as written) guards the
