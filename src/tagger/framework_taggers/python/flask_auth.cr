@@ -86,7 +86,7 @@ class FlaskAuthTagger < FrameworkTagger
     body_guard(endpoint, method).try { |found| guards << found }
     guards.concat(before_request_guards(endpoint, method))
     if first = guards.find(&.description)
-      guards.concat(api_decorator_guards(endpoint))
+      guards.concat(unread_layers(endpoint))
       endpoint.add_tag(Tag.new("auth", "Protected by #{first.description}", "flask_auth", requires: guards.flat_map(&.requires).uniq!))
     end
     endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "flask_auth")) if authz
@@ -105,16 +105,62 @@ class FlaskAuthTagger < FrameworkTagger
 
   # flask-restx `Api(..., decorators=[...])` / `Namespace(..., decorators=
   # [...])` and flask-restful `Api(..., decorators=[...])` wrap every
-  # resource they register. Which one serves this view is not followed, so
-  # one in the view's files is a check noir did not read.
+  # resource they register.
   API_DECORATORS = /\b(?:Api|Namespace)\s*\((?:[^()]|\([^()]*\))*?\bdecorators\s*=/
+  HOOK_LINE      = /^\s*@([\w.]+)\.(before_request|before_app_request)\s*$/
+  FLASK_APP      = /^\s*([A-Za-z_]\w*)\s*(?::[^=\n]+)?=\s*(?:flask\.)?Flask\s*\(/m
 
-  private def api_decorator_guards(endpoint : Endpoint) : Array(Guard)
-    files = ([endpoint.handler.try(&.path)] + endpoint.details.code_paths.map(&.path)).compact.uniq!
-    files.compact_map do |file|
-      next unless read_file(file).try(&.matches?(API_DECORATORS))
-      fragment = "decorators= on an Api or Namespace in #{File.basename(file)}"
-      Guard.new(nil, Access.clauses(PythonAuthAccess.unresolved(fragment), fragment))
+  # A layer elsewhere in the scan that may wrap a view without the
+  # per-route walk following it: an Api or Namespace decorators list (no
+  # router), or a refusing hook. `per_route`: a `before_request` hook,
+  # read for a route of its router in its own file. `app_wide`: it runs
+  # ahead of every route (`before_app_request`, or a hook on a `Flask(...)`).
+  private record Unread, file : String, router : String?, per_route : Bool, app_wide : Bool, text : String
+
+  @unread : Array(Unread)? = nil
+
+  # Each such layer that may apply to the view, unresolved: one on no
+  # router, an app-wide hook, a hook of the view's router read nowhere
+  # else, and any hook for a view whose router is not known.
+  private def unread_layers(endpoint : Endpoint) : Array(Guard)
+    routes = endpoint.details.code_paths.compact_map do |path_info|
+      line = read_file_lines(path_info.path).try(&.[(path_info.line || next) - 1]?) || next
+      router = line.strip.match(ROUTE_DECORATOR).try(&.[1]) || next
+      {File.expand_path(path_info.path), router}
+    end
+    unread_elsewhere.compact_map do |layer|
+      if router = layer.router
+        next if layer.per_route && routes.includes?({layer.file, router})
+        next unless routes.empty? || layer.app_wide || routes.any? { |_, name| name == router }
+      end
+      Guard.new(nil, Access.clauses(PythonAuthAccess.unresolved(layer.text), layer.text))
+    end
+  end
+
+  # A hook counts when it carries a decorator or its body refuses.
+  private def unread_elsewhere : Array(Unread)
+    @unread ||= collect_files_by_extension(".py").flat_map do |file|
+      content = CodeLocator.instance.read_source(file) || next [] of Unread
+      path = File.expand_path(file)
+      found = [] of Unread
+      if content.matches?(API_DECORATORS)
+        found << Unread.new(path, nil, false, true, "decorators= on an Api or Namespace in #{File.basename(file)}")
+      end
+      next found unless content.includes?(".before_")
+      apps = content.scan(FLASK_APP).map(&.[1])
+      lines = content.lines
+      lines.each_with_index do |line, idx|
+        hook = line.match(HOOK_LINE) || next
+        def_idx = idx + 1
+        while def_idx < lines.size && lines[def_idx].lstrip.starts_with?('@')
+          def_idx += 1
+        end
+        next unless def_idx > idx + 1 || function_body(lines, def_idx).any? { |(_, code)| refusal_statement?(code) }
+        per_route = hook[2] == "before_request"
+        app_wide = !per_route || apps.includes?(hook[1])
+        found << Unread.new(path, hook[1], per_route, app_wide, "#{hook[1]}.#{hook[2]} #{lines[def_idx]?.to_s.strip}")
+      end
+      found
     end
   end
 
@@ -127,7 +173,7 @@ class FlaskAuthTagger < FrameworkTagger
   # nothing.
   # ponytail: same file and same router name only; a hook on a blueprint
   # the route file imports, or on the app a blueprint is registered on, is
-  # not followed.
+  # not followed for the tag (`unread_layers` keeps it unresolved).
   # Every hook of the router runs, so each one contributes; one the tagger
   # does not judge a guard still adds what it may refuse as unresolved.
   private def before_request_guards(endpoint : Endpoint, method : String) : Array(Guard)

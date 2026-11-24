@@ -86,6 +86,7 @@ describe PythonAuthAccess do
       "@scoped(['a', 'b'], False)"             => [["authenticated"], ["scope:a", "scope:b"]],
       "@scoped('user:read')"                   => [["authenticated"], ["scope:user:read", "unresolved:scoped('user:read') (a broader scope also passes)"]],
       "@scoped(SCOPES)"                        => [["authenticated"], ["unresolved:SCOPES"]],
+      "@scoped(None)"                          => [["unresolved:scoped(None)"]],
       "@scoped(['a'], require_all=ALL)"        => [["authenticated"], ["unresolved:scoped(['a'], require_all=ALL)"]],
     }.each do |text, expected|
       it "reads #{text}" do

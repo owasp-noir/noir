@@ -73,7 +73,7 @@ module PythonAuthAccess
   def auth_required(args : String?, source : String) : Access::CNF
     return signed_in if args.nil?
     cnf = signed_in
-    split(args).each do |arg|
+    parts(args).each do |arg|
       if kw = arg.match(KEYWORD)
         next if kw[1] == "grace" || (kw[1] == "within" && kw[2].strip == "-1")
         cnf += unresolved(source)
@@ -84,12 +84,12 @@ module PythonAuthAccess
     cnf.uniq
   end
 
-  # Flask-Security `roles_required(*roles)` needs every role,
-  # `roles_accepted(*roles)` any one. With no roles both admit everyone (an
-  # empty Flask-Principal `Permission` allows any identity), which a guard
-  # never reads as.
+  # Flask-Security `roles_required(*roles)` needs every role (it refuses
+  # at the first `Permission(RoleNeed(role))` the identity fails),
+  # `roles_accepted(*roles)` any one. With no roles neither names a role,
+  # which a guard never reads as open: it stays unresolved.
   def roles(args : String?, source : String, every : Bool) : Access::CNF
-    items = args.try { |text| split(text) } || [] of String
+    items = args.try { |text| parts(text) } || [] of String
     return unresolved(source) if items.empty? || items.any? { |item| item.starts_with?('*') || item.matches?(KEYWORD) }
     atoms = items.map { |item| atom(:role, item) }
     every ? atoms.map { |found| [found] } : [atoms]
@@ -131,6 +131,8 @@ module PythonAuthAccess
     return unresolved("#{source} (skipped for OPTIONS)") if method.upcase == "OPTIONS"
     values = args.try { |text| keywords(text, %w[scopes require_all require_all_actions initialized_on]) }
     scopes = values.try(&.["scopes"]?) || return signed_in + unresolved(source)
+    # `scopes` None or False skips the check, protection included.
+    return unresolved(source) if FALSY.includes?(scopes)
     return signed_in + unresolved(source) if custom_validator
     items = elements(scopes) || [scopes]
     return signed_in + unresolved(source) if items.empty?
@@ -194,7 +196,7 @@ module PythonAuthAccess
   def elements(text : String) : Array(String)?
     text = text.strip
     return unless (text.starts_with?('[') && text.ends_with?(']')) || (text.starts_with?('(') && text.ends_with?(')'))
-    split(text[1...-1])
+    parts(text[1...-1])
   end
 
   private def atom(kind : Access::Kind, text : String) : Access::Atom
@@ -210,7 +212,7 @@ module PythonAuthAccess
   private def keywords(args : String, params : Array(String)) : Hash(String, String)?
     values = Hash(String, String).new
     position = 0
-    split(args).each do |arg|
+    parts(args).each do |arg|
       return if arg.starts_with?('*')
       if kw = arg.match(KEYWORD)
         values[kw[1]] = kw[2].strip
@@ -223,7 +225,7 @@ module PythonAuthAccess
     values
   end
 
-  private def split(text : String) : Array(String)
+  private def parts(text : String) : Array(String)
     Noir::TopLevelSplit.split(text, ',', DjangoAccess::ARGS)
   end
 end

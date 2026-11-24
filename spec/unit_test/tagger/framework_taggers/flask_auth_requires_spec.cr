@@ -184,6 +184,62 @@ describe "FlaskAuthTagger requires" do
     atoms(mixed[0]).should eq([["authenticated"], ["unresolved:bp.before_request refusing a caller who is not logged in"]])
   end
 
+  it "keeps a hook on the app, or on the router in another file, unresolved" do
+    files = {
+      "app.py" => <<-PY,
+        from flask import Flask
+        app = Flask(__name__)
+
+        @app.before_request
+        def admins_only():
+            if not current_user.is_admin:
+                abort(403)
+        PY
+      "bp.py" => <<-PY,
+        @bp.before_app_request
+        def anyone():
+            pass
+
+        @bp.before_request
+        @staff_required
+        def staff():
+            pass
+        PY
+      "views.py" => <<-PY,
+        from flask_login import login_required
+
+        @bp.route('/x')
+        @login_required
+        def x():
+            return 'x'
+        PY
+    }
+    atoms(flask_tags(files, "views.py", 3)[0]).sort.should eq([
+      ["authenticated"],
+      ["unresolved:app.before_request def admins_only():"],
+      ["unresolved:bp.before_request def staff():"],
+    ])
+  end
+
+  it "adds a project decorator that is not judged a guard but refuses" do
+    tags = flask_tags({"app.py" => <<-PY}, "app.py", 9)
+      from flask_login import login_required
+
+      def feature_gate(f):
+          def wrapper(*args, **kwargs):
+              abort(404)
+          return wrapper
+
+      # route
+      @app.route('/x')
+      @login_required
+      @feature_gate
+      def x():
+          return 'x'
+      PY
+    atoms(tags[0]).should eq([["authenticated"], ["unresolved:feature_gate"]])
+  end
+
   it "keeps a decorators list on an Api or Namespace in the view's file unresolved" do
     tags = flask_tags({"app.py" => <<-PY}, "app.py", 6)
       from flask_login import login_required
