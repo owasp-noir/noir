@@ -70,14 +70,23 @@ Noir reads the requirement from the endpoint's tags:
 |---|---|
 | Spring Security | `@PreAuthorize` and `@PostAuthorize` expressions, `@Secured`, `@RolesAllowed`, filter-chain rules |
 | NestJS | `@UseGuards`, global guards, `@Roles`, `@Permissions`, `@Scopes` |
-| ASP.NET Core, FastEndpoints | `[Authorize]` roles and policies, `RequireAuthorization`, endpoint `Roles`, `Permissions` and `Scopes` |
+| ASP.NET Core, FastEndpoints | `[Authorize]` roles and policies, `RequireAuthorization` (also at a route-builder extension's call site), Razor Pages and Blazor `[Authorize]` and page conventions, endpoint `Roles`, `Permissions` and `Scopes` |
 | Django, Django REST framework | `login_required`, `permission_required`, the auth mixins, `permission_classes`, `LoginRequiredMiddleware` |
 | Laravel | route, group and controller middleware, `can:`, Spatie roles and permissions, Sanctum and Passport scopes, `authorize()` |
 | FastAPI | `fastapi.security` schemes, `Security(..., scopes=[...])`, role checks in dependencies |
+| Quarkus, Micronaut | `@RolesAllowed`, `@Authenticated`, `@PermissionsAllowed`, `quarkus.http.auth.permission.*` policies, `@Secured` |
+| Vert.x, Vaadin, Dropwizard | vertx-web authentication and authorization handlers, `@RolesAllowed` / `@PermitAll` / `@AnonymousAllowed`, a required `@Auth` principal |
+| Express, Hono | Passport, `express-jwt`, `express-oauth2-jwt-bearer`, `express-jwt-authz`, `express-basic-auth`, and Hono's `jwt`, `bearerAuth` and `basicAuth`, across the whole middleware chain |
+| Ruby on Rails | `before_action` chains, Devise `authenticate_*!` and route blocks, Rolify `has_role?`, CanCanCan `authorize!` |
+| Flask | Flask-Login, Flask-JWT-Extended, Flask-Security, Flask-HTTPAuth and Flask-AppBuilder decorators, `before_request` hooks |
+| Tornado, Sanic, Odoo, Frappe, Chalice, Home Assistant | `@tornado.web.authenticated`, sanic-jwt `@protected` and `@scoped`, `auth=`, `allow_guest=`, `authorizer=`, `requires_auth` |
+| Symfony | `#[IsGranted]`, `@Security`, `access_control` in `security.yaml` |
+| Drupal, WordPress, Nextcloud, Yii, CakePHP | route `_permission` and `_role`, `permission_callback`, controller attributes, `AccessControl` rules, the Authentication component |
+| Encore, Huma | `//encore:api` and `api({ auth, expose })` access, `Operation.Security` |
 | OpenAPI 2 and 3 | `security` schemes and scopes |
 | Azure Functions, Serverless Framework | the auth level, the authorizer, `private` |
 
-A value is read only where the source states it. What application code decides stays `unresolved`: a custom guard or policy, a constant from another file, a setting that can switch a guard off, a NestJS roles guard Noir could not read. Taggers for other frameworks record no requirement yet.
+A value is read only where the source states it. What application code decides stays `unresolved`: a custom guard or policy, a constant from another file, a setting that can switch a guard off, a NestJS roles guard Noir could not read. Taggers for other frameworks, such as the Go router middleware taggers, Ktor and the Rust frameworks, record no requirement yet.
 
 The format runs every tagger by default. With `--use-taggers` it adds the framework auth taggers to your list, because a matrix built without guard tags would show every route as open.
 
