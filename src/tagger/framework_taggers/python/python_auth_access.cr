@@ -90,9 +90,11 @@ module PythonAuthAccess
   # which a guard never reads as open: it stays unresolved.
   def roles(args : String?, source : String, every : Bool) : Access::CNF
     items = args.try { |text| parts(text) } || [] of String
-    return unresolved(source) if items.empty? || items.any? { |item| item.starts_with?('*') || item.matches?(KEYWORD) }
+    return unresolved(source) if items.empty?
+    # A signed-out caller holds no role, whatever the arguments say.
+    return signed_in + unresolved(source) if items.any? { |item| item.starts_with?('*') || item.matches?(KEYWORD) }
     atoms = items.map { |item| atom(:role, item) }
-    every ? atoms.map { |found| [found] } : [atoms]
+    signed_in + (every ? atoms.map { |found| [found] } : [atoms])
   end
 
   # Flask-HTTPAuth `login_required(role=None, optional=None)`, also what
@@ -109,7 +111,9 @@ module PythonAuthAccess
     role = values["role"]?
     return signed_in if role.nil? || role == "None"
     return signed_in + unresolved(source) unless httpauth
-    elements(role).try { |items| either_roles(items) } || atom_cnf(:role, role)
+    # `login_required` answers 401 to a caller without credentials before
+    # it asks `authorize` about roles.
+    signed_in + (elements(role).try { |items| either_roles(items) } || atom_cnf(:role, role))
   end
 
   private def either_roles(items : Array(String)) : Access::CNF?

@@ -129,7 +129,7 @@ describe "FlaskAuthTagger requires" do
       def y():
           return 'y'
       PY
-    atoms(flask_tags({"app.py" => source}, "app.py", 6)[0]).should eq([["role:admin", "role:ops"]])
+    atoms(flask_tags({"app.py" => source}, "app.py", 6)[0]).should eq([["authenticated"], ["role:admin", "role:ops"]])
     atoms(flask_tags({"app.py" => source}, "app.py", 11)[0]).should eq([["authenticated"], ["unresolved:flask-httpauth token_auth"]])
   end
 
@@ -219,6 +219,92 @@ describe "FlaskAuthTagger requires" do
       ["unresolved:app.before_request def admins_only():"],
       ["unresolved:bp.before_request def staff():"],
     ])
+  end
+
+  it "keeps every decorator it does not read unresolved" do
+    tags = flask_tags({"app.py" => <<-PY}, "app.py", 6)
+      from flask_login import login_required
+      from flask_principal import Permission, RoleNeed
+
+      admin_permission = Permission(RoleNeed("admin"))
+
+      @app.route('/x')
+      @login_required
+      @admin_permission.require(http_exception=403)
+      def x():
+          return 'x'
+      PY
+    atoms(tags[0]).should eq([["authenticated"], ["unresolved:admin_permission.require(http_exception=403)"]])
+  end
+
+  it "keeps a refusal in the handler body unresolved" do
+    tags = flask_tags({"app.py" => <<-PY}, "app.py", 3, handler: {"claims", 5})
+      from flask_jwt_extended import jwt_required, get_jwt
+
+      @app.route('/claims')
+      @jwt_required()
+      def claims():
+          if "admin" not in get_jwt()["roles"]:
+              return {"msg": "forbidden"}, 403
+          return "x"
+      PY
+    atoms(tags[0]).should eq([["authenticated"], ["unresolved:checks in the body of def claims():"]])
+  end
+
+  it "keeps hooks it cannot rule out for the route unresolved" do
+    files = {
+      "app.py" => <<-PY,
+        from flask_login import login_required
+
+        parent = Blueprint("parent", __name__)
+        child = Blueprint("child", __name__)
+        other = Blueprint("other", __name__)
+
+        @parent.before_request
+        def parent_admin_only():
+            if not current_user.is_admin:
+                abort(403)
+
+        @other.before_request
+        def other_admin_only():
+            abort(403)
+
+        calls.before_request(calls_admin_only)
+
+        @child.route('/x')
+        @login_required
+        def child_x():
+            return 'x'
+
+        parent.register_blueprint(child)
+        PY
+      "hooks.py" => <<-PY,
+        from factory import app
+
+        @app.before_request
+        def staff_only():
+            abort(403)
+        PY
+    }
+    atoms(flask_tags(files, "app.py", 18)[0]).sort.should eq([
+      ["authenticated"],
+      ["unresolved:app.before_request def staff_only():"],
+      ["unresolved:calls.before_request(calls_admin_only)"],
+      ["unresolved:parent.before_request def parent_admin_only():"],
+    ])
+  end
+
+  it "does not count LOGIN_DISABLED set to False" do
+    tags = flask_tags({"app.py" => <<-PY}, "app.py", 4)
+      from flask_login import login_required
+      app.config["LOGIN_DISABLED"] = False
+
+      @app.route('/x')
+      @login_required
+      def x():
+          return 'x'
+      PY
+    atoms(tags[0]).should eq([["authenticated"]])
   end
 
   it "adds a project decorator that is not judged a guard but refuses" do

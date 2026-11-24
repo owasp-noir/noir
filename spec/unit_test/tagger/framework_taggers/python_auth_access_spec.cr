@@ -16,7 +16,7 @@ describe PythonAuthAccess do
     {
       {"flask_login.login_required", "@login_required"}                           => [["authenticated"]],
       {"flask_security.login_required", "@login_required"}                        => [["authenticated"]],
-      {"flask_security.decorators.roles_accepted", "@roles_accepted('a')"}        => [["role:a"]],
+      {"flask_security.decorators.roles_accepted", "@roles_accepted('a')"}        => [["authenticated"], ["role:a"]],
       {"flask_jwt_extended.jwt_required", "@jwt_required()"}                      => [["authenticated"]],
       {"flask_jwt_extended.jwt_required", "@jwt_required(locations=['headers'])"} => [["authenticated"]],
       {"flask_jwt_extended.jwt_required", "@jwt_required(optional=False)"}        => [["authenticated"]],
@@ -33,10 +33,10 @@ describe PythonAuthAccess do
       {"flask_security.auth_required", "@auth_required('token', 'session')"}      => [["authenticated"]],
       {"flask_security.auth_required", "@auth_required('session', within=5)"}     => [["authenticated"], ["unresolved:auth_required('session', within=5)"]],
       {"flask_security.http_auth_required", "@http_auth_required('realm')"}       => [["authenticated"]],
-      {"flask_security.roles_required", "@roles_required('admin', 'editor')"}     => [["role:admin"], ["role:editor"]],
-      {"flask_security.roles_required", "@roles_required('admin', EDITOR)"}       => [["role:admin"], ["unresolved:EDITOR"]],
-      {"flask_security.roles_accepted", "@roles_accepted('admin', 'editor')"}     => [["role:admin", "role:editor"]],
-      {"flask_security.roles_accepted", "@roles_accepted(*ROLES)"}                => [["unresolved:roles_accepted(*ROLES)"]],
+      {"flask_security.roles_required", "@roles_required('admin', 'editor')"}     => [["authenticated"], ["role:admin"], ["role:editor"]],
+      {"flask_security.roles_required", "@roles_required('admin', EDITOR)"}       => [["authenticated"], ["role:admin"], ["unresolved:EDITOR"]],
+      {"flask_security.roles_accepted", "@roles_accepted('admin', 'editor')"}     => [["authenticated"], ["role:admin", "role:editor"]],
+      {"flask_security.roles_accepted", "@roles_accepted(*ROLES)"}                => [["authenticated"], ["unresolved:roles_accepted(*ROLES)"]],
       {"flask_security.roles_required", "@roles_required()"}                      => [["unresolved:roles_required()"]],
       {"sanic_jwt.protected", "@protected()"}                                     => [["authenticated"]],
     }.each do |(qualified, text), expected|
@@ -51,7 +51,7 @@ describe PythonAuthAccess do
 
     it "reads nothing exact for an OPTIONS request the library lets through" do
       library("flask_login.login_required", "@login_required", "OPTIONS").should eq([["unresolved:login_required (skipped for OPTIONS)"]])
-      library("flask_security.roles_required", "@roles_required('admin')", "OPTIONS").should eq([["role:admin"]])
+      library("flask_security.roles_required", "@roles_required('admin')", "OPTIONS").should eq([["authenticated"], ["role:admin"]])
     end
 
     it "says nothing about a name it does not know" do
@@ -63,13 +63,13 @@ describe PythonAuthAccess do
   describe ".httpauth" do
     {
       {"@auth.login_required", true}                                     => [["authenticated"]],
-      {"@auth.login_required(role='admin')", true}                       => [["role:admin"]],
-      {"@auth.login_required(role=['admin', 'moderator'])", true}        => [["role:admin", "role:moderator"]],
-      {"@auth.login_required(role=['admin', ['user', 'editor']])", true} => [["role:admin", "role:user"], ["role:admin", "role:editor"]],
-      {"@auth.login_required(role=ROLE)", true}                          => [["unresolved:ROLE"]],
+      {"@auth.login_required(role='admin')", true}                       => [["authenticated"], ["role:admin"]],
+      {"@auth.login_required(role=['admin', 'moderator'])", true}        => [["authenticated"], ["role:admin", "role:moderator"]],
+      {"@auth.login_required(role=['admin', ['user', 'editor']])", true} => [["authenticated"], ["role:admin", "role:user"], ["role:admin", "role:editor"]],
+      {"@auth.login_required(role=ROLE)", true}                          => [["authenticated"], ["unresolved:ROLE"]],
       {"@auth.login_required(role='admin')", false}                      => [["authenticated"], ["unresolved:auth.login_required(role='admin')"]],
       {"@auth.login_required(optional=True)", true}                      => [["unresolved:auth.login_required(optional=True)"]],
-      {"@authenticate(token_auth, role='admin')", true}                  => [["role:admin"]],
+      {"@authenticate(token_auth, role='admin')", true}                  => [["authenticated"], ["role:admin"]],
     }.each do |(text, bound), expected|
       it "reads #{text}#{bound ? "" : " on an object not known to be Flask-HTTPAuth's"}" do
         _, args, source = DjangoAccess.call(text).not_nil!
