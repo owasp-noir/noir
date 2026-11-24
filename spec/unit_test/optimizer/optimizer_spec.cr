@@ -299,12 +299,32 @@ describe "EndpointOptimizer" do
         optimizer = EndpointOptimizer.new(logger, options)
         {"openapi.yaml", "z.yaml"}.each do |spec_path|
           spec = tech_endpoint("/login", "POST", "oas3", spec_path, 3)
-          spec.add_tag(Tag.new("auth", "Protected by OAS security bearerAuth", Tag.declared_access_tagger("oas3")))
-          spec.add_tag(Tag.new("anonymous", "OAS security admits anonymous callers", Tag.declared_access_tagger("oas3")))
+          spec.add_tag(Tag.new("auth", "Protected by OAS security bearerAuth", Tag.declared_access_tagger("oas3"),
+            requires: Access.clauses([[Access::Atom.new(:authenticated)]], "Protected by OAS security bearerAuth")))
+          spec.add_tag(Tag.new("anonymous", "OAS security admits anonymous callers", Tag.declared_access_tagger("oas3"),
+            requires: Access.clauses([[Access::Atom.new(:anonymous)]], "OAS security admits anonymous callers")))
           result = optimizer.optimize_endpoints([spec, tech_endpoint("/login", "POST", "go_gin", "server.go", 2)])
           result.size.should eq(1)
           result[0].tags.should be_empty
         end
+      end
+
+      # The description names schemes, not scopes, so two documents can state
+      # one guard text with different requirements. Each documents the calls
+      # it routes: a caller either one admits reaches the route.
+      it "joins the requirements two OAS documents state for one route" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        description = "Protected by OAS security oauth"
+        documents = {"a.yaml" => "read", "b.yaml" => "write"}.map do |path, scope|
+          spec = tech_endpoint("/items", "GET", "oas3", path, 3)
+          spec.add_tag(Tag.new("auth", description, Tag.declared_access_tagger("oas3"),
+            requires: Access.clauses([[Access::Atom.new(:scope, scope)]], description)))
+          spec
+        end
+        result = optimizer.optimize_endpoints(documents)
+        result.size.should eq(1)
+        result[0].tags.map(&.description).should eq([description])
+        Access.of(result[0]).map(&.to_s).should eq(["(scope:read | scope:write)"])
       end
     end
 

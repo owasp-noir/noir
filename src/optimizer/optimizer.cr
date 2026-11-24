@@ -1,4 +1,5 @@
 require "../analyzer/engines/python_engine"
+require "../models/access"
 require "../models/code_locator"
 require "../models/endpoint"
 require "../models/logger"
@@ -853,10 +854,32 @@ class EndpointOptimizer
 
     tagger = Tag.declared_access_tagger(technology)
     guarded = ->(endpoint : Endpoint) { endpoint.tags.any? { |tag| tag.name == "auth" && tag.tagger == tagger } }
-    return if guarded.call(target) && guarded.call(source)
+    if guarded.call(target) && guarded.call(source)
+      join_declared_requires(target, source, tagger)
+      return
+    end
 
     target.tags.reject! { |tag| tag.name == "auth" && tag.tagger == tagger }
     source.tags.reject! { |tag| tag.name == "auth" && tag.tagger == tagger }
+  end
+
+  # Each declaration guards the calls it routes, so a caller either one
+  # admits reaches the merged row. Every guard tag of the row carries the
+  # joined requirement, which also lets `merge_tag` fold two tags with one
+  # text into one, as it did before tags carried `requires`.
+  private def join_declared_requires(target : Endpoint, source : Endpoint, tagger : String) : Nil
+    guard = ->(tag : Tag) { tag.name == "auth" && tag.tagger == tagger }
+    return if (target.tags + source.tags).none? { |tag| guard.call(tag) && tag.requires }
+
+    cnf = ->(endpoint : Endpoint) { endpoint.tags.select(&guard).flat_map { |tag| Access.of(tag) }.map(&.any_of).uniq! }
+    joined = Access.either(cnf.call(target), cnf.call(source))
+    {target, source}.each do |endpoint|
+      endpoint.tags.map! do |tag|
+        next tag unless guard.call(tag)
+        tag.requires = Access.clauses(joined, tag.description, tag.path, tag.line)
+        tag
+      end
+    end
   end
 
   private def merge_tag(target : Endpoint, tag : Tag) : Nil
