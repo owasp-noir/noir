@@ -486,7 +486,7 @@ module Analyzer::Python
       rest = Noir::ImportGraph::Python.root_package_relative(search_dir, dotted_as_urlconf.join("."))
       return found if rest.nil? || rest.empty?
       candidate = File.join(search_dir, "#{rest.tr(".", "/")}.py")
-      File.exists?(candidate) ? [candidate] : found
+      CodeLocator.instance.source_file?(candidate) ? [candidate] : found
     end
 
     # The directory a root urlconf's dotted path is anchored at: `filepath`
@@ -506,15 +506,18 @@ module Analyzer::Python
     # `a/b.py` or the package `a/b/__init__.py`, retried without the leading
     # segment when that segment names the base package itself.
     private def django_module_file(dotted : ::String) : ::String?
-      [dotted, Noir::ImportGraph::Python.root_package_relative(@django_base_path, dotted)].each do |candidate|
-        next if candidate.nil? || candidate.empty?
-        relative = candidate.tr(".", "/")
-        {"#{relative}.py", "#{relative}/__init__.py"}.each do |rel|
-          path = File.join(@django_base_path, rel)
-          return path if File.file?(path)
-        end
+      if found = django_module_candidates(dotted).find { |path| File.file?(path) }
+        return found
       end
-      nil
+      # The retried path lies under the scan base, so it must be a scanned file.
+      rest = Noir::ImportGraph::Python.root_package_relative(@django_base_path, dotted)
+      return if rest.nil? || rest.empty?
+      django_module_candidates(rest).find { |path| CodeLocator.instance.source_file?(path) }
+    end
+
+    private def django_module_candidates(dotted : ::String) : Array(::String)
+      relative = dotted.tr(".", "/")
+      ["#{relative}.py", "#{relative}/__init__.py"].map { |rel| File.join(@django_base_path, rel) }
     end
 
     # Extract endpoints from a Django URL configuration file

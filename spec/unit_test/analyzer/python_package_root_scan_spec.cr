@@ -11,6 +11,7 @@ private def scan_from(cwd : String, target : String) : Array(Endpoint)
 end
 
 private def scan_dir(dir : String) : Array(Endpoint)
+  previous_bases = CodeLocator.instance.scan_base_paths
   CodeLocator.instance.clear_all
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new(dir)])
@@ -21,6 +22,8 @@ private def scan_dir(dir : String) : Array(Endpoint)
   runner.endpoints
 ensure
   CodeLocator.instance.reset_files
+  # The runner sets the scan bases, which the import resolver reads.
+  CodeLocator.instance.scan_base_paths = previous_bases if previous_bases
 end
 
 # What a scan reports, without the file paths that differ by base.
@@ -72,5 +75,7 @@ describe "Python scan rooted at a package directory" do
     signature(package).should eq(signature(parent))
     signature(scan_from("#{FIXTURES}/flask/webapp", ".")).should eq(signature(parent))
     endpoint_at(package, "GET", "/admin/reports")
+    # `from webapp import app` names the root package itself.
+    endpoint_at(package, "GET", "/health").params.map(&.name).should eq(["verbose"])
   end
 end

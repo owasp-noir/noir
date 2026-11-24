@@ -252,7 +252,7 @@ class PythonParser
       if wildcard
         # `from X import *` — resolve X, merge every global.
         next if full_module.empty?
-        pyfile = resolve_python_module(base_dir, full_module)
+        pyfile = resolve_python_module(base_dir, full_module, absolute: !relative)
         next unless pyfile
         next if @visited.includes?(pyfile)
         next unless ParserLimit.allow_depth?(@depth)
@@ -281,7 +281,7 @@ class PythonParser
       local_name = alias_name || name
 
       if !full_module.empty?
-        from_pyfile = resolve_python_module(base_dir, full_module)
+        from_pyfile = resolve_python_module(base_dir, full_module, absolute: !relative)
         if from_pyfile && !@visited.includes?(from_pyfile) && ParserLimit.allow_depth?(@depth)
           sub = get_or_create_parser(from_pyfile)
           if sub && sub.@global_variables.has_key?(name)
@@ -292,7 +292,7 @@ class PythonParser
       end
 
       submodule_path = full_module.empty? ? name : "#{full_module}.#{name}"
-      pyfile = resolve_python_module(base_dir, submodule_path)
+      pyfile = resolve_python_module(base_dir, submodule_path, absolute: !relative)
       next unless pyfile
       next if @visited.includes?(pyfile)
       next unless ParserLimit.allow_depth?(@depth)
@@ -364,27 +364,35 @@ class PythonParser
     end
   end
 
-  # Walk a dotted Python module path under `base_dir`, preferring
-  # packages (directories) over modules (`.py` files). Mirrors the
-  # legacy parser's `parse_import_statements` resolution logic plus
-  # `Noir::ImportGraph::Python.find_imported_package` — but returns
-  # the full leaf `.py` path (not a name → path map) since we just
-  # want to recurse into one specific module.
   # True when `dir` lies under a scan base, or no scan is running.
   private def scanned_dir?(dir : String) : Bool
     bases = CodeLocator.instance.scan_base_paths
     bases.empty? || bases.any? { |base| Noir::PathScope.under_root?(dir, base) }
   end
 
-  private def resolve_python_module(base_dir : String, dotted : String) : String?
+  # The module file `dotted` names under `base_dir`. An absolute import
+  # that names the scan root's own package (`from myapp.views import x`
+  # in a scan rooted at `myapp/`) is retried relative to the root; a
+  # relative one means what it says.
+  private def resolve_python_module(base_dir : String, dotted : String, absolute : Bool = true) : String?
     if found = resolve_python_module_as_written(base_dir, dotted)
       return found
     end
-    # `from myapp.views import x` in a scan rooted at `myapp/` itself.
-    rest = Noir::ImportGraph::Python.root_package_relative(base_dir, dotted)
-    resolve_python_module_as_written(base_dir, rest) if rest && !rest.empty?
+    return unless absolute
+    rest = Noir::ImportGraph::Python.root_package_relative(base_dir, dotted) || return
+    if rest.empty?
+      init = File.join(base_dir, "__init__.py")
+      return File.exists?(init) ? init : nil
+    end
+    resolve_python_module_as_written(base_dir, rest)
   end
 
+  # Walk a dotted Python module path under `base_dir`, preferring
+  # packages (directories) over modules (`.py` files). Mirrors the
+  # legacy parser's `parse_import_statements` resolution logic plus
+  # `Noir::ImportGraph::Python.find_imported_package` — but returns
+  # the full leaf `.py` path (not a name → path map) since we just
+  # want to recurse into one specific module.
   private def resolve_python_module_as_written(base_dir : String, dotted : String) : String?
     segments = dotted.split(".")
     package_dir = base_dir

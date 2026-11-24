@@ -656,12 +656,15 @@ module Noir::ImportGraph::Python
   @@symbol_cache = Hash(Tuple(String, String, UInt64), Hash(String, Tuple(String, String))).new
   @@package_import_cache = Hash(Tuple(String, String), Hash(String, Tuple(String, String))).new
   @@symbol_mutex = Mutex.new
+  @@root_chains = Hash(String, Array(String)).new
+  @@root_chains_mutex = Mutex.new
 
   Noir::ExtractionResultCache.register_clearer do
     @@symbol_mutex.synchronize do
       @@symbol_cache.clear
       @@package_import_cache.clear
     end
+    @@root_chains_mutex.synchronize { @@root_chains.clear }
   end
 
   # Find every `import` and `from … import …` line in `content`
@@ -789,26 +792,59 @@ module Noir::ImportGraph::Python
     resolve_package_reexport(app_base_path, target[0], target[1], depth + 1, visited) || target
   end
 
-  # `dotted` with its leading segment removed when that segment names
-  # `base` itself and `base`'s parent lies outside the scan: a scan rooted
-  # at the package directory `myapp/` sees `from myapp.api.deps import X`
-  # as `api.deps`, since the parent where `myapp` resolves was not
-  # scanned. Nil when the leading segment is another name, when the parent
-  # is scanned (it resolves from there), or when `base` has an entry of
-  # that name (it resolves from `base` as written). A bare `myapp` gives
-  # `""`, the package itself. Callers retry with the result only after the
-  # path failed as written, and keep it only if it resolves.
+  # `dotted` relative to `base` when it names `base` through the package
+  # chain above it and that chain's parent lies outside the scan. A scan
+  # rooted at the package directory `myapp/` reads `from myapp.api.deps
+  # import X` as `api.deps`; one rooted at the subpackage `src/pkg/api/`
+  # reads `pkg.api.views` as `views`, since the directories where those
+  # names resolve were not scanned. `base` must be a package (hold an
+  # `__init__.py`): a plain directory that happens to be named `fastapi`
+  # says nothing about `fastapi.security`. Any tail of the chain counts
+  # (`api.views` too), longest first. Nil when no tail matches, when the
+  # parent is scanned (it resolves from there), or when `base` has an
+  # entry named like the first segment (it resolves as written). A bare
+  # `myapp` gives `""`, the package itself. Callers retry with the result
+  # only after the path failed as written, and keep it only if it resolves.
   def self.root_package_relative(base : String, dotted : String) : String?
-    head, _, rest = dotted.partition('.')
-    return if head.empty?
-    normalized = Noir::PathScope.normalize_root(base)
-    return unless head == File.basename(normalized)
-    parent = File.dirname(normalized)
-    return if CodeLocator.instance.scan_base_paths.any? { |scan_base| Noir::PathScope.under_root?(parent, scan_base) }
-
-    candidate = File.join(base, head)
+    return if dotted.empty?
+    segments = dotted.split('.')
+    return if segments.any?(&.empty?)
+    candidate = File.join(base, segments[0])
     return if python_directory?(candidate) || python_file?("#{candidate}.py")
-    rest
+
+    chain = root_package_chain(base)
+    chain.size.times do |start|
+      tail = chain[start..]
+      next unless segments.size >= tail.size && segments[0, tail.size] == tail
+      return segments[tail.size..].join('.')
+    end
+    nil
+  end
+
+  # Package names from the outermost package above `base` down to `base`
+  # (`["pkg", "api"]` for `src/pkg/api/`), empty when `base` is not a
+  # package or its parent is scanned. The directories above the scan are
+  # only probed for `__init__.py`, never read.
+  private def self.root_package_chain(base : String) : Array(String)
+    normalized = Noir::PathScope.normalize_root(base)
+    key = "#{normalized}\0#{CodeLocator.instance.scan_base_paths.join('\0')}"
+    if cached = @@root_chains_mutex.synchronize { @@root_chains[key]? }
+      return cached
+    end
+
+    chain = [] of String
+    parent = File.dirname(normalized)
+    parent_scanned = CodeLocator.instance.scan_base_paths.any? { |scan_base| Noir::PathScope.under_root?(parent, scan_base) }
+    if !parent_scanned && python_file?(File.join(base, "__init__.py"))
+      dir = normalized
+      chain << File.basename(dir)
+      while parent != dir && File.file?(File.join(parent, "__init__.py"))
+        chain.unshift(File.basename(parent))
+        dir = parent
+        parent = File.dirname(dir)
+      end
+    end
+    @@root_chains_mutex.synchronize { @@root_chains[key] = chain }
   end
 
   # The `.py` file a dotted module path names under `package_path`: the
@@ -956,6 +992,7 @@ module Noir::ImportGraph::Python
                                       from_import : String,
                                       imports : String) : Nil
     package_path = app_base_path
+    absolute = !from_import.starts_with?(".")
     # `..` resolves to file's parent dir; `.` to file's dir. The parent is
     # taken lexically, not as `dir/..`: the resolved path is compared with
     # the scanned file paths, which never spell `..`.
@@ -979,9 +1016,15 @@ module Noir::ImportGraph::Python
       dotted_as_names = "#{from_import}.#{import}" unless from_import.empty?
 
       import_package_map = find_imported_package(package_path, dotted_as_names)
-      if import_package_map.empty? && package_path == app_base_path &&
-         (rest = root_package_relative(app_base_path, dotted_as_names)) && !rest.empty?
-        import_package_map = find_imported_package(app_base_path, rest)
+      if import_package_map.empty? && absolute && !import.starts_with?(".") &&
+         (rest = root_package_relative(app_base_path, dotted_as_names))
+        import_package_map = rest.empty? ? import_package_map : find_imported_package(app_base_path, rest)
+        if import_package_map.empty? && !rest.includes?('.')
+          # `from myapp import app` / `import myapp`: a name the root package
+          # binds, reported with no file as a scan from the parent reports it.
+          bound, _, alias_name = (rest.empty? ? dotted_as_names : rest).partition(/\s+as\s+/)
+          import_package_map = [{alias_name.empty? ? bound.strip : alias_name.strip, "", PackageType::CODE}]
+        end
       end
       next if import_package_map.empty?
       import_package_map.each do |name, filepath, package_type|
