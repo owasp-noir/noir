@@ -5,7 +5,8 @@ require "./aspnet_auth"
 # `RazorPagesOptions.Conventions`. The endpoint's code path is the
 # `.cshtml` / `.razor` file holding the `@page` directive.
 class AspnetAuthTagger < FrameworkTagger
-  RAZOR_COMMENT       = %r{@\*.*?\*@}m
+  # An unclosed `@*` runs to the end of the file.
+  RAZOR_COMMENT       = %r{@\*.*?(?:\*@|\z)}m
   ATTRIBUTE_DIRECTIVE = /^[ \t]*@attribute[ \t]+(\[.*\])[ \t]*$/
   # Razor reads `@model` inside a `@{ }` block too.
   MODEL_DIRECTIVE    = /^[ \t]*@model[ \t]+([\w.]+)/m
@@ -14,10 +15,12 @@ class AspnetAuthTagger < FrameworkTagger
   PAGE_CONVENTION    = /\.\s*(Authorize(?:Area)?(?:Page|Folder)|AllowAnonymousTo(?:Area)?(?:Page|Folder))\s*\(/
 
   # A `PageConventionCollection` call (`AuthorizeFolder("/Admin", "Ops")`):
-  # its page name or folder and area, nil when either is not a literal, and
-  # its policy argument's text.
+  # its page name or folder and area, nil when either is not a literal or an
+  # argument is named, and its policy argument's text. `certain` is false
+  # for a call under a condition, or in a project that moves the pages root
+  # (`RootDirectory`), whose reach this does not follow.
   record PageConvention, name : String, target : String?, area : String?, policy : String?,
-    text : String, path : String, line : Int32 do
+    text : String, path : String, line : Int32, certain : Bool do
     def anonymous? : Bool
       name.starts_with?("AllowAnonymous")
     end
@@ -54,7 +57,7 @@ class AspnetAuthTagger < FrameworkTagger
     lists = layers.map(&.[0])
     conventions = page_conventions_for(file)
     return if lists.any? { |attrs| anonymous?(attrs) } || derived_attribute(lists, :anonymous)
-    return if conventions.any? { |conv| conv.anonymous? && conv.target }
+    return if conventions.any? { |conv| conv.anonymous? && conv.target && conv.certain }
 
     description = nil
     chain.each_with_index do |decl, i|
@@ -73,11 +76,16 @@ class AspnetAuthTagger < FrameworkTagger
       next if conv.anonymous?
       # `AuthorizePage(name)` passes `string.Empty`, which means the default policy.
       policy = conv.policy.try { |text| Noir::CSharpDecl.literal(text) == "" ? nil : text }
-      clauses.concat(Access.clauses(AspnetAccess.authorize(policy, default), conv.text, conv.path, conv.line))
+      read = Access.clauses(AspnetAccess.authorize(policy, default), conv.text, conv.path, conv.line)
+      unless conv.certain
+        unread = Access::Atom.new(:unresolved, "#{conv.text} (conditional)")
+        read = read.map { |clause| Access::Clause.new(clause.any_of + [unread], clause.source, clause.path, clause.line) }
+      end
+      clauses.concat(read)
     end
-    # An `AllowAnonymousTo*` whose page this cannot read may lift every layer.
+    # An `AllowAnonymousTo*` whose reach this cannot read may lift every layer.
     conventions.each do |conv|
-      next unless conv.anonymous? && conv.target.nil?
+      next if !conv.anonymous? || (conv.target && conv.certain)
       unread = Access::Atom.new(:unresolved, conv.text)
       clauses = clauses.map { |clause| Access::Clause.new(clause.any_of + [unread], clause.source, clause.path, clause.line) }
     end
@@ -119,19 +127,34 @@ class AspnetAuthTagger < FrameworkTagger
   end
 
   # Project roots whose components a server maps: each one calling
-  # `MapRazorComponents`, and every project it references.
+  # `MapRazorComponents`, and a project it references that it names in
+  # `AddAdditionalAssemblies(typeof(T).Assembly)` (`T` declared there, or a
+  # namespace-qualified `_Imports` naming that project). A referenced
+  # WebAssembly client or class library it does not name is not served.
   private def component_roots : Set(String?)
     @component_roots ||= begin
-      hosts = [] of String
+      roots = Set(String?).new
       collect_files_by_extension(".cs").each do |path|
         next unless read_file(path).try(&.includes?("MapRazorComponents"))
         next if base_relative_path(path).matches?(TEST_PATH)
-        next unless lexer_for(path).try(&.masked_source.matches?(MAP_COMPONENTS))
-        nearest_project_root(path, CSPROJ).try { |root| hosts << root }
+        masked = lexer_for(path).try(&.masked_source) || next
+        next unless masked.matches?(MAP_COMPONENTS)
+        host = nearest_project_root(path, CSPROJ) || next
+        roots << host
+        referenced = project_closure([host], project_references)
+        masked.scan(/\bAddAdditionalAssemblies\s*\(([^;]*)/) do |call|
+          call[1].scan(/\btypeof\s*\(\s*([\w.]+)\s*\)/) do |type|
+            names = type[1].split('.')
+            candidates = if names.last == "_Imports"
+                           qualifier = names[0...-1].join('.')
+                           referenced.select { |dir| !qualifier.empty? && File.basename(dir).compare(qualifier, case_insensitive: true) == 0 }
+                         else
+                           (class_files[names.last]? || [] of String).compact_map { |file| nearest_project_root(file, CSPROJ) }
+                         end
+            candidates.each { |dir| roots << dir if referenced.includes?(dir) }
+          end
+        end
       end
-      roots = Set(String?).new
-      hosts.each { |host| roots << host }
-      project_closure(hosts, project_references).each { |dir| roots << dir }
       roots
     end
   end
@@ -163,14 +186,15 @@ class AspnetAuthTagger < FrameworkTagger
   end
 
   # `{true, the component's code-behind partial class (`Cart.razor.cs`)
-  # and its bases}`, or `{false, its `@inherits` base and that one's bases}`.
+  # and its bases}` or `{false, }`, followed by its `@inherits` base and
+  # that one's bases.
   private def component_chain(file : String, markup : String) : Tuple(Bool, Array(ClassDecl))
     name = File.basename(file, File.extname(file))
+    inherited = markup.match(INHERITS_DIRECTIVE).try { |found| scoped_chain(found[1].split('.').last, file) } || [] of ClassDecl
     if (behind = code_behind(file)) && (type = unit_for(behind).try(&.types.find { |decl| decl.kind == "class" && decl.name == name }))
-      return {true, class_chain(behind, type.line)}
+      return {true, class_chain(behind, type.line) + inherited}
     end
-    base = markup.match(INHERITS_DIRECTIVE).try(&.[1].split('.').last) || return {false, [] of ClassDecl}
-    {false, scoped_chain(base, file)}
+    {false, inherited}
   end
 
   # Class `name` as the page or component at `file` sees it, then its
@@ -187,7 +211,8 @@ class AspnetAuthTagger < FrameworkTagger
             end
     decls = decls.select { |decl| visible.includes?(nearest_project_root(decl.path, CSPROJ)) }
     return decls if decls.empty?
-    decls + ancestors(decls.compact_map(&.base).first?, decls.first.path, Set{name})
+    bases = ancestors(decls.compact_map(&.base).first?, decls.first.path, Set{name})
+    decls + bases.take_while { |decl| visible.includes?(nearest_project_root(decl.path, CSPROJ)) }
   end
 
   # `Index.cshtml.cs` beside `Index.cshtml`, matched case-insensitively as
@@ -225,9 +250,11 @@ class AspnetAuthTagger < FrameworkTagger
     end
   end
 
-  # `PageConventionCollection.PathBelongsToFolder`.
+  # `PageConventionCollection.PathBelongsToFolder`, after its
+  # `FolderApplicationModelConvention` trims the trailing `/`.
   private def folder_reaches?(folder : String, page : String) : Bool
-    return true if folder == "/"
+    folder = folder.rstrip('/')
+    return true if folder.empty?
     page.size > folder.size && page.downcase.starts_with?(folder.downcase) && page[folder.size] == '/'
   end
 
@@ -246,6 +273,12 @@ class AspnetAuthTagger < FrameworkTagger
   private def page_conventions : Hash(String?, Array(PageConvention))
     @page_conventions ||= begin
       found = Hash(String?, Array(PageConvention)).new
+      moved = Set(String?).new
+      collect_files_by_extension(".cs").each do |path|
+        next unless read_file(path).try(&.includes?("RootDirectory"))
+        next if base_relative_path(path).matches?(TEST_PATH)
+        moved << nearest_project_root(path, CSPROJ) if lexer_for(path).try(&.masked_source.matches?(/\bRootDirectory\s*=(?![=>])/))
+      end
       collect_files_by_extension(".cs").each do |path|
         content = read_file(path) || next
         next unless content.includes?("Conventions") && content.matches?(PAGE_CONVENTION)
@@ -258,13 +291,17 @@ class AspnetAuthTagger < FrameworkTagger
           close = lexer.matching_delimiter(call.end(0) - 1) || next
           name = call[1]
           text = code[call.end(0)...close]
-          args = Noir::TopLevelSplit.split(text, ',', AspnetAccess::SPLIT).map(&.sub(/\A\s*@?\w+\s*:(?!:)/, "").strip)
+          args = Noir::TopLevelSplit.split(text, ',', AspnetAccess::SPLIT).map(&.strip)
+          # A named argument may bind any parameter: its reach is not read.
+          named = args.any?(&.matches?(/\A@?\w+\s*:(?!:)/))
           area = name.includes?("Area") ? args.shift? : nil
           target = args.shift?.try { |arg| Noir::CSharpDecl.literal(arg) }
           area_name = area.try { |arg| Noir::CSharpDecl.literal(arg) }
-          target = nil if area && area_name.nil?
-          (found[nearest_project_root(path, CSPROJ)] ||= [] of PageConvention) << PageConvention.new(
-            name, target, area_name, args.shift?, "#{name}(#{text.strip})", path, code[0, call.begin(0)].count('\n') + 1)
+          target = nil if named || (area && area_name.nil?)
+          root = nearest_project_root(path, CSPROJ)
+          certain = !moved.includes?(root) && !conditional?(masked, call.begin(0))
+          (found[root] ||= [] of PageConvention) << PageConvention.new(
+            name, target, area_name, args.shift?, "#{name}(#{text.strip})", path, code[0, call.begin(0)].count('\n') + 1, certain)
         end
       end
       found

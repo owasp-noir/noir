@@ -69,7 +69,7 @@ class AspnetAuthTagger < FrameworkTagger
     super
     @fallback_roots = Set(String?).new
     @controllers_global_roots = Set(String?).new
-    @extension_sites = Hash(String, Array(ExtensionSite)).new
+    @extension_sites = Hash(Tuple(String, String?), Array(ExtensionSite)).new
     @default_policy = nil.as(String?)
   end
 
@@ -153,17 +153,25 @@ class AspnetAuthTagger < FrameworkTagger
   # A call site: its file, the line its statement starts on, whether it
   # authorizes the returned builder (`result`) and the `this` builder
   # (`receiver`), the line of the authorized declaration the receiver takes
-  # that from, if any, and the lines of the authorizing statements on the
-  # variable the returned builder is assigned to.
+  # that from, if any, the lines of the authorizing statements on the
+  # variable the returned builder is assigned to, and whether those are
+  # read (`certain`: not a call form this does not read, not a call inside
+  # a conditional). Sites are kept per extension name and declaring
+  # project, for the call sites in that project or one referencing it.
   record ExtensionSite, path : String, line : Int32, result : Bool, receiver : Bool, declaration : Int32?,
-    assignments : Array(Int32)
+    assignments : Array(Int32), certain : Bool
+
+  # Extensions with a call in the static form (`MapOrdersApi(app)`), which
+  # never counted as a call site for the tag.
+  @unread_sites = Set(Tuple(String, String?)).new
 
   private def collect_extension_auth
     @extension_sites.clear
+    @unread_sites.clear
     @helper_roots.clear
     @call_patterns.clear
     sources = [] of Tuple(String, String)
-    names = Set(String).new
+    declared_in = Hash(String, Set(String?)).new
     collect_files_by_extension(".cs").each do |path|
       content = read_file(path)
       # A convention helper can sit alone in a file that maps nothing.
@@ -172,60 +180,122 @@ class AspnetAuthTagger < FrameworkTagger
       # Strings blanked: a route template's `{orgId}` must not split a statement.
       code = lexer_for(path).try(&.masked_source) || next
       sources << {path, code}
-      code.scan(ROUTE_BUILDER_EXTENSION) { |m| names << m[1] }
+      code.scan(ROUTE_BUILDER_EXTENSION) { |m| (declared_in[m[1]] ||= Set(String?).new) << nearest_project_root(path, CSPROJ) }
     end
-    return if names.empty?
+    return if declared_in.empty?
     collect_authorizing_helpers(sources.map(&.[0]))
 
-    call_re = /\.\s*(#{names.map { |n| Regex.escape(n) }.join('|')})\s*\(/
+    alternatives = declared_in.keys.map { |n| Regex.escape(n) }.join('|')
+    call_re = /\.\s*(#{alternatives})\s*\(/
+    # `MapOrdersApi(app)`: the static call form, whose builder this does not follow.
+    static_re = /(?:\A|[;{}(=,]|\breturn|\bawait)\s*(#{alternatives})\s*\((?!\s*this\b)/
     sources.each do |path, code|
-      next unless code.matches?(call_re)
+      next unless code.matches?(call_re) || code.matches?(static_re)
       auth_call = call_patterns(path)[0]
+      visible = visible_roots(nearest_project_root(path, CSPROJ))
+      add = ->(name : String, site : ExtensionSite) do
+        declared_in[name].each { |root| (@extension_sites[{name, root}] ||= [] of ExtensionSite) << site if visible.includes?(root) }
+      end
+      code.scan(static_re) do |m|
+        declared_in[m[1]].each { |root| @unread_sites << {m[1], root} if visible.includes?(root) }
+      end
       # Each statement with the offset of its first non-blank character.
       statements = code.scan(/[^;{}]+/).map { |m| {m[0], m.begin(0) + (m[0].size - m[0].lstrip.size)} }
       statements.each do |statement, start|
         statement.scan(call_re) do |m|
           before = statement[0...m.begin]
           after = statement[m.end..]
-          next if after.matches?(MINIMAL_API_ALLOW_ANON)
-          # `.AllowAnonymous()` on the chain lifts the authorization it inherits.
-          anonymous = before.matches?(MINIMAL_API_ALLOW_ANON)
-          before_auth = !anonymous && before.matches?(auth_call)
-          declared = nil
+          # `.MapA().MapGet("/x", h).RequireAuthorization()` authorizes `/x` alone.
+          after = after[0, after.index(/\.\s*Map\w*\s*\(/) || after.size]
           variable = before.match(/\A\s*(?:var\s+|[\w.<>?]+\s+)?(\w+)\s*=(?![=>])/)
           chain = variable ? before[variable.end(0)..] : before
-          # `admin.MapGroup("/users").MapUsers()`: a child group takes `admin`'s conventions.
+          line = code[0, start].count('\n')
+          # `OrdersApi.MapOrdersApi(app)`: the static form again.
+          if chain.matches?(/\A\s*[A-Z][\w.]*\s*\z/) && after.matches?(/\A\s*[^\s)]/)
+            add.call(m[1], ExtensionSite.new(path, line, false, false, nil, [] of Int32, false))
+            next
+          end
+          # `.AllowAnonymous()` on the chain lifts the authorization it inherits.
+          anonymous = before.matches?(MINIMAL_API_ALLOW_ANON) || after.matches?(MINIMAL_API_ALLOW_ANON)
+          before_auth = !anonymous && before.matches?(auth_call)
+          declared = nil
+          # `admin.MapGroup("/users").MapUsers()`: a child group takes `admin`'s
+          # conventions, from its nearest declaration in scope.
           if !before_auth && !anonymous && (receiver = chain.match(/\A\s*(\w+)\s*(?:\z|\.\s*MapGroup\s*\()/))
-            declaration = /\b#{Regex.escape(receiver[1])}\s*=[^=]/
-            if found = statements.find { |s, _| s.matches?(declaration) && s.matches?(auth_call) && !s.matches?(MINIMAL_API_ALLOW_ANON) }
+            declaration = /\A\s*(?:var\s+|[\w.<>?]+\s+)?#{Regex.escape(receiver[1])}\s*=(?![=>])/
+            found = statements.reverse_each.find { |s, offset| offset < start && s.matches?(declaration) && in_scope?(code, offset, start) }
+            if found && found[0].matches?(auth_call) && !found[0].matches?(MINIMAL_API_ALLOW_ANON)
               before_auth = true
               declared = code[0, found[1]].count('\n')
             end
           end
-          # `var api = app.MapOrders(); api.RequireAuthorization();`: a
-          # statement of its own on the variable holding the returned group,
-          # later in the same block.
-          assignments = [] of Int32
-          if variable
-            convention = Regex.new("\\A\\s*#{Regex.escape(variable[1])}\\s*#{auth_call.source}")
-            depth = 0
-            last = start
-            statements.each do |later, offset|
-              next if offset <= start
-              between = code[last...offset]
-              depth += between.count('{') - between.count('}')
-              last = offset
-              break if depth < 0
-              next if depth != 0 || !later.matches?(convention) || later.matches?(MINIMAL_API_ALLOW_ANON)
-              assignments << code[0, offset].count('\n')
-            end
-          end
-          result = before_auth || after.matches?(auth_call) || !assignments.empty?
-          site = ExtensionSite.new(path, code[0, start].count('\n'), result, before_auth, declared, assignments)
-          (@extension_sites[m[1]] ||= [] of ExtensionSite) << site
+          assignments = variable && !anonymous ? assigned_conventions(code, statements, start, variable[1], auth_call) : [] of Int32
+          result = !anonymous && (before_auth || after.matches?(auth_call) || !assignments.empty?)
+          add.call(m[1], ExtensionSite.new(path, line, result, before_auth, declared, assignments, !conditional?(code, start)))
         end
       end
     end
+  end
+
+  # `var api = app.MapOrders(); api.RequireAuthorization();`: the lines of
+  # the statements of their own on `variable`, later in the same block, that
+  # authorize it. None once the variable is assigned again or opened with
+  # `AllowAnonymous`.
+  private def assigned_conventions(code : String, statements : Array(Tuple(String, Int32)), start : Int32,
+                                   variable : String, auth_call : Regex) : Array(Int32)
+    name = Regex.escape(variable)
+    convention = Regex.new("\\A\\s*#{name}\\s*#{auth_call.source}")
+    lines = [] of Int32
+    depth = 0
+    last = start
+    statements.each do |later, offset|
+      next if offset <= start
+      between = code[last...offset]
+      depth += between.count('{') - between.count('}')
+      last = offset
+      break if depth < 0
+      return [] of Int32 if later.matches?(/\A\s*#{name}\s*=(?![=>])/) || (later.matches?(/\A\s*#{name}\s*\./) && later.matches?(MINIMAL_API_ALLOW_ANON))
+      next if depth != 0 || !later.matches?(convention) || later.matches?(MINIMAL_API_ALLOW_ANON)
+      lines << code[0, offset].count('\n')
+    end
+    lines
+  end
+
+  # Whether `from` (a statement start) sits in a block enclosing `to`: no
+  # brace between them closes a block opened before `from`.
+  private def in_scope?(code : String, from : Int32, to : Int32) : Bool
+    depth = 0
+    code[from...to].each_char do |char|
+      depth += 1 if char == '{'
+      depth -= 1 if char == '}'
+      return false if depth < 0
+    end
+    true
+  end
+
+  CONDITIONAL_HEAD = /\b(?:if|else|switch|case|while|for|foreach|do|catch)\b/
+
+  # Whether the statement at `offset` of masked `code` runs only under a
+  # condition: it is itself a branch or ternary, or a block it sits in is
+  # headed by `if`, `else`, `switch`, a loop or `catch`.
+  private def conditional?(code : String, offset : Int32) : Bool
+    head_start = (code.rindex(/[;{}]/, offset - 1) || -1) + 1
+    statement_end = code.index(/[;{}]/, offset) || code.size
+    return true if code[head_start...statement_end].matches?(/#{CONDITIONAL_HEAD.source}|\?/)
+    depth = 0
+    (offset - 1).downto(0) do |i|
+      case code[i]
+      when '}' then depth += 1
+      when '{'
+        if depth == 0
+          head = code[((code.rindex(/[;{}]/, i - 1) || -1) + 1)...i]
+          return true if head.matches?(CONDITIONAL_HEAD)
+        else
+          depth -= 1
+        end
+      end
+    end
+    false
   end
 
   # Authorizing helper name -> the project roots declaring it.
@@ -653,10 +723,14 @@ class AspnetAuthTagger < FrameworkTagger
   # enclosing member could be meant.
   private def handler_method(path : String, line_idx : Int32, handler : String) : Tuple(Noir::CSharpDecl::Member, String)?
     names = handler.split('.').map(&.strip.lchop('@'))
+    # `App.Admin.H.Get`: a namespace or nesting this does not follow.
+    return if names.size > 2
     name = names.pop
     types = [] of Tuple(Noir::CSharpDecl::TypeDecl, String)
     if owner = names.last?
+      visible = visible_roots(nearest_project_root(path, CSPROJ))
       class_decls(owner, path).each do |decl|
+        next unless visible.includes?(nearest_project_root(decl.path, CSPROJ))
         declarations(decl.name, [decl.path]).each { |_, type| types << {type, decl.path} }
       end
     else
@@ -678,13 +752,15 @@ class AspnetAuthTagger < FrameworkTagger
     found.first if found.size == 1
   end
 
-  # A local function or delegate named `name` in the member enclosing
-  # `line_idx`, which a bare method group would name before a method.
+  # A parameter, local function or delegate named `name` in the member
+  # enclosing `line_idx`, which a bare method group would name before a
+  # method.
   private def local_callable?(path : String, type : Noir::CSharpDecl::TypeDecl, line_idx : Int32, name : String) : Bool
     member = type.members.find { |candidate| candidate.line <= line_idx && line_idx <= candidate.end_line } || return false
     masked = lexer_for(path).try(&.masked_lines) || return false
-    body = masked[(member.header_end + 1)..member.end_line].join('\n')
-    body.matches?(/\b[\w<>\[\],?]+\s+#{Regex.escape(name)}\s*(?:\(|=[^=>])/)
+    # From the signature on: a parameter of that name counts too.
+    body = masked[member.line..member.end_line].join('\n')
+    body.matches?(/\b[\w.]+(?:<[^<>()]*>)?[?\[\]]*\s+#{Regex.escape(name)}\s*(?:\(|=[^=>]|[,)])/)
   end
 
   # `[Authorize(...)]` on a route's handler lambda.
@@ -1475,7 +1551,7 @@ class AspnetAuthTagger < FrameworkTagger
         return check_minimal_api_fluent(path, lines, idx, depth + 1, chain, origin)
       end
     end
-    extension_auth(lines, origin, chain)
+    extension_auth(path, lines, origin, chain)
   end
 
   # Per file: the brace depth before each line, the member declarations,
@@ -1551,25 +1627,28 @@ class AspnetAuthTagger < FrameworkTagger
   # The authorization a route mapped through `chain` (route receiver first,
   # root builder last) inherits from the call sites of the route-builder
   # extension method enclosing `route_line`.
-  private def extension_auth(lines : Array(String), route_line : Int32, chain : Array(String)) : String?
-    name, receiver, result = extension_reach(lines, route_line, chain) || return
-    sites = @extension_sites[name]
+  private def extension_auth(path : String, lines : Array(String), route_line : Int32, chain : Array(String)) : String?
+    key, receiver, result = extension_reach(path, lines, route_line, chain) || return
+    sites = @extension_sites[key]
     "ASP.NET .RequireAuthorization() (route group)" if (receiver && sites.all?(&.receiver)) || (result && sites.all?(&.result))
   end
 
   # What the call sites of the extension enclosing `route_line` add to a
   # route mapped through `chain`: the authorization calls read from the one
   # call site, or, for several, one unread clause, since the route is
-  # served once per call site.
+  # served once per call site. A site this does not read (a static call, a
+  # conditional one) leaves only that unread clause.
   private def extension_clauses(path : String, lines : Array(String), route_line : Int32, chain : Array(String)) : Array(Access::Clause)
-    name, receiver, result = extension_reach(lines, route_line, chain) || return [] of Access::Clause
-    sites = @extension_sites[name]
+    key, receiver, result = extension_reach(path, lines, route_line, chain) || return [] of Access::Clause
+    name = key[0]
+    sites = @extension_sites[key]
     applying = sites.select { |site| (receiver && site.receiver) || (result && site.result) }
-    return [] of Access::Clause if applying.empty?
-    if sites.size > 1
-      source = "the authorization of #{sites.size} call sites of #{name}"
+    certain = sites.all?(&.certain) && !@unread_sites.includes?(key)
+    return [] of Access::Clause if applying.empty? && certain
+    if sites.size > 1 || !certain
+      source = "the authorization of #{sites.size} call site(s) of #{name}"
       cnf = [[Access::Atom.new(:unresolved, source)]]
-      return Access.clauses(applying.size == sites.size ? AspnetAccess.floor(cnf) : cnf, source, path, route_line + 1)
+      return Access.clauses(certain && applying.size == sites.size ? AspnetAccess.floor(cnf) : cnf, source, path, route_line + 1)
     end
     site = sites.first
     source = "the authorization at the call site of #{name}"
@@ -1584,7 +1663,9 @@ class AspnetAuthTagger < FrameworkTagger
     end
     # Blanked up to the call, so columns still line up with the source.
     if result && site.result
-      clauses.concat(authorization_calls(site.path, site.line, " " * call.end(0) + statement[call.end(0)..]))
+      rest = statement[call.end(0)..]
+      rest = rest[0, rest.index(/\.\s*Map\w*\s*\(/) || rest.size]
+      clauses.concat(authorization_calls(site.path, site.line, " " * call.end(0) + rest))
       site.assignments.each { |idx| clauses.concat(authorization_calls(site.path, idx, bounded(statement_at(masked, idx)))) }
     end
     clauses.empty? ? unread : clauses
@@ -1593,11 +1674,12 @@ class AspnetAuthTagger < FrameworkTagger
   # `{extension name, whether the route's root builder is its this-builder,
   # whether the route's chain reaches the builder it returns}` for the
   # route-builder extension method enclosing `route_line`.
-  private def extension_reach(lines : Array(String), route_line : Int32, chain : Array(String)) : Tuple(String, Bool, Bool)?
+  private def extension_reach(path : String, lines : Array(String), route_line : Int32, chain : Array(String)) : Tuple(Tuple(String, String?), Bool, Bool)?
     return if @extension_sites.empty?
     decl_idx = (0..route_line).reverse_each.find { |idx| lines[idx].includes?("this") && lines[idx].matches?(ROUTE_BUILDER_EXTENSION) } || return
     decl = lines[decl_idx].match(ROUTE_BUILDER_EXTENSION) || return
-    return unless @extension_sites.has_key?(decl[1])
+    key = {decl[1], nearest_project_root(path, CSPROJ)}
+    return unless @extension_sites.has_key?(key)
 
     # The route must sit inside the method body, and the `return x;` of
     # that body names the builder the call sites' chain applies to.
@@ -1614,7 +1696,7 @@ class AspnetAuthTagger < FrameworkTagger
       break if opened && depth <= 0
     end
 
-    {decl[1], chain.last? == decl[2], !returned.nil? && chain.includes?(returned)}
+    {key, chain.last? == decl[2], !returned.nil? && chain.includes?(returned)}
   end
 
   # A minimal API route carries its attributes on the handler lambda inside
