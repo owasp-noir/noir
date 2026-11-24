@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../utils/c_comments"
 require "../../../miniparsers/csharp_decl_parser"
+require "./aspnet_access"
 
 @[Noir::TaggerFor(key: "aspnet_auth", name: "ASP.NET Auth Tagger", desc: "Identifies ASP.NET authentication patterns ([Authorize], policies)", order: 170)]
 class AspnetAuthTagger < FrameworkTagger
@@ -30,6 +31,7 @@ class AspnetAuthTagger < FrameworkTagger
   # controller-wide `MapControllers().RequireAuthorization()` / global
   # `AuthorizeFilter`, and MVC 5's `filters.Add(new AuthorizeAttribute())`.
   FALLBACK_POLICY    = /FallbackPolicy\s*=[^;]*RequireAuthenticatedUser\s*\(/
+  DEFAULT_POLICY     = /\bDefaultPolicy\s*=(?![=>])[^;]*/
   CONTROLLERS_GLOBAL = /MapControllers\s*\(\s*\)\s*\.RequireAuthorization\s*\(|Filters\.Add\s*(?:<\s*AuthorizeFilter\s*>|\(\s*new\s+AuthorizeFilter\b)|filters\.Add\s*\(\s*new\s+(?:System\.Web\.Mvc\.)?AuthorizeAttribute\b/
   CONTROLLER_TECHS   = %w[cs_aspnet_mvc cs_aspnet_core_mvc]
   # Techs whose endpoint line is a route registration statement.
@@ -69,6 +71,7 @@ class AspnetAuthTagger < FrameworkTagger
     @fallback_roots = Set(String?).new
     @controllers_global_roots = Set(String?).new
     @extension_auth = Hash(String, Tuple(Bool, Bool)).new
+    @default_policy = nil.as(String?)
   end
 
   # Collects the project roots (nearest `.csproj`) whose live, non-test
@@ -76,15 +79,18 @@ class AspnetAuthTagger < FrameworkTagger
   def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
     @fallback_roots.clear
     @controllers_global_roots.clear
+    @default_policy = nil
     collect_files_by_extension(".cs").each do |path|
       content = read_file(path)
       next unless content
       fallback = content.includes?("FallbackPolicy") && content.matches?(FALLBACK_POLICY)
       controllers = content.includes?("Authorize") && content.matches?(CONTROLLERS_GLOBAL)
-      next unless fallback || controllers
+      default_policy = content.includes?("DefaultPolicy")
+      next unless fallback || controllers || default_policy
       next if base_relative_path(path).matches?(TEST_PATH)
       code = Noir::CComments.strip(content)
       next if code.includes?("WebApplicationFactory")
+      @default_policy ||= code.match(DEFAULT_POLICY).try { |found| unwrapped(found[0]) } if default_policy
       root = nearest_project_root(path, CSPROJ)
       @fallback_roots << root if fallback && code.matches?(FALLBACK_POLICY)
       @controllers_global_roots << root if controllers && code.matches?(CONTROLLERS_GLOBAL)
@@ -92,6 +98,15 @@ class AspnetAuthTagger < FrameworkTagger
     expand_fallback_roots
     collect_extension_auth
     super
+  end
+
+  # The assignment without the `)` of the call it sits in.
+  private def unwrapped(assignment : String) : String
+    text = assignment.strip
+    while text.ends_with?(')') && text.count(')') > text.count('(')
+      text = text.rchop(')').rstrip
+    end
+    text
   end
 
   PROJECT_REFERENCE_RE = /<ProjectReference\s[^>]*?Include\s*=\s*"([^"]+)"/i
@@ -398,16 +413,20 @@ class AspnetAuthTagger < FrameworkTagger
           endpoint.add_tag(tag)
           return unless tag.name == "authz"
         end
-        if description = action_refusal(path_info.path, line_idx)
-          endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
+        if refusal = action_refusal(path_info.path, line_idx)
+          endpoint.add_tag(refusal_tag(refusal))
         end
         return
       end
 
+      # The tag names the first layer found; its requirement holds every
+      # layer, since ASP.NET requires all of them.
+      layered = -> { layered_requires(path_info.path, lines, line_idx, action_attrs, chain, project_file, endpoint.details.technology) }
+
       # Check method-level [Authorize]
       description = check_method_attributes(lines, line_idx, action_attrs)
       if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
+        endpoint.add_tag(guard_tag("Protected by #{description}", layered.call))
         return
       end
 
@@ -415,20 +434,20 @@ class AspnetAuthTagger < FrameworkTagger
       description = check_minimal_api_fluent(path_info.path, lines, line_idx)
       return if description == ""
       if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
+        endpoint.add_tag(guard_tag("Protected by #{description}", layered.call))
         return
       end
 
       # Check class-level [Authorize] (applies to all actions)
       description = authorize_description(class_attrs)
       if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description} (class-level)", "aspnet_auth"))
+        endpoint.add_tag(guard_tag("Protected by #{description} (class-level)", layered.call))
         return
       end
       chain.each do |decl|
         description ||= authorize_description(decl.attributes)
         if description
-          endpoint.add_tag(Tag.new("auth", "Protected by #{description} (#{decl.name == chain.first.name ? "class-level" : "inherited from #{decl.name}"})", "aspnet_auth"))
+          endpoint.add_tag(guard_tag("Protected by #{description} (#{decl.name == chain.first.name ? "class-level" : "inherited from #{decl.name}"})", layered.call))
           return
         end
       end
@@ -436,7 +455,7 @@ class AspnetAuthTagger < FrameworkTagger
       # A custom attribute that derives `AuthorizeAttribute`
       # (`class ApiPermissionAttribute : AuthorizeAttribute`) is one.
       if derived = derived_attribute(lists, :authorize)
-        endpoint.add_tag(Tag.new("auth", "Protected by [#{derived[0]}] (derives AuthorizeAttribute)", "aspnet_auth"))
+        endpoint.add_tag(guard_tag("Protected by [#{derived[0]}] (derives AuthorizeAttribute)", layered.call))
         return
       end
 
@@ -458,13 +477,155 @@ class AspnetAuthTagger < FrameworkTagger
         return
       end
 
-      # Check action body for auth checks
-      description = check_action_body(lines, line_idx) || action_refusal(path_info.path, line_idx)
-      if description
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "aspnet_auth"))
+      # Check action body for auth checks. A caller check next to some
+      # refusal may refuse signed-in callers only, so it is left unread.
+      if description = check_action_body(lines, line_idx)
+        description = "Protected by #{description}"
+        endpoint.add_tag(Tag.new("auth", description, "aspnet_auth", requires: [Access::Clause.unresolved(description, description)]))
+        return
+      end
+      if refusal = action_refusal(path_info.path, line_idx)
+        endpoint.add_tag(refusal_tag(refusal))
         return
       end
     end
+  end
+
+  # ---- what the guards require -------------------------------------------
+
+  # Never an empty requirement: that reads as open to anyone.
+  private def guard_tag(description : String, requires : Array(Access::Clause)) : Tag
+    requires = [Access::Clause.unresolved(description, description)] if requires.empty?
+    Tag.new("auth", description, "aspnet_auth", requires: requires)
+  end
+
+  # A refusal of a caller who is not signed in requires signing in plus a
+  # condition noir does not read; one a setting can lift is unread.
+  private def refusal_tag(refusal : Tuple(String, Symbol)) : Tag
+    description = "Protected by #{refusal[0]}"
+    unread = Access::Clause.unresolved(description, description)
+    requires = refusal[1] == :auth ? [Access::Clause.new([Access::Atom.new(:authenticated)], description), unread] : [unread]
+    Tag.new("auth", description, "aspnet_auth", requires: requires)
+  end
+
+  # What a bare `[Authorize]` or `.RequireAuthorization()` requires: the
+  # default policy, which is a signed-in user unless the code replaces it.
+  private def default_policy : Access::CNF
+    (text = @default_policy) ? [[Access::Atom.new(:unresolved, text)]] : AspnetAccess::AUTHENTICATED
+  end
+
+  # Every authorization layer ASP.NET applies to the action, all of them
+  # required: each `[Authorize]` on the action, its class and base classes
+  # or the route's handler lambda, the route's and its groups'
+  # `RequireAuthorization`, an attribute deriving `AuthorizeAttribute`, a
+  # refusing filter, and the controllers-wide convention. `AllowAnonymous`
+  # on any level of a route's group chain lifts them all.
+  private def layered_requires(path : String, lines : Array(String), line_idx : Int32, action_attrs : Array(Attr),
+                               chain : Array(ClassDecl), project_file : String, technology : String?) : Array(Access::Clause)
+    default = default_policy
+    clauses = [] of Access::Clause
+    layers = [{action_attrs, path}] + chain.map { |decl| {decl.attributes, decl.path} }
+    layers.each do |attrs, file|
+      attrs.each do |attr|
+        source = "[#{attr.text}]"
+        if attr.name == "Authorize"
+          clauses.concat(Access.clauses(AspnetAccess.authorize(attr.argument_text, default), source, file, attr.line + 1))
+        elsif derives?(attr, :authorize)
+          clauses << Access::Clause.unresolved(source, source, file, attr.line + 1)
+        end
+      end
+    end
+    each_filter_guard(layers.map(&.[0]), anonymous: false) do |attr, description, configurable|
+      source = "[#{attr.text}] (#{description})"
+      clauses << Access::Clause.new([Access::Atom.new(:authenticated)], source) unless configurable
+      clauses << Access::Clause.unresolved("[#{attr.text}]", source)
+    end
+    if statement = minimal_api_statement(lines, line_idx)
+      clauses.concat(statement_authorize(path, line_idx, statement, default))
+    end
+    unless fluent_requires(path, lines, line_idx, clauses)
+      return [Access::Clause.new([Access::Atom.new(:anonymous)], "AllowAnonymous on the route or its group")]
+    end
+    if CONTROLLER_TECHS.includes?(technology) && @controllers_global_roots.includes?(nearest_project_root(project_file, CSPROJ))
+      source = "ASP.NET global authorization for controllers"
+      clauses << Access::Clause.unresolved(source, source)
+    end
+    clauses.uniq
+  end
+
+  STATEMENT_AUTHORIZE = /\[(?:[^\[\]]*,\s*)?Authorize\s*(?=[(,\]])/
+
+  # `[Authorize(...)]` on a route's handler lambda.
+  private def statement_authorize(path : String, line_idx : Int32, statement : String, default : Access::CNF) : Array(Access::Clause)
+    code = code_statement(path, line_idx, statement.size)
+    lexer = Noir::CSharpLexer.new(code)
+    clauses = [] of Access::Clause
+    statement.scan(STATEMENT_AUTHORIZE) do |found|
+      open = found.end(0)
+      args = nil
+      if statement[open]? == '('
+        close = lexer.matching_delimiter(open) || next
+        args = code[open + 1...close]
+      end
+      source = args ? "[Authorize(#{args})]" : "[Authorize]"
+      clauses.concat(Access.clauses(AspnetAccess.authorize(args, default), source, path, line_idx + 1))
+    end
+    clauses
+  end
+
+  # The requirements of every `RequireAuthorization` the route at
+  # `route_line` takes, along the chain `check_minimal_api_fluent` walks but
+  # through every level of it. False when a level allows anonymous callers.
+  private def fluent_requires(path : String, lines : Array(String), route_line : Int32, clauses : Array(Access::Clause),
+                              depth : Int32 = 0, chain : Array(String) = [] of String, origin : Int32 = route_line) : Bool
+    statement = statement_at(lines, route_line)
+    return false if statement.matches?(MINIMAL_API_ALLOW_ANON)
+    clauses.concat(authorization_calls(path, route_line, statement))
+    return true if depth >= 5
+    receiver = (statement.match(MINIMAL_API_RECEIVER) || statement.match(GROUP_DECLARATION_RECEIVER)).try(&.[1]) || return true
+    chain << receiver
+    index = fluent_index(path, lines)
+    group_statement_lines(index, route_line, receiver).each do |idx|
+      clauses.concat(authorization_calls(path, idx, statement_at(lines, idx)))
+    end
+    if receiver != "app" && (idx = nearest_before(index.groups[receiver]?, route_line))
+      return fluent_requires(path, lines, idx, clauses, depth + 1, chain, origin)
+    end
+    if extension_auth(lines, origin, chain)
+      source = "RequireAuthorization at the call sites of the enclosing route-builder method"
+      clauses << Access::Clause.unresolved(source, source)
+    end
+    true
+  end
+
+  # `.RequireAuthorization(...)` calls in a statement, read from its
+  # unmasked text. An authorizing helper's body is not read.
+  private def authorization_calls(path : String, line_idx : Int32, statement : String) : Array(Access::Clause)
+    clauses = [] of Access::Clause
+    pattern = call_patterns(path)[0]
+    return clauses unless statement.matches?(pattern)
+    code = code_statement(path, line_idx, statement.size)
+    lexer = Noir::CSharpLexer.new(code)
+    statement.scan(pattern) do |call|
+      open = call.end(0) - 1
+      close = lexer.matching_delimiter(open) || next
+      args = code[open + 1...close].strip
+      name = call[0][/\w+/]
+      source = ".#{name}(#{args})"
+      if name == "RequireAuthorization"
+        clauses.concat(Access.clauses(AspnetAccess.require_authorization(args, default_policy), source, path, line_idx + 1))
+      else
+        clauses << Access::Clause.unresolved(source, source, path, line_idx + 1)
+      end
+    end
+    clauses
+  end
+
+  # The statement `statement_at` read from masked lines, from the same
+  # columns of the source with only comments blanked.
+  private def code_statement(path : String, line_idx : Int32, size : Int32) : String
+    code = lexer_for(path).try(&.code_lines) || return ""
+    code[line_idx, STATEMENT_LINES + 1].join(' ')[0, size]
   end
 
   # ---- inherited attributes and custom filters ---------------------------
@@ -685,6 +846,13 @@ class AspnetAuthTagger < FrameworkTagger
   # convention; a filter that combines its instances some other way is
   # read the same.
   private def filter_attribute_guard(lists : Array(Array(Attr)), anonymous : Bool) : Tag?
+    each_filter_guard(lists, anonymous) do |attr, description, configurable|
+      return Tag.new(configurable ? "authz" : "auth", "Protected by [#{attr.name}] (#{description})", "aspnet_auth")
+    end
+    nil
+  end
+
+  private def each_filter_guard(lists : Array(Array(Attr)), anonymous : Bool, &)
     seen = Set(String).new
     lists.each do |list|
       list.each do |attr|
@@ -694,10 +862,9 @@ class AspnetAuthTagger < FrameworkTagger
         description, configurable = verdict
         next if opt_out?(name, attr.argument_text)
         next if anonymous && filter_definition(name).includes?("AllowAnonymous")
-        return Tag.new(configurable ? "authz" : "auth", "Protected by [#{name}] (#{description})", "aspnet_auth")
+        yield attr, description, configurable
       end
     end
-    nil
   end
 
   ATTRIBUTE_BASE_ROOTS = {"AuthorizeAttribute" => :authorize, "IAllowAnonymous" => :anonymous, "AllowAnonymousAttribute" => :anonymous}
@@ -709,10 +876,14 @@ class AspnetAuthTagger < FrameworkTagger
   private def derived_attribute(lists : Array(Array(Attr)), kind : Symbol) : Tuple(String, String?)?
     lists.each do |list|
       list.each do |attr|
-        return {attr.name, attr.argument_text} if attribute_ancestors(attr.name, 0).any? { |ancestor| ATTRIBUTE_BASE_ROOTS[ancestor]? == kind }
+        return {attr.name, attr.argument_text} if derives?(attr, kind)
       end
     end
     nil
+  end
+
+  private def derives?(attr : Attr, kind : Symbol) : Bool
+    attribute_ancestors(attr.name, 0).any? { |ancestor| ATTRIBUTE_BASE_ROOTS[ancestor]? == kind }
   end
 
   # `[ApiPermissionOrAnonymous(Ids.Read)]`: authorization lets anonymous
@@ -1019,13 +1190,13 @@ class AspnetAuthTagger < FrameworkTagger
 
   # A refusal of an anonymous caller in the action body, or in a helper of
   # the same file whose result the action returns.
-  private def action_refusal(path : String, method_line : Int32) : String?
+  private def action_refusal(path : String, method_line : Int32) : Tuple(String, Symbol)?
     lexer = lexer_for(path) || return
     lines = lexer.code_lines
     masked = lexer.masked_lines
     body = action_body(lines, masked, method_line)
     if found = caller_refusal(body)
-      return "an in-action #{found}"
+      return {"an in-action #{found[0]}", found[1]}
     end
     file = lines.join('\n')
     body.scan(/(?:\b(\w+)\s*=\s*)?(?:await\s+)?\b([A-Z]\w*)\s*\(/) do |call|
@@ -1041,17 +1212,17 @@ class AspnetAuthTagger < FrameworkTagger
       handed = args.matches?(CALLER_CALL) || action_callers.any? { |name| args.matches?(/\b#{Regex.escape(name)}\b/) }
       params = handed ? definition[1].scan(/(\w+)\s*(?:=[^,]*)?(?:,|\z)/).map(&.[1]) : [] of String
       if found = caller_refusal(action_body(lines, masked, helper_line), params)
-        return "#{helper}() (#{found})"
+        return {"#{helper}() (#{found[0]})", found[1]}
       end
     end
     nil
   end
 
-  private def caller_refusal(body : String, callers = [] of String) : String?
+  private def caller_refusal(body : String, callers = [] of String) : Tuple(String, Symbol)?
     body.scan(ACTION_REFUSAL_RE) do |refusal|
       reason = refusal_reason(body, refusal.begin(0), callers) || next
       result = refusal[0].sub(/\Areturn\s+(?:new\s+)?/, "").rstrip(" (")
-      return "#{result} #{refusal_wording(reason)}"
+      return {"#{result} #{refusal_wording(reason)}", reason[0]}
     end
     nil
   end
@@ -1184,11 +1355,17 @@ class AspnetAuthTagger < FrameworkTagger
   # nearest statement at or above the route's depth must come after the
   # nearest member declaration enclosing it.
   private def group_statement_auth?(index : FluentIndex, route_line : Int32, receiver : String) : Bool
-    return false if receiver == "app"
+    !group_statement_lines(index, route_line, receiver).empty?
+  end
+
+  # Every such statement: each convention added to the group applies.
+  private def group_statement_lines(index : FluentIndex, route_line : Int32, receiver : String) : Array(Int32)
+    return [] of Int32 if receiver == "app"
     at = index.depth[route_line]
-    statement = nearest_before(index.statements[receiver]?, route_line) { |idx| index.depth[idx] <= at } || return false
     member = nearest_before(index.members, route_line) { |idx| index.depth[idx] < at }
-    member.nil? || statement > member
+    (index.statements[receiver]? || [] of Int32).select do |idx|
+      idx < route_line && index.depth[idx] <= at && (member.nil? || idx > member)
+    end
   end
 
   # A method or local function, with or without an access modifier.
