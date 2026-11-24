@@ -78,13 +78,14 @@ class SpringAuthTagger < FrameworkTagger
   # can suppress a broader protected one. The matcher's argument list is
   # found by paren matching (it nests `antMatcher(X)` calls and spans lines),
   # so only the call opener is a regex.
-  RULE_AFTER_CALL  = /\A\s*\.\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
-  ANY_REQUEST_AUTH = /\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
+  AUTH_RULE_NAMES  = "permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|rememberMe|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|hasIpAddress|access"
+  RULE_AFTER_CALL  = /\A\s*(?:\.\s*(not)\s*\(\s*\)\s*)?\.\s*(#{AUTH_RULE_NAMES})\s*(?:\(|\{)/
+  ANY_REQUEST_AUTH = /\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*(?:\.\s*(not)\s*\(\s*\)\s*)?\.\s*(#{AUTH_RULE_NAMES})\s*(?:\(|\{)/
 
   # The Kotlin DSL Spring Security documents for Kotlin apps:
   # `authorizeHttpRequests { authorize("/public/**", permitAll);
   # authorize(anyRequest, authenticated) }` (`anyExchange` in WebFlux).
-  KOTLIN_AUTHORIZE_RULE = /\bauthorize\s*\(\s*(?:HttpMethod\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*,\s*)?(?:"([^"]+)"|(any(?:Request|Exchange)))\s*,\s*(permitAll|anonymous|denyAll|authenticated|fullyAuthenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\b/
+  KOTLIN_AUTHORIZE_RULE = /\bauthorize\s*\(\s*(?:HttpMethod\.(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*,\s*)?(?:"([^"]+)"|(any(?:Request|Exchange)))\s*,\s*(#{AUTH_RULE_NAMES})\b/
 
   FORM_LOGIN_DSL     = /(?:\.\s*formLogin\s*\(|\bformLogin\s*\(|\bformLogin\s*\{)/
   FORM_LOGIN_SETTER  = /\b(loginPage|loginProcessingUrl|failureUrl)\s*(?:\(\s*|=\s*)/
@@ -108,7 +109,9 @@ class SpringAuthTagger < FrameworkTagger
   AUTHORIZATION_DSL          = /\b(?:authorizeHttpRequests|authorizeRequests|authorizeExchange)\b/
   # Spring Security switched on without a chain of the app's own: its
   # default chain authenticates every request.
-  ENABLE_SECURITY = /@Enable(?:Web|WebFlux|RSocket)Security\b/
+  ENABLE_SECURITY        = /@Enable(?:Web|WebFlux|RSocket)Security\b/
+  ENABLE_METHOD_SECURITY = /@(?:[\w.]*\.)?(EnableMethodSecurity|EnableGlobalMethodSecurity|EnableReactiveMethodSecurity)\b/
+  XML_METHOD_SECURITY    = /<(?:[\w-]+:)?(?:global-)?method-security[\s\/>]/
   # Boot's default chain comes from this auto-configuration, not from the
   # dependency: an app that excludes it (`@SpringBootApplication(exclude =
   # SecurityAutoConfiguration.class)`, `spring.autoconfigure.exclude`) has none.
@@ -130,6 +133,49 @@ class SpringAuthTagger < FrameworkTagger
   ANONYMOUS_ROLES = Set{"IS_AUTHENTICATED_ANONYMOUSLY", "ROLE_ANONYMOUS", "ANONYMOUS"}
 
   alias SecurityAnnotation = NamedTuple(public_access: Bool, description: String, followed: Bool, denies_all: Bool, requires: Array(Access::Clause))
+
+  record MethodSecurityConfig,
+    mode : Symbol,
+    pre_post : Bool,
+    secured : Bool,
+    jsr250 : Bool,
+    module_dir : String?,
+    conditional : Bool,
+    readable : Bool
+
+  record MethodSecurityMode,
+    mode : Symbol,
+    pre_post : Bool,
+    secured : Bool,
+    jsr250 : Bool do
+    def enabled?(kind : Symbol) : Bool
+      case kind
+      when :pre_authorize, :post_authorize then pre_post
+      when :secured                        then secured
+      when :jsr250                         then jsr250
+      else                                      false
+      end
+    end
+  end
+
+  private record KindResult, decision : SecurityAnnotation, certain : Bool
+
+  SPRING_METHOD_KINDS = {
+    "PreAuthorize"  => :pre_authorize,
+    "PostAuthorize" => :post_authorize,
+    "Secured"       => :secured,
+    "RolesAllowed"  => :jsr250,
+    "PermitAll"     => :jsr250,
+    "DenyAll"       => :jsr250,
+  }
+  SHIRO_ANNOTATIONS        = Set{"RequiresAuthentication", "RequiresUser", "RequiresPermissions", "RequiresRoles", "RequiresGuest"}
+  SPRING_INTERCEPTOR_ORDER = {:pre_authorize, :secured, :jsr250, :post_authorize}
+  ORIGIN_RANK              = {
+    :method           => 0,
+    :inherited_method => 1,
+    :class            => 2,
+    :inherited_class  => 3,
+  }
 
   # `module` is the build unit (Maven module) whose sources declare the
   # rule, nil when unknown. `config_key` marks a rule whose patterns are a
@@ -165,11 +211,13 @@ class SpringAuthTagger < FrameworkTagger
     # security configurations noir does not read (an XML `<http>`, a chain
     # whose authorization rules it cannot read).
     @security_enabled = Set(String?).new
+    @method_security_configs = [] of MethodSecurityConfig
     @unread_configs = [] of UnreadConfig
     # Boot apps => whether they exclude SecurityAutoConfiguration.
     @security_autoconfig_off = Hash(String, Bool).new
     @management_port = Hash(String, Bool).new
     @fallback_annotations = Noir::SpringAnnotationIndex.new
+    @fallback_type_candidates = Hash(String, Array(String)).new
     @annotation_aliases = Hash(String, Set(String)).new
     @method_readers = Hash(String, {Set(String), Bool}).new
     @permit_markers = Hash(String, Set(String)).new
@@ -236,11 +284,13 @@ class SpringAuthTagger < FrameworkTagger
     @ignored_paths.clear
     @chain_modules.clear
     @security_enabled.clear
+    @method_security_configs.clear
     @unread_configs.clear
     @security_autoconfig_off.clear
     @management_port.clear
     @boot_apps.clear
     @fallback_annotations = Noir::SpringAnnotationIndex.new
+    @fallback_type_candidates.clear
     @annotation_aliases.clear
     @method_readers.clear
     @permit_markers.clear
@@ -289,7 +339,15 @@ class SpringAuthTagger < FrameworkTagger
         end
 
         unless test_source?(file)
+          if fallback
+            content.scan(/\b(?:class|interface|object)\s+([\w$]+)/) do |match|
+              (@fallback_type_candidates[match[1]] ||= [] of String) << file
+            end
+          end
           @security_enabled << module_dir if content.matches?(ENABLE_SECURITY) && Noir::CComments.strip(content).matches?(ENABLE_SECURITY)
+          if content.includes?("EnableMethodSecurity") || content.includes?("EnableGlobalMethodSecurity") || content.includes?("EnableReactiveMethodSecurity")
+            scan_method_security_config(content, module_dir)
+          end
           @security_autoconfig_off[module_dir] = true if module_dir && content.includes?("SecurityAutoConfiguration") && excludes_security_autoconfig?(content)
           scan_servlet_filter_defs(content, file, module_dir) if content.includes?("doFilter")
           scan_filter_registrations(content, file, module_dir) if content.includes?("FilterRegistrationBean")
@@ -322,6 +380,17 @@ class SpringAuthTagger < FrameworkTagger
       next if test_source?(file)
       next unless (content = read_file(file)) && content.includes?(XML_SECURITY_NAMESPACE)
       xml = Noir::XmlComments.strip(content)
+      if xml.matches?(XML_METHOD_SECURITY)
+        @method_security_configs << MethodSecurityConfig.new(
+          mode: :global_method_security,
+          pre_post: false,
+          secured: false,
+          jsr250: false,
+          module_dir: build_module(file),
+          conditional: false,
+          readable: false
+        )
+      end
       next unless http = xml.match(XML_HTTP_ELEMENT)
       # An `<http>` is a chain: Boot's default one backs off. Every `<http>`
       # `security="none"`, or only permitAll rules, guards nothing.
@@ -335,12 +404,199 @@ class SpringAuthTagger < FrameworkTagger
   end
 
   private def index_annotation_source(path : String)
-    return if @fallback_annotations.indexed?(path)
-    return unless content = read_file(path)
-    base = @base_paths.find { |root| Noir::PathScope.under_root?(path, root) } || @base_path
-    @fallback_annotations.read(path, content, base, build_module(path) || base)
-  rescue ex
-    @logger.debug "Could not read Spring annotations in #{path}: #{ex.message}"
+    queue = [path]
+    cursor = 0
+    while cursor < queue.size
+      current = queue[cursor]
+      cursor += 1
+      next if @fallback_annotations.indexed?(current)
+      begin
+        next unless content = read_file(current)
+        base = @base_paths.find { |root| Noir::PathScope.under_root?(current, root) } || @base_path
+        @fallback_annotations.read(current, content, base, build_module(current) || base)
+      rescue ex
+        @logger.debug "Could not read Spring annotations in #{current}: #{ex.message}"
+        next
+      end
+      @fallback_annotations.resolve_references do |name|
+        @fallback_type_candidates.delete(name).try &.each do |candidate|
+          queue << candidate unless @fallback_annotations.indexed?(candidate)
+        end
+      end
+    end
+  end
+
+  # Reads `@EnableMethodSecurity` (Spring Security 6; `prePostEnabled` defaults
+  # to true) and `@EnableGlobalMethodSecurity` (Spring Security 5; all three
+  # flags default to false). Non-literal flag values, `@Profile` /
+  # `@ConditionalOn…` guards, custom metadata sources, meta-annotated enabling
+  # annotations and `@EnableReactiveMethodSecurity` mark the mode unreadable.
+  private def scan_method_security_config(content : String, module_dir : String?)
+    masked = mask_strings(ascii_only(Noir::CComments.strip(content)))
+    masked.scan(ENABLE_METHOD_SECURITY) do |match|
+      if match[1] == "EnableReactiveMethodSecurity"
+        @method_security_configs << MethodSecurityConfig.new(
+          mode: :method_security,
+          pre_post: false,
+          secured: false,
+          jsr250: false,
+          module_dir: module_dir,
+          conditional: false,
+          readable: false
+        )
+        next
+      end
+
+      mode = match[1] == "EnableMethodSecurity" ? :method_security : :global_method_security
+      pre_post = mode == :method_security
+      secured = false
+      jsr250 = false
+      readable = true
+
+      pos = skip_space(masked, match.byte_end(0))
+      args : String? = nil
+      if pos < masked.bytesize && masked.byte_at(pos) == '('.ord
+        if close = Noir::JSLiteralScanner.find_matching_paren_at_byte(masked, pos)
+          args = masked.byte_slice(pos + 1, close - pos - 1)
+          pos = close + 1
+        else
+          readable = false
+          pos += 1
+        end
+      end
+
+      between, is_meta, body_open = scan_annotation_target(masked, pos)
+      if is_meta
+        @method_security_configs << MethodSecurityConfig.new(
+          mode: mode,
+          pre_post: false,
+          secured: false,
+          jsr250: false,
+          module_dir: module_dir,
+          conditional: false,
+          readable: false
+        )
+        next
+      end
+
+      if args && !args.blank?
+        Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules.new).each do |part|
+          item = part.strip
+          next if item.empty?
+          unless kv = item.match(/\A([A-Za-z_]\w*)\s*=\s*(.+)\z/m)
+            readable = false
+            break
+          end
+          key = kv[1]
+          val = kv[2].strip
+          next unless key.in?("prePostEnabled", "securedEnabled", "jsr250Enabled")
+          if val == "true"
+            bool_val = true
+          elsif val == "false"
+            bool_val = false
+          else
+            readable = false
+            break
+          end
+          case key
+          when "prePostEnabled" then pre_post = bool_val
+          when "securedEnabled" then secured = bool_val
+          when "jsr250Enabled"  then jsr250 = bool_val
+          end
+        end
+      end
+
+      if readable && mode == :global_method_security && body_open
+        if body_close = Noir::JSLiteralScanner.find_matching_brace_at_byte(masked, body_open)
+          body = masked.byte_slice(body_open, body_close - body_open + 1)
+          readable = false if body.matches?(/\b(?:customMethodSecurityMetadataSource|methodSecurityMetadataSource)\s*\(\s*\)/)
+        end
+      end
+
+      before_lead = method_security_lead(masked, match.byte_begin(0))
+      conditional = before_lead.matches?(CONDITIONAL_REGISTRATION) ||
+                    between.matches?(CONDITIONAL_REGISTRATION) ||
+                    conditionally_registered?(masked, match.byte_begin(0))
+
+      @method_security_configs << MethodSecurityConfig.new(
+        mode: mode,
+        pre_post: pre_post,
+        secured: secured,
+        jsr250: jsr250,
+        module_dir: module_dir,
+        conditional: conditional,
+        readable: readable
+      )
+    end
+  end
+
+  private def scan_annotation_target(masked : String, from : Int32) : {String, Bool, Int32?}
+    depth = 0
+    i = from
+    limit = Math.min(masked.bytesize, from + 2000)
+    while i < limit
+      ch = masked.byte_at(i)
+      if ch == '('.ord || ch == '['.ord
+        depth += 1
+      elsif ch == ')'.ord || ch == ']'.ord
+        depth -= 1 if depth > 0
+      elsif depth == 0
+        if ch == '{'.ord || ch == ';'.ord
+          return {masked.byte_slice(from, i - from), false, ch == '{'.ord ? i : nil}
+        end
+        prev_word = i > 0 && ident_byte?(masked.byte_at(i - 1))
+        if !prev_word && (kw = masked.byte_slice(i, Math.min(12, masked.bytesize - i)).match(/\A(class|object|interface)\b/))
+          between = masked.byte_slice(from, i - from)
+          is_meta = (kw[1] == "interface" && between.rstrip.ends_with?('@')) ||
+                    (kw[1] == "class" && between.matches?(/(?:\A|[^\w$])annotation\s+\z/))
+          body_open = is_meta ? nil : find_type_body_open(masked, i + kw.byte_end(0))
+          return {between, is_meta, body_open}
+        end
+      end
+      i += 1
+    end
+    {masked.byte_slice(from, limit - from), false, nil}
+  end
+
+  private def find_type_body_open(masked : String, from : Int32) : Int32?
+    depth = 0
+    i = from
+    limit = Math.min(masked.bytesize, from + 600)
+    while i < limit
+      ch = masked.byte_at(i)
+      if ch == '('.ord || ch == '['.ord
+        depth += 1
+      elsif ch == ')'.ord || ch == ']'.ord
+        depth -= 1 if depth > 0
+      elsif depth == 0
+        return i if ch == '{'.ord
+        return if ch == ';'.ord
+        if ch == '\n'.ord
+          next_pos = skip_space(masked, i + 1)
+          if next_pos < masked.bytesize
+            rest = masked.byte_slice(next_pos, Math.min(20, masked.bytesize - next_pos))
+            return if rest.starts_with?('@') || rest.matches?(/\A(?:class|object|interface|fun|public|private|protected|internal|abstract|open|sealed|data|annotation)\b/)
+          end
+        end
+      end
+      i += 1
+    end
+    nil
+  end
+
+  private def method_security_lead(masked : String, before_pos : Int32) : String
+    lead = declaration_lead(masked.byte_slice(0, before_pos))
+    if stop = lead.rindex(/(?:\A|\n)[ \t]*(?:(?:public|private|protected|internal|open|abstract|final|sealed|data|annotation)\s+)*(?:class|object|interface)\s+[A-Za-z_$][\w$]*[^\n]*\r?\n/)
+      if newline = lead.index('\n', stop + 1)
+        lead = lead[(newline + 1)..]
+      end
+    end
+    lead
+  end
+
+  private def ident_byte?(byte : UInt8) : Bool
+    ch = byte.unsafe_chr
+    ch.ascii_alphanumeric? || ch == '_' || ch == '$'
   end
 
   # `AsyncHandlerInterceptor` extends `HandlerInterceptor` and keeps its
@@ -1813,27 +2069,24 @@ class SpringAuthTagger < FrameworkTagger
     block.scan(MATCHERS_CALL) do |match|
       open = match.byte_end(0) - 1
       next unless close = Noir::JSLiteralScanner.find_matching_paren_at_byte(block, open)
-      after_call = Noir::TextFile.byte_window(block, close + 1, 96)
+      after_call = Noir::TextFile.byte_window(block, close + 1, 128)
       next unless rule = after_call.match(RULE_AFTER_CALL)
 
       args = block.byte_slice(open + 1, close - open - 1)
-      auth_type = rule[1]
-      is_anonymous = auth_type == "anonymous" ||
-                     (auth_type == "hasRole" && after_call.matches?(/\A\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
-                     (auth_type == "hasAuthority" && after_call.matches?(/\A\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
-      protected_rule = auth_type != "permitAll" && auth_type != "denyAll" && !is_anonymous
+      negated = !rule[1]?.nil?
+      auth_type = rule[2]
+      rule_name = negated ? "not().#{auth_type}" : auth_type
+      anonymous_role = (auth_type == "hasRole" && after_call.matches?(/\A\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
+                       (auth_type == "hasAuthority" && after_call.matches?(/\A\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
       # An inline `access((authentication, context) -> ..)` that admits only
       # signed-out callers (`!isAuthenticated`) is a public page, not a guard.
       access_verdict = nil
-      if auth_type == "access" && (paren = close + rule.byte_end(0)) < block.bytesize && block.to_unsafe[paren] == '('.ord
+      if !negated && auth_type == "access" && (paren = close + rule.byte_end(0)) < block.bytesize && block.to_unsafe[paren] == '('.ord
         if access_close = Noir::JSLiteralScanner.find_matching_paren_at_byte(block, paren)
           access_verdict = access_lambda(block.byte_slice(paren + 1, access_close - paren - 1))
         end
       end
-      if access_verdict == :open
-        protected_rule = false
-        is_anonymous = true
-      end
+      protected_rule, is_anonymous, denies_all = classify_chain_rule(auth_type, negated, anonymous_role, access_verdict)
       matcher_method = request_matcher_method(args)
       config_keys = [] of String
       in_scope = loops_enclosing(loops, open)
@@ -1842,32 +2095,32 @@ class SpringAuthTagger < FrameworkTagger
         if access_verdict == :open
           [Access::Clause.unresolved(auth_type, auth_type, file_path, rule_line)]
         else
-          rule_requires(block, auth_type, close + rule.byte_end(0), file_path, rule_line)
+          rule_requires(block, auth_type, close + rule.byte_end(0), file_path, rule_line, negated: negated)
         end
       patterns = matcher_patterns(args, strings, arrays, loops: in_scope, config_keys: config_keys, java_source: java_source, builders: builders).uniq
       unread_matcher ||= patterns.empty? && config_keys.empty?
-      if patterns.empty? && config_keys.empty? && !protected_rule && java_source
+      if patterns.empty? && config_keys.empty? && !protected_rule && !denies_all && java_source
         # A matcher fed by a method that collects URLs from annotated
         # handlers: a rule keyed to that method, resolved per endpoint.
         permit_source_methods(args, block, java_source).each do |key|
-          rules << {pattern: "", method: matcher_method, description: auth_type, protected_rule: false, module: module_dir, config_key: key, path: file_path, line: rule_line, requires: requires}
+          rules << {pattern: "", method: matcher_method, description: rule_name, protected_rule: false, module: module_dir, config_key: key, path: file_path, line: rule_line, requires: requires}
         end
       end
       patterns.each do |url_pattern|
         description =
           if protected_rule
-            "Protected by Spring Security #{auth_type} via #{match[1]}(\"#{url_pattern}\")#{ACCESS_NOTE if auth_type == "access" && access_verdict.nil?}"
+            "Protected by Spring Security #{rule_name} via #{match[1]}(\"#{url_pattern}\")#{ACCESS_NOTE if !negated && auth_type == "access" && access_verdict.nil?}"
           elsif is_anonymous
-            "Public by Spring Security anonymous via #{match[1]}(\"#{url_pattern}\")"
-          elsif auth_type == "denyAll"
-            "Denied by Spring Security denyAll via #{match[1]}(\"#{url_pattern}\")"
+            "Public by Spring Security #{negated ? rule_name : "anonymous"} via #{match[1]}(\"#{url_pattern}\")"
+          elsif denies_all
+            "Denied by Spring Security #{rule_name} via #{match[1]}(\"#{url_pattern}\")"
           else
-            "Public by Spring Security permitAll via #{match[1]}(\"#{url_pattern}\")"
+            "Public by Spring Security #{negated ? rule_name : "permitAll"} via #{match[1]}(\"#{url_pattern}\")"
           end
         rules << {pattern: url_pattern, method: matcher_method, description: description, protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: rule_line, requires: requires}
       end
       config_keys.uniq.each do |key|
-        rules << {pattern: "", method: matcher_method, description: auth_type, protected_rule: protected_rule, module: module_dir, config_key: key, path: file_path, line: rule_line, requires: requires}
+        rules << {pattern: "", method: matcher_method, description: rule_name, protected_rule: protected_rule, module: module_dir, config_key: key, path: file_path, line: rule_line, requires: requires}
       end
     end
 
@@ -1913,26 +2166,28 @@ class SpringAuthTagger < FrameworkTagger
 
     if any_request_covered
       block.scan(ANY_REQUEST_AUTH) do |match|
-        auth_type = match[1]
-        len = Math.min(120, block.bytesize - match.byte_begin(0))
+        negated = !match[1]?.nil?
+        auth_type = match[2]
+        rule_name = negated ? "not().#{auth_type}" : auth_type
+        len = Math.min(160, block.bytesize - match.byte_begin(0))
         slice = block.byte_slice(match.byte_begin(0), len)
-        is_anonymous = auth_type == "anonymous" ||
-                       (auth_type == "hasRole" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
-                       (auth_type == "hasAuthority" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
-        protected_rule = auth_type != "permitAll" && auth_type != "denyAll" && !is_anonymous
-        rule_line = block_start_line + block[0, match.begin(1)].count('\n')
+        anonymous_role = (auth_type == "hasRole" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasRole\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/)) ||
+                         (auth_type == "hasAuthority" && slice.matches?(/\.\s*any(?:Request|Exchange)\s*\(\s*\)\s*\.\s*hasAuthority\s*\(\s*["'](?:ROLE_)?ANONYMOUS["']\s*\)/))
+        protected_rule, is_anonymous, denies_all = classify_chain_rule(auth_type, negated, anonymous_role, nil)
+        line_pos = match[1]? ? match.begin(1) : match.begin(2)
+        rule_line = block_start_line + block[0, line_pos].count('\n')
         any_call = slice.includes?("anyExchange") ? "anyExchange()" : "anyRequest()"
         description =
           if protected_rule
-            "Protected by Spring Security #{auth_type} via #{any_call}"
+            "Protected by Spring Security #{rule_name} via #{any_call}"
           elsif is_anonymous
-            "Public by Spring Security anonymous via #{any_call}"
-          elsif auth_type == "denyAll"
-            "Denied by Spring Security denyAll via #{any_call}"
+            "Public by Spring Security #{negated ? rule_name : "anonymous"} via #{any_call}"
+          elsif denies_all
+            "Denied by Spring Security #{rule_name} via #{any_call}"
           else
-            "Public by Spring Security permitAll via #{any_call}"
+            "Public by Spring Security #{negated ? rule_name : "permitAll"} via #{any_call}"
           end
-        requires = rule_requires(block, auth_type, match.byte_end(0) - 1, file_path, rule_line)
+        requires = rule_requires(block, auth_type, match.byte_end(0) - 1, file_path, rule_line, negated: negated)
         rules << {pattern: "/**", method: nil, description: description, protected_rule: protected_rule, module: module_dir, config_key: nil, path: file_path, line: rule_line, requires: requires}
       end
     end
@@ -2171,16 +2426,49 @@ class SpringAuthTagger < FrameworkTagger
     bound
   end
 
+  # Classifies a chain rule into `{protected_rule, is_anonymous, denies_all}`.
+  # Negated rules that admit anonymous callers (`not().authenticated()`,
+  # `not().fullyAuthenticated()`, `not().rememberMe()`, `not().denyAll()`) are
+  # public; `not().permitAll()` denies every caller; other negated rules are
+  # guards noir cannot read.
+  private def classify_chain_rule(auth_type : String, negated : Bool, anonymous_role : Bool, access_verdict : Symbol?) : {Bool, Bool, Bool}
+    if negated
+      case auth_type
+      when "permitAll"
+        {false, false, true}
+      when "denyAll"
+        {false, false, false}
+      when "authenticated", "fullyAuthenticated", "rememberMe"
+        {false, true, false}
+      else
+        {true, false, false}
+      end
+    else
+      is_anonymous = auth_type == "anonymous" || anonymous_role || access_verdict == :open
+      denies_all = auth_type == "denyAll"
+      protected_rule = !denies_all && auth_type != "permitAll" && !is_anonymous
+      {protected_rule, is_anonymous, denies_all}
+    end
+  end
+
   # What the authorization call `name` requires. Its argument list opens at
   # byte `open` of `text`, past any spaces; a list that never closes leaves
   # the bare name, which reads as unresolved unless it takes no arguments.
-  private def rule_requires(text : String, name : String, open : Int32, path : String, line : Int32) : Array(Access::Clause)
+  # Negated `permitAll` denies all and negated `denyAll` permits all; every
+  # other negated rule stays unresolved.
+  private def rule_requires(text : String, name : String, open : Int32, path : String, line : Int32, negated : Bool = false) : Array(Access::Clause)
     while open < text.bytesize && text.byte_at(open).unsafe_chr.ascii_whitespace?
       open += 1
     end
     call = name
     if open < text.bytesize && text.byte_at(open) == '('.ord && (close = Noir::JSLiteralScanner.find_matching_paren_at_byte(text, open))
       call = "#{name}(#{text.byte_slice(open + 1, close - open - 1)})"
+    end
+    if negated
+      negated_call = "not().#{call}"
+      return [Access::Clause.new([DENY], negated_call, path, line)] if name == "permitAll"
+      return [] of Access::Clause if name == "denyAll"
+      return [Access::Clause.unresolved(negated_call, negated_call, path, line)]
     end
     Access.clauses(SpringAccess.expression(call), call, path, line)
   end
@@ -2536,21 +2824,241 @@ class SpringAuthTagger < FrameworkTagger
     end || 0
   end
 
-  private def check_annotations(location : PathInfo, method : String) : SecurityAnnotation?
+  # Effective method-security configuration for `endpoint`, scoped by the
+  # serving app's classpath. Returns nil for JAX-RS endpoints (where
+  # Jersey/RESTEasy enforce JSR-250 independently of Spring), when no
+  # configuration is found, any config in scope is conditional or unreadable,
+  # or configs disagree.
+  private def method_security_mode(endpoint : Endpoint) : MethodSecurityMode?
+    return if endpoint.details.technology == "java_jaxrs"
+    return if @method_security_configs.empty?
+    modules = endpoint_modules(endpoint)
+    return resolve_method_security_configs(@method_security_configs) if modules.empty?
+
+    resolved = [] of MethodSecurityMode?
+    modules.each do |module_dir|
+      if apps = serving_apps(module_dir)
+        apps.each do |app|
+          classpath = module_classpath(app).try(&.[0])
+          applicable = @method_security_configs.select do |config|
+            owner = config.module_dir
+            owner ? (classpath.nil? || classpath.includes?(owner)) : classpath.nil?
+          end
+          resolved << resolve_method_security_configs(applicable)
+        end
+      else
+        resolved << resolve_method_security_configs(@method_security_configs)
+      end
+    end
+    return if resolved.empty? || resolved.any?(Nil)
+    unique = resolved.compact.uniq!
+    unique.size == 1 ? unique[0] : nil
+  end
+
+  private def resolve_method_security_configs(configs : Array(MethodSecurityConfig)) : MethodSecurityMode?
+    return if configs.empty?
+    return if configs.any? { |config| !config.readable || config.conditional }
+    modes = configs.map { |config| MethodSecurityMode.new(config.mode, config.pre_post, config.secured, config.jsr250) }.uniq!
+    modes.size == 1 ? modes[0] : nil
+  end
+
+  private def check_annotations(location : PathInfo, method : String, mode : MethodSecurityMode?) : {SecurityAnnotation?, String?}
     evidence = location.route_annotations
     unless evidence
-      return unless location.line && (location.path.ends_with?(".java") || location.path.ends_with?(".kt"))
+      return {nil, nil} unless location.line && (location.path.ends_with?(".java") || location.path.ends_with?(".kt"))
       index_annotation_source(location.path)
-      evidence = @fallback_annotations.at(location) || return
+      evidence = @fallback_annotations.at(location) || return {nil, nil}
     end
+
+    marker = find_permit_marker(evidence)
+    return check_annotations_with_mode(evidence, method, mode, marker) if mode
 
     evidence.chunk(&.level).each do |level, annotations|
       decisions = annotations.compact_map { |ann| judge_annotation(ann, method) }
       if picked = pick_security_annotation(decisions)
-        return picked.merge(requires: decisions.flat_map(&.[:requires]) + unsettled_annotations(evidence, level, annotations))
+        decision = picked.merge(requires: decisions.flat_map(&.[:requires]) + unsettled_annotations(evidence, level, annotations))
+        return {decision, marker}
       end
     end
+    {nil, marker}
+  end
+
+  private def check_annotations_with_mode(evidence : Array(RouteAnnotation), method : String, mode : MethodSecurityMode, marker : String?) : {SecurityAnnotation?, String?}
+    by_kind = Hash(Symbol, Array(RouteAnnotation)).new
+    shiro = [] of RouteAnnotation
+
+    evidence.each do |ann|
+      simple = ann.name.split('.').last
+      if kind = SPRING_METHOD_KINDS[simple]?
+        (by_kind[kind] ||= [] of RouteAnnotation) << ann if mode.enabled?(kind)
+      elsif SHIRO_ANNOTATIONS.includes?(simple)
+        shiro << ann
+      end
+    end
+
+    spring_decision = case mode.mode
+                      when :method_security
+                        combine_method_security(by_kind, method)
+                      else
+                        combine_global_method_security(by_kind, method, mode)
+                      end
+
+    shiro_decision = nil.as(SecurityAnnotation?)
+    unless shiro.empty?
+      shiro.chunk(&.level).each do |level, annotations|
+        decisions = annotations.compact_map { |ann| judge_annotation(ann, method) }
+        if picked = pick_security_annotation(decisions)
+          shiro_decision = picked.merge(requires: decisions.flat_map(&.[:requires]) + unsettled_annotations(shiro, level, annotations))
+          break
+        end
+      end
+    end
+
+    if combined = combine_active_decisions([spring_decision, shiro_decision].compact)
+      return {combined, marker}
+    end
+
+    if marker
+      return {
+        {public_access: true, description: "#{PERMIT_MARKER_PREFIX}#{marker}", followed: false, denies_all: false, requires: [] of Access::Clause},
+        marker,
+      }
+    end
+
+    {nil, nil}
+  end
+
+  private def find_permit_marker(evidence : Array(RouteAnnotation)) : String?
+    return if @permit_marker_names.empty?
+    evidence.each do |ann|
+      name = ann.name.split('.').last
+      next if SECURITY_ANNOTATIONS.includes?(name)
+      on_class = ann.origin.in?(:class, :inherited_class)
+      return name if !ann.uncertain && !on_class && !ann.composed_from && @permit_marker_names.includes?(name)
+    end
     nil
+  end
+
+  # Picks the deciding annotation of one kind in Spring's lookup order:
+  # method, inherited method, class, inherited class (closer level first
+  # within an origin). An uncertain annotation (possible override) never
+  # hides a farther certain annotation of its kind.
+  private def pick_for_kind(annotations : Array(RouteAnnotation)?, method : String) : KindResult?
+    return if annotations.nil? || annotations.empty?
+    ordered = annotations.each_with_index.to_a
+      .sort_by! { |(ann, idx)| {ORIGIN_RANK.fetch(ann.origin, 4), ann.level, idx} }
+      .map(&.[0])
+
+    uncertain_guards = [] of SecurityAnnotation
+    ordered.chunk { |ann| {ORIGIN_RANK.fetch(ann.origin, 4), ann.level} }.each do |_, group|
+      certain_anns, uncertain_anns = group.partition { |ann| !ann.uncertain }
+      certain_decisions = certain_anns.compact_map { |ann| judge_annotation(ann, method) }
+      unless certain_decisions.empty?
+        picked = pick_security_annotation(certain_decisions)
+        next unless picked
+        certain = picked.merge(requires: certain_decisions.flat_map(&.[:requires]))
+        result = uncertain_guards.empty? ? certain : combine_with_uncertain(certain, uncertain_guards)
+        return KindResult.new(result, true)
+      end
+      uncertain_anns.each do |ann|
+        if judged = judge_annotation(ann, method)
+          uncertain_guards << judged
+        end
+      end
+    end
+
+    return if uncertain_guards.empty?
+    picked = pick_security_annotation(uncertain_guards)
+    return unless picked
+    picked_idx = uncertain_guards.index(picked) || 0
+    others = uncertain_guards.each_with_index.compact_map { |guard, i| guard unless i == picked_idx }.to_a
+    result = others.empty? ? picked : combine_with_uncertain(picked, others)
+    KindResult.new(result, false)
+  end
+
+  # When an uncertain annotation sits ahead of a certain one, either may
+  # apply at runtime: OR their requirements so callers denied by both stay
+  # denied, and keep an unresolved clause for the uncertain alternative.
+  private def combine_with_uncertain(certain : SecurityAnnotation, uncertain : Array(SecurityAnnotation)) : SecurityAnnotation
+    certain_cnf = certain[:requires].map(&.any_of)
+    cnf = certain_cnf
+    unresolved = [] of Access::Clause
+    uncertain.each do |alt|
+      alt_cnf = alt[:requires].map(&.any_of)
+      cnf = Access.either(cnf, alt_cnf)
+      next if alt_cnf == certain_cnf
+      first = alt[:requires].first?
+      source = first ? first.source : alt[:description]
+      unresolved << Access::Clause.unresolved(source, source, first.try(&.path), first.try(&.line))
+    end
+    base = certain[:requires].first?
+    combined = Access.clauses(cnf, base.try(&.source) || certain[:description], base.try(&.path), base.try(&.line)) + unresolved
+    still_denies_all = certain[:denies_all] && cnf == [[DENY]]
+    certain.merge(denies_all: still_denies_all, requires: combined.uniq!)
+  end
+
+  # `@EnableMethodSecurity` (Spring Security 6): each kind has its own
+  # interceptor and all active ones must pass.
+  private def combine_method_security(by_kind : Hash(Symbol, Array(RouteAnnotation)), method : String) : SecurityAnnotation?
+    active = SPRING_INTERCEPTOR_ORDER.compact_map { |kind| pick_for_kind(by_kind[kind]?, method) }
+    return if active.empty?
+    combine_active_decisions(active.map(&.decision))
+  end
+
+  # Combines independent decisions that must all pass (AND).
+  private def combine_active_decisions(decisions : Array(SecurityAnnotation)) : SecurityAnnotation?
+    return if decisions.empty?
+    return decisions[0] if decisions.size == 1
+
+    if denied = decisions.find(&.[:denies_all])
+      return denied.merge(requires: decisions.flat_map(&.[:requires]).uniq!)
+    end
+
+    guards = decisions.select { |item| !item[:public_access] }
+    if primary = guards.first?
+      requires = (guards.flat_map(&.[:requires]) + decisions.select(&.[:public_access]).flat_map(&.[:requires])).uniq!
+      return primary.merge(followed: guards.any?(&.[:followed]), requires: requires)
+    end
+
+    decisions[0].merge(requires: decisions.flat_map(&.[:requires]).uniq!)
+  end
+
+  # `@EnableGlobalMethodSecurity` (Spring Security 5): the first enabled
+  # metadata source (PrePost -> Secured -> JSR-250) with an annotation wins.
+  private def combine_global_method_security(by_kind : Hash(Symbol, Array(RouteAnnotation)), method : String, mode : MethodSecurityMode) : SecurityAnnotation?
+    sources = [] of {KindResult?, Bool}
+
+    if mode.pre_post
+      pre = pick_for_kind(by_kind[:pre_authorize]?, method)
+      post = pick_for_kind(by_kind[:post_authorize]?, method)
+      post_shadows = post.nil? && !SAFE_HTTP_METHODS.includes?(method.upcase) &&
+                     (by_kind[:post_authorize]?.try(&.any? { |ann| !ann.uncertain }) || false)
+      pre_post_items = [pre, post].compact
+      if pre_post_items.empty?
+        sources << {nil, post_shadows}
+      else
+        combined = combine_active_decisions(pre_post_items.map(&.decision))
+        sources << {combined ? KindResult.new(combined, pre_post_items.any?(&.certain)) : nil, post_shadows}
+      end
+    end
+
+    sources << {pick_for_kind(by_kind[:secured]?, method), false} if mode.secured
+    sources << {pick_for_kind(by_kind[:jsr250]?, method), false} if mode.jsr250
+
+    uncertain_earlier = [] of SecurityAnnotation
+    sources.each do |result, shadows_without_guard|
+      if result
+        if result.certain
+          return uncertain_earlier.empty? ? result.decision : combine_with_uncertain(result.decision, uncertain_earlier)
+        end
+        uncertain_earlier << result.decision
+      end
+      break if shadows_without_guard
+    end
+
+    return if uncertain_earlier.empty?
+    first = uncertain_earlier[0]
+    uncertain_earlier.size == 1 ? first : combine_with_uncertain(first, uncertain_earlier[1..])
   end
 
   # Spring Security 6 also applies a farther annotation of another kind, and
@@ -2558,11 +3066,15 @@ class SpringAuthTagger < FrameworkTagger
   # neither. The version is not known here, so such an annotation is a
   # requirement left unresolved.
   private def unsettled_annotations(evidence : Array(RouteAnnotation), level : Int32, picked : Array(RouteAnnotation)) : Array(Access::Clause)
-    kinds = picked.map(&.name.split('.').last)
+    kinds = picked.map do |ann|
+      name = ann.name.split('.').last
+      SPRING_METHOD_KINDS[name]?.try(&.to_s) || name
+    end
     class_level = picked.all?(&.origin.in?(:class, :inherited_class))
     farther = evidence.select do |ann|
       name = ann.name.split('.').last
-      ann.level > level && SECURITY_ANNOTATIONS.includes?(name) && (!kinds.includes?(name) || (class_level && ann.origin == :inherited_method))
+      kind = SPRING_METHOD_KINDS[name]?.try(&.to_s) || name
+      ann.level > level && SECURITY_ANNOTATIONS.includes?(name) && (!kinds.includes?(kind) || (class_level && ann.origin == :inherited_method))
     end
     farther.map do |ann|
       source = (argument = ann.argument) ? "@#{ann.name}(#{argument})" : "@#{ann.name}"
@@ -2687,19 +3199,24 @@ class SpringAuthTagger < FrameworkTagger
     # whichever later layer guards the endpoint.
     public_requires = [] of Access::Clause
     marker : String? = nil
+    mode = method_security_mode(endpoint)
     recorded = endpoint.details.code_paths.select(&.route_annotations)
     locations = recorded.empty? ? endpoint.details.code_paths : recorded
     locations.each do |location|
-      decision = check_annotations(location, endpoint.method)
+      decision, found_marker = check_annotations(location, endpoint.method, mode)
+      marker ||= found_marker
       next unless decision
       if decision[:denies_all]
-        deny = decision[:requires].find(&.any_of.==([DENY])) || Access::Clause.new([DENY], decision[:description])
-        return note_denied(endpoint, decision[:description], [deny], deny.path, deny.line)
+        if deny = decision[:requires].find(&.any_of.==([DENY]))
+          return note_denied(endpoint, decision[:description], [deny], deny.path, deny.line)
+        end
+        first = decision[:requires].first?
+        clauses = decision[:requires].empty? ? [Access::Clause.new([DENY], decision[:description])] : decision[:requires]
+        return note_denied(endpoint, decision[:description], clauses, first.try(&.path), first.try(&.line))
       end
       if decision[:public_access]
         annotation_public = true
         public_requires.concat(decision[:requires])
-        marker ||= decision[:description].match(PERMIT_MARKER_DESCRIPTION).try(&.[1])
       else
         endpoint = add_guard_tag(endpoint, decision[:description], decision[:followed], decision[:requires])
         # The chain rule matching the route applies on top of the annotation.
