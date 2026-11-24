@@ -213,9 +213,9 @@ module JavaAccess
     positional.flat_map do |item|
       inner = item.strip
       if (inner.starts_with?('{') && inner.ends_with?('}')) || (inner.starts_with?('[') && inner.ends_with?(']'))
-        split(inner[1...-1])
+        comma_items(inner[1...-1])
       elsif array = inner.match(/\AarrayOf\s*\((.*)\)\z/m)
-        split(array[1])
+        comma_items(array[1])
       else
         [inner]
       end
@@ -225,7 +225,7 @@ module JavaAccess
   private def arguments(args : String) : {Array(String), Hash(String, String)}
     positional = [] of String
     named = Hash(String, String).new
-    split(args).each do |part|
+    comma_items(args).each do |part|
       if found = part.match(NAMED)
         named[found[1]] = found[2].strip
       else
@@ -235,7 +235,7 @@ module JavaAccess
     {positional, named}
   end
 
-  private def split(text : String) : Array(String)
+  private def comma_items(text : String) : Array(String)
     Noir::TopLevelSplit.split(text, ',', SPLIT).map(&.strip).reject(&.empty?)
   end
 
