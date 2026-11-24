@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../../../utils/c_comments"
 require "./aspnet_access"
 
 @[Noir::TaggerFor(key: "fastendpoints_auth", name: "FastEndpoints Auth Tagger", desc: "Identifies FastEndpoints authentication patterns (Roles, Permissions, Policies)", order: 180)]
@@ -13,6 +14,18 @@ class FastEndpointsAuthTagger < FrameworkTagger
 
   def self.target_techs : Array(String)
     ["cs_fastendpoints"]
+  end
+
+  @default_policy : String? = nil
+
+  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
+    @default_policy = nil
+    collect_files_by_extension(".cs").each do |path|
+      content = read_file(path) || next
+      next unless content.includes?("DefaultPolicy")
+      @default_policy ||= AspnetAccess.default_policy_assignment(Noir::CComments.strip(content))
+    end
+    super
   end
 
   private def check_endpoint(endpoint : Endpoint)
@@ -30,7 +43,7 @@ class FastEndpointsAuthTagger < FrameworkTagger
       # FastEndpoints endpoints are secure by default: without
       # `AllowAnonymous()` they require an authenticated user.
       description = "Protected by FastEndpoints #{describe_guard(configure_block) || "default authorization (no AllowAnonymous)"}"
-      requires = Access.clauses(AspnetAccess.fastendpoints(configure_block), description, path_info.path)
+      requires = Access.clauses(AspnetAccess.fastendpoints(configure_block, AspnetAccess.default_policy(@default_policy)), description, path_info.path)
       endpoint.add_tag(Tag.new("auth", description, "fastendpoints_auth", requires: requires))
       return
     end

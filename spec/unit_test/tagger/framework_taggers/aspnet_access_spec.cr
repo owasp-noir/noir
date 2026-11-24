@@ -59,6 +59,15 @@ describe AspnetAccess do
     end
   end
 
+  describe ".default_policy_assignment" do
+    it "reads the assignment without the call around it" do
+      code = %(services.AddAuthorization(o => o.DefaultPolicy = new AuthorizationPolicyBuilder().RequireClaim("t").Build());)
+      AspnetAccess.default_policy_assignment(code).should eq(%(DefaultPolicy = new AuthorizationPolicyBuilder().RequireClaim("t").Build()))
+      AspnetAccess.default_policy_assignment("var p = options.DefaultPolicy;").should be_nil
+      AspnetAccess.default_policy_assignment("if (o.DefaultPolicy == null) { }").should be_nil
+    end
+  end
+
   describe ".require_authorization" do
     {
       ""                                                               => [["authenticated"]],
@@ -126,6 +135,13 @@ describe AspnetAccess do
       it "reads #{block.inspect}" do
         shown(AspnetAccess.fastendpoints(block)).should eq(expected)
       end
+    end
+
+    it "takes the default policy for an endpoint that names no requirement" do
+      custom = [[Access::Atom.new(:unresolved, "DefaultPolicy = custom")]]
+      AspnetAccess.fastendpoints(%(Get("/x");), custom).should eq(custom)
+      shown(AspnetAccess.fastendpoints(%(AuthSchemes("Bearer");), custom)).should eq([["authenticated"]])
+      shown(AspnetAccess.fastendpoints(%(Policies("X");), custom)).should eq([["authenticated"], ["unresolved"]])
     end
 
     it "keeps claim types and policy names" do

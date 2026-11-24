@@ -31,7 +31,6 @@ class AspnetAuthTagger < FrameworkTagger
   # controller-wide `MapControllers().RequireAuthorization()` / global
   # `AuthorizeFilter`, and MVC 5's `filters.Add(new AuthorizeAttribute())`.
   FALLBACK_POLICY    = /FallbackPolicy\s*=[^;]*RequireAuthenticatedUser\s*\(/
-  DEFAULT_POLICY     = /\bDefaultPolicy\s*=(?![=>])[^;]*/
   CONTROLLERS_GLOBAL = /MapControllers\s*\(\s*\)\s*\.RequireAuthorization\s*\(|Filters\.Add\s*(?:<\s*AuthorizeFilter\s*>|\(\s*new\s+AuthorizeFilter\b)|filters\.Add\s*\(\s*new\s+(?:System\.Web\.Mvc\.)?AuthorizeAttribute\b/
   CONTROLLER_TECHS   = %w[cs_aspnet_mvc cs_aspnet_core_mvc]
   # Techs whose endpoint line is a route registration statement.
@@ -90,7 +89,7 @@ class AspnetAuthTagger < FrameworkTagger
       next if base_relative_path(path).matches?(TEST_PATH)
       code = Noir::CComments.strip(content)
       next if code.includes?("WebApplicationFactory")
-      @default_policy ||= code.match(DEFAULT_POLICY).try { |found| unwrapped(found[0]) } if default_policy
+      @default_policy ||= AspnetAccess.default_policy_assignment(code) if default_policy
       root = nearest_project_root(path, CSPROJ)
       @fallback_roots << root if fallback && code.matches?(FALLBACK_POLICY)
       @controllers_global_roots << root if controllers && code.matches?(CONTROLLERS_GLOBAL)
@@ -98,15 +97,6 @@ class AspnetAuthTagger < FrameworkTagger
     expand_fallback_roots
     collect_extension_auth
     super
-  end
-
-  # The assignment without the `)` of the call it sits in.
-  private def unwrapped(assignment : String) : String
-    text = assignment.strip
-    while text.ends_with?(')') && text.count(')') > text.count('(')
-      text = text.rchop(')').rstrip
-    end
-    text
   end
 
   PROJECT_REFERENCE_RE = /<ProjectReference\s[^>]*?Include\s*=\s*"([^"]+)"/i
@@ -508,10 +498,8 @@ class AspnetAuthTagger < FrameworkTagger
     Tag.new("auth", description, "aspnet_auth", requires: requires)
   end
 
-  # What a bare `[Authorize]` or `.RequireAuthorization()` requires: the
-  # default policy, which is a signed-in user unless the code replaces it.
   private def default_policy : Access::CNF
-    (text = @default_policy) ? [[Access::Atom.new(:unresolved, text)]] : AspnetAccess::AUTHENTICATED
+    AspnetAccess.default_policy(@default_policy)
   end
 
   # Every authorization layer ASP.NET applies to the action, all of them
@@ -528,8 +516,10 @@ class AspnetAuthTagger < FrameworkTagger
     layers.each do |attrs, file|
       attrs.each do |attr|
         source = "[#{attr.text}]"
-        if attr.name == "Authorize"
+        if attr.name == "Authorize" && !own_authorize?(file)
           clauses.concat(Access.clauses(AspnetAccess.authorize(attr.argument_text, default), source, file, attr.line + 1))
+        elsif attr.name == "Authorize"
+          clauses << Access::Clause.unresolved(source, source, file, attr.line + 1)
         elsif derives?(attr, :authorize)
           clauses << Access::Clause.unresolved(source, source, file, attr.line + 1)
         end
@@ -540,10 +530,12 @@ class AspnetAuthTagger < FrameworkTagger
       clauses << Access::Clause.new([Access::Atom.new(:authenticated)], source) unless configurable
       clauses << Access::Clause.unresolved("[#{attr.text}]", source)
     end
-    if statement = minimal_api_statement(lines, line_idx)
-      clauses.concat(statement_authorize(path, line_idx, statement, default))
-    end
-    unless fluent_requires(path, lines, line_idx, clauses)
+    statement = minimal_api_statement(lines, line_idx)
+    clauses.concat(statement_authorize(path, line_idx, statement, default)) if statement
+    # From a controller action, the statement walk runs on past the action,
+    # so only a route statement's `AllowAnonymous` is its own.
+    open = !fluent_requires(path, lines, line_idx, clauses)
+    if open && (statement || ROUTE_STATEMENT_TECHS.includes?(technology))
       return [Access::Clause.new([Access::Atom.new(:anonymous)], "AllowAnonymous on the route or its group")]
     end
     if CONTROLLER_TECHS.includes?(technology) && @controllers_global_roots.includes?(nearest_project_root(project_file, CSPROJ))
@@ -551,6 +543,12 @@ class AspnetAuthTagger < FrameworkTagger
       clauses << Access::Clause.unresolved(source, source)
     end
     clauses.uniq
+  end
+
+  # Whether `[Authorize]` in `file` names an `AuthorizeAttribute` the
+  # project declares, whose arguments mean what its body says.
+  private def own_authorize?(file : String) : Bool
+    !class_decls("AuthorizeAttribute", file).empty?
   end
 
   STATEMENT_AUTHORIZE = /\[(?:[^\[\]]*,\s*)?Authorize\s*(?=[(,\]])/
@@ -568,7 +566,11 @@ class AspnetAuthTagger < FrameworkTagger
         args = code[open + 1...close]
       end
       source = args ? "[Authorize(#{args})]" : "[Authorize]"
-      clauses.concat(Access.clauses(AspnetAccess.authorize(args, default), source, path, line_idx + 1))
+      if own_authorize?(path)
+        clauses << Access::Clause.unresolved(source, source, path, line_idx + 1)
+      else
+        clauses.concat(Access.clauses(AspnetAccess.authorize(args, default), source, path, line_idx + 1))
+      end
     end
     clauses
   end

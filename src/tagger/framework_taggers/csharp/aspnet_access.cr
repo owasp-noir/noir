@@ -18,6 +18,24 @@ module AspnetAccess
   LAMBDA        = /\A\(?\s*(\w+)\s*\)?\s*=>\s*(.+)\z/m
   BUILDER       = /\A\s*new\s+(?:[\w.]+\.)?AuthorizationPolicyBuilder\s*\(/
 
+  DEFAULT_POLICY = /\bDefaultPolicy\s*=(?![=>])[^;]*/
+
+  # A `DefaultPolicy = ...` assignment in `code`, without the `)` of the
+  # call it sits in.
+  def default_policy_assignment(code : String) : String?
+    text = code.match(DEFAULT_POLICY).try(&.[0].strip) || return
+    while text.ends_with?(')') && text.count(')') > text.count('(')
+      text = text.rchop(')').rstrip
+    end
+    text
+  end
+
+  # What the default policy requires: a signed-in user, unless the code
+  # replaces it (`assignment`), which noir does not follow.
+  def default_policy(assignment : String?) : Access::CNF
+    assignment ? [[Access::Atom.new(:unresolved, assignment)]] : AUTHENTICATED
+  end
+
   # The argument text of `[Authorize(...)]`, nil without parentheses.
   # ASP.NET's `AuthorizationPolicy.CombineAsync` adds the default policy only
   # when the attribute names neither roles nor a policy; `default` is what
@@ -72,15 +90,17 @@ module AspnetAccess
     cnf.empty? ? [[unresolved(source)]] : cnf
   end
 
-  FASTENDPOINTS_CALL = /\b(Roles|Permissions|PermissionsAll|Scopes|ScopesAll|Claims|ClaimsAll|Policies|Policy)\s*\(/
+  FASTENDPOINTS_CALL = /\b(Roles|Permissions|PermissionsAll|Scopes|ScopesAll|Claims|ClaimsAll|Policies|Policy|AuthSchemes)\s*\(/
 
   # A FastEndpoints `Configure()` body of an endpoint that does not allow
   # anonymous callers. Per FastEndpoints' `EndpointDefinition` and
   # `EndpointSecurityPolicies`, every call adds to one list per kind (the
   # last `X` / `XAll` call decides whether any or all of it is needed), the
   # endpoint policy always requires an authenticated user, and roles, each
-  # named policy and each policy builder apply on top of it.
-  def fastendpoints(block : String) : Access::CNF
+  # named policy and each policy builder apply on top of it. An endpoint
+  # calling none of them gets a bare `RequireAuthorization()` from
+  # `EndpointRouteMapper`: the default policy.
+  def fastendpoints(block : String, default : Access::CNF = AUTHENTICATED) : Access::CNF
     lexer = Noir::CSharpLexer.new(block)
     masked = lexer.masked_source
     roles = [] of Access::Atom
@@ -89,13 +109,16 @@ module AspnetAccess
       "Scopes"      => {[] of Access::Atom, true},
       "Claims"      => {[] of Access::Atom, true},
     }
-    cnf = AUTHENTICATED.dup
+    cnf = Access::CNF.new
+    secured = false
     masked.scan(FASTENDPOINTS_CALL) do |call|
+      secured = true
       open = call.end(0) - 1
       close = lexer.matching_delimiter(open) || next
       name = call[1]
       args = block[open + 1...close]
       case name
+      when "AuthSchemes"
       when "Roles"
         parts(args).each { |value| roles << atom(value, :role) }
       when "Policies"
@@ -117,7 +140,7 @@ module AspnetAccess
       next if values.empty?
       any ? (cnf << values) : values.each { |value| cnf << [value] }
     end
-    cnf
+    (secured ? AUTHENTICATED : default) + cnf
   end
 
   private def requirement(part : String, default : Access::CNF) : Access::CNF

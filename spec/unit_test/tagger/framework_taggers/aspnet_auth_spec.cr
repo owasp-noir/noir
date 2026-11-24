@@ -1110,6 +1110,51 @@ describe "AspnetAuthTagger requires" do
     unread_of(tags[0]).should eq([%(DefaultPolicy = new AuthorizationPolicyBuilder().RequireClaim("tenant").Build())])
   end
 
+  it "keeps an AuthorizeAttribute the project declares unread" do
+    files = {
+      "Auth/AuthorizeAttribute.cs" => <<-CS,
+        namespace App.Auth;
+        public class AuthorizeAttribute : Attribute, IAuthorizationFilter
+        {
+            public string Roles { get; set; }
+            public void OnAuthorization(AuthorizationFilterContext context) { }
+        }
+        CS
+      "Controllers.cs" => <<-CS,
+        using App.Auth;
+        public class ItemsController : ControllerBase
+        {
+            [Authorize(Roles = "Admin")]
+            [HttpGet("items")]
+            public IActionResult List() => Ok();
+        }
+        CS
+    }
+    tags = aspnet_tags(files, "Controllers.cs", 6)
+    tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)]"])
+    requires_of(tags[0]).should eq([["unresolved"]])
+    unread_of(tags[0]).should eq([%([Authorize(Roles = "Admin")])])
+  end
+
+  it "does not take a later route's AllowAnonymous for a controller action's" do
+    files = {"Controllers.cs" => <<-CS}
+      public class ItemsController : ControllerBase
+      {
+          [Authorize]
+          [HttpGet("a")]
+          public IActionResult A()
+          {
+              return Ok();
+          }
+
+          void Map(IEndpointRouteBuilder app) { app.MapGet("/x", () => 1).AllowAnonymous(); }
+      }
+      CS
+    tags = aspnet_tags(files, "Controllers.cs", 5)
+    tags.map(&.description).should eq(["Protected by ASP.NET [Authorize]"])
+    requires_of(tags[0]).should eq([["authenticated"]])
+  end
+
   it "reads an in-action refusal a permission setting can lift as unread only" do
     files = {"Controllers.cs" => <<-CS}
       public class ItemsController : Controller
