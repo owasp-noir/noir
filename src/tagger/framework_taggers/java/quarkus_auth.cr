@@ -4,7 +4,9 @@ require "./java_access"
 
 @[Noir::TaggerFor(key: "quarkus_auth", name: "Quarkus Auth Tagger", desc: "Identifies Quarkus authentication annotations and HTTP permission policies", order: 255)]
 class QuarkusAuthTagger < FrameworkTagger
-  record PermissionRule, root : String, paths : Array(String), policy : String, methods : Array(String), name : String, file : String, shared : Bool
+  record PermissionRule, root : String, paths : Array(String), policy : String, methods : Array(String), name : String, file : String, shared : Bool, enabled : Bool
+  # A config line noir does not read that may change who is admitted.
+  record UnreadSetting, root : String, file : String, text : String
   record Decision, public_access : Bool, description : String, access : Array(Access::Clause)
   # The Keycloak policy enforcer settings of one properties file: on, it
   # refuses every path but the `enforcement-mode=DISABLED` ones. `primary`
@@ -14,16 +16,22 @@ class QuarkusAuthTagger < FrameworkTagger
   # Method annotations override the class. A restricting annotation wins over
   # `@PermitAll` on the same member. `@PermitAll` is public; the others guard.
   SECURITY_ANNOTATION = /@([\w.]*\.)?(Authenticated|DenyAll|PermitAll|RolesAllowed|PermissionsAllowed)\b/
-  PERMISSION_KEY      = /\Aquarkus\.http\.auth\.permission\.([^.]+)\.(paths|policy|methods|shared)\z/
-  POLICY_KEY          = /\Aquarkus\.http\.auth\.policy\.([^.]+)\.(.+)\z/
-  PERMISSION_CHECKER  = /@(?:[\w.]*\.)?PermissionChecker\s*\(\s*(?:value\s*=\s*)?("(?:[^"\\]|\\.)*")?/
-  ENFORCER_KEY        = /\Aquarkus\.keycloak\.policy-enforcer\.(?:(enable|enforcement-mode)|paths\.("[^"]*"|[^.]+)\.(paths?|enforcement-mode|methods\.[^.]+\.scopes-enforcement-mode))\z/
+  PERMISSION_KEY      = /\Aquarkus\.http\.auth\.permission\.([^.]+)\.(paths|policy|methods|shared|enabled)\z/
+  # Build-time defaults for Jakarta REST endpoints without a security annotation.
+  UNANNOTATED_KEY    = /\Aquarkus\.security\.(?:jaxrs\.deny-unannotated-endpoints|jaxrs\.default-roles-allowed|deny-unannotated-members)\z/
+  PROFILED_KEY       = /\A%[^.]+\.quarkus\.(?:http\.auth|security|keycloak\.policy-enforcer)\./
+  POLICY_KEY         = /\Aquarkus\.http\.auth\.policy\.([^.]+)\.(.+)\z/
+  PERMISSION_CHECKER = /@(?:[\w.]*\.)?PermissionChecker\s*\(\s*(?:value\s*=\s*)?("(?:[^"\\]|\\.)*")?/
+  ENFORCER_KEY       = /\Aquarkus\.keycloak\.policy-enforcer\.(?:(enable|enforcement-mode)|paths\.("[^"]*"|[^.]+)\.(paths?|enforcement-mode|methods\.[^.]+\.scopes-enforcement-mode))\z/
 
   @rules = [] of PermissionRule
   @enforcers = [] of PolicyEnforcer
   # The `roles-allowed` of each `{root, name}` role policy, nil when unset.
   @policies = Hash({String, String}, String?).new
   @checkers : Set(String)? = Set(String).new
+  @unannotated = [] of UnreadSetting
+  @profiled = [] of UnreadSetting
+  @programmatic = [] of String
 
   def self.target_techs : Array(String)
     ["java_quarkus"]
@@ -64,7 +72,7 @@ class QuarkusAuthTagger < FrameworkTagger
       policy, pattern = permission
       unless policy.downcase == "permit"
         description = "Protected by Quarkus permission policy #{policy} (#{pattern})"
-        endpoint.add_tag(Tag.new("auth", description, "quarkus_auth", requires: JavaAccess.signed_in(config_layer(endpoint), description)))
+        endpoint.add_tag(Tag.new("auth", description, "quarkus_auth", requires: JavaAccess.signed_in(config_layer(endpoint, public_annotation), description)))
       end
     elsif enforced?(endpoint)
       endpoint.add_tag(Tag.new("auth", "Protected by Quarkus Keycloak policy enforcer", "quarkus_auth"))
@@ -185,21 +193,38 @@ class QuarkusAuthTagger < FrameworkTagger
   # The permission names app `@PermissionChecker` methods decide; nil when
   # one names its permission with anything but a literal.
   private def load_checkers : Set(String)?
+    @programmatic.clear
     names = Set(String).new
+    unread = false
     {".java", ".kt"}.flat_map { |ext| collect_files_by_extension(ext) }.each do |file|
-      next unless (content = read_file(file)) && content.includes?("PermissionChecker")
+      next unless content = read_file(file)
+      # `HttpSecurity` observers define path policies in code.
+      @programmatic << file if content.includes?("HttpSecurity") && content.matches?(/@Observes\s+(?:[\w.]+\.)?HttpSecurity\b/)
+      next unless content.includes?("PermissionChecker")
       Noir::CComments.strip(content).scan(PERMISSION_CHECKER) do |found|
-        return unless literal = found[1]?
-        names << literal[1...-1]
+        if literal = found[1]?
+          names << literal[1...-1]
+        else
+          unread = true
+        end
       end
     end
-    names
+    names unless unread
   end
 
-  # The HTTP permissions and the policy enforcer that apply to the endpoint.
-  private def config_layer(endpoint : Endpoint) : Array(Access::Clause)
+  # The HTTP permissions and the policy enforcer that apply to the endpoint,
+  # and the settings noir does not read that may: a profile override (it
+  # depends on the profile the app runs under), a code-defined policy, and
+  # for an endpoint without a security annotation the Jakarta REST defaults.
+  private def config_layer(endpoint : Endpoint, annotated : Bool = true) : Array(Access::Clause)
     clauses = [] of Access::Clause
     files = endpoint.details.code_paths.map(&.path)
+    settings = annotated ? @profiled : @profiled + @unannotated
+    settings.each do |setting|
+      next unless files.any? { |file| Noir::PathScope.under_root?(file, setting.root) }
+      clauses << Access::Clause.unresolved(setting.text, setting.text, setting.file)
+    end
+    @programmatic.each { |file| clauses << Access::Clause.unresolved("@Observes HttpSecurity", "@Observes HttpSecurity", file) }
     verb = endpoint.method.upcase
     matched = [] of {PermissionRule, String, Int32}
     @rules.each do |rule|
@@ -223,7 +248,11 @@ class QuarkusAuthTagger < FrameworkTagger
       permit = !winners.empty? && winners.all? { |rule, _, _| rule.policy.downcase == "permit" }
       matched.each do |rule, _, score|
         source = "quarkus.http.auth.permission.#{rule.name}.policy=#{rule.policy}"
-        if rule.shared || (score == best && patterns.size == 1)
+        if !rule.enabled && (rule.shared || score == best)
+          # Off in config, and turned back on by a system property at run time.
+          key = "quarkus.http.auth.permission.#{rule.name}.enabled=false"
+          clauses << Access::Clause.unresolved(key, key, rule.file)
+        elsif rule.shared || (score == best && patterns.size == 1)
           # All permissions of the most specific path apply, and every
           # shared one too.
           cnf = rule.policy.empty? ? [[Access::Atom.new(:unresolved, source)]] : JavaAccess.quarkus_policy(rule.policy, @policies[{rule.root, rule.policy}]?, @policies.has_key?({rule.root, rule.policy}))
@@ -248,6 +277,8 @@ class QuarkusAuthTagger < FrameworkTagger
     rules = [] of PermissionRule
     @enforcers.clear
     @policies.clear
+    @unannotated.clear
+    @profiled.clear
     get_files_by_basename("application.properties").each do |path|
       next unless @base_paths.any? { |base| Noir::PathScope.under_root?(path, base) }
       content = read_file(path)
@@ -263,7 +294,11 @@ class QuarkusAuthTagger < FrameworkTagger
         next unless separator
         key = stripped[...separator].strip
         value = stripped[(separator + 1)..].strip
-        if match = key.match(PERMISSION_KEY)
+        if key.matches?(PROFILED_KEY)
+          @profiled << UnreadSetting.new(config_root(path), path, "#{key}=#{value}")
+        elsif key.matches?(UNANNOTATED_KEY)
+          @unannotated << UnreadSetting.new(config_root(path), path, "#{key}=#{value}")
+        elsif match = key.match(PERMISSION_KEY)
           grouped[match[1]][match[2]] = value
         elsif match = key.match(POLICY_KEY)
           policy = {config_root(path), match[1]}
@@ -294,7 +329,7 @@ class QuarkusAuthTagger < FrameworkTagger
         paths = fields["paths"]?.to_s.split(',').map(&.strip).reject(&.empty?)
         next if paths.empty?
         methods = fields["methods"]?.to_s.split(',').map(&.strip.upcase).reject(&.empty?)
-        rules << PermissionRule.new(root, paths, fields["policy"]?.to_s.strip, methods, name, path, fields["shared"]?.try(&.downcase) == "true")
+        rules << PermissionRule.new(root, paths, fields["policy"]?.to_s.strip, methods, name, path, fields["shared"]?.try(&.downcase) == "true", fields["enabled"]?.try(&.downcase) != "false")
       end
     end
     rules

@@ -255,4 +255,33 @@ describe "QuarkusAuthTagger" do
       ["authenticated", "(permission:read | unresolved)"],
     ])
   end
+
+  it "keeps the settings it does not read unread: profile overrides, disabled permissions, Jakarta REST defaults and code-defined policies" do
+    quarkus_requires([
+      "@Path(\"/api\")",                               # 1
+      "public class ItemResource {",                   # 2
+      "  @GET",                                        # 3
+      "  @Path(\"/items\")",                           # 4
+      "  public String items() { return \"items\"; }", # 5
+      "  @GET",                                        # 6
+      "  @Path(\"/roles\")",                           # 7
+      "  @RolesAllowed(\"user\")",                     # 8
+      "  public String roles() { return \"roles\"; }", # 9
+      "}",                                             # 10
+    ], [
+      "quarkus.http.auth.permission.api.paths=/api/*",
+      "quarkus.http.auth.permission.api.policy=authenticated",
+      "%prod.quarkus.http.auth.permission.api.policy=deny",
+      "quarkus.http.auth.permission.old.paths=/api/roles",
+      "quarkus.http.auth.permission.old.policy=deny",
+      "quarkus.http.auth.permission.old.enabled=false",
+      "quarkus.security.jaxrs.deny-unannotated-endpoints=true",
+    ], {3 => "/api/items", 6 => "/api/roles"}, {"Security.java" => "class Security {\n  void configure(@Observes HttpSecurity httpSecurity) {}\n}"}).should eq([
+      # The profile override, the Jakarta REST default, the observer, then `api`.
+      ["unresolved", "unresolved", "unresolved", "authenticated"],
+      # The Jakarta REST default needs an endpoint without annotations; the
+      # disabled `old` hides which permission applies.
+      ["role:user", "unresolved", "unresolved", "unresolved"],
+    ])
+  end
 end
