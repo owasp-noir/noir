@@ -112,7 +112,8 @@ class FastAPIAuthTagger < FrameworkTagger
   end
 
   # `parent.include_router(target, ..., dependencies=[...])` in `file`.
-  private record IncludeCall, file : String, parent : String, target : String, dependencies : String?, line : Int32
+  # `prefix` is nil when it is not a string literal.
+  private record IncludeCall, file : String, parent : String, target : String, dependencies : String?, line : Int32, prefix : String?
   # `self.app.include_router(...)` is indexed too: its parent never
   # resolves, so that mount counts as one without a dependency.
   INCLUDE_ROUTER_CALL = /^\s*([\w.]+?)\s*\.\s*include_router\s*\(/
@@ -251,7 +252,8 @@ class FastAPIAuthTagger < FrameworkTagger
       next if description.nil? && authz.nil?
 
       route_path = path_info.path
-      @pending << {endpoint, -> { dependency_tags(description, authz, header, receiver, lines, line_num - 1, route_path) }}
+      url = endpoint.url
+      @pending << {endpoint, -> { dependency_tags(description, authz, header, receiver, lines, line_num - 1, route_path, url) }}
       return
     end
     if tag = http_middleware_guard(endpoint)
@@ -275,14 +277,14 @@ class FastAPIAuthTagger < FrameworkTagger
   # requires. Every layer applies, so each contributes, though the text
   # names only the first guard found. With one tag emitted it carries all
   # the clauses.
-  private def dependency_tags(description : String?, authz : String?, header : String, receiver : String?, lines : Array(String), idx : Int32, path : String) : Array(Tag)
+  private def dependency_tags(description : String?, authz : String?, header : String, receiver : String?, lines : Array(String), idx : Int32, path : String, url : String) : Array(Tag)
     own = [{header, path}]
     own.concat(router_statement(lines, receiver, path, idx)) if receiver
     own.concat(class_dependencies(lines, idx, path))
     own.concat(own.flat_map { |text, file| dependency_variables(text, file, file == path ? {lines, idx} : nil) })
     auth, guard = scope_requires(own)
     if receiver
-      mounted_auth, mounted_guard = include_requires(path, receiver, 0)
+      mounted_auth, mounted_guard = mount_requires(path, receiver, header, lines, idx, url)
       auth += mounted_auth
       guard += mounted_guard
     end
@@ -332,24 +334,102 @@ class FastAPIAuthTagger < FrameworkTagger
     {auth, guard}
   end
 
-  # The requirement of each mount chain of router `receiver`. FastAPI serves
-  # its routes under every mount, so with several the route requires one
-  # chain's dependencies or another's.
-  private def include_requires(path : String, receiver : String, depth : Int32) : {Array(Access::Clause), Array(Access::Clause)}
-    return {NO_CLAUSES, NO_CLAUSES} if depth > 6 || include_dependencies(path, receiver).empty?
-    chains = (includes_by_site[{path, receiver}]? || [] of IncludeCall).map do |call|
-      scopes = [] of {String, String}
+  MAX_MOUNTS     = 32
+  ROUTE_PATH_ARG = /\A\s*@\s*\w+\s*\.\s*\w+\s*\(\s*(?:path\s*=\s*)?([rRuU]?(?:"[^"\n]*"|'[^'\n]*'))/
+
+  # What the include_router mounts serving this route require. FastAPI
+  # copies a router's routes into each mount, so each URL is served by the
+  # mount whose prefixes build it. A URL no single mount accounts for is
+  # one Starlette serves through the first matching route, which this does
+  # not settle: it requires one of the candidate mounts, read as unresolved.
+  private def mount_requires(path : String, receiver : String, header : String, lines : Array(String), idx : Int32, url : String) : {Array(Access::Clause), Array(Access::Clause)}
+    mounts = [] of Array(IncludeCall)
+    unless collect_mounts(path, receiver, [] of IncludeCall, mounts)
+      note = "#{receiver} mounted by more than #{MAX_MOUNTS} include_router chains"
+      return {[Access::Clause.new([AUTHENTICATED], note, path), Access::Clause.unresolved(note, note, path)], NO_CLAUSES}
+    end
+    return {NO_CLAUSES, NO_CLAUSES} if mounts.empty?
+    candidates = serving_mounts(mounts, path, receiver, header, idx, url)
+    return mount_clauses(candidates[0]) if candidates.size == 1
+    note = "#{receiver} served by one of #{candidates.size} include_router mounts"
+    floor = candidates.all? do |mount|
+      auth, guard = mount_clauses(mount)
+      (auth + guard).any? { |clause| clause.any_of.all? { |atom| atom.kind.authenticated? || atom.kind.role? || atom.kind.permission? || atom.kind.scope? } }
+    end
+    clauses = [Access::Clause.unresolved(note, note, path)]
+    clauses.unshift(Access::Clause.new([AUTHENTICATED], note, path)) if floor
+    {clauses, NO_CLAUSES}
+  end
+
+  # Every chain of include_router calls from router `receiver` up to a
+  # router nothing includes, innermost first. false past `MAX_MOUNTS`.
+  private def collect_mounts(file : String, receiver : String, trail : Array(IncludeCall), found : Array(Array(IncludeCall))) : Bool
+    calls = (includes_by_site[{file, receiver}]? || [] of IncludeCall).reject { |call| trail.includes?(call) }
+    if calls.empty?
+      found << trail unless trail.empty?
+      return found.size <= MAX_MOUNTS
+    end
+    return false if trail.size >= 6
+    calls.all? { |call| collect_mounts(call.file, call.parent, trail + [call], found) }
+  end
+
+  # The mounts whose prefixes, with the route's own router prefix and path,
+  # build `url`; failing that, those whose prefix starts it; failing that,
+  # all. A mount with a prefix that is not a literal stays a candidate.
+  private def serving_mounts(mounts : Array(Array(IncludeCall)), path : String, receiver : String, header : String, idx : Int32, url : String) : Array(Array(IncludeCall))
+    target = normalize_url(url.sub(/\A[a-zA-Z][\w+.-]*:\/\/[^\/]*/, ""))
+    pairs = mounts.map { |mount| {mount, mount_prefix(mount)} }
+    unknown = pairs.select { |_, prefix| prefix.nil? }.map(&.[0])
+    route = header.match(ROUTE_PATH_ARG).try { |m| FastAPIAccess.literal(m[1]) }
+    own = router_prefix(path, receiver, idx)
+    if route && own
+      exact = pairs.select { |_, prefix| prefix && normalize_url(prefix + own + route) == target }.map(&.[0])
+      return exact + unknown unless exact.empty?
+    end
+    starting = pairs.select do |_, prefix|
+      next false unless prefix
+      prefix = normalize_url(prefix)
+      prefix == "/" || target == prefix || target.starts_with?("#{prefix}/")
+    end.map(&.[0])
+    starting.empty? ? mounts : starting + unknown
+  end
+
+  private def normalize_url(url : String) : String
+    url = url.gsub(%r{/+}, "/")
+    url = url.rchop('/') if url.size > 1
+    url.empty? ? "/" : url
+  end
+
+  # The URL prefix a mount chain puts before its router's routes: each
+  # include's `prefix=` after the prefix of the router it is included in.
+  private def mount_prefix(mount : Array(IncludeCall)) : String?
+    built = ""
+    mount.each do |call|
+      prefix = call.prefix || return
+      parent = router_prefix(call.file, call.parent, call.line) || return
+      built = parent + prefix + built
+    end
+    built
+  end
+
+  # The `prefix=` a router or app named `name` is built with in `file`: ""
+  # without one, nil when it is not a literal or the router is not found.
+  private def router_prefix(file : String, name : String, idx : Int32) : String?
+    lines = read_file_lines(file) || return
+    statement = router_statement(lines, name, file, idx).first? || return
+    value = statement[0].match(/\bprefix\s*=\s*([^,)\n]+)/).try(&.[1]) || return ""
+    FastAPIAccess.literal(value)
+  end
+
+  # `{auth, authz}` clauses of the dependencies one mount chain applies.
+  private def mount_clauses(mount : Array(IncludeCall)) : {Array(Access::Clause), Array(Access::Clause)}
+    scopes = [] of {String, String}
+    mount.each do |call|
       call.dependencies.try { |dependencies| scopes << {dependencies, call.file} }
       read_file_lines(call.file).try { |lines| scopes.concat(router_statement(lines, call.parent, call.file, call.line)) }
-      scopes.concat(scopes.flat_map { |text, file| dependency_variables(text, file) })
-      auth, guard = scope_requires(scopes)
-      parent_auth, parent_guard = include_requires(call.file, call.parent, depth + 1)
-      {auth + parent_auth, guard + parent_guard}
     end
-    return {NO_CLAUSES, NO_CLAUSES} if chains.empty?
-    return chains[0] if chains.size == 1
-    cnf = chains.map { |auth, guard| (auth + guard).map(&.any_of) }.reduce { |left, right| Access.either(left, right) }
-    {Access.clauses(cnf, "#{receiver} mounted by #{chains.size} include_router calls", path), NO_CLAUSES}
+    scopes.concat(scopes.flat_map { |text, file| dependency_variables(text, file) })
+    scope_requires(scopes)
   end
 
   # `{auth, authz}` clauses of each `Depends(...)` / `Security(...)`, each
@@ -1785,8 +1865,9 @@ class FastAPIAuthTagger < FrameworkTagger
                parts.find { |part| !part.empty? && !part.includes?('=') }
       next unless target && target.matches?(/\A[\w.]+\z/)
       dependencies = parts.find(&.matches?(/\Adependencies\s*=/))
+      prefix = parts.find(&.matches?(/\Aprefix\s*=/)).try { |part| FastAPIAccess.literal(part.partition('=')[2]) } || (parts.any?(&.matches?(/\Aprefix\s*=/)) ? nil : "")
       (loop_items(lines, idx, target) || [target]).each do |item|
-        @include_calls << IncludeCall.new(path, parent, item, dependencies, idx)
+        @include_calls << IncludeCall.new(path, parent, item, dependencies, idx, prefix)
       end
     end
   end

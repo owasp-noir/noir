@@ -2,9 +2,9 @@ require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
-# Writes `files` under a temp dir and tags the route of `main.py` whose
-# decorator names `url`.
-private def fastapi_endpoint(files : Hash(String, String), url : String) : Endpoint
+# Writes `files` under a temp dir and tags endpoint `url` of the route in
+# `main.py` whose decorator names `route` (default: `url`).
+private def fastapi_endpoint(files : Hash(String, String), url : String, route : String = url) : Endpoint
   CodeLocator.instance.clear_all
   tmpdir = File.tempname("fastapi_requires")
   Dir.mkdir_p(tmpdir)
@@ -13,7 +13,7 @@ private def fastapi_endpoint(files : Hash(String, String), url : String) : Endpo
     File.write(path, source)
     CodeLocator.instance.register_path(path)
   end
-  line = files["main.py"].lines.index!(&.matches?(/^\s*@\s*\w+\.\w+\(\s*"#{Regex.escape(url)}"/)) + 1
+  line = files["main.py"].lines.index!(&.matches?(/^\s*@\s*\w+\.\w+\(\s*"#{Regex.escape(route)}"/)) + 1
   options = create_test_options
   options["base"] = YAML::Any.new(tmpdir)
   details = Details.new(PathInfo.new(File.join(tmpdir, "main.py"), line))
@@ -26,8 +26,8 @@ private def fastapi_endpoint(files : Hash(String, String), url : String) : Endpo
 end
 
 # `{name => sorted clause atoms}` of the route's fastapi_auth tags.
-private def fastapi_requires(files : Hash(String, String), url : String) : Hash(String, Array(Array(String)))
-  fastapi_endpoint(files, url).tags.select(&.tagger.==("fastapi_auth")).to_h do |tag|
+private def fastapi_requires(files : Hash(String, String), url : String, route : String = url) : Hash(String, Array(Array(String)))
+  fastapi_endpoint(files, url, route).tags.select(&.tagger.==("fastapi_auth")).to_h do |tag|
     {tag.name, (tag.requires || [] of Access::Clause).map(&.any_of.map(&.to_s).sort!).sort!}
   end
 end
@@ -277,25 +277,76 @@ describe "FastAPIAuthTagger requires" do
     (authz.requires || [] of Access::Clause).map(&.any_of.map(&.value)).should eq([["item.owner_id != current_user.id"]])
   end
 
-  it "requires one mount's dependencies or another's for a router mounted twice" do
+  it "reads each mount of a router by the prefix that serves the URL" do
+    main = <<-PY
+      from fastapi import APIRouter, Depends, FastAPI, HTTPException
+      from users import get_current_user
+
+      def require_admin(user=Depends(get_current_user)):
+          if user.role != "admin":
+              raise HTTPException(status_code=403)
+
+      def require_staff(user=Depends(get_current_user)):
+          if user.role != "staff":
+              raise HTTPException(status_code=403)
+
+      app = FastAPI()
+      shared = APIRouter(dependencies=[Depends(get_current_user)])
+
+      @shared.get("/ping")
+      async def ping():
+          return {}
+
+      app.include_router(shared, prefix="/v1")
+      app.include_router(shared, prefix="/staff", dependencies=[Depends(require_staff)])
+      app.include_router(shared, prefix="/admin", dependencies=[Depends(require_admin)])
+      PY
+    files = {"users.py" => FASTAPI_REQUIRES_USERS, "main.py" => main}
+    every_clause = ->(url : String) { fastapi_requires(files, url, "/ping").values.sum([] of Array(String)).uniq.sort! }
+    every_clause.call("/admin/ping").should eq([["authenticated"], ["role:admin"]])
+    every_clause.call("/staff/ping").should eq([["authenticated"], ["role:staff"]])
+    # The open mount brings nothing of the others.
+    every_clause.call("/v1/ping").should eq([["authenticated"]])
+  end
+
+  it "keeps an unresolved alternative when it cannot tell which mount serves the URL" do
     main = <<-PY
       from fastapi import APIRouter, Depends, FastAPI
-      from fastapi.security import HTTPBearer
       from users import get_current_user
 
       app = FastAPI()
-      bearer = HTTPBearer(auto_error=False)
       shared = APIRouter()
 
-      @shared.get("/shared")
-      async def shared_route():
+      @shared.get("/ping")
+      async def ping():
           return {}
 
-      app.include_router(shared, prefix="/a", dependencies=[Depends(get_current_user)])
-      app.include_router(shared, prefix="/b", dependencies=[Security(get_current_user, scopes=["b"])])
+      app.include_router(shared, prefix=V1, dependencies=[Depends(get_current_user)])
+      app.include_router(shared, prefix=V2, dependencies=[Security(get_current_user, scopes=["b"])])
       PY
-    fastapi_requires({"users.py" => FASTAPI_REQUIRES_USERS, "main.py" => main}, "/shared")["auth"]
-      .should eq([["authenticated"], ["authenticated", "scope:b"]])
+    fastapi_requires({"users.py" => FASTAPI_REQUIRES_USERS, "main.py" => main}, "/x/ping", "/ping")["auth"]
+      .should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "reads a router mounted many times without blowing up" do
+    mounts = (0...12).map { |i| %(app.include_router(shared, prefix="/p#{i}", dependencies=[Security(get_current_user, scopes=["a#{i}", "b#{i}", "c#{i}"])])) }.join('\n')
+    main = <<-PY
+      from fastapi import APIRouter, FastAPI, Security
+      from users import get_current_user
+
+      app = FastAPI()
+      shared = APIRouter()
+
+      @shared.get("/x")
+      async def x():
+          return {}
+
+      #{mounts}
+      PY
+    started = Time.instant
+    requires = fastapi_requires({"users.py" => FASTAPI_REQUIRES_USERS, "main.py" => main}, "/p7/x", "/x")
+    (Time.instant - started).should be < 5.seconds
+    (requires["auth"]? || requires["authz"]).should contain(["scope:a7"])
   end
 
   it "marks a dependency a setting can lift" do
