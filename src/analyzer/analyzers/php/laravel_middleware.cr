@@ -310,17 +310,33 @@ module Analyzer::Php
         cnf
       elsif yield
         [[Access::Atom.new(:authenticated)], [Access::Atom.new(:unresolved, entry)]]
-      elsif LaravelAccess.non_access?(entry, klass) || read_class?(klass, root)
+      elsif LaravelAccess.non_access?(entry, klass)
         nil
+      elsif (outside = decided_outside(klass, root)) == ""
+        nil
+      elsif outside
+        LaravelAccess.middleware(entry, outside) || (LaravelAccess.non_access?(entry, outside) ? nil : [[Access::Atom.new(:unresolved, entry)]])
       else
         [[Access::Atom.new(:unresolved, entry)]]
       end
     end
 
-    # An app class whose file noir read and found no refusal in.
-    private def read_class?(klass : String?, root : String) : Bool
-      return false unless klass
-      !!(path = app_class_path(klass.partition(':')[0], root)) && File.exists?(path)
+    # Where an app middleware class's check lives: "" when noir read it in
+    # the app's own code (a `handle()` that does not defer to its parent),
+    # else the first ancestor outside the app, which it inherits `handle()`
+    # from. Nil when the class is not an app class noir can open.
+    private def decided_outside(klass : String?, root : String, depth : Int32 = 0) : String?
+      return unless klass && depth < 4
+      fqcn = klass.partition(':')[0].lchop('\\')
+      path = app_class_path(fqcn, root)
+      return (depth > 0 ? fqcn : nil) unless path && File.exists?(path)
+      content = php_code(read_file_content(path))
+      handle = declared_method(Noir::PhpBlockParser.new(content), "handle")
+      return "" if handle && !handle.includes?("parent::handle")
+      parent = content.match(/\bclass\s+\w+\s+extends\s+(\\?[\w\\]+)/).try do |m|
+        qualify_class(m[1], parse_use_imports(content), content.match(/\bnamespace\s+([\w\\]+)\s*;/).try(&.[1]))
+      end
+      parent ? decided_outside(parent, root, depth + 1) : ""
     end
 
     # The class an alias entry (`role:admin`) or class entry names.

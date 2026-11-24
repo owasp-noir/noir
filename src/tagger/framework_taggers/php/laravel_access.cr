@@ -65,6 +65,14 @@ module LaravelAccess
     "Fruitcake\\Cors\\HandleCors",
   }
 
+  # The framework's classes that do decide who may call.
+  ACCESS_CLASSES = Set{
+    "Illuminate\\Auth\\Middleware\\Authenticate",
+    "Illuminate\\Auth\\Middleware\\AuthenticateWithBasicAuth",
+    "Illuminate\\Auth\\Middleware\\Authorize",
+    "Illuminate\\Auth\\Middleware\\RedirectIfAuthenticated",
+  }
+
   # The framework's default groups; an app that lists them adds members.
   DEFAULT_GROUPS = Set{"web", "api"}
 
@@ -110,6 +118,7 @@ module LaravelAccess
     klass ||= BUILTIN_CLASSES[name]?
     return DEFAULT_GROUPS.includes?(name) unless klass
     klass = klass.lchop('\\').partition(':')[0]
+    return false if ACCESS_CLASSES.includes?(klass)
     klass.starts_with?("Illuminate\\") || NON_ACCESS_CLASSES.includes?(klass)
   end
 

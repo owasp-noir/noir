@@ -21,6 +21,8 @@ private KERNEL = <<-'PHP'
           'scope' => \Laravel\Passport\Http\Middleware\CheckForAnyScope::class,
           'legacy' => \Zizaco\Entrust\Middleware\EntrustRole::class,
           'member' => \App\Http\Middleware\MemberOnly::class,
+          'checkrole' => \App\Http\Middleware\CheckRole::class,
+          'wrapped' => \App\Http\Middleware\Wrapped::class,
       ];
   }
   PHP
@@ -61,6 +63,8 @@ private ROUTES = <<-'PHP'
           Route::get('/group-without', fn () => 1);
       });
   });
+  Route::get('/inherited', fn () => 1)->middleware(['auth', 'checkrole:admin']);
+  Route::get('/wrapped', fn () => 1)->middleware(['auth', 'wrapped']);
   Route::get('/unbalanced', fn () => 1)->middleware(['auth', 'can:x'
   Route::get('/next', fn () => 1)->middleware(['auth', 'role:admin']);
   PHP
@@ -78,6 +82,19 @@ private MEMBER_ONLY = <<-'PHP'
           return $next($request);
       }
   }
+  PHP
+
+private CHECK_ROLE = <<-'PHP'
+  <?php
+  namespace App\Http\Middleware;
+  use Spatie\Permission\Middleware\RoleMiddleware;
+  class CheckRole extends RoleMiddleware {}
+  PHP
+
+private WRAPPED = <<-'PHP'
+  <?php
+  namespace App\Http\Middleware;
+  class Wrapped extends \Acme\Gate {}
   PHP
 
 private DOC_CONTROLLER = <<-'PHP'
@@ -108,6 +125,8 @@ private def scan_laravel : Array(Endpoint)
     FileUtils.mkdir_p(File.join(root, "app/Http/Middleware"))
     FileUtils.mkdir_p(File.join(root, "app/Http/Controllers"))
     File.write(File.join(root, "app/Http/Middleware/MemberOnly.php"), MEMBER_ONLY)
+    File.write(File.join(root, "app/Http/Middleware/CheckRole.php"), CHECK_ROLE)
+    File.write(File.join(root, "app/Http/Middleware/Wrapped.php"), WRAPPED)
     File.write(File.join(root, "app/Http/Controllers/DocController.php"), DOC_CONTROLLER)
     FileUtils.mkdir_p(File.join(root, "routes"))
     File.write(File.join(root, "composer.json"), %({"require": {"laravel/framework": "^10.0"}}))
@@ -187,6 +206,11 @@ describe "Laravel route requires" do
 
   it "reads a custom middleware judged to refuse guests as signed in plus unread" do
     requires_of("/member").should eq({"auth" => [["authenticated"], ["unresolved"]]})
+  end
+
+  it "reads an app middleware by the vendor class it inherits handle() from" do
+    requires_of("/inherited").should eq({"auth" => [["authenticated"], ["role:admin"]]})
+    requires_of("/wrapped").should eq({"auth" => [["authenticated"], ["unresolved"]]})
   end
 
   it "lifts what an enclosing group withdraws" do
