@@ -29,6 +29,7 @@ class EndpointOptimizer
   # Proxy configs whose `ANY` route is folded into the code routes at its
   # path (`expand_proxy_routes`).
   PROXY_ROUTE_TECHNOLOGIES = Set{"k8s_ingress", "envoy"}
+  SPEC_ONLY_ACCESS_TAGGERS = SPEC_ONLY_TECHNOLOGIES.map { |technology| Tag.declared_access_tagger(technology) }.to_set
 
   # `:id`, `:id?`, `:id(\d+)`, `*`, `*path`, `{id}`, `<int:id>`, `[id]`.
   AI_FOLD_PLACEHOLDER_RE = /\A(?::\w.*|\*\w*|\{[^}]*\}|<[^>]*>|\[[^\]]*\])\z/
@@ -848,35 +849,46 @@ class EndpointOptimizer
       end
     end
 
-    return unless technology = source.details.technology
-    # The first declaration of this technology brings its guard in as is.
-    return unless target.details.technologies.includes?(technology)
-
-    tagger = Tag.declared_access_tagger(technology)
-    guarded = ->(endpoint : Endpoint) { endpoint.tags.any? { |tag| tag.name == "auth" && tag.tagger == tagger } }
-    if guarded.call(target) && guarded.call(source)
-      join_declared_requires(target, source, tagger)
-      return
+    # The first declaration of a technology brings its guard in as is.
+    technology = source.details.technology
+    if technology && target.details.technologies.includes?(technology)
+      tagger = Tag.declared_access_tagger(technology)
+      guard = ->(tag : Tag) { tag.name == "auth" && tag.tagger == tagger }
+      if target.tags.any?(&guard) && source.tags.any?(&guard)
+        join_declared_requires(target, source, guard) unless SPEC_ONLY_TECHNOLOGIES.includes?(technology)
+      else
+        target.tags.reject!(&guard)
+        source.tags.reject!(&guard)
+      end
     end
 
-    target.tags.reject! { |tag| tag.name == "auth" && tag.tagger == tagger }
-    source.tags.reject! { |tag| tag.name == "auth" && tag.tagger == tagger }
+    # A Swagger 2 and an OpenAPI 3 document of one route are alternatives
+    # like two documents of one contract.
+    join_declared_requires(target, source, ->(tag : Tag) { SPEC_ONLY_ACCESS_TAGGERS.includes?(tag.tagger) })
   end
 
   # Each declaration guards the calls it routes, so a caller either one
-  # admits reaches the merged row. Every guard tag of the row carries the
-  # joined requirement, which also lets `merge_tag` fold two tags with one
-  # text into one, as it did before tags carried `requires`.
-  private def join_declared_requires(target : Endpoint, source : Endpoint, tagger : String) : Nil
-    guard = ->(tag : Tag) { tag.name == "auth" && tag.tagger == tagger }
-    return if (target.tags + source.tags).none? { |tag| guard.call(tag) && tag.requires }
+  # admits reaches the merged row. Every access tag `selects` of the row
+  # carries the joined requirement, which also lets `merge_tag` fold two
+  # tags with one text into one, as it did before tags carried `requires`.
+  private def join_declared_requires(target : Endpoint, source : Endpoint, selects : Tag -> Bool) : Nil
+    side = ->(endpoint : Endpoint) { endpoint.tags.select(&selects).flat_map { |tag| Access.of(tag) }.uniq! }
+    sides = {side.call(target), side.call(source)}
+    return if sides.any?(&.empty?) || (target.tags + source.tags).none? { |tag| selects.call(tag) && tag.requires }
 
-    cnf = ->(endpoint : Endpoint) { endpoint.tags.select(&guard).flat_map { |tag| Access.of(tag) }.map(&.any_of).uniq! }
-    joined = Access.either(cnf.call(target), cnf.call(source))
+    joined = Access.either(sides[0].map(&.any_of), sides[1].map(&.any_of))
+    # Past the cap the requirement is the guard's text, which still refuses
+    # anonymous callers when both sides do.
+    floor = joined.size > Access::MAX_CLAUSES && sides.all? { |clauses| Access.cell(clauses, Access::Atom.new(:anonymous)) == false }
     {target, source}.each do |endpoint|
       endpoint.tags.map! do |tag|
-        next tag unless guard.call(tag)
-        tag.requires = Access.clauses(joined, tag.description, tag.path, tag.line)
+        next tag unless selects.call(tag)
+        tag.requires = if floor
+                         [Access::Clause.new([Access::Atom.new(:authenticated)], tag.description, tag.path, tag.line),
+                          Access::Clause.unresolved(tag.description, tag.description, tag.path, tag.line)]
+                       else
+                         Access.clauses(joined, tag.description, tag.path, tag.line)
+                       end
         tag
       end
     end

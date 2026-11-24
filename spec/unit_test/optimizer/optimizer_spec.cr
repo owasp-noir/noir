@@ -326,6 +326,39 @@ describe "EndpointOptimizer" do
         result[0].tags.map(&.description).should eq([description])
         Access.of(result[0]).map(&.to_s).should eq(["(scope:read | scope:write)"])
       end
+
+      it "still refuses anonymous callers when the joined requirement passes the cap" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        description = "Protected by OAS security oauth"
+        documents = {"a.yaml" => %w[a b c], "b.yaml" => %w[d e f]}.map do |path, scopes|
+          spec = tech_endpoint("/items", "GET", "oas3", path, 3)
+          spec.add_tag(Tag.new("auth", description, Tag.declared_access_tagger("oas3"),
+            requires: Access.clauses(scopes.map { |scope| [Access::Atom.new(:scope, scope)] }, description)))
+          spec
+        end
+        result = optimizer.optimize_endpoints(documents)
+        result[0].tags.size.should eq(1)
+        Access.of(result[0]).map(&.to_s).should eq(["authenticated", "unresolved"])
+      end
+
+      it "joins the requirements a Swagger 2 and an OpenAPI 3 document state for one route" do
+        optimizer = EndpointOptimizer.new(logger, options)
+        build = ->(technology : String, path : String, name : String, atom : Access::Atom) do
+          spec = tech_endpoint("/items", "GET", technology, path, 3)
+          spec.add_tag(Tag.new(name, "#{technology} guard", Tag.declared_access_tagger(technology), requires: Access.clauses([[atom]], "#{technology} guard")))
+          spec
+        end
+        both = optimizer.optimize_endpoints([build.call("oas2", "swagger.yaml", "auth", Access::Atom.new(:scope, "read")),
+                                             build.call("oas3", "openapi.yaml", "auth", Access::Atom.new(:scope, "write"))])
+        both[0].tags.map(&.tagger).sort!.should eq([Tag.declared_access_tagger("oas2"), Tag.declared_access_tagger("oas3")])
+        Access.cell(Access.of(both[0]), Access::Atom.new(:scope, "read")).should be_true
+        Access.cell(Access.of(both[0]), Access::Atom.new(:anonymous)).should be_false
+
+        either = optimizer.optimize_endpoints([build.call("oas3", "openapi.yaml", "auth", Access::Atom.new(:scope, "write")),
+                                               build.call("oas2", "swagger.yaml", "anonymous", Access::Atom.new(:anonymous))])
+        either[0].tags.map(&.name).sort!.should eq(["anonymous", "auth"])
+        Access.cell(Access.of(either[0]), Access::Atom.new(:anonymous)).should be_true
+      end
     end
 
     # `/` before `(^/a$)|(^/b$)` is a regex nothing matches.
