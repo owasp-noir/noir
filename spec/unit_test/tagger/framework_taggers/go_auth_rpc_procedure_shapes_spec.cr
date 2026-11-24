@@ -5,6 +5,12 @@ require "file_utils"
 # Interceptor shapes that read like a procedure allow-list but are not one,
 # or are one with a twist (see `GoRpcProcedureGate`).
 private def shape_tags(base : String, procedure : String) : Array(String)
+  shape_tag_list(base, procedure).map do |tag|
+    tag.description.includes?("a setting") ? "#{tag.name}*" : tag.name
+  end
+end
+
+private def shape_tag_list(base : String, procedure : String) : Array(Tag)
   CodeLocator.instance.clear_all
   Dir.glob("#{base}/**/*.{go,proto}").each { |f| CodeLocator.instance.register_path(f) }
   options = create_test_options
@@ -12,9 +18,7 @@ private def shape_tags(base : String, procedure : String) : Array(String)
   details = Details.new(PathInfo.new("#{base}/server.go", 1))
   details.technology = "go_connect_rpc"
   endpoint = Endpoint.new(procedure, "POST", [] of Param, details)
-  GoAuthTagger.new(options).perform([endpoint]).first.tags.select(&.name.in?("auth", "authz", "anonymous")).map do |tag|
-    tag.description.includes?("a setting") ? "#{tag.name}*" : tag.name
-  end
+  GoAuthTagger.new(options).perform([endpoint]).first.tags.select(&.name.in?("auth", "authz", "anonymous"))
 end
 
 private def with_rpc_shape(code : String, proto : String = "", &)
@@ -252,6 +256,12 @@ describe "GoAuthTagger (RPC procedure gate shapes)" do
       shape_tags(dir, "/svc.v1.NoteService/Delete").should eq(["auth"])
       shape_tags(dir, "/svc.v1.NoteService/List").should eq(["anonymous*"])
       shape_tags(dir, "/svc.v1.AuthService/SignIn").should be_empty
+      # The later check withdraws the opening: unknown for every caller.
+      note = shape_tag_list(dir, "/svc.v1.NoteService/List").first
+      clauses = Access.of(note)
+      clauses.map(&.to_s).should eq(["unresolved"])
+      clauses.first.any_of.first.value.should eq("return ErrUnauthenticated")
+      Access.cell(clauses, Access::Atom.new(:anonymous)).should be_nil
     end
   end
 
