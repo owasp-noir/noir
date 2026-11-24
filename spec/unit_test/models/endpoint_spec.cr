@@ -200,21 +200,21 @@ describe "Endpoint equality" do
       tag.requires.should eq([role, signed_in])
     end
 
-    it "gives a kept tag without a requirement the incoming one's" do
+    it "keeps the default reading of a tag without a requirement when it joins one that has it" do
+      unread = ->(text : String) { [[Access::Atom.new(:authenticated)], [Access::Atom.new(:unresolved, text)]] }
       endpoint = Endpoint.new("/admin", "GET")
-      endpoint.add_tag(Tag.new("auth", "first", "spring_auth"))
-      endpoint.add_tag(Tag.new("auth", "second", "spring_auth", requires: [signed_in]))
+      endpoint.add_tag(Tag.new("auth", "first", "php_auth"))
+      endpoint.add_tag(Tag.new("auth", "second", "php_auth", requires: [role]))
 
       endpoint.tags[0].description.should eq("first")
-      endpoint.tags[0].requires.should eq([signed_in])
-    end
+      endpoint.tags[0].requires.not_nil!.map(&.any_of).should eq(unread.call("first") + [role.any_of])
 
-    it "keeps the kept tag's requirement when the incoming tag has none" do
       endpoint = Endpoint.new("/admin", "GET")
-      endpoint.add_tag(Tag.new("auth", "first", "spring_auth", requires: [role]))
-      endpoint.add_tag(Tag.new("auth", "second", "spring_auth"))
+      endpoint.add_tag(Tag.new("auth", "first", "php_auth", requires: [role]))
+      endpoint.add_tag(Tag.new("auth", "second", "php_auth"))
 
-      endpoint.tags[0].requires.should eq([role])
+      endpoint.tags[0].requires.not_nil!.map(&.any_of).should eq([role.any_of] + unread.call("second"))
+      Access.cell(Access.of(endpoint), Access::Atom.new(:role, "ADMIN")).should be_nil
     end
 
     it "tells apart two tags that differ only in their requirement" do

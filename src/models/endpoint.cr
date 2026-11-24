@@ -184,12 +184,15 @@ struct Endpoint
   # collections, so re-tagging the same target (e.g. a match in two
   # code_paths) can't surface a duplicate "auth auth" in the text output.
   # A second tag from one tagger keeps the first one's text, and both
-  # requirements hold, so the kept tag takes the clauses of both.
+  # requirements hold, so the kept tag takes the clauses of both. A tag that
+  # records no requirement still stands for a guard nobody read, so it joins
+  # with its default reading: otherwise the other tag's clauses would pass
+  # for the whole requirement.
   def add_tag(tag : Tag)
     if index = @tags.index { |existing| existing.name == tag.name && existing.tagger == tag.tagger }
       kept = @tags[index]
       if kept.requires || tag.requires
-        kept.requires = ((kept.requires || [] of Access::Clause) + (tag.requires || [] of Access::Clause)).uniq
+        kept.requires = ((kept.requires || Access.of(kept)) + (tag.requires || Access.of(tag))).uniq
         @tags[index] = kept
       end
       return
