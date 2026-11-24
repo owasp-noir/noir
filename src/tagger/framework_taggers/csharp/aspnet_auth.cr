@@ -518,9 +518,9 @@ class AspnetAuthTagger < FrameworkTagger
         source = "[#{attr.text}]"
         if attr.name == "Authorize" && !own_authorize?(file)
           clauses.concat(Access.clauses(AspnetAccess.authorize(attr.argument_text, default), source, file, attr.line + 1))
-        elsif attr.name == "Authorize"
-          clauses << Access::Clause.unresolved(source, source, file, attr.line + 1)
-        elsif derives?(attr, :authorize) || attr.name.in?("TypeFilter", "ServiceFilter")
+        elsif attr.name == "Authorize" || derives?(attr, :authorize)
+          clauses.concat(Access.clauses(AspnetAccess.floor([[Access::Atom.new(:unresolved, source)]]), source, file, attr.line + 1))
+        elsif attr.name.in?("TypeFilter", "ServiceFilter")
           clauses << Access::Clause.unresolved(source, source, file, attr.line + 1)
         end
       end
@@ -545,7 +545,9 @@ class AspnetAuthTagger < FrameworkTagger
       source = "ASP.NET global authorization for controllers"
       clauses << Access::Clause.unresolved(source, source)
     end
-    clauses.uniq
+    # Layers that require the same thing (each floored `authenticated`)
+    # need it once.
+    clauses.uniq(&.any_of)
   end
 
   # Whether `[Authorize]` in `file` names an `AuthorizeAttribute` the
@@ -596,7 +598,7 @@ class AspnetAuthTagger < FrameworkTagger
       end
       source = args ? "[Authorize(#{args})]" : "[Authorize]"
       if own_authorize?(path)
-        clauses << Access::Clause.unresolved(source, source, path, line_idx + 1)
+        clauses.concat(Access.clauses(AspnetAccess.floor([[Access::Atom.new(:unresolved, source)]]), source, path, line_idx + 1))
       else
         clauses.concat(Access.clauses(AspnetAccess.authorize(args, default), source, path, line_idx + 1))
       end
@@ -664,18 +666,17 @@ class AspnetAuthTagger < FrameworkTagger
       statement.scan(calls) do |call|
         open = call.end(0) - 1
         name = call[0][/\w+/]
-        unless close = lexer.matching_delimiter(open)
-          source = code[call.begin(0)..].strip
-          clauses << Access::Clause.unresolved(source, source, path, line_idx + 1)
-          next
-        end
-        args = code[open + 1...close].strip
-        source = ".#{name}(#{args})"
+        close = lexer.matching_delimiter(open)
+        args = close ? code[open + 1...close].strip : ""
+        source = close ? ".#{name}(#{args})" : code[call.begin(0)..].strip
+        unread = [[Access::Atom.new(:unresolved, source)]]
         cnf =
-          case name
-          when "RequireAuthorization" then AspnetAccess.require_authorization(args, default_policy)
-          when "WithMetadata"         then AspnetAccess.metadata(args, default_policy)
-          else                             [[Access::Atom.new(:unresolved, source)]]
+          if name == "WithMetadata"
+            close ? AspnetAccess.metadata(args, default_policy) : unread
+          elsif close && name == "RequireAuthorization"
+            AspnetAccess.require_authorization(args, default_policy)
+          else
+            AspnetAccess.floor(unread)
           end
         clauses.concat(Access.clauses(cnf, source, path, line_idx + 1))
       end

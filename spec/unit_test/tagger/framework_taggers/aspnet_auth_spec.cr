@@ -1017,7 +1017,7 @@ describe "AspnetAuthTagger requires" do
     unread_of(tags[0]).should eq([%([ApiPermission("items.read")])])
   end
 
-  it "reads a derived attribute alone as unread, not as signed in" do
+  it "reads a derived attribute alone as signed in plus unread" do
     files = {"Controllers.cs" => <<-CS}
       public class ApiPermissionAttribute : AuthorizeAttribute { }
 
@@ -1030,7 +1030,7 @@ describe "AspnetAuthTagger requires" do
       CS
     tags = aspnet_tags(files, "Controllers.cs", 7)
     tags.map(&.description).should eq(["Protected by [ApiPermission] (derives AuthorizeAttribute)"])
-    requires_of(tags[0]).should eq([["unresolved"]])
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
   end
 
   it "adds a minimal API route's lambda attribute, its own and its group's RequireAuthorization" do
@@ -1042,7 +1042,7 @@ describe "AspnetAuthTagger requires" do
       CS
     tags = aspnet_tags(files, "Program.cs", 3, "cs_aspnet_core_minimal_api")
     tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)]"])
-    requires_of(tags[0]).sort.should eq([["role:Admin"], ["role:Ops"], ["unresolved"]])
+    requires_of(tags[0]).sort.should eq([["authenticated"], ["role:Admin"], ["role:Ops"], ["unresolved"]])
     unread_of(tags[0]).should eq(["Policy=Member"])
   end
 
@@ -1090,10 +1090,10 @@ describe "AspnetAuthTagger requires" do
     tags = aspnet_tags(files, "Program.cs", 2, "cs_aspnet_core_minimal_api")
     tags.map(&.description).should eq(["Protected by ASP.NET .RequireAuthorization()"])
     unread_of(tags[0]).should eq([".WithApiDefaults()"])
-    requires_of(tags[0]).should eq([["unresolved"]])
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
   end
 
-  it "reads a bare [Authorize] as unread when the code replaces DefaultPolicy" do
+  it "reads a bare [Authorize] as signed in plus unread when the code replaces DefaultPolicy" do
     files = {
       "Program.cs"     => %(builder.Services.AddAuthorization(o => o.DefaultPolicy = new AuthorizationPolicyBuilder().RequireClaim("tenant").Build());),
       "Controllers.cs" => <<-CS,
@@ -1106,7 +1106,7 @@ describe "AspnetAuthTagger requires" do
         CS
     }
     tags = aspnet_tags(files, "Controllers.cs", 5)
-    requires_of(tags[0]).should eq([["unresolved"]])
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
     unread_of(tags[0]).should eq([%(DefaultPolicy = new AuthorizationPolicyBuilder().RequireClaim("tenant").Build())])
   end
 
@@ -1132,7 +1132,7 @@ describe "AspnetAuthTagger requires" do
     }
     tags = aspnet_tags(files, "Controllers.cs", 6)
     tags.map(&.description).should eq(["Protected by ASP.NET [Authorize(Roles)]"])
-    requires_of(tags[0]).should eq([["unresolved"]])
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
     unread_of(tags[0]).should eq([%([Authorize(Roles = "Admin")])])
   end
 
@@ -1238,7 +1238,7 @@ describe "AspnetAuthTagger requires" do
       app.Run();
       CS
     tags = aspnet_tags(files, "Program.cs", 2, "cs_aspnet_core_minimal_api")
-    requires_of(tags[0]).should eq([["unresolved"]])
+    requires_of(tags[0]).should eq([["unresolved"], ["authenticated"]])
   end
 
   it "reads an in-action refusal a permission setting can lift as unread only" do

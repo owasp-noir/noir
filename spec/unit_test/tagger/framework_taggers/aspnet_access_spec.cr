@@ -18,7 +18,7 @@ describe AspnetAccess do
       %(Roles = @"Admin")                               => [["role:Admin"]],
       %(AuthenticationSchemes = "Bearer")               => [["authenticated"]],
       %(Roles = "A", Policy = "P")                      => [["role:A"], ["unresolved"]],
-      %(Policy = "P", AuthenticationSchemes = "Bearer") => [["unresolved"]],
+      %(Policy = "P", AuthenticationSchemes = "Bearer") => [["unresolved"], ["authenticated"]],
     }.each do |args, expected|
       it "reads [Authorize(#{args})]" do
         shown(AspnetAccess.authorize(args)).should eq(expected)
@@ -30,9 +30,9 @@ describe AspnetAccess do
       %("CanExport")          => "Policy=CanExport",
       %(policy: "CanExport")  => "Policy=CanExport",
     }.each do |args, value|
-      it "keeps the named policy of [Authorize(#{args})] unread" do
+      it "keeps the named policy of [Authorize(#{args})] unread beside signed in" do
         cnf = AspnetAccess.authorize(args)
-        shown(cnf).should eq([["unresolved"]])
+        shown(cnf).should eq([["unresolved"], ["authenticated"]])
         unresolved_values(cnf).should eq([value])
       end
     end
@@ -45,15 +45,16 @@ describe AspnetAccess do
       %(Roles = "")               => %(Roles = ""),
       %(Policy = Policies.Admin)  => "Policies.Admin",
     }.each do |args, value|
-      it "keeps the non-literal #{args} unresolved" do
+      it "keeps the non-literal #{args} unresolved beside signed in" do
         cnf = AspnetAccess.authorize(args)
-        shown(cnf).should eq([["unresolved"]])
+        shown(cnf).should eq([["unresolved"], ["authenticated"]])
         unresolved_values(cnf).should eq([value])
       end
     end
 
     it "takes the default policy it is given for a bare [Authorize]" do
-      default = [[Access::Atom.new(:unresolved, "DefaultPolicy = custom")]]
+      default = AspnetAccess.default_policy("DefaultPolicy = custom")
+      shown(default).should eq([["unresolved"], ["authenticated"]])
       AspnetAccess.authorize(nil, default).should eq(default)
       shown(AspnetAccess.authorize(%(Roles = "A"), default)).should eq([["role:A"]])
     end
@@ -74,17 +75,17 @@ describe AspnetAccess do
   describe ".require_authorization" do
     {
       ""                                                               => [["authenticated"]],
-      %("A", "B")                                                      => [["unresolved"], ["unresolved"]],
+      %("A", "B")                                                      => [["unresolved"], ["authenticated"], ["unresolved"]],
       %(new AuthorizeAttribute { Roles = "Admin" })                    => [["role:Admin"]],
       %(new AuthorizeAttribute())                                      => [["authenticated"]],
-      %(new AuthorizeAttribute("P"))                                   => [["unresolved"]],
+      %(new AuthorizeAttribute("P"))                                   => [["unresolved"], ["authenticated"]],
       %(p => p.RequireRole("Admin", "Ops").RequireAuthenticatedUser()) => [["role:Admin", "role:Ops"], ["authenticated"]],
-      %(policy => policy.RequireClaim("scope", "api"))                 => [["unresolved"]],
+      %(policy => policy.RequireClaim("scope", "api"))                 => [["unresolved"], ["authenticated"]],
       %(p => p.RequireRole("A").RequireAssertion(c => true))           => [["role:A"], ["unresolved"]],
-      %(p => { p.RequireRole("A"); })                                  => [["unresolved"]],
+      %(p => { p.RequireRole("A"); })                                  => [["unresolved"], ["authenticated"]],
       %(new AuthorizationPolicyBuilder().RequireRole("BR").Build())    => [["role:BR"]],
-      "adminPolicy"                                                    => [["unresolved"]],
-      "Policies.Admin"                                                 => [["unresolved"]],
+      "adminPolicy"                                                    => [["unresolved"], ["authenticated"]],
+      "Policies.Admin"                                                 => [["unresolved"], ["authenticated"]],
     }.each do |args, expected|
       it "reads .RequireAuthorization(#{args})" do
         shown(AspnetAccess.require_authorization(args)).should eq(expected)

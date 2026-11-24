@@ -36,7 +36,20 @@ module AspnetAccess
   # What the default policy requires: a signed-in user, unless the code
   # replaces it (`assignment`), which noir does not follow.
   def default_policy(assignment : String?) : Access::CNF
-    assignment ? [[Access::Atom.new(:unresolved, assignment)]] : AUTHENTICATED
+    assignment ? floor([[Access::Atom.new(:unresolved, assignment)]]) : AUTHENTICATED
+  end
+
+  SIGNED_IN = [Access::Kind::Role, Access::Kind::Permission, Access::Kind::Scope, Access::Kind::Authenticated]
+
+  # An authorize layer this cannot read keeps `authenticated` beside its
+  # unread part. The tag it produces already says the route refuses
+  # anonymous callers, which is what main reads from it; a policy built only
+  # from an assertion can admit them, but nothing in the scan says this one
+  # does, so the requirement keeps the tag's own claim.
+  def floor(cnf : Access::CNF) : Access::CNF
+    return cnf unless cnf.any?(&.any?(&.kind.unresolved?))
+    return cnf if cnf.any?(&.all? { |atom| SIGNED_IN.includes?(atom.kind) })
+    cnf + AUTHENTICATED
   end
 
   # The argument text of `[Authorize(...)]`, nil without parentheses.
@@ -60,7 +73,7 @@ module AspnetAccess
         cnf << [unresolved(part)]
       end
     end
-    narrowed ? cnf : cnf + default
+    floor(narrowed ? cnf : cnf + default)
   end
 
   # The argument text of `.RequireAuthorization(...)`: no argument is the
@@ -69,7 +82,7 @@ module AspnetAccess
   def require_authorization(args : String?, default : Access::CNF = AUTHENTICATED) : Access::CNF
     parts = parts(args)
     return default if parts.empty?
-    parts.flat_map { |part| requirement(part, default) }
+    parts.flat_map { |part| requirement(part, default) }.uniq!
   end
 
   # The authorization in `.WithMetadata(...)` arguments: an
@@ -176,6 +189,10 @@ module AspnetAccess
   end
 
   private def requirement(part : String, default : Access::CNF) : Access::CNF
+    floor(unfloored_requirement(part, default))
+  end
+
+  private def unfloored_requirement(part : String, default : Access::CNF) : Access::CNF
     if name = literal(part)
       [[Access::Atom.new(:unresolved, "Policy=#{name}")]]
     elsif found = part.match(NEW_AUTHORIZE)
