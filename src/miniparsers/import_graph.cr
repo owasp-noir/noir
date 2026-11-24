@@ -736,17 +736,31 @@ module Noir::ImportGraph::Python
         name, _, alias_name = spec.strip.partition(/\s+as\s+/)
         next if name.empty? || name == "*"
         local = alias_name.empty? ? name : alias_name.strip
-        if from_import.empty?
-          file = resolve_module_file(package_path, name)
-          symbols[local] = {file, ""} if file
-        elsif file = resolve_module_file(package_path, module_dotted.empty? ? name : "#{module_dotted}.#{name}")
-          symbols[local] = {file, ""}
-        elsif file = resolve_module_file(package_path, module_dotted)
-          symbols[local] = {file, name}
+        target = imported_symbol_target(package_path, module_dotted, from_import.empty?, name)
+        if target.nil? && !from_import.starts_with?(".") &&
+           (rest = root_package_relative(package_path, from_import.empty? ? name : module_dotted))
+          target = from_import.empty? ? imported_symbol_target(package_path, "", true, rest) : imported_symbol_target(package_path, rest, false, name)
         end
+        symbols[local] = target if target
       end
     end
     symbols
+  end
+
+  # `{file, original name}` for one name an import statement binds:
+  # `plain` is a bare `import name`; otherwise `name` comes from the
+  # `module_dotted` module (empty for `from . import name`).
+  private def self.imported_symbol_target(package_path : String, module_dotted : String,
+                                          plain : Bool, name : String) : Tuple(String, String)?
+    if plain
+      file = resolve_module_file(package_path, name)
+      return file ? {file, ""} : nil
+    end
+    if file = resolve_module_file(package_path, module_dotted.empty? ? name : "#{module_dotted}.#{name}")
+      {file, ""}
+    elsif file = resolve_module_file(package_path, module_dotted)
+      {file, name}
+    end
   end
 
   private def self.resolve_package_reexport(app_base_path : String,
@@ -773,6 +787,28 @@ module Noir::ImportGraph::Python
     return unless target
 
     resolve_package_reexport(app_base_path, target[0], target[1], depth + 1, visited) || target
+  end
+
+  # `dotted` with its leading segment removed when that segment names
+  # `base` itself and `base`'s parent lies outside the scan: a scan rooted
+  # at the package directory `myapp/` sees `from myapp.api.deps import X`
+  # as `api.deps`, since the parent where `myapp` resolves was not
+  # scanned. Nil when the leading segment is another name, when the parent
+  # is scanned (it resolves from there), or when `base` has an entry of
+  # that name (it resolves from `base` as written). A bare `myapp` gives
+  # `""`, the package itself. Callers retry with the result only after the
+  # path failed as written, and keep it only if it resolves.
+  def self.root_package_relative(base : String, dotted : String) : String?
+    head, _, rest = dotted.partition('.')
+    return if head.empty?
+    normalized = Noir::PathScope.normalize_root(base)
+    return unless head == File.basename(normalized)
+    parent = File.dirname(normalized)
+    return if CodeLocator.instance.scan_base_paths.any? { |scan_base| Noir::PathScope.under_root?(parent, scan_base) }
+
+    candidate = File.join(base, head)
+    return if python_directory?(candidate) || python_file?("#{candidate}.py")
+    rest
   end
 
   # The `.py` file a dotted module path names under `package_path`: the
@@ -943,6 +979,10 @@ module Noir::ImportGraph::Python
       dotted_as_names = "#{from_import}.#{import}" unless from_import.empty?
 
       import_package_map = find_imported_package(package_path, dotted_as_names)
+      if import_package_map.empty? && package_path == app_base_path &&
+         (rest = root_package_relative(app_base_path, dotted_as_names)) && !rest.empty?
+        import_package_map = find_imported_package(app_base_path, rest)
+      end
       next if import_package_map.empty?
       import_package_map.each do |name, filepath, package_type|
         import_map[name] = {filepath, package_type}

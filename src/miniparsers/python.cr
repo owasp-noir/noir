@@ -58,6 +58,9 @@ class PythonParser
     while !@basedir.empty? && File.exists?(@basedir + "/__init__.py")
       parent = File.dirname(@basedir)
       break if parent == @basedir # relative "." (and "/") are fixed points of dirname
+      # Rooted at the package itself: the parent was not scanned, and
+      # `resolve_python_module` reads `pkg.x` from here as `x`.
+      break unless scanned_dir?(parent)
       @basedir = parent
     end
 
@@ -367,7 +370,22 @@ class PythonParser
   # `Noir::ImportGraph::Python.find_imported_package` — but returns
   # the full leaf `.py` path (not a name → path map) since we just
   # want to recurse into one specific module.
+  # True when `dir` lies under a scan base, or no scan is running.
+  private def scanned_dir?(dir : String) : Bool
+    bases = CodeLocator.instance.scan_base_paths
+    bases.empty? || bases.any? { |base| Noir::PathScope.under_root?(dir, base) }
+  end
+
   private def resolve_python_module(base_dir : String, dotted : String) : String?
+    if found = resolve_python_module_as_written(base_dir, dotted)
+      return found
+    end
+    # `from myapp.views import x` in a scan rooted at `myapp/` itself.
+    rest = Noir::ImportGraph::Python.root_package_relative(base_dir, dotted)
+    resolve_python_module_as_written(base_dir, rest) if rest && !rest.empty?
+  end
+
+  private def resolve_python_module_as_written(base_dir : String, dotted : String) : String?
     segments = dotted.split(".")
     package_dir = base_dir
     py_path : String? = nil

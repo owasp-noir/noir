@@ -342,6 +342,9 @@ module Analyzer::Python
       while File.exists?(File.join(dir, "__init__.py"))
         parent = File.dirname(dir)
         break if parent == dir
+        # The scan is rooted at the package itself: its parent was not
+        # scanned, and the import resolver reads `pkg.x` from the base as `x`.
+        break if Noir::PathScope.normalize_root(dir) == Noir::PathScope.normalize_root(stop)
         dir = parent
       end
       dir
