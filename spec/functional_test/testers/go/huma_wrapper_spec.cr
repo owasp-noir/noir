@@ -68,12 +68,14 @@ it "names the handler and reads the declared operation security", tags: "functio
   access.call("GET /api/v2/filled/own").should eq ["anonymous"]
   by_key["GET /api/v2/filled/unset"].tags.find!(&.name.==("auth")).description.should contain("AdminKey")
   access.call("GET /api/v2/open/sub/x").should eq ["anonymous"]
-  # Read like OpenAPI `security`: either alternative's credential.
-  Access.of(by_key["GET /api/v2/labels/{id}"]).map(&.to_s).should eq ["authenticated"]
+  # Huma enforces no scheme itself: a credential, plus the unread check.
+  labels = Access.of(by_key["GET /api/v2/labels/{id}"])
+  Access.cell(labels, Access::Atom.new(:anonymous)).should be_false
+  Access.cell(labels, Access::Atom.new(:authenticated)).should be_nil
   Access.of(by_key["POST /api/v2/login"]).map(&.to_s).should eq ["anonymous"]
 end
 
-it "reads Huma operation security schemes and scopes like OpenAPI", tags: "functional" do
+it "reads Huma operation security schemes, scopes and alternatives the name scan misses", tags: "functional" do
   dir = File.tempname("huma_security")
   Dir.mkdir_p(dir)
   File.write(File.join(dir, "go.mod"), "module example.com/h\n\nrequire github.com/danielgtaylor/huma/v2 v2.19.0\n")
@@ -95,6 +97,14 @@ it "reads Huma operation security schemes and scopes like OpenAPI", tags: "funct
     	huma.Register(api, huma.Operation{Method: "GET", Path: "/both", Security: []map[string][]string{{"a": {}, "b": {}}}}, h)
     	huma.Register(api, huma.Operation{Method: "GET", Path: "/var", Security: []map[string][]string{{"oauth": scopes}}}, h)
     	huma.Register(api, huma.Operation{Method: "GET", Path: "/mixed", Security: []map[string][]string{{"a": {}, schemeB: {}}}}, h)
+    	huma.Register(api, huma.Operation{Method: "GET", Path: "/const", Security: []map[string][]string{{SchemeName: {}}}}, h)
+    	huma.Register(api, huma.Operation{Method: "GET", Path: "/reset", Security: twice}, h)
+    }
+
+    var twice = []map[string][]string{{"key": {}}}
+
+    func init() {
+    	twice = []map[string][]string{}
     }
     GO
   begin
@@ -105,16 +115,23 @@ it "reads Huma operation security schemes and scopes like OpenAPI", tags: "funct
     app = NoirRunner.new(options)
     app.detect
     app.analyze
-    reading = ->(url : String) { Access.of(app.endpoints.find! { |ep| ep.url == url }).map(&.to_s) }
-    # The scheme registry is not read, so the scopes stay unread; the key
-    # alternative still admits any caller holding a credential.
-    reading.call("/scoped").should eq ["authenticated", "(authenticated | unresolved)"]
-    reading.call("/both").should eq ["authenticated"]
-    reading.call("/var").should eq ["authenticated", "unresolved"]
-    Access.of(app.endpoints.find! { |ep| ep.url == "/var" }).last.any_of.first.value.should eq "oauth: scopes"
-    # A scheme named by a constant still asks for a credential.
-    reading.call("/mixed").should eq ["authenticated", "unresolved"]
-    Access.cell(Access.of(app.endpoints.find! { |ep| ep.url == "/mixed" }), Access::Atom.new(:anonymous)).should be_false
+    clauses = ->(url : String) { Access.of(app.endpoints.find! { |ep| ep.url == url }) }
+    cell = ->(url : String, principal : Access::Atom) { Access.cell(clauses.call(url), principal) }
+    anonymous = Access::Atom.new(:anonymous)
+    signed_in = Access::Atom.new(:authenticated)
+    %w[/scoped /both /var /mixed /const].each do |url|
+      cell.call(url, anonymous).should be_false
+      cell.call(url, signed_in).should be_nil
+    end
+    # A scope a token must hold, read from the literal.
+    cell.call("/scoped", Access::Atom.new(:scope, "read")).should be_nil
+    clauses.call("/scoped").flat_map(&.any_of).should contain(Access::Atom.new(:scope, "read"))
+    # Dropping one of two schemes an alternative names loses its clause.
+    clauses.call("/both").flat_map(&.any_of).compact_map(&.value).sort!.should eq ["a", "b"]
+    # The name scan sees no scheme here and tags it open; the reading does.
+    app.endpoints.find!(&.url.==("/const")).tags.map(&.name).should eq ["anonymous"]
+    # Assigned twice: either value may hold.
+    clauses.call("/reset").map(&.to_s).should eq ["unresolved"]
   ensure
     FileUtils.rm_rf(dir)
   end

@@ -1,29 +1,38 @@
 require "../../spec_helper"
 require "../../../src/miniparsers/huma_security"
 
+private def shown(cnf : Access::CNF?) : Array(String)?
+  cnf.try &.map(&.join(" | ") { |atom| atom.value ? "#{atom.kind.to_s.downcase}:#{atom.value}" : atom.kind.to_s.downcase })
+end
+
 describe HumaSecurity do
-  it "reads each entry's scheme and scopes, keeping what is not a literal as text" do
+  it "reads each scheme as a credential plus its unread check, and literal scopes as scopes" do
     {
-      %({"bearer": {}})                  => {"bearer" => [] of String},
-      %({"oauth": {"read", "write"}})    => {"oauth" => ["read", "write"]},
-      %({"oauth": []string{"read"}})     => {"oauth" => ["read"]},
-      %({"key": nil})                    => {"key" => [] of String},
-      %({"a": {}, "b": {"s"}})           => {"a" => [] of String, "b" => ["s"]},
-      %({"oauth": scopes})               => {"oauth" => "scopes"},
-      %({"oauth": {"read", other}})      => {"oauth" => %({"read", other})},
-      %({"oauth": {"a\\"b"}})            => {"oauth" => %({"a\\"b"})},
-      %({"a": {}, schemeB: {}})          => {"a" => [] of String, "schemeB" => "schemeB: {}"},
-      %({auth.Scheme: {"read"}})         => {"auth.Scheme" => %(auth.Scheme: {"read"})},
-      %({"oauth": {"read"}, f(): {"x"}}) => {"oauth" => ["read"], %(f(): {"x"}) => %(f(): {"x"})},
-    }.each do |alternative, expected|
-      HumaSecurity.requirement(alternative).should eq(expected)
+      %([]map[string][]string{{"bearer": {}}})            => ["authenticated", "unresolved:bearer"],
+      %([]map[string][]string{{"o": {"read", "write"}}})  => ["authenticated", "unresolved:o", "scope:read", "scope:write"],
+      %([]map[string][]string{{"o": []string{"read"}}})   => ["authenticated", "unresolved:o", "scope:read"],
+      %([]map[string][]string{{"key": nil}})              => ["authenticated", "unresolved:key"],
+      %([]map[string][]string{{"a": {}, "b": {}}})        => ["authenticated", "unresolved:a", "unresolved:b"],
+      %([]map[string][]string{{"o": scopes}})             => ["authenticated", "unresolved:o", "unresolved:o: scopes"],
+      %([]map[string][]string{{"o": {"a\\"b"}}})          => ["authenticated", "unresolved:o", %(unresolved:o: {"a\\"b"})],
+      %([]map[string][]string{{"o": {""}}})               => ["authenticated", "unresolved:o", %(unresolved:o: {""})],
+      %([]map[string][]string{{SchemeName: {"admin"}}})   => ["authenticated", %(unresolved:SchemeName: {"admin"})],
+      %([]map[string][]string{{`ra{w`: {}}})              => ["authenticated", "unresolved:`ra{w`: {}"],
+      %([]map[string][]string{{"a}b": {}}})               => ["authenticated", "unresolved:a}b"],
+      %([]map[string][]string{{a: {}, "a": {}}})          => ["authenticated", "unresolved:a: {}", "unresolved:a"],
+      %([]map[string][]string{{"o": {"a,b"}}})            => ["authenticated", "unresolved:o", "scope:a,b"],
+      %([]map[string][]string{{"o": { // why\n "read"}}}) => ["authenticated", "unresolved:o", "scope:read"],
+      %([]map[string][]string{{"a": {}}, {"b": {}}})      => ["authenticated", "authenticated | unresolved:b", "authenticated | unresolved:a", "unresolved:a | unresolved:b"],
+      %([]map[string][]string{{"key": {}}, openAlt})      => ["authenticated | unresolved:openAlt", "unresolved:key | unresolved:openAlt"],
+      %([]map[string][]string{openAlt})                   => ["unresolved:openAlt"],
+    }.each do |literal, expected|
+      shown(HumaSecurity.cnf(literal)).should eq(expected)
     end
   end
 
-  it "keeps an entry it cannot name a credential requirement" do
-    requirement = HumaSecurity.requirement(%({"a": {}, schemeB: {}}))
-    clauses = Access.clauses(OasSecurityAccess.cnf([requirement], nil, "huma"), "huma")
-    clauses.map(&.to_s).should eq ["authenticated", "unresolved"]
-    Access.cell(clauses, Access::Atom.new(:anonymous)).should be_false
+  it "reads an empty list, an empty alternative or a commented-out entry as open" do
+    HumaSecurity.cnf(%([]map[string][]string{})).should be_nil
+    HumaSecurity.cnf(%([]map[string][]string{{"a": {}}, {}})).should be_nil
+    HumaSecurity.cnf(%([]map[string][]string{{\n// "admin": {"root"},\n}})).should be_nil
   end
 end
