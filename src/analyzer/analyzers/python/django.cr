@@ -4,6 +4,7 @@ require "json"
 require "../../../utils/top_level_split"
 require "./django_view_registry"
 require "./django_drf_inputs"
+require "../../../tagger/framework_taggers/python/django_access"
 
 module Analyzer::Python
   class Django < PythonEngine
@@ -2111,14 +2112,24 @@ module Analyzer::Python
       view
     end
 
-    # The auth decorator wrapping `view` in the urlconf, read before
-    # `extract_wrapped_view_reference` strips it; nil when there is none.
+    # The auth decorator call wrapping `view` in the urlconf, from its name
+    # on, read before `extract_wrapped_view_reference` strips it; nil when
+    # there is none.
     private def urlconf_auth_wrapper(view : ::String) : ::String?
-      view.match(URLCONF_AUTH_WRAPPER_RE).try(&.[1])
+      view.match(URLCONF_AUTH_WRAPPER_RE).try { |found| view[found.begin(0)..] }
     end
 
     private def tag_urlconf_auth(endpoint : Endpoint, wrapper : ::String?) : Endpoint
-      endpoint.add_tag(Tag.new("auth", "Protected by Django #{wrapper} in urlconf", TAGGER)) if wrapper
+      return endpoint unless wrapper
+      name = wrapper.match(URLCONF_AUTH_WRAPPER_RE).try(&.[1]).to_s
+      # Nested wrappers (`login_required(permission_required("a.b")(view))`) all run.
+      requires = [] of Access::Clause
+      wrapper.scan(URLCONF_AUTH_WRAPPER_RE) do |found|
+        _, args, source = DjangoAccess.call(wrapper[found.begin(0)..]) || next
+        cnf = DjangoAccess.decorator(found[1], args, source) || DjangoAccess.unresolved(source)
+        requires.concat Access.clauses(cnf, source)
+      end
+      endpoint.add_tag(Tag.new("auth", "Protected by Django #{name} in urlconf", TAGGER, requires: requires))
       endpoint
     end
 
