@@ -29,6 +29,7 @@ module Noir
     @members_by_line = Hash(String, Array({Type, Member})).new
     @offsets = Hash({String, UInt32}, {Type, Member}).new
     @references = [] of String
+    @resolved_cursor = 0
     @files = Hash(String, Array(Type)).new
     @types = Hash(String, Array(Type)).new
     @bindings = [] of Binding
@@ -91,13 +92,17 @@ module Noir
       @bindings.empty?
     end
 
-    def resolve(&)
+    def resolve_references(&)
       # Reading one annotation or base can introduce another reference.
-      cursor = 0
-      while cursor < @references.size
-        yield @references[cursor]
-        cursor += 1
+      while @resolved_cursor < @references.size
+        name = @references[@resolved_cursor]
+        @resolved_cursor += 1
+        yield name
       end
+    end
+
+    def resolve(&)
+      resolve_references { |name| yield name }
       @bindings.each { |binding| collect(binding) }
       @bindings.clear
     end
