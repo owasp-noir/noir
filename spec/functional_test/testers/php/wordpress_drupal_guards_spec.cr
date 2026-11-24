@@ -73,7 +73,8 @@ describe "WordPress / Drupal routes and guards", tags: "functional" do
     guards.call(endpoints, "GET", "/demo/either").should be_empty
     endpoints.none?(&.url.==("/demo-prefix")).should be_true
 
-    requires.call(endpoints, "GET", "/admin/demo").should eq(["permission:administer site configuration"])
+    # Configuration may grant the permission to every caller.
+    requires.call(endpoints, "GET", "/admin/demo").should eq(["(permission:administer site configuration | unresolved)"])
     requires.call(endpoints, "GET", "/demo/mine").should eq(["authenticated"])
     requires.call(endpoints, "GET", "/demo/{node}/edit").should eq(["unresolved"])
   end

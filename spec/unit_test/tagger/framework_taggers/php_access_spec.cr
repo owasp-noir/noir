@@ -106,11 +106,11 @@ describe PhpAccess do
 
   describe ".drupal_requirement" do
     {
-      {"_permission", "administer nodes"}                => [["permission:administer nodes"]],
-      {"_permission", "access content+administer nodes"} => [["permission:access content", "permission:administer nodes"]],
-      {"_permission", "access content,administer nodes"} => [["permission:access content"], ["permission:administer nodes"]],
-      {"_permission", "a+b,c"}                           => [["permission:a+b"], ["permission:c"]],
-      {"_permission", "a,"}                              => [["permission:a"], ["unresolved:a,"]],
+      {"_permission", "administer nodes"}                => [["permission:administer nodes", "unresolved:a permission the anonymous or authenticated role may hold"]],
+      {"_permission", "access content+administer nodes"} => [["permission:access content", "permission:administer nodes", "unresolved:a permission the anonymous or authenticated role may hold"]],
+      {"_permission", "access content,administer nodes"} => [["permission:access content", "unresolved:a permission the anonymous or authenticated role may hold"], ["permission:administer nodes", "unresolved:a permission the anonymous or authenticated role may hold"]],
+      {"_permission", "a+b,c"}                           => [["permission:a+b", "unresolved:a permission the anonymous or authenticated role may hold"], ["permission:c", "unresolved:a permission the anonymous or authenticated role may hold"]],
+      {"_permission", "a,"}                              => [["permission:a", "unresolved:a permission the anonymous or authenticated role may hold"], ["unresolved:a permission the anonymous or authenticated role may hold", "unresolved:a,"]],
       {"_role", "administrator"}                         => [["role:administrator"]],
       {"_role", "editor+administrator"}                  => [["role:administrator", "role:editor"]],
       {"_role", "editor, administrator"}                 => [["role:editor"], ["role:administrator"]],

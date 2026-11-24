@@ -185,13 +185,18 @@ module PhpAccess
   # `_permission` on `,` (all required) before `+` (any one), without
   # trimming; RoleAccessCheck does the same for `_role`, trimming and
   # dropping empty ids. The `authenticated` role is every signed-in user;
-  # `anonymous` admits only signed-out callers.
+  # `anonymous` admits only signed-out callers. A site grants permissions to
+  # those two roles in its configuration (the standard profile gives
+  # `access content` to anonymous), so a permission clause keeps them as an
+  # unread alternative.
+  DRUPAL_EVERYONE = Access::Atom.new(:unresolved, "a permission the anonymous or authenticated role may hold")
+
   def drupal_requirement(key : String, value : String) : CNF
     case key
     when "_permission"
       all = value.split(',')
-      return all.map { |name| [drupal_atom(:permission, name, value)] } if all.size > 1
-      [value.split('+').map { |name| drupal_atom(:permission, name, value) }]
+      return all.map { |name| [drupal_atom(:permission, name, value), DRUPAL_EVERYONE] } if all.size > 1
+      [value.split('+').map { |name| drupal_atom(:permission, name, value) } << DRUPAL_EVERYONE]
     when "_role"
       all = value.split(',').map(&.strip).reject(&.empty?)
       return all.map { |name| [drupal_role(name)] } if all.size > 1
