@@ -1312,4 +1312,50 @@ describe "AspnetAuthTagger requires" do
     requires_of(tags[0]).sort.should eq([["authenticated"], ["unresolved"], ["unresolved"]])
     unread_of(tags[0]).sort.should eq(["Policy=Admins", "the conventions of app, a builder made outside this method"])
   end
+
+  it "reads the attributes of a method-group handler the scan declares once" do
+    files = {"Handlers.cs" => <<-CS, "Program.cs" => <<-CS}
+      public static class Handlers
+      {
+          public static string Plain() => "x";
+          [Authorize(Roles = "Admin")]
+          public static string Admin() => "x";
+          [AllowAnonymous]
+          public static string Open() => "x";
+          public static string Over() => "a";
+          public static string Over(int id) => "b";
+      }
+      CS
+      var app = builder.Build();
+      app.MapGet("/plain", Handlers.Plain).RequireAuthorization();
+      app.MapGet("/admin", Handlers.Admin).RequireAuthorization();
+      app.MapGet("/open", Handlers.Open).RequireAuthorization();
+      app.MapGet("/over", Handlers.Over).RequireAuthorization();
+      app.MapGet("/missing", Elsewhere.Get).RequireAuthorization();
+      app.Run();
+      CS
+    requires_of(aspnet_tags(files, "Program.cs", 2, "cs_aspnet_core_minimal_api")[0]).should eq([["authenticated"]])
+    requires_of(aspnet_tags(files, "Program.cs", 3, "cs_aspnet_core_minimal_api")[0]).sort.should eq([["authenticated"], ["role:Admin"]])
+    requires_of(aspnet_tags(files, "Program.cs", 4, "cs_aspnet_core_minimal_api")[0]).should eq([["anonymous"]])
+    unread_of(aspnet_tags(files, "Program.cs", 5, "cs_aspnet_core_minimal_api")[0]).should eq(["attributes of the handler Handlers.Over"])
+    unread_of(aspnet_tags(files, "Program.cs", 6, "cs_aspnet_core_minimal_api")[0]).should eq(["attributes of the handler Elsewhere.Get"])
+  end
+
+  it "finds a bare method-group handler in the class mapping the route, unless a local function shadows it" do
+    files = {"Orders.cs" => <<-CS}
+      public static class OrdersApi
+      {
+          public static void MapOrders(WebApplication app)
+          {
+              app.MapGet("/a", GetOrders).RequireAuthorization();
+              app.MapGet("/b", Local).RequireAuthorization();
+              static string Local() => "x";
+          }
+          public static string GetOrders() => "x";
+          public static string Local() => "y";
+      }
+      CS
+    requires_of(aspnet_tags(files, "Orders.cs", 5, "cs_aspnet_core_minimal_api")[0]).should eq([["authenticated"]])
+    unread_of(aspnet_tags(files, "Orders.cs", 6, "cs_aspnet_core_minimal_api")[0]).should eq(["attributes of the handler Local"])
+  end
 end

@@ -524,12 +524,9 @@ class AspnetAuthTagger < FrameworkTagger
     layers = [{action_attrs, path}] + chain.map { |decl| {decl.attributes, decl.path} }
     layers.each do |attrs, file|
       attrs.each do |attr|
-        source = "[#{attr.text}]"
-        if attr.name == "Authorize" && !own_authorize?(file)
-          clauses.concat(Access.clauses(AspnetAccess.authorize(attr.argument_text, default), source, file, attr.line + 1))
-        elsif attr.name == "Authorize" || derives?(attr, :authorize)
-          clauses.concat(Access.clauses(AspnetAccess.floor([[Access::Atom.new(:unresolved, source)]]), source, file, attr.line + 1))
-        elsif attr.name.in?("TypeFilter", "ServiceFilter")
+        clauses.concat(authorize_clauses(attr, file, default))
+        if attr.name.in?("TypeFilter", "ServiceFilter")
+          source = "[#{attr.text}]"
           clauses << Access::Clause.unresolved(source, source, file, attr.line + 1)
         end
       end
@@ -542,7 +539,9 @@ class AspnetAuthTagger < FrameworkTagger
     statement = minimal_api_statement(lines, line_idx).try { |text| bounded(text) }
     if statement
       clauses.concat(statement_authorize(path, line_idx, statement, default))
-      clauses.concat(handler_clauses(path, line_idx, statement))
+      handler = handler_clauses(path, line_idx, statement, default)
+      return handler if handler.any?(&.any_of.any?(&.kind.anonymous?))
+      clauses.concat(handler)
     end
     # From a controller action, the statement walk runs on past the action,
     # so only a route statement's `AllowAnonymous` is its own.
@@ -582,15 +581,78 @@ class AspnetAuthTagger < FrameworkTagger
     statement
   end
 
-  # A method-group handler (`app.MapGet("/x", Handlers.Secret)`) carries
-  # attributes of its own, which are not read.
-  private def handler_clauses(path : String, line_idx : Int32, statement : String) : Array(Access::Clause)
+  # `[Authorize]`, or an attribute deriving `AuthorizeAttribute`, as one
+  # authorization layer; nothing for any other attribute.
+  private def authorize_clauses(attr : Attr, file : String, default : Access::CNF) : Array(Access::Clause)
+    source = "[#{attr.text}]"
+    if attr.name == "Authorize" && !own_authorize?(file)
+      Access.clauses(AspnetAccess.authorize(attr.argument_text, default), source, file, attr.line + 1)
+    elsif attr.name == "Authorize" || derives?(attr, :authorize)
+      Access.clauses(AspnetAccess.floor([[Access::Atom.new(:unresolved, source)]]), source, file, attr.line + 1)
+    else
+      [] of Access::Clause
+    end
+  end
+
+  # A method-group handler (`app.MapGet("/x", Handlers.Secret)`): ASP.NET
+  # adds the method's own attributes to the endpoint's metadata
+  # (`RouteEndpointDataSource`: `handler.Method.GetCustomAttributes()`), not
+  # its class's, and runs no MVC filter. An `[AllowAnonymous]` there lifts
+  # every layer and comes back as an `anonymous` clause. A handler the scan
+  # does not declare exactly once stays unread.
+  private def handler_clauses(path : String, line_idx : Int32, statement : String, default : Access::CNF) : Array(Access::Clause)
     call = statement.match(MAP_CALL) || return [] of Access::Clause
     code = code_statement(path, line_idx, statement.size)
     close = Noir::CSharpLexer.new(code).matching_delimiter(call.end(0) - 1) || return [] of Access::Clause
     handler = AspnetAccess.method_group(code[call.end(0)...close]) || return [] of Access::Clause
     source = "attributes of the handler #{handler}"
-    [Access::Clause.unresolved(source, source, path, line_idx + 1)]
+    method, file = handler_method(path, line_idx, handler) || return [Access::Clause.unresolved(source, source, path, line_idx + 1)]
+    attrs = method.attributes
+    if attrs.any? { |attr| attr.name == "AllowAnonymous" || derives?(attr, :anonymous) }
+      return [Access::Clause.new([Access::Atom.new(:anonymous)], "[AllowAnonymous] on the handler #{handler}", file, method.attr_line + 1)]
+    end
+    attrs.flat_map { |attr| authorize_clauses(attr, file, default) }
+  end
+
+  # The one method a method group names, with its file: `M` in the class
+  # declaring the route (all parts of a `partial` one), `A.M` in class `A`
+  # as C# lookup finds it from `path`. Nil when there is none, several
+  # (overloads), or a local function or delegate of the same name in the
+  # enclosing member could be meant.
+  private def handler_method(path : String, line_idx : Int32, handler : String) : Tuple(Noir::CSharpDecl::Member, String)?
+    names = handler.split('.').map(&.strip.lchop('@'))
+    name = names.pop
+    types = [] of Tuple(Noir::CSharpDecl::TypeDecl, String)
+    if owner = names.last?
+      class_decls(owner, path).each do |decl|
+        declarations(decl.name, [decl.path]).each { |_, type| types << {type, decl.path} }
+      end
+    else
+      type = enclosing_class(path, line_idx) || return
+      return if local_callable?(path, type, line_idx, name)
+      if type.partial?
+        key = partial_key(type, nearest_project_root(path, CSPROJ))
+        (class_files[type.name]? || [] of String).each do |file|
+          declarations(type.name, [file]).each do |_, part|
+            types << {part, file} if part.partial? && partial_key(part, nearest_project_root(file, CSPROJ)) == key
+          end
+        end
+      else
+        types << {type, path}
+      end
+    end
+    found = types.flat_map { |candidate, file| candidate.methods.select(&.name.== name).map { |method| {method, file} } }
+    found.uniq! { |method, file| {file, method.line} }
+    found.first if found.size == 1
+  end
+
+  # A local function or delegate named `name` in the member enclosing
+  # `line_idx`, which a bare method group would name before a method.
+  private def local_callable?(path : String, type : Noir::CSharpDecl::TypeDecl, line_idx : Int32, name : String) : Bool
+    member = type.members.find { |candidate| candidate.line <= line_idx && line_idx <= candidate.end_line } || return false
+    masked = lexer_for(path).try(&.masked_lines) || return false
+    body = masked[(member.header_end + 1)..member.end_line].join('\n')
+    body.matches?(/\b[\w<>\[\],?]+\s+#{Regex.escape(name)}\s*(?:\(|=[^=>])/)
   end
 
   # `[Authorize(...)]` on a route's handler lambda.
