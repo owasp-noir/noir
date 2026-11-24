@@ -193,7 +193,8 @@ describe "DjangoAuthTagger requires" do
     }
     tags = django_tags(files, "views.py", 6)
     tags[0].description.should eq("Protected by DRF permission_classes")
-    atoms(tags[0]).should eq([["unresolved:HasAPIKey"], ["authenticated", "unresolved:DRF 3.16+ exempts its views from LoginRequiredMiddleware"]])
+    # djangorestframework-api-key's class refuses a caller with no key.
+    atoms(tags[0]).should eq([["authenticated"], ["unresolved:HasAPIKey"], ["authenticated", "unresolved:DRF 3.16+ exempts its views from LoginRequiredMiddleware"]])
   end
 
   it "keeps only what disagreeing DEFAULT_PERMISSION_CLASSES share" do
@@ -277,5 +278,80 @@ describe "DjangoAuthTagger requires" do
     files = {"urls.py" => "urlpatterns = [\n    path(\"admin/\", admin.site.urls),\n]\n"}
     tags = django_tags(files, "urls.py", 2, url: "/admin/")
     atoms(tags[0]).should eq([["authenticated"], ["unresolved:is_staff"], ["unresolved:ModelAdmin permissions"]])
+  end
+
+  it "reads a project class named like DRF's by the tagger's verdict, not by DRF's name" do
+    files = {
+      "api/permissions.py" => <<-PY,
+        from rest_framework import permissions
+
+        class IsAuthenticated(permissions.IsAuthenticated):
+            def has_permission(self, request, view):
+                return super().has_permission(request, view) and request.user.is_verified
+        PY
+      "api/views.py" => <<-PY,
+        from rest_framework import permissions
+        from rest_framework.views import APIView
+        from . import permissions as myperms
+
+        class FakeView(APIView):
+            permission_classes = [myperms.IsAuthenticated]
+
+            def get(self, request):
+                pass
+
+        class RealView(APIView):
+            permission_classes = [permissions.IsAuthenticated]
+
+            def get(self, request):
+                pass
+        PY
+    }
+    atoms(django_tags(files, "api/views.py", 8)[0]).should eq([["authenticated"], ["unresolved:myperms.IsAuthenticated"]])
+    atoms(django_tags(files, "api/views.py", 14)[0]).should eq([["authenticated"]])
+  end
+
+  it "keeps a project permission class the tagger judged refusing anonymous callers signed in" do
+    files = {"views.py" => <<-PY}
+      from rest_framework.permissions import BasePermission
+      from rest_framework.views import APIView
+
+      class IsOwner(BasePermission):
+          def has_permission(self, request, view):
+              return request.user.is_authenticated
+
+      class OwnView(APIView):
+          permission_classes = [IsOwner]
+
+          def get(self, request):
+              pass
+      PY
+    atoms(django_tags(files, "views.py", 11)[0]).should eq([["authenticated"], ["unresolved:IsOwner"]])
+  end
+
+  it "does not read past a get_permissions override it cannot read, except a super() concatenation" do
+    view = ->(body : String) do
+      "from rest_framework.permissions import IsAuthenticated, IsAdminUser\nfrom rest_framework.views import APIView\n\n" \
+      "class V(APIView):\n    permission_classes = [IsAuthenticated]\n\n    def get_permissions(self):\n#{body}\n\n    def get(self, request):\n        pass\n"
+    end
+    branch = view.call("        if self.request.user.is_superuser:\n            return []\n        return [IsAdminUser()]")
+    tags = django_tags({"views.py" => branch}, "views.py", 12)
+    tags[0].description.should eq("Protected by DRF permission_classes")
+    atoms(tags[0]).should eq([["authenticated"], ["unresolved:get_permissions"]])
+    plus = view.call("        return super().get_permissions() + [IsAdminUser()]")
+    atoms(django_tags({"views.py" => plus}, "views.py", 10)[0]).should eq([["authenticated"], ["authenticated"], ["unresolved:is_staff"]])
+  end
+
+  it "does not read a permission_classes list that goes on past its bracket" do
+    files = {"views.py" => "from rest_framework.permissions import IsAuthenticated, IsAdminUser\nfrom rest_framework.views import APIView\n\n" \
+                           "class V(APIView):\n    permission_classes = [IsAuthenticated] + [IsAdminUser]\n\n    def get(self, request):\n        pass\n"}
+    statement = "permission_classes = [IsAuthenticated] + [IsAdminUser]"
+    atoms(django_tags(files, "views.py", 7)[0]).should eq([["authenticated"], ["unresolved:#{statement}"]])
+  end
+
+  it "keeps a DRF view with no authenticators unread" do
+    files = {"views.py" => "from rest_framework.permissions import IsAuthenticated\nfrom rest_framework.views import APIView\n\n" \
+                           "class V(APIView):\n    authentication_classes = []\n    permission_classes = [IsAuthenticated]\n\n    def get(self, request):\n        pass\n"}
+    atoms(django_tags(files, "views.py", 8)[0]).should eq([["authenticated"], ["unresolved:authentication_classes = []"]])
   end
 end

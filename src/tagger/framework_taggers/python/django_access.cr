@@ -80,14 +80,18 @@ module DjangoAccess
   # `(IsAuthenticated | ReadOnly,)`, a settings list of dotted paths) for a
   # request of `method`. DRF checks every listed class and composes them
   # with `&`, `|` and `~`. Text that does not parse is one unresolved atom.
-  def drf(text : String, method : String) : Access::CNF
+  # `project` reads a class the caller knows is not DRF's own (its name and
+  # source text); nil leaves it to `drf_class`.
+  def drf(text : String, method : String, project : Proc(String, String, Access::CNF?)? = nil) : Access::CNF
     tokens = drf_tokens(text) || return unresolved(text.strip)
-    parser = DrfParser.new(tokens, method)
+    parser = DrfParser.new(tokens, method, project)
     result = parser.list(nil)
     parser.done? ? result : unresolved(text.strip)
   rescue DrfParser::Error
     unresolved(text.strip)
   end
+
+  DRF_CLASSES = %w[AllowAny IsAuthenticated IsAdminUser IsAuthenticatedOrReadOnly DjangoModelPermissionsOrAnonReadOnly DjangoModelPermissions DjangoObjectPermissions]
 
   def drf_class(name : String, source : String, method : String) : Access::CNF
     case name.rpartition('.')[2]
@@ -169,7 +173,7 @@ module DjangoAccess
     class Error < Exception
     end
 
-    def initialize(@tokens : Array(Token), @method : String)
+    def initialize(@tokens : Array(Token), @method : String, @project : Proc(String, String, Access::CNF?)?)
       @pos = 0
     end
 
@@ -211,7 +215,8 @@ module DjangoAccess
       @pos += 1
       if name = token.name
         skip_arguments
-        return DjangoAccess.drf_class(name, source(start), @method)
+        text = source(start)
+        return @project.try(&.call(name, text)) || DjangoAccess.drf_class(name, text, @method)
       end
       case token.text
       when "~"

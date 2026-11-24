@@ -1141,8 +1141,9 @@ class DjangoAuthTagger < FrameworkTagger
   end
 
   # The class-body `permission_classes = ...` value, wherever in the body it
-  # sits: a ViewSet route points at the `class` line, above it.
-  private def class_permission_classes(lines : Array(String), class_idx : Int32, class_indent : Int32) : String?
+  # sits: a ViewSet route points at the `class` line, above it. The
+  # statement comes along when text after the list (`[A] + [B]`) is not read.
+  private def class_permission_classes(lines : Array(String), class_idx : Int32, class_indent : Int32) : {String, String?}?
     # The body starts after the header, whose closing `):` of a wrapped
     # bases list sits at the class's own indent.
     idx = class_idx
@@ -1158,7 +1159,10 @@ class DjangoAuthTagger < FrameworkTagger
       unless current.empty? || current.starts_with?('#')
         break if raw.size - current.size <= class_indent
         if current.matches?(/^permission_classes\s*=/)
-          return bracketed_after(lines[idx, 20].join("\n"), /permission_classes\s*=/)
+          text = lines[idx, 20].join("\n")
+          value = bracketed_after(text, /permission_classes\s*=/) || return
+          rest = text[(text.index(value) || 0) + value.size..].lines.first? || ""
+          return {value, Analyzer::Python::Helper.strip_python_comment(rest).strip.empty? ? nil : current.strip}
         end
       end
       idx += 1
@@ -1196,6 +1200,7 @@ class DjangoAuthTagger < FrameworkTagger
     # `@action(..., permission_classes=[...])` / `@permission_classes([...])`
     own = bracketed_after(decorators, /permission_classes\s*[=(]/)
     decorator_own = !own.nil?
+    unread_list = nil
     drf = decorators.includes?("@api_view")
     action = drf_action(lines, endpoint_line, method, url)
     get_permissions = nil
@@ -1216,7 +1221,9 @@ class DjangoAuthTagger < FrameworkTagger
         get_permissions ||= method_body(lines, class_idx, "get_permissions")
         unless decorator_own
           drf ||= header.matches?(DRF_VIEW_BASE)
-          own ||= class_permission_classes(lines, class_idx, class_indent)
+          if own.nil? && (statement = class_permission_classes(lines, class_idx, class_indent))
+            own, unread_list = statement
+          end
         end
         class_attributes(lines, class_idx).each { |name, value| attrs[name] = value unless attrs.has_key?(name) }
         bases = same_file_bases(lines, header)
@@ -1228,27 +1235,83 @@ class DjangoAuthTagger < FrameworkTagger
     end
 
     # A `get_permissions` override decides in place of `permission_classes`
-    # for the actions it answers itself.
-    if get_permissions && (listed = listed_permissions(get_permissions, action, method))
-      return drf_guard(listed, method, "DRF get_permissions") || open_drf
+    # for the actions it answers itself (`:inherit` hands over to the list).
+    listed = get_permissions.try { |body| listed_permissions(body, action, method) }
+    project = drf_project(lines, method)
+    found =
+      if listed.is_a?(String)
+        drf_guard(listed, method, "DRF get_permissions", project) || open_drf
+      elsif own
+        drf_guard(own, method, "DRF permission_classes", project) || (drf ? open_drf : nil)
+      elsif drf
+        default_drf_guard(method)
+      end
+    return found if found.nil? || found.description.empty?
+    requires = found.requires
+    if own && unread_list && !listed.is_a?(String)
+      requires = Access.clauses(DjangoAccess.unread(unread_list), unread_list)
     end
+    if get_permissions && listed.nil?
+      # DRF calls the override, which this did not read, instead of the
+      # list; only `super().get_permissions() + [...]` keeps the list.
+      requires =
+        if extra = get_permissions.strip.match(SUPER_PERMISSIONS_PLUS).try(&.[1].gsub(/\(\s*\)/, ""))
+          requires + Access.clauses(DjangoAccess.drf(extra, method, project), extra)
+        else
+          Access.clauses(DjangoAccess.unread("get_permissions"), "get_permissions")
+        end
+    end
+    # With no authenticator every request is anonymous to DRF.
+    if decorators.matches?(NO_AUTHENTICATORS) || @drf_view_attrs.try(&.[0]["authentication_classes"]?.in?("[]", "()"))
+      requires += Access.clauses(DjangoAccess.unresolved("authentication_classes = []"), "authentication_classes = []")
+    end
+    Guard.new(found.description, requires)
+  end
 
-    if own
-      return drf_guard(own, method, "DRF permission_classes") || (drf ? open_drf : nil)
-    end
-    return unless drf
+  SUPER_PERMISSIONS_PLUS = /\Areturn\s+super\([^)]*\)\.get_permissions\(\)\s*\+\s*(\[[\w.\s,()]*\])\z/
+  NO_AUTHENTICATORS      = /\bauthentication_classes\s*[=(]\s*[\[(]\s*[\])]/
+
+  private def default_drf_guard(method : String) : Guard
     defaults = @drf_default_permissions
     verdicts = defaults.map { |perms| permissions_refusal(perms, method) }
-    if !verdicts.empty? && verdicts.none?(Nil)
-      setting = verdicts.compact.max_by(&.size)
-      description = setting.empty? ? "Protected by DRF DEFAULT_PERMISSION_CLASSES" : "Protected by DRF DEFAULT_PERMISSION_CLASSES (settings.#{setting} decides; a setting can make it public)"
-      cnfs = defaults.map { |perms| DjangoAccess.drf(perms, method) }.uniq!
-      # Which settings module runs is decided at deploy time: only what
-      # they all require is known.
-      cnf = cnfs.size == 1 ? cnfs[0] : cnfs.reduce { |left, right| left & right } + DjangoAccess.unresolved("DEFAULT_PERMISSION_CLASSES differs between settings modules")
-      guard(description, cnf, "DEFAULT_PERMISSION_CLASSES")
-    else
-      open_drf
+    return open_drf if verdicts.empty? || verdicts.any?(Nil)
+    setting = verdicts.compact.max_by(&.size)
+    description = setting.empty? ? "Protected by DRF DEFAULT_PERMISSION_CLASSES" : "Protected by DRF DEFAULT_PERMISSION_CLASSES (settings.#{setting} decides; a setting can make it public)"
+    project = drf_project([] of String, method)
+    cnfs = defaults.map { |perms| DjangoAccess.drf(perms, method, project) }.uniq!
+    # Which settings module runs is decided at deploy time: only what
+    # they all require is known.
+    cnf = cnfs.size == 1 ? cnfs[0] : cnfs.reduce { |left, right| left & right } + DjangoAccess.unresolved("DEFAULT_PERMISSION_CLASSES differs between settings modules")
+    guard(description, cnf, "DEFAULT_PERMISSION_CLASSES")
+  end
+
+  # A permission class that is not DRF's own, by import or because the
+  # project defines one of that name, is read by this tagger's verdict on
+  # it: whether it refuses an anonymous caller is known, nothing more.
+  private def drf_project(lines : Array(String), method : String) : Proc(String, String, Access::CNF?)
+    ->(name : String, source : String) { drf_project_class(name, source, lines, method) }
+  end
+
+  private def drf_project_class(name : String, source : String, lines : Array(String), method : String) : Access::CNF?
+    leaf = name.rpartition('.')[2]
+    shadowed = @permission_classes.has_key?(leaf)
+    return if drf_library?(name, lines) || (DjangoAccess::DRF_CLASSES.includes?(leaf) && !shadowed)
+    verdicts = shadowed ? @permission_classes[leaf].map { |klass| class_refusal(klass, method, 0) }.uniq! : [permission_refusal(leaf, method)]
+    case verdict = verdicts.size == 1 ? verdicts[0] : nil
+    when nil then DjangoAccess.unresolved(source)
+    when ""  then DjangoAccess.unread(source)
+    else          DjangoAccess.liftable(DjangoAccess.unread(source), "settings.#{verdict}")
+    end
+  end
+
+  # Whether `name` is DRF's in the module whose `lines` are given: a dotted
+  # settings path, or a name or module imported from `rest_framework`.
+  private def drf_library?(name : String, lines : Array(String)) : Bool
+    return true if name.starts_with?("rest_framework.")
+    bound = Regex.escape(name.partition('.')[0])
+    lines.any? do |line|
+      line.matches?(/\A\s*from\s+rest_framework(?:\.\w+)*\s+import\b[^#]*\b#{bound}\b/) ||
+        line.matches?(/\A\s*import\s+rest_framework(?:\.\w+)*\s+as\s+#{bound}\b/)
     end
   end
 
@@ -1293,7 +1356,7 @@ class DjangoAuthTagger < FrameworkTagger
   # assignment the return then instantiates. Nil when the body hands over
   # to the view's `permission_classes` (`super().get_permissions()`) or does
   # anything else: the caller then judges the view as if it had no override.
-  private def listed_permissions(body : String, action : String, method : String) : String?
+  private def listed_permissions(body : String, action : String, method : String) : String | Symbol?
     statements = [] of {Int32, String}
     depth = 0
     body.each_line do |raw|
@@ -1328,7 +1391,7 @@ class DjangoAuthTagger < FrameworkTagger
       end
       executed.each do |statement|
         if statement.matches?(PERMISSION_INHERIT)
-          return assigned
+          return assigned || :inherit
         elsif listed = (statement.match(PERMISSION_ASSIGN) || statement.match(PERMISSION_RETURN)).try(&.[1].gsub(/\(\s*\)/, ""))
           # Only class names and DRF's `|` `&` `~` composition: not a
           # comprehension or a conditional expression.
@@ -1356,11 +1419,11 @@ class DjangoAuthTagger < FrameworkTagger
     test[2] == "==" || test[2] == "in" ? holds : !holds
   end
 
-  # A setting decides only inside a project class, which reads as unresolved.
-  private def drf_guard(perms : String, method : String, source : String) : Guard?
+  # A setting decides only inside a project class, which `project` reads.
+  private def drf_guard(perms : String, method : String, source : String, project : Proc(String, String, Access::CNF?)) : Guard?
     setting = permissions_refusal(perms, method) || return
     description = setting.empty? ? "Protected by #{source}" : "Protected by #{source} (settings.#{setting} decides; a setting can make it public)"
-    guard(description, DjangoAccess.drf(perms, method), perms.gsub(/\s+/, " "))
+    guard(description, DjangoAccess.drf(perms, method, project), perms.gsub(/\s+/, " "))
   end
 
   # DRF checks every class in `permission_classes` and refuses when any
