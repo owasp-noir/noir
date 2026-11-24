@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "../../../analyzer/analyzers/python/python_helper"
 require "./python_guard_definitions"
+require "./python_auth_access"
 require "../../../utils/python_mro"
 
 @[Noir::TaggerFor(key: "flask_auth", name: "Flask Auth Tagger", desc: "Identifies Flask authentication patterns (flask-login, flask-jwt, flask-httpauth)", order: 90)]
@@ -56,28 +57,130 @@ class FlaskAuthTagger < FrameworkTagger
     ["python_flask"]
   end
 
+  # A decorator as a class list names it (`login_required`, judged as
+  # `@login_required`) and as written there (`jwt_required(optional=True)`),
+  # with the file its name resolves in.
+  private record Listed, file : String, line : String, source : String
+
+  # One layer that applies to the view: the text that names the tag (nil
+  # for a layer the tagger does not judge a guard but that may refuse) and
+  # what it requires.
+  private record Guard, description : String?, requires : Array(Access::Clause)
+
+  SETTING_OPENS = "(a setting can make it public)"
+
   def initialize(options : Hash(String, YAML::Any))
     super
-    @class_decorators = Hash(Tuple(String, String), Array(Tuple(String, String))?).new
+    @class_decorators = Hash(Tuple(String, String), Array(Listed)?).new
     @authz_params = Hash(Tuple(String, String, Int32), Array(String)?).new
   end
 
+  # Every layer applies: the view's decorators (or, for a handler the
+  # analyzer did not resolve, the route's), the handler's own refusal, and
+  # the router's `before_request` hooks. The first judged guard names the
+  # tag, as it did before the requirement was read.
   private def check_endpoint(endpoint : Endpoint)
-    auth, authz = handler_guards(endpoint)
-    auth ||= code_path_guard(endpoint)
-    auth ||= body_guard(endpoint)
-    auth ||= before_request_guard(endpoint)
-    endpoint.add_tag(Tag.new("auth", "Protected by #{auth}", "flask_auth")) if auth
+    method = endpoint.method.upcase
+    guards, authz = handler_guards(endpoint, method)
+    guards.concat(code_path_guards(endpoint, method)) if guards.none?(&.description)
+    body_guard(endpoint, method).try { |found| guards << found }
+    guards.concat(before_request_guards(endpoint, method))
+    if first = guards.find(&.description)
+      guards.concat(unread_layers(endpoint))
+      endpoint.add_tag(Tag.new("auth", "Protected by #{first.description}", "flask_auth", requires: guards.flat_map(&.requires).uniq!))
+    end
     endpoint.add_tag(Tag.new("authz", "Protected by #{authz}", "flask_auth")) if authz
   end
 
   # The handler's own refusal of a caller who is not logged in.
-  private def body_guard(endpoint : Endpoint) : String?
+  # Any other refusal in the body (`abort(403)` after a role test, `with
+  # permission.require():`) is a check noir did not read.
+  private def body_guard(endpoint : Endpoint, method : String) : Guard?
     handler = endpoint.handler || return
     file = handler.path || return
     lines = read_file_lines(file) || return
     def_idx = (handler.line || return) - 1
-    "handler refusing a caller who is not logged in" if refuses_anonymous?(file, lines, def_idx, endpoint.method.upcase)
+    description = "handler refusing a caller who is not logged in"
+    if cnf = anonymous_refusal(file, lines, def_idx, method, description)
+      return Guard.new(description, Access.clauses(cnf, description))
+    end
+    return unless function_body(lines, def_idx).any? { |(_, code)| refusal_statement?(code) || code.matches?(/\Awith\s.*\.require\s*\(/) }
+    fragment = "checks in the body of #{lines[def_idx].strip}"
+    Guard.new(nil, Access.clauses(PythonAuthAccess.unresolved(fragment), fragment))
+  end
+
+  # flask-restx `Api(..., decorators=[...])` / `Namespace(..., decorators=
+  # [...])` and flask-restful `Api(..., decorators=[...])` wrap every
+  # resource they register.
+  API_DECORATORS = /\b(?:Api|Namespace)\s*\((?:[^()]|\([^()]*\))*?\bdecorators\s*=/
+  HOOK_LINE      = /^\s*@([\w.]+)\.(before_request|before_app_request)\s*$/
+  HOOK_CALL      = /^\s*([\w.]+)\.(before_request|before_app_request)\s*\(\s*([^)\s]+)\s*\)/
+  BLUEPRINT      = /^\s*([A-Za-z_]\w*)\s*(?::[^=\n]+)?=\s*(?:flask\.)?Blueprint\s*\(/m
+  NESTING        = /\b([A-Za-z_]\w*)\.register_blueprint\s*\(/
+
+  # A layer elsewhere in the scan that may wrap a view without the
+  # per-route walk following it: an Api or Namespace decorators list (no
+  # router), or a hook. `per_route`: a `@<router>.before_request` hook,
+  # which `before_request_guards` reads for a route of its router in its
+  # own file. `app_wide`: a `before_app_request` hook, run ahead of every
+  # route.
+  private record Unread, file : String, router : String?, per_route : Bool, app_wide : Bool, text : String
+
+  @unread : Array(Unread)? = nil
+  @blueprints = Set(String).new
+  @nesting = Set(String).new
+
+  # Each such layer that may apply to the view, unresolved. A hook is ruled
+  # out only when it sits on a blueprint that is not the view's and that
+  # nests no other blueprint (and so cannot be a parent of the view's).
+  private def unread_layers(endpoint : Endpoint) : Array(Guard)
+    routes = endpoint.details.code_paths.compact_map do |path_info|
+      line = read_file_lines(path_info.path).try(&.[(path_info.line || next) - 1]?) || next
+      router = line.strip.match(ROUTE_DECORATOR).try(&.[1]) || next
+      {File.expand_path(path_info.path), router}
+    end
+    unread_elsewhere.compact_map do |layer|
+      if (router = layer.router) && !routes.empty?
+        next if layer.per_route && routes.includes?({layer.file, router})
+        unless layer.app_wide || routes.any? { |_, name| name == router }
+          next if @blueprints.includes?(router) && !@nesting.includes?(router)
+        end
+      end
+      Guard.new(nil, Access.clauses(PythonAuthAccess.unresolved(layer.text), layer.text))
+    end
+  end
+
+  # A decorated hook counts when it carries a decorator or its body is
+  # more than `pass`; a hook registered by call (`bp.before_request(fn)`)
+  # always counts, its function unread.
+  private def unread_elsewhere : Array(Unread)
+    @unread ||= collect_files_by_extension(".py").flat_map do |file|
+      content = CodeLocator.instance.read_source(file) || next [] of Unread
+      path = File.expand_path(file)
+      found = [] of Unread
+      if content.matches?(API_DECORATORS)
+        found << Unread.new(path, nil, false, true, "decorators= on an Api or Namespace in #{File.basename(file)}")
+      end
+      content.scan(BLUEPRINT) { |m| @blueprints << m[1] }
+      content.scan(NESTING) { |m| @nesting << m[1] }
+      next found unless content.includes?(".before_")
+      lines = content.lines
+      lines.each_with_index do |line, idx|
+        if call = line.match(HOOK_CALL)
+          found << Unread.new(path, call[1], false, call[2] == "before_app_request", line.strip)
+          next
+        end
+        hook = line.match(HOOK_LINE) || next
+        def_idx = idx + 1
+        while def_idx < lines.size && lines[def_idx].lstrip.starts_with?('@')
+          def_idx += 1
+        end
+        next if def_idx == idx + 1 && inert?(function_body(lines, def_idx))
+        per_route = hook[2] == "before_request"
+        found << Unread.new(path, hook[1], per_route, !per_route, "#{hook[1]}.#{hook[2]} #{lines[def_idx]?.to_s.strip}")
+      end
+      found
+    end
   end
 
   # A `@<router>.before_request` hook in the route's file runs before every
@@ -89,8 +192,11 @@ class FlaskAuthTagger < FrameworkTagger
   # nothing.
   # ponytail: same file and same router name only; a hook on a blueprint
   # the route file imports, or on the app a blueprint is registered on, is
-  # not followed.
-  private def before_request_guard(endpoint : Endpoint) : String?
+  # not followed for the tag (`unread_layers` keeps it unresolved).
+  # Every hook of the router runs, so each one contributes; one the tagger
+  # does not judge a guard still adds what it may refuse as unresolved.
+  private def before_request_guards(endpoint : Endpoint, method : String) : Array(Guard)
+    guards = [] of Guard
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path) || next
       route_line = lines[(path_info.line || next) - 1]? || next
@@ -100,22 +206,30 @@ class FlaskAuthTagger < FrameworkTagger
         next unless text.strip == hook
         def_idx = idx + 1
         while def_idx < lines.size && lines[def_idx].lstrip.starts_with?('@')
-          if desc = decorator_guard(lines[def_idx].strip, path_info.path)
-            return "#{desc} on #{router}.before_request"
+          entry = Listed.new(path_info.path, lines[def_idx].strip, lines[def_idx].strip)
+          if desc = decorator_guard(entry.line, entry.file)
+            guards << guard("#{desc} on #{router}.before_request", decorator_access(entry, desc, method, nil), entry.source)
+          elsif unread = judged_guard(entry, method, nil)
+            guards << unread
           end
           def_idx += 1
         end
-        if refuses_anonymous?(path_info.path, lines, def_idx, endpoint.method.upcase)
-          return "#{router}.before_request refusing a caller who is not logged in"
+        description = "#{router}.before_request refusing a caller who is not logged in"
+        if cnf = anonymous_refusal(path_info.path, lines, def_idx, method, description)
+          guards << guard(description, cnf, description)
+        elsif !inert?(function_body(lines, def_idx))
+          fragment = "#{router}.before_request #{lines[def_idx]?.to_s.strip}"
+          guards << Guard.new(nil, Access.clauses(PythonAuthAccess.unresolved(fragment), fragment))
         end
       end
     end
-    nil
+    guards
   end
 
-  # Whether the function at `def_idx` turns away a caller who is not logged
-  # in before any path that answers `method`: Superset's `welcome` opens
-  # with `if not g.user or not get_user_id(): return redirect_to_login()`.
+  # What passing the function at `def_idx` takes when it turns away a
+  # caller who is not logged in before any path that answers `method`:
+  # Superset's `welcome` opens with `if not g.user or not get_user_id():
+  # return redirect_to_login()`.
   # The `if` must hold only for an unidentified caller (`implies_identity?`
   # on its false branch) and its block must refuse: a login redirect, a 401,
   # or a 403. Top-level statements are read in order, and the walk stops at
@@ -124,26 +238,15 @@ class FlaskAuthTagger < FrameworkTagger
   # page()` leaves GET open, but not POST). A test on `request.method` is
   # decided for `method`. `if not is_feature_enabled(...):
   # abort(404)` reads no caller and answers nobody, so the walk goes on.
-  private def refuses_anonymous?(file : String, lines : Array(String), def_idx : Int32, method : String) : Bool
-    return false unless 0 <= def_idx < lines.size
-    def_indent = lines[def_idx].size - lines[def_idx].lstrip.size
-    idx = def_idx + 1
-    # Past the signature, which may wrap.
-    while idx < lines.size && !Analyzer::Python::Helper.strip_python_comment(lines[idx - 1]).rstrip.ends_with?(':')
-      idx += 1
-    end
-    body = [] of {Int32, String}
-    lines[idx..].each do |raw|
-      line = Analyzer::Python::Helper.strip_python_comment(raw).rstrip
-      next if line.blank?
-      indent = line.size - line.lstrip.size
-      break if indent <= def_indent
-      body << {indent, line.strip}
-    end
-    level = body.first?.try(&.[0]) || return false
+  # Nil when it does not refuse. Signed in when the function is nothing but
+  # a plain sign-in test and its refusal; otherwise signed in plus
+  # `description` unresolved, for what else the test or those refusals decide.
+  private def anonymous_refusal(file : String, lines : Array(String), def_idx : Int32, method : String, description : String) : Access::CNF?
+    body = function_body(lines, def_idx)
+    level = body.first?.try(&.[0]) || return
     body.each_with_index do |(indent, code), k|
       next unless indent == level
-      return false if code.starts_with?("return")
+      return if code.starts_with?("return")
       block = body[(k + 1)..].take_while { |entry| entry[0] > level }.map(&.[1])
       if if_match = code.match(/\A(?:if|elif)\s+(.+?):\s*(.*)\z/)
         inline = if_match[2]
@@ -152,14 +255,46 @@ class FlaskAuthTagger < FrameworkTagger
         next if cond == false # never taken for this method
         if cond.is_a?(String) && !block.empty? && block.first.matches?(BODY_REFUSAL) &&
            implies_identity?(cond, false, file, Hash(String, String).new, [] of String)
-          return true
+          plain = cond.strip.matches?(SIGN_IN_TEST) && body.size == (inline.empty? ? 2 : 1)
+          return plain ? PythonAuthAccess.signed_in : DjangoAccess.unread(description)
         end
-        return false if cond == true && block.any?(&.starts_with?("return"))
+        return if cond == true && block.any?(&.starts_with?("return"))
       end
       # Any other way this statement may answer first.
-      return false if block.any? { |statement| statement.starts_with?("return") && !statement.matches?(BODY_REFUSAL) }
+      return if block.any? { |statement| statement.starts_with?("return") && !statement.matches?(BODY_REFUSAL) }
     end
-    false
+    nil
+  end
+
+  # A test that holds exactly for a caller who is not signed in.
+  SIGN_IN_TEST = /\A(?:not\s+(?:flask_login\.)?current_user\.is_authenticated|(?:flask_login\.)?current_user\.is_anonymous|not\s+g\.user|g\.user\s+is\s+None)\z/
+
+  # The statements of the function whose `def` is at `def_idx`, past its
+  # signature (which may wrap), with their indents, comments cut.
+  private def function_body(lines : Array(String), def_idx : Int32) : Array({Int32, String})
+    body = [] of {Int32, String}
+    return body unless 0 <= def_idx < lines.size
+    def_indent = lines[def_idx].size - lines[def_idx].lstrip.size
+    idx = def_idx + 1
+    while idx < lines.size && !Analyzer::Python::Helper.strip_python_comment(lines[idx - 1]).rstrip.ends_with?(':')
+      idx += 1
+    end
+    lines[idx..].each do |raw|
+      line = Analyzer::Python::Helper.strip_python_comment(raw).rstrip
+      next if line.blank?
+      indent = line.size - line.lstrip.size
+      break if indent <= def_indent
+      body << {indent, line.strip}
+    end
+    body
+  end
+
+  # Whether a statement (or the one a one-line block header holds) turns
+  # the request away.
+  private def refusal_statement?(code : String) : Bool
+    statement = code.sub(/\A(?:if|elif|else|except|try|with|for|while)\b[^:]*:\s*/, "")
+    statement.matches?(/\A(?:return|raise|abort)\b/) &&
+      (statement.matches?(BODY_REFUSAL) || statement.matches?(REJECTION) || statement.matches?(FORBIDDEN))
   end
 
   BODY_REFUSAL = /\A(?:return|raise|abort)\b.*(?:#{LOGIN_REDIRECT.source}|\bredirect_to_(?:log_?in|sign_?in)\b|\b40[13]\b|Unauthori[sz]ed|Forbidden|\.response_40[13]\s*\()/i
@@ -187,7 +322,7 @@ class FlaskAuthTagger < FrameworkTagger
 
   # The auth decorator at the route's declaration line, for a route whose
   # handler the analyzer did not resolve.
-  private def code_path_guard(endpoint : Endpoint) : String?
+  private def code_path_guards(endpoint : Endpoint, method : String) : Array(Guard)
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path)
       next if lines.nil?
@@ -213,29 +348,28 @@ class FlaskAuthTagger < FrameworkTagger
             decorators[-1] += " #{current}"
           end
         end
-        decorators.each do |current|
-          if desc = decorator_guard(current, path_info.path)
-            return desc
-          end
-        end
+        guards = decorators.compact_map { |current| judged_guard(Listed.new(path_info.path, current, current), method, nil) }
+        return guards if guards.any?(&.description)
         next
       end
 
       # Otherwise the line is the view itself: walk back over its decorators.
       # 8-line window: Flask decorators stack above def, typically 1-5 decorators
+      guards = [] of Guard
       idx = line_num - 2 # 0-indexed, one line before
       while idx >= 0 && idx >= line_num - 10
         current = lines[idx].strip
         break if current.empty? && idx < line_num - 2
 
-        if current.starts_with?('@') && (desc = decorator_guard(current, path_info.path))
-          return desc
+        if current.starts_with?('@') && (found = judged_guard(Listed.new(path_info.path, current, current), method, nil))
+          guards << found
         end
 
         idx -= 1
       end
+      return guards if guards.any?(&.description)
     end
-    nil
+    [] of Guard
   end
 
   # The guard on the handler the analyzer resolved, outermost first: for a
@@ -243,26 +377,129 @@ class FlaskAuthTagger < FrameworkTagger
   # `method_decorators` / `decorators` (inherited from a base class when the
   # class does not set them, as Dify's `WebApiResource` subclasses do), then
   # the decorators stacked on the `def`, top down. Returns the first
-  # authentication guard and the first authorization guard among them.
-  private def handler_guards(endpoint : Endpoint) : Tuple(String?, String?)
-    none = {nil, nil}
+  # authentication guard and the first authorization guard among them; every
+  # guard in the stack adds what it requires.
+  private def handler_guards(endpoint : Endpoint, method : String) : Tuple(Array(Guard), String?)
+    none = {[] of Guard, nil}
     handler = endpoint.handler || return none
     file = handler.path || return none
     def_idx = (handler.line || return none) - 1
     lines = read_file_lines(file) || return none
     return none unless 0 <= def_idx < lines.size
-    decorators = [] of Tuple(String, String)
+    decorators = [] of Listed
     class_file, class_name = registered_class(endpoint) || {file, handler.name.rpartition('.')[0]}
     if !class_name.empty? && (found = class_decorators(class_file, class_name))
-      found.each { |declaring_file, name| decorators << {"@#{name}", declaring_file} }
+      decorators.concat(found)
     end
-    decorators_above(lines, def_idx).reverse_each { |line| decorators << {line, file} }
-    auth = authz = nil
-    decorators.each do |line, declaring_file|
-      auth ||= decorator_guard(line, declaring_file)
-      authz ||= decorator_authz(line, declaring_file)
+    stack = decorators_above(lines, def_idx)
+    stack.reverse_each { |line| decorators << Listed.new(file, line, line) }
+    view = class_name.empty? ? nil : fab_permission(stack, handler.name.rpartition('.')[2], class_name)
+    authz = nil
+    guards = decorators.compact_map do |entry|
+      authz ||= decorator_authz(entry.line, entry.file)
+      judged_guard(entry, method, view)
     end
-    {auth, authz}
+    {guards, authz}
+  end
+
+  # The permission a Flask-AppBuilder decorator on `def_name` of `view`
+  # checks: `@permission_name("x")` in the stack names it, else the method.
+  private def fab_permission(stack : Array(String), def_name : String, view : String) : String
+    named = stack.compact_map(&.match(/\A@permission_name\s*\((.*)\)\s*\z/)).first?
+    permission = named ? (PythonAuthAccess.literal(named[1]) || "<#{named[1].strip}>") : def_name
+    PythonAuthAccess.fab_permission(permission, view)
+  end
+
+  private def guard(description : String?, cnf : Access::CNF, source : String) : Guard
+    Guard.new(description, Access.clauses(cnf, source.lchop('@')))
+  end
+
+  # Flask-AppBuilder's route, error-wrapping and permission-name markers,
+  # which check nothing themselves (security/decorators.py, api/__init__.py).
+  NON_GUARDS = %w[expose safe permission_name]
+
+  # The guard a decorator applies, judged as before. Any other decorator
+  # but a route or a `NON_GUARDS` marker is a check noir did not read.
+  private def judged_guard(entry : Listed, method : String, view : String?) : Guard?
+    if description = decorator_guard(entry.line, entry.file)
+      return guard(description, decorator_access(entry, description, method, view), entry.source)
+    end
+    name = entry.line.match(DECORATOR_NAME).try(&.[1]) || return
+    return if entry.line.matches?(ROUTE_DECORATOR) || NON_GUARDS.includes?(name.rpartition('.')[2])
+    guard(nil, PythonAuthAccess.unresolved(entry.source.lchop('@')), entry.source)
+  end
+
+  # A body of nothing but `pass`, `...` or a one-line docstring.
+  private def inert?(body : Array({Int32, String})) : Bool
+    body.all? { |(_, code)| code.matches?(/\A(?:pass|\.\.\.|[rRuU]?(?:"[^"]*"|'[^']*'|"""[^"]*"""|\'\'\'[^']*\'\'\'))\z/) }
+  end
+
+  # What a decorator judged a guard requires. A project decorator is read
+  # no further than the verdict that it refuses an anonymous caller: its
+  # arguments stay text. A library one is read only when this file binds
+  # its name to the library. `view` names the Flask-AppBuilder permission.
+  private def decorator_access(entry : Listed, description : String, method : String, view : String?) : Access::CNF
+    name, args, source = DjangoAccess.call(entry.source) || return DjangoAccess.unread(description)
+    if resolve_def(entry.file, name)
+      cnf = DjangoAccess.unread(source)
+      return description.ends_with?(SETTING_OPENS) ? DjangoAccess.liftable(cnf, description) : cnf
+    end
+    return PythonAuthAccess.fab(view || source, description) if description.starts_with?("flask-appbuilder")
+    if description.starts_with?("apifairy")
+      auth = args.try { |text| Noir::TopLevelSplit.split(text, ',', DjangoAccess::ARGS).first? } || ""
+      return httpauth_object?(entry.file, auth) ? PythonAuthAccess.httpauth(args, source, true, method) : DjangoAccess.unread(description)
+    end
+    receiver, _, leaf = name.rpartition('.')
+    if leaf == "login_required" && !receiver.empty?
+      return PythonAuthAccess.httpauth(args, source, true, method) if httpauth_object?(entry.file, receiver)
+      # An `optional=True` lets a caller without credentials through whatever the object is.
+      read = PythonAuthAccess.httpauth(args, source, false, method)
+      return read.includes?(PythonAuthAccess.signed_in[0]) ? DjangoAccess.unread(description) : read
+    end
+    if qualified = from_imports(entry.file)[name]?
+      login_disabled = qualified.matches?(/\Aflask_(?:login|security)\b.*\.login_required\z/) && login_disabled?
+      PythonAuthAccess.library_decorator(qualified, args, source, method, login_disabled).try { |cnf| return cnf }
+    end
+    DjangoAccess.unread(description)
+  end
+
+  @from_imports = Hash(String, Hash(String, String)).new
+
+  private def from_imports(path : String) : Hash(String, String)
+    @from_imports[path] ||= PythonAuthAccess.from_imports(read_file(path) || "")
+  end
+
+  HTTPAUTH_CLASSES = %w[HTTPBasicAuth HTTPTokenAuth HTTPDigestAuth MultiAuth]
+
+  # Whether `name` in `file` is a Flask-HTTPAuth object: assigned from one
+  # of its classes in the module that declares it.
+  private def httpauth_object?(file : String, name : String) : Bool
+    return false if name.empty?
+    !!resolve(file, name) do |path, instance|
+      read_file(path).try(&.scan(ALLOWS_INSTANCE).any? do |m|
+        next false unless m[1] == instance
+        mod, _, ctor = m[2].rpartition('.')
+        HTTPAUTH_CLASSES.includes?(ctor) && (mod.empty? ? from_imports(path)[ctor]? == "flask_httpauth.#{ctor}" : mod == "flask_httpauth")
+      end) || false
+    end
+  end
+
+  @login_disabled : Bool? = nil
+
+  # `LOGIN_DISABLED = x`, `["LOGIN_DISABLED"] = x`, `"LOGIN_DISABLED": x`,
+  # `LOGIN_DISABLED=x` with `x` anything but the literal `False`.
+  LOGIN_DISABLED_SET = /LOGIN_DISABLED['"]?\]?\s*(?::|=(?!=))\s*(?!False\b)[^\s,)}\]]/
+  PYTHON_TEST        = Noir::FileRole::Convention.new(:test, path: /(?:\A|\/)tests?\//, name: /\A(?:test_.*|.*_test|conftest)\.py\z/)
+
+  # Whether a source of the scan outside the tests may set flask_login's
+  # `LOGIN_DISABLED`.
+  private def login_disabled? : Bool
+    if (known = @login_disabled).nil?
+      known = @login_disabled = collect_files_by_extension(".py").any? do |file|
+        file_role(file, PYTHON_TEST).production? && !!CodeLocator.instance.read_source(file).try(&.matches?(LOGIN_DISABLED_SET))
+      end
+    end
+    known
   end
 
   # The class view registered for the route when its handler is a method
@@ -492,14 +729,14 @@ class FlaskAuthTagger < FrameworkTagger
   # `View.decorators = [...]` / `+= [...]` after the class body counts. A
   # list built from another class's (`BaseResource.decorators + [...]`)
   # holds that class's entries. Nil when neither attribute is set.
-  private def class_decorators(file : String, name : String) : Array(Tuple(String, String))?
+  private def class_decorators(file : String, name : String) : Array(Listed)?
     key = {file, name}
     return @class_decorators[key] if @class_decorators.has_key?(key)
     @class_decorators[key] = nil # a self-referencing list ends here
     found = nil
     CLASS_DECORATOR_ATTRS.each do |attr|
       if entries = class_attr(file, name, attr, 0)
-        (found ||= [] of Tuple(String, String)).concat(entries)
+        (found ||= [] of Listed).concat(entries)
       end
     end
     @class_decorators[key] = found
@@ -507,20 +744,20 @@ class FlaskAuthTagger < FrameworkTagger
 
   CLASS_DECORATOR_ATTRS = %w[decorators method_decorators]
 
-  private def class_attr(file : String, name : String, attr : String, depth : Int32) : Array(Tuple(String, String))?
+  private def class_attr(file : String, name : String, attr : String, depth : Int32) : Array(Listed)?
     return if depth > 5
     mro = Noir::PythonMRO.linearize({file, name}) { |node| class_bases(node[0], node[1]) }
     mro_attr(mro, 0, attr, depth)
   end
 
-  private def mro_attr(mro : Array(Tuple(String, String)), index : Int32, attr : String, depth : Int32) : Array(Tuple(String, String))?
+  private def mro_attr(mro : Array(Tuple(String, String)), index : Int32, attr : String, depth : Int32) : Array(Listed)?
     return if index >= mro.size
     file, name = mro[index]
     lines = read_file_lines(file) || return mro_attr(mro, index + 1, attr, depth)
     value = class_body_attr(lines, name, attr).try { |text| decorator_entries(text, file, depth) }
     module_attr_assignments(lines, name, attr).each do |op, text|
       entries = decorator_entries(text, file, depth)
-      value = op == "=" ? entries : (value || mro_attr(mro, index + 1, attr, depth) || [] of Tuple(String, String)) + entries
+      value = op == "=" ? entries : (value || mro_attr(mro, index + 1, attr, depth) || [] of Listed) + entries
     end
     value || mro_attr(mro, index + 1, attr, depth)
   end
@@ -569,19 +806,23 @@ class FlaskAuthTagger < FrameworkTagger
     text
   end
 
-  # The decorators a list expression names, as `{declaring file, name}`.
-  private def decorator_entries(text : String, file : String, depth : Int32) : Array(Tuple(String, String))
-    code = text.gsub(PY_STRING, "")
-    names = code.scan(/(?:^\s*[\[({]?|[\[,{:+])\s*([A-Za-z_][\w.]*)/).map do |m|
+  # The decorators a list expression names. Each is judged by its name
+  # alone, as before its requirement was read, and read as written.
+  private def decorator_entries(text : String, file : String, depth : Int32) : Array(Listed)
+    # Strings blanked to their length keep each position in `code` one in `text`.
+    code = text.gsub(PY_STRING) { |literal| " " * literal.size }
+    entries = code.scan(/(?:^\s*[\[({]?|[\[,{:+])\s*([A-Za-z_][\w.]*)/).map do |m|
+      args = call_arguments_after(code, m.end(1))
       # A flask-allows `requires(...)` entry keeps its requirements: what
       # they test decides how the guard is described.
-      m[1].ends_with?("requires") && (args = call_arguments_after(code, m.end(1))) ? "#{m[1]}#{args}" : m[1]
+      name = m[1].ends_with?("requires") && args ? "#{m[1]}#{args}" : m[1]
+      {name, args ? "#{m[1]}#{text[m.end(1), args.size]}" : m[1]}
     end
-    names.flat_map do |entry|
-      if (ref = entry.match(/^(.+)\.(method_decorators|decorators)$/)) && (target = resolve_class(file, ref[1]))
-        class_attr(target[0], target[1], ref[2], depth + 1) || [] of Tuple(String, String)
+    entries.flat_map do |name, source|
+      if (ref = name.match(/^(.+)\.(method_decorators|decorators)$/)) && (target = resolve_class(file, ref[1]))
+        class_attr(target[0], target[1], ref[2], depth + 1) || [] of Listed
       else
-        [{file, entry}]
+        [Listed.new(file, "@#{name}", "@#{source}")]
       end
     end
   end

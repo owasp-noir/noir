@@ -46,16 +46,27 @@ module Analyzer::Python
         params = Noir::URLPath.params(deco.path, Noir::URLPath::BRACE_IDENT)
         params.concat(request_params(body, "current_request", ALIAS_RE, REQUEST_ATTRS))
 
-        tags = [] of Tag
+        settings = [] of ::String
         if (authorizer = deco.keywords["authorizer"]?) && authorizer != "None"
-          tags << Tag.new("auth", "Protected by Chalice authorizer=#{authorizer}", TAGGER)
-        elsif deco.keywords["api_key_required"]? == "True"
-          tags << Tag.new("auth", "Protected by Chalice api_key_required=True", TAGGER)
+          settings << "authorizer=#{authorizer}"
         end
+        settings << "api_key_required=True" if deco.keywords["api_key_required"]? == "True"
+        tags = settings.empty? ? [] of Tag : [unread_guard(settings)]
 
         routes << Route.new(deco.router_name, deco.path, deco.methods.uniq, params, deco.decorator_line + 1, callees, tags)
       end
       FileScan.new(path, routes, mounts) unless routes.empty? && mounts.empty?
+    end
+
+    # API Gateway answers a request without the authorizer's identity
+    # header, or without a valid API key, before the function runs. What
+    # the authorizer accepts, and who holds a key, is the deployment's.
+    # Both apply when a route sets both; the first names the tag.
+    private def unread_guard(settings : Array(::String)) : Tag
+      descriptions = settings.map { |setting| "Chalice #{setting}" }
+      requires = [Access::Clause.new([Access::Atom.new(:authenticated)], descriptions[0])] +
+                 descriptions.map { |description| Access::Clause.unresolved(description, description) }
+      Tag.new("auth", "Protected by #{descriptions[0]}", TAGGER, requires: requires)
     end
   end
 end

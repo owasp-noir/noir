@@ -5,6 +5,7 @@ require "../../engines/python_engine"
 require "./flask_family"
 require "../../../utils/worker_threads"
 require "../../../utils/python_mro"
+require "../../../tagger/framework_taggers/python/python_auth_access"
 
 module Analyzer::Python
   class Flask < PythonEngine
@@ -1442,6 +1443,10 @@ module Analyzer::Python
       {"info", "GET", "/_info"},
     ]
 
+    # The `@permission_name` FAB gives each of them where it differs from
+    # the method's name.
+    FAB_MODEL_REST_PERMISSIONS = {"get_list" => "get"}
+
     # Route-method sets as Superset's `RouteMethod` spells them; any other
     # `RouteMethod.NAME` is the lowercased name.
     FAB_ROUTE_METHOD_SETS = {
@@ -1907,7 +1912,10 @@ module Analyzer::Python
             # Flask-AppBuilder stacks `@protect()` on each of these: a
             # permission check that admits anonymous callers only when the
             # Public role holds the permission.
-            endpoint.add_tag(Tag.new("auth", "Protected by flask-appbuilder ModelRestApi protect (a setting can make it public)", "flask_auth"))
+            description = "flask-appbuilder ModelRestApi protect (a setting can make it public)"
+            permission = PythonAuthAccess.fab_permission(FAB_MODEL_REST_PERMISSIONS[handler]? || handler, decl.name)
+            requires = Access.clauses(PythonAuthAccess.fab(permission, description), description)
+            endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "flask_auth", requires: requires))
             result << endpoint
           end
         end

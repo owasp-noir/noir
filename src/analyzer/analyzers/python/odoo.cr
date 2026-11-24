@@ -43,6 +43,8 @@ module Analyzer::Python
                     json ? ["POST"] : ["GET", "POST"]
                   end
         auth = deco.keywords["auth"]? || "user"
+        # `auth=public` names a variable, not the literal method.
+        literal = !deco.keywords.has_key?("auth") || (deco.def_line >= 0 && lines[deco.decorator_line...deco.def_line].join.matches?(/\bauth\s*=\s*[rRuU]?['"]/))
 
         def_line = deco.def_line
         body = def_line >= 0 ? extract_function_body(lines, def_line) : ""
@@ -59,8 +61,9 @@ module Analyzer::Python
             (arg_names - path_names).each { |name| params << Param.new(name, "", param_type) }
 
             endpoint = Endpoint.new(url, method, params, Details.new(PathInfo.new(path, deco.decorator_line + 1)))
-            endpoint.add_tag(Tag.new("auth", "Protected by Odoo auth='#{auth}'", TAGGER)) if PROTECTED_AUTH.includes?(auth)
-            endpoint.add_tag(Tag.new("odoo-auth", auth, TAGGER))
+            requires = access(auth, literal, body, lines[(deco.decorator_line + 1)...def_line]? || [] of ::String)
+            endpoint.add_tag(Tag.new("auth", "Protected by Odoo auth='#{auth}'", TAGGER, requires: requires)) if PROTECTED_AUTH.includes?(auth)
+            endpoint.add_tag(Tag.new("odoo-auth", auth, TAGGER, requires: requires))
             endpoint.add_tag(Tag.new("odoo-type", kind, TAGGER))
             endpoint.add_tag(Tag.new("csrf-disabled", "Odoo csrf=False", TAGGER)) if deco.keywords["csrf"]? == "False"
             callees.each { |callee| endpoint.push_callee(callee) }
@@ -69,6 +72,32 @@ module Analyzer::Python
         end
       end
       endpoints
+    end
+
+    # `ir.http._auth_method_<auth>`: `user` refuses no uid and the public
+    # users; `bearer` takes an API key (scoped by `bearer_scope`) or else
+    # falls back to `user`; `public` runs as the public user when nobody is
+    # signed in, and `none` runs with no user at all, so both admit anyone.
+    # Any other value names a project's own method. Another decorator, and
+    # a refusal or group check in the body, are checks noir does not read.
+    BODY_CHECK = /(?m)^.*(?:\braise\s+[A-Za-z_]|\.has_group\s*\(|\.check_access\w*\s*\(|\babort\s*\(|\bForbidden\b).*$/
+
+    private def access(auth : ::String, literal : Bool, body : ::String, decorators : Array(::String)) : Array(Access::Clause)
+      source = "Odoo auth='#{auth}'"
+      clauses = case literal ? auth : nil
+                when "user"
+                  [Access::Clause.new([Access::Atom.new(:authenticated)], source)]
+                when "public", "none"
+                  [Access::Clause.new([Access::Atom.new(:anonymous)], source)]
+                when "bearer"
+                  [Access::Clause.new([Access::Atom.new(:authenticated)], source), Access::Clause.unresolved("bearer_scope", source)]
+                else
+                  [Access::Clause.unresolved(source, source)]
+                end
+      unread = decorators.map(&.strip).select(&.starts_with?('@'))
+      body.scan(BODY_CHECK) { |m| unread << m[0].strip }
+      unread.uniq.each { |fragment| clauses << Access::Clause.unresolved(fragment, fragment) }
+      clauses
     end
   end
 end

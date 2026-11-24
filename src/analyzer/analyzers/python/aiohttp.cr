@@ -651,6 +651,7 @@ module Analyzer::Python
     HA_VIEW_URL_RE     = /^url\s*(?::[^=]+)?=\s*(?:[rf]?['"]([^'"]+)['"]|([A-Z_][A-Z0-9_]*)\s*$)/
     HA_VIEW_EXTRA_RE   = /^extra_urls\s*(?::[^=]+)?=\s*\[([^\]]*)\]/
     HA_VIEW_NO_AUTH_RE = /^requires_auth\s*(?::[^=]+)?=\s*False\b/
+    HA_VIEW_AUTH_RE    = /^requires_auth\s*(?::[^=]+)?=\s*([^#]+?)\s*(?:#.*)?$/
     HA_VIEW_STRINGS_RE = /[rf]?['"]([^'"]+)['"]/
 
     # `URL_API_STATES = "/api/states"`: a module-level string constant in
@@ -664,6 +665,38 @@ module Analyzer::Python
       read_file_content(imported[0]).match(const_re).try(&.[1])
     end
 
+    # `request_handler_factory` answers 401 to a request the auth
+    # middleware did not authenticate while the view's `requires_auth`
+    # holds. A value other than `True` may not. A decorator on the verb
+    # method (`@require_admin`, read past its wrapped arguments) and a
+    # refusal or admin test in its body are checks of their own.
+    HA_BODY_CHECK = /(?m)^.*(?:\braise\s+[A-Za-z_]|\bis_admin\b|\bHTTPStatus\.(?:UNAUTHORIZED|FORBIDDEN)\b|\b40[13]\b).*$/
+
+    private def ha_view_access(setting : ::String?, lines : Array(::String), method_index : Int32, body : ::String) : Array(Access::Clause)
+      source = "HomeAssistantView requires_auth"
+      signed_in = Access::Atom.new(:authenticated)
+      clauses = [setting ? Access::Clause.new([signed_in, Access::Atom.new(:unresolved, setting)], source) : Access::Clause.new([signed_in], source)]
+      idx = method_index - 1
+      open = 0
+      while idx >= 0
+        line = lines[idx].strip
+        idx -= 1
+        open += line.count(")]}") - line.count("([{")
+        next if open > 0
+        break unless line.starts_with?('@')
+        clauses << Access::Clause.unresolved(line, line)
+      end
+      body.scan(HA_BODY_CHECK) { |m| clauses << Access::Clause.unresolved(m[0].strip, m[0].strip) }
+      clauses
+    end
+
+    # `name` assigned the literal `True` once at module level in `source`.
+    private def true_constant?(source : ::String, name : ::String) : Bool
+      return false unless name.matches?(/\A[A-Za-z_]\w*\z/)
+      assignments = source.scan(/^#{Regex.escape(name)}\s*(?::[^=\n]+)?=(?!=)\s*(.+?)\s*$/m)
+      assignments.size == 1 && assignments[0][1] == "True"
+    end
+
     private def emit_home_assistant_views(path : ::String, lines : Array(::String), source : ::String,
                                           base_path : ::String) : Nil
       lines.each_with_index do |line, class_index|
@@ -671,6 +704,7 @@ module Analyzer::Python
         class_indent = header[1].size
         urls = [] of ::String
         requires_auth = true
+        auth_setting = nil
         body_indent = nil
         ((class_index + 1)...lines.size).each do |i|
           stripped = lines[i].lstrip
@@ -689,6 +723,8 @@ module Analyzer::Python
             extra[1].scan(HA_VIEW_STRINGS_RE) { |m| urls << m[1] }
           elsif stripped.matches?(HA_VIEW_NO_AUTH_RE)
             requires_auth = false
+          elsif setting = stripped.match(HA_VIEW_AUTH_RE)
+            auth_setting = "requires_auth = #{setting[1]}" unless setting[1] == "True" || true_constant?(source, setting[1])
           end
         end
         next if urls.empty?
@@ -701,7 +737,8 @@ module Analyzer::Python
               definition_base_path: base_path, source: source, handler: handler_at(lines, method_index, path))
             next unless requires_auth
             endpoint = result.pop
-            endpoint.add_tag(Tag.new("auth", "Protected by HomeAssistantView requires_auth", "python_aiohttp"))
+            endpoint.add_tag(Tag.new("auth", "Protected by HomeAssistantView requires_auth", "python_aiohttp",
+              requires: ha_view_access(auth_setting, lines, method_index, body)))
             result << endpoint
           end
         end
