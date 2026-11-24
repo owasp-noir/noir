@@ -84,4 +84,44 @@ describe "MicronautAuthTagger" do
       "}",                                  # 6
     ], {3 => "/account"}).should eq([{["auth"], ["(role:ROLE_A | role:ROLE_B)"]}])
   end
+
+  jsr = [
+    "@Secured(\"ROLE_ADMIN\")",                   # 1
+    "@Controller(\"/jsr\")",                      # 2
+    "public class JsrController {",               # 3
+    "  @Get(\"/deny\")",                          # 4
+    "  @DenyAll",                                 # 5
+    "  public String deny() { return \"x\"; }",   # 6
+    "  @Get(\"/roles\")",                         # 7
+    "  @RolesAllowed(\"ROLE_JSR\")",              # 8
+    "  public String roles() { return \"x\"; }",  # 9
+    "  @Get(\"/permit\")",                        # 10
+    "  @PermitAll",                               # 11
+    "  public String permit() { return \"x\"; }", # 12
+    "}",                                          # 13
+  ]
+  jsr_routes = {4 => "/jsr/deny", 7 => "/jsr/roles", 10 => "/jsr/permit"}
+
+  it "reads a method's JSR-250 annotation in place of the class's @Secured once the mapper is in the build" do
+    micronaut_tags("JsrController.java", jsr, jsr_routes, {"build.gradle" => "dependencies { annotationProcessor(\"io.micronaut.security:micronaut-security-processor\") }"}).should eq([
+      {["auth"], ["deny"]},
+      {["auth"], ["role:ROLE_JSR"]},
+      # `@PermitAll` maps to `isAnonymous()`, but the tag stays a guard.
+      {["auth"], ["authenticated", "unresolved"]},
+    ])
+  end
+
+  it "keeps the class's @Secured as an alternative without the mapper" do
+    micronaut_tags("JsrController.java", jsr, jsr_routes).should eq([
+      {["auth"], ["(role:ROLE_ADMIN | deny)", "unresolved"]},
+      {["auth"], ["(role:ROLE_ADMIN | role:ROLE_JSR)", "unresolved"]},
+      {["auth"], ["authenticated", "(role:ROLE_ADMIN | unresolved)", "unresolved"]},
+    ])
+  end
+
+  it "keeps Micronaut's ip-patterns, which may refuse first, unread" do
+    micronaut_tags("AccountController.java", controller, {4 => "/account"}, {"application.yml" => "micronaut:\n  security:\n    ip-patterns:\n      - 10.0.0.*\n"}).should eq([
+      {["auth"], ["authenticated", "unresolved"]},
+    ])
+  end
 end
