@@ -78,6 +78,20 @@ describe Access do
       Access.either(Access::CNF.new, [[admin]]).should eq(Access::CNF.new)
       Access.either([[admin]], Access::CNF.new).should eq(Access::CNF.new)
     end
+
+    it "stops past the cap, so a fold over many alternatives stays cheap" do
+      scopes = ->(prefix : String) { (1..8).map { |n| [Access::Atom.new(:scope, "#{prefix}#{n}")] } }
+      started = Time.instant
+      folded = (1..12).map { |n| scopes.call("s#{n}:") }.reduce { |left, right| Access.either(left, right) }
+      (Time.instant - started).should be < 1.second
+      folded.size.should be > Access::MAX_CLAUSES
+      Access.clauses(folded, "security").map(&.any_of.map(&.to_s)).should eq([["unresolved"]])
+    end
+
+    it "keeps every clause of a result within the cap, duplicates folded" do
+      Access.either([[admin], [admin]], [[write], [write]]).should eq([[admin, write]])
+      Access.either((1..4).map { |n| [Access::Atom.new(:role, "R#{n}")] }, [[write], [signed_in]]).size.should eq(8)
+    end
   end
 
   describe ".clauses" do
