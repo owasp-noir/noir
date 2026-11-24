@@ -3,6 +3,7 @@ require "../../../utils/spec_line_index"
 require "./symfony_security"
 require "./symfony_route_attributes"
 require "../../../miniparsers/php_class_members"
+require "../../../tagger/framework_taggers/php/php_access"
 
 module Analyzer::Php
   class Symfony < PhpEngine
@@ -12,18 +13,21 @@ module Analyzer::Php
 
     # A class declared in a controller file: its name, its `#[Route]` prefixes,
     # its class-level route attribute (if any, used when it is invocable),
-    # the guard its class-level security attributes impose, and its body.
+    # the guard its class-level security attributes impose and what they
+    # require, and its body.
     private record ClassInfo,
       name : String,
       prefixes : Array(Tuple(String?, String)),
       guard : String?,
+      requires : Array(Access::Clause),
       body_start : Int32,
       body_end : Int32,
       route_attr : RouteAttr?,
       invoke_start : Int32?
 
     # What a controller method contributes to the routes it serves.
-    private record Action, handler : Handler, params : Array(Param), guard : String?, body : Tuple(String, Int32)?
+    # `requires` holds every check that applies, `guard` names the first.
+    private record Action, handler : Handler, params : Array(Param), guard : String?, requires : Array(Access::Clause), body : Tuple(String, Int32)?
 
     SIGNATURE_RE = /(?:public|protected|private)\s+(?:static\s+)?function\s+(\w+)\s*\(/
 
@@ -124,7 +128,9 @@ module Analyzer::Php
       file = File.expand_path(path)
       config = @security_configs.select { |c| file.starts_with?("#{c.root}/") }.max_by?(&.root.size)
       return unless config && (roles = config.required_roles(endpoint.method, endpoint.url))
-      endpoint.add_tag(Tag.new("auth", "Protected by Symfony access_control (#{roles.join(", ")})#{SymfonySecurity.roles_note(roles)}", "php_auth"))
+      source = "access_control (#{roles.join(", ")})"
+      requires = Access.clauses(PhpAccess.symfony_roles(roles, config.affirmative?, SymfonySecurity::VOTER_NOTE), source)
+      endpoint.add_tag(Tag.new("auth", "Protected by Symfony #{source}#{SymfonySecurity.roles_note(roles)}", "php_auth", requires: requires))
     end
 
     private def yaml_route_file?(path : String) : Bool
@@ -311,9 +317,10 @@ module Analyzer::Php
           a if (decl = next_declaration(content, a.stop)) && decl.begin(0) == class_start
         end
         prefixes = attr ? extract_symfony_route_localized_paths(attr.args) : [] of Tuple(String?, String)
-        guard = security_attribute_guard(content[member_prelude_start(content, parser.lexer, class_start)...class_start])
+        prelude = content[member_prelude_start(content, parser.lexer, class_start)...class_start]
+        guard = security_attribute_guard(prelude)
         invoke_start = node.children.find { |child| child.kind.method? && child.name == "__invoke" }.try(&.start)
-        classes << ClassInfo.new(name, prefixes, guard, node.body.begin, node.body.end, attr, invoke_start)
+        classes << ClassInfo.new(name, prefixes, guard, PhpAccess.symfony_attributes(prelude), node.body.begin, node.body.end, attr, invoke_start)
       end
       classes
     end
@@ -351,13 +358,16 @@ module Analyzer::Php
       handler = Handler.new(name, path, offsets.line(offsets.begin(sig, 1)))
       prelude = offsets.slice(member_prelude_start(content, lexer, sig_start), sig_start)
       guard = security_attribute_guard(prelude) || klass.try(&.guard)
+      requires = (klass.try(&.requires) || [] of Access::Clause) + PhpAccess.symfony_attributes(prelude)
       params = fos_rest_params(prelude) + argument_params(offsets, lexer, sig)
       if body
         sources = [{content, body[0]}] + callee_bodies(content, body[0])
         sources.each { |source, code| params.concat(extract_method_params(code) + form_params(source, code)) }
         guard ||= sources.compact_map { |_, code| refusal_in(code) }.first?
+        sources.each_with_index { |(_, code), index| requires.concat(PhpAccess.symfony_refusals(code, own: index == 0)) }
       end
-      Action.new(handler, dedup_params(params), guard, body)
+      requires = Access.clauses(PhpAccess.symfony_unread(guard), guard) if guard && requires.empty?
+      Action.new(handler, dedup_params(params), guard, requires.uniq, body)
     end
 
     # The request key of each FOSRest param attribute on an action: its `key`
@@ -439,7 +449,7 @@ module Analyzer::Php
     private def apply_action(endpoint : Endpoint, action : Action?) : Endpoint
       return endpoint unless action
       endpoint.handler = action.handler
-      action.guard.try { |guard| endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "php_auth")) }
+      action.guard.try { |guard| endpoint.add_tag(Tag.new("auth", "Protected by #{guard}", "php_auth", requires: action.requires)) }
       endpoint
     end
 
