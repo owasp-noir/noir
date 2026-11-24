@@ -230,6 +230,115 @@ describe "FastAPIAuthTagger requires" do
     fastapi_requires(files, "/super")["authz"].should eq([["authenticated"], ["unresolved"]])
   end
 
+  it "names a role only off the injected caller" do
+    main = <<-PY
+      from fastapi import Depends, HTTPException
+      from users import get_current_user
+
+      def require_public_doc(doc=Depends(load_doc), user=Depends(get_current_user)):
+          if doc.role != "public":
+              raise HTTPException(status_code=403)
+          return doc
+
+      @app.get("/docs/{doc_id}")
+      async def read_doc(d=Depends(require_public_doc)):
+          return d
+      PY
+    fastapi_requires({"users.py" => FASTAPI_REQUIRES_USERS, "main.py" => main}, "/docs/{doc_id}")["authz"]
+      .should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "keeps the condition of a 401 that is not an absence test, and a setting that lifts one" do
+    main = <<-PY
+      from fastapi import Depends, Header, HTTPException
+      from users import get_current_user
+
+      def tenant_user(x_tenant: str = Header(...), user=Depends(get_current_user)):
+          if user.tenant_id != x_tenant:
+              raise HTTPException(status_code=401)
+          return user
+
+      def maybe_user(token: str = Header(None)):
+          if settings.AUTH_ENABLED:
+              if not token:
+                  raise HTTPException(status_code=401)
+          return token
+
+      @app.get("/tenant")
+      async def tenant(u=Depends(tenant_user)):
+          return u
+
+      @app.get("/maybe")
+      async def maybe(t=Depends(maybe_user)):
+          return t
+      PY
+    files = {"users.py" => FASTAPI_REQUIRES_USERS, "main.py" => main}
+    fastapi_requires(files, "/tenant")["auth"].should eq([["authenticated"], ["unresolved"]])
+    fastapi_requires(files, "/maybe")["auth"].should eq([["authenticated", "unresolved"]])
+  end
+
+  it "reads a role constant only when it is bound once and never changed here" do
+    main = <<-PY
+      import os
+      from fastapi import Depends, HTTPException
+      from users import get_current_user
+      from roles import IMPORTED
+
+      ADMIN_ROLE = "admin"
+      ADMIN_ROLE = os.getenv("ADMIN_ROLE", "superadmin")
+      EDITORS = ["editor"]
+      EDITORS.append("intern")
+
+      def reassigned(user=Depends(get_current_user)):
+          if user.role != ADMIN_ROLE:
+              raise HTTPException(status_code=403)
+
+      def mutated(user=Depends(get_current_user)):
+          if user.role not in EDITORS:
+              raise HTTPException(status_code=403)
+
+      def imported(user=Depends(get_current_user)):
+          if user.role not in IMPORTED:
+              raise HTTPException(status_code=403)
+
+      @app.get("/reassigned")
+      async def a(u=Depends(reassigned)):
+          return u
+
+      @app.get("/mutated")
+      async def b(u=Depends(mutated)):
+          return u
+
+      @app.get("/imported")
+      async def c(u=Depends(imported)):
+          return u
+      PY
+    files = {"users.py" => FASTAPI_REQUIRES_USERS, "roles.py" => %(IMPORTED = ["admin"]\n), "main.py" => main}
+    %w[/reassigned /mutated /imported].each do |url|
+      fastapi_requires(files, url)["authz"].should eq([["authenticated"], ["unresolved"]])
+    end
+  end
+
+  it "keeps a conditional raise of any exception" do
+    main = <<-PY
+      from fastapi import Depends, HTTPException
+      from users import get_current_user
+
+      def acme_admin(user=Depends(get_current_user)):
+          if user.org != "acme":
+              raise NotOwner()
+          if user.role != "admin":
+              raise HTTPException(status_code=403)
+          return user
+
+      @app.get("/custom")
+      async def custom(u=Depends(acme_admin)):
+          return u
+      PY
+    fastapi_requires({"users.py" => FASTAPI_REQUIRES_USERS, "main.py" => main}, "/custom")["authz"]
+      .should eq([["authenticated"], ["role:admin"], ["unresolved"]])
+  end
+
   it "does not read a 403 on a setting as a sign-in" do
     main = <<-PY
       from fastapi import Depends, HTTPException

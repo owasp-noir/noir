@@ -533,24 +533,25 @@ class FastAPIAuthTagger < FrameworkTagger
     found
   end
 
-  # The code a dependency runs for a request, with what its names are bound
-  # to: a `def`'s body under its defaults, the `__call__` of the instance a
-  # call or a module-level assignment builds, or a factory's body under the
-  # call's arguments.
-  private record CheckBody, text : String, file : String, env : Env, attrs : Hash(String, String?), instance : Bool
+  # The code a dependency runs for a request, with where the names it
+  # reads get their values: a `def`'s body under its defaults, the
+  # `__call__` of the instance a call or a module-level assignment builds,
+  # or a factory's body under the call's arguments.
+  private record CheckBody, text : String, file : String, bindings : Hash(String, Binding), instance : Bool
+  # An expression and the file it is written in.
+  alias Binding = {String, String}
 
   private def check_body(name : String, call : String?, file : String, depth : Int32) : CheckBody?
     return if depth > 2
-    no_attrs = Hash(String, String?).new
     unless call
       site = callable_site(file, name)
       # Defined inside an app factory, as `dependency_refuses?` reads it.
       if site.nil? && !name.includes?('.') && (block = definition_block(file, /^\s+(?:async\s+)?def\s+#{Regex.escape(name)}\b/))
-        return CheckBody.new(block, file, def_env(block, file, nil, Env.new, file), no_attrs, false)
+        return CheckBody.new(block, file, raw_bind(def_params(block), [] of String, file, file), false)
       end
       return unless site
       if block = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/)
-        return CheckBody.new(block, site[0], def_env(block, site[0], nil, Env.new, file), no_attrs, false)
+        return CheckBody.new(block, site[0], raw_bind(def_params(block), [] of String, site[0], site[0]), false)
       end
       statement = definition_block(site[0], /^#{Regex.escape(site[1])}\s*(?::[^=\n]+)?=\s*[\w.]+\s*\(/) || return
       m = statement.match(INSTANCE_CALL) || return
@@ -559,51 +560,147 @@ class FastAPIAuthTagger < FrameworkTagger
     args = call_arguments(call)
     if klass = class_site(file, name)
       body = call_method(klass, 0) || return
-      return CheckBody.new(body, klass[0], Env.new, instance_attrs(klass, bind_arguments(init_signature(klass), args, Env.new, file, klass[0])), true)
+      return CheckBody.new(body, klass[0], attr_bindings(klass, raw_bind(init_signature(klass), args, file, klass[0])), true)
     end
     site = callable_site(file, name) || return
     block = definition_block(site[0], /^(?:async\s+)?def\s+#{Regex.escape(site[1])}\b/) || return
-    bound = bind_arguments(def_params(block), args, Env.new, file, site[0])
+    bound = raw_bind(def_params(block), args, file, site[0])
     if klass = factory_class(file, name)
       body = call_method(klass, 0) || return
-      return CheckBody.new(body, klass[0], Env.new, instance_attrs(klass, bound), true)
+      # The factory hands its parameters to the class by name.
+      return CheckBody.new(body, klass[0], attr_bindings(klass, bound), true)
     end
-    CheckBody.new(block, site[0], def_env(block, site[0], bound, Env.new, file), no_attrs, false)
+    CheckBody.new(block, site[0], bound, false)
   end
 
-  # What the refusals in a dependency's code require, one clause each: the
-  # request passes only when none fires. A refusal under a test that the
-  # caller's credential is absent requires sign-in, and one under a single
-  # comparison of an injected caller's role with a value read here names
-  # the roles. Any other 401 answers an unauthenticated caller; any other
-  # 403 is unresolved with its conditions. nil when it refuses nowhere.
+  # Each parameter bound to the argument a call passes, written in `file`,
+  # or to its default, written in `callee_file`. Past a `*args` nothing is
+  # bound, defaults included.
+  private def raw_bind(params : Array({String, String?}), args : Array(String), file : String, callee_file : String) : Hash(String, Binding)
+    bound = Hash(String, Binding).new
+    positional = 0
+    args.each do |arg|
+      return bound if arg.starts_with?('*')
+      if kw = arg.match(/\A([A-Za-z_]\w*)\s*=(?!=)\s*(.+)\z/m)
+        bound[kw[1]] = {kw[2].strip, file}
+      else
+        params[positional]?.try { |param| bound[param[0]] = {arg, file} }
+        positional += 1
+      end
+    end
+    params.each { |name, default| bound[name] = {default, callee_file} if default && !bound.has_key?(name) }
+    bound
+  end
+
+  # `self.x` for each `self.x = expr` of the class's `__init__`, through a
+  # parameter to what the constructor was handed.
+  private def attr_bindings(klass : {String, Int32}, bound : Hash(String, Binding)) : Hash(String, Binding)
+    attrs = Hash(String, Binding).new
+    if init = method_body(klass, "__init__", 0)
+      init.each_line do |line|
+        m = line.match(/^\s+self\.([A-Za-z_]\w*)\s*(?::[^=\n]+)?=(?!=)\s*(.+)$/) || next
+        key = "self.#{m[1]}"
+        attrs[key] = bound[m[2].strip]? || {m[2].strip, klass[0]} unless attrs.has_key?(key)
+      end
+    end
+    attrs
+  end
+
+  # The literal `ref` holds where the dependency reads it: written there,
+  # bound from a call or default, or a module constant assigned once in
+  # that file and never changed. nil otherwise.
+  private def role_value(ref : String, body : CheckBody) : String?
+    if binding = body.bindings[ref]?
+      return strict_value(binding[0], binding[1], 0)
+    end
+    # A local the code assigns shadows a module constant of that name.
+    return if body.text.matches?(/^\s+#{Regex.escape(ref)}\s*(?::[^=\n]+)?=(?!=)/m)
+    strict_value(ref, body.file, 0)
+  end
+
+  private def strict_value(expr : String, file : String, depth : Int32) : String?
+    expr = expr.strip
+    return expr if FastAPIAccess.literal(expr) || expr.starts_with?('[') || expr.starts_with?('(') || expr.starts_with?('{')
+    return unless depth == 0 && expr.matches?(/\A[A-Za-z_]\w*\z/)
+    constant_value(expr, file).try { |value| strict_value(value, file, 1) }
+  end
+
+  MUTATION = "\\s*(?:\\.\\s*(?:append|extend|insert|add|update|remove|pop|clear|discard)\\s*\\(|[-+|&]=|\\[[^\\]\\n]*\\]\\s*=(?!=))"
+
+  # The value of module constant `name` in `file`: assigned once, at the
+  # top level, never mutated or rebound, not imported.
+  private def constant_value(name : String, file : String) : String?
+    return if foreign_import?(file, name)
+    lines = read_file_lines(file) || return
+    escaped = Regex.escape(name)
+    assignment = /^\s*#{escaped}\s*(?::[^=\n]+)?=(?!=)/
+    indices = (0...lines.size).select { |i| lines[i].matches?(assignment) }
+    return if indices.size != 1 || lines[indices[0]].starts_with?(/\s/)
+    content = lines.join('\n')
+    return if content.matches?(/(?<![\w.])#{escaped}#{MUTATION}/) || content.matches?(/\bglobal\s+[\w\s,]*\b#{escaped}\b/)
+    joined_statement(lines, indices[0]).partition(/(?<![=!<>])=(?!=)/)[2].strip
+  end
+
+  ANY_RAISE = /\braise\b/
+
+  # What the raises in a dependency's code require, one clause per raise:
+  # the request passes only when none fires, i.e. when one of the
+  # conditions it sits under fails. A failed test that the caller is absent
+  # is sign-in; a failed comparison of the injected caller's role with a
+  # value read here names the roles; any other condition is unresolved. A
+  # 401 under conditions that all read the caller answers an
+  # unauthenticated caller as well. nil when nothing is raised.
   private def refusal_cnf(body : CheckBody) : Access::CNF?
     lines = body.text.lines
-    sites = refusal_sites(lines, body.file, REFUSAL_MARKER)
+    sites = refusal_sites(lines, body.file, ANY_RAISE)
     return if sites.empty?
     unauthenticated = refusal_sites(lines, body.file, UNAUTHENTICATED_MARKER).map(&.[0]).to_set
-    sites.flat_map do |idx, inline|
+    callers = handler_caller_names(body.text, body.file)
+    loop_variable = FastAPIAccess.scope_loop_variable(body.text)
+    cnf = Access::CNF.new
+    sites.each do |idx, inline|
       conds = governing_conditions(lines, idx)
       conds << {inline, true} if inline
-      if conds.size == 1 && conds[0][1]
-        cond = conds[0][0]
-        next [[AUTHENTICATED]] if FastAPIAccess.absence_test?(cond) && credential_condition?(cond, Hash(String, String).new)
-        if (comparison = FastAPIAccess.role_comparison(cond)) && body.text.matches?(/[(,]\s*#{Regex.escape(comparison[0])}\s*[:=,)]/)
-          _, ref, collection = comparison
-          value = ref.starts_with?("self.") ? body.attrs[ref[5..]]? : eval_expr(ref, body.env, body.file, 0)
-          next [FastAPIAccess.role_atoms(value, ref, collection)]
-        end
+      # The documented every-scope check, which the scope atoms carry.
+      next if loop_variable && conds.any? { |cond, positive| positive && cond.matches?(/\A#{Regex.escape(loop_variable)}\s+not\s+in\b/) }
+      unauthenticated_site = unauthenticated.includes?(idx) || local_401?(lines, idx)
+      if conds.empty?
+        cnf << [Access::Atom.new(:unresolved, lines[idx].strip)]
+      elsif unauthenticated_site && conds.all? { |cond, _| cond == "except" }
+        # A 401 for a credential that failed to decode.
+        cnf << [AUTHENTICATED]
+      else
+        cnf << conds.flat_map { |cond, positive| holds_unless(cond, positive, callers, body) }
+        cnf << [AUTHENTICATED] if unauthenticated_site && conds.all? { |cond, _| reads_caller?(cond, callers) }
       end
-      fragment = conds.empty? ? lines[idx].strip : conds.map { |test, positive| positive ? test : "not (#{test})" }.join(" and ")
-      unread = [Access::Atom.new(:unresolved, fragment)]
-      next [unread] unless unauthenticated.includes?(idx)
-      # A 401 on a role or ownership field still judges what the caller
-      # may do. The scopes the documented loop checks are read as scopes.
-      fragment.matches?(AUTHZ_FIELD_401) ? [[AUTHENTICATED], unread] : [[AUTHENTICATED]]
     end
+    cnf
   end
 
-  AUTHZ_FIELD_401 = /\.(?:is_superuser|is_admin|is_staff|owner_id|roles?|permissions?)\b/
+  # What holds when the raise under `cond` (taken when `cond` is
+  # `positive`) does not fire.
+  private def holds_unless(cond : String, positive : Bool, callers : Set(String), body : CheckBody) : Array(Access::Atom)
+    if reads_caller?(cond, callers) && (positive ? FastAPIAccess.absence_test?(cond) : FastAPIAccess.presence_test?(cond))
+      return [AUTHENTICATED]
+    end
+    if (comparison = FastAPIAccess.role_comparison(cond, positive)) && callers.includes?(comparison[0])
+      _, ref, collection = comparison
+      return FastAPIAccess.role_atoms(role_value(ref, body), ref, collection)
+    end
+    [Access::Atom.new(:unresolved, positive ? cond : "not (#{cond})")]
+  end
+
+  private def reads_caller?(cond : String, callers : Set(String)) : Bool
+    cond == "except" || credential_condition?(cond, Hash(String, String).new) ||
+      callers.any? { |caller| cond.matches?(/(?<![\w.])#{Regex.escape(caller)}\b/) }
+  end
+
+  # `raise credentials_exception` of a 401 the function builds itself.
+  private def local_401?(lines : Array(String), idx : Int32) : Bool
+    name = lines[idx].match(/\braise\s+(\w+)\s*(?:from\b.*)?$/).try(&.[1]) || return false
+    assigned = lines.index(&.matches?(/^\s*#{Regex.escape(name)}\s*=(?!=)/)) || return false
+    joined_statement(lines, assigned).matches?(UNAUTHENTICATED_MARKER)
+  end
 
   # What the guard call a dependency's code opens with requires (see
   # `leading_guard_call`): the callee's refusals, read the same way.
