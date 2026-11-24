@@ -95,6 +95,11 @@ module Analyzer::Php
         requires = Access.clauses(PhpAccess.drupal_requirement(key, value), "#{key}: #{value}")
         endpoint.add_tag(Tag.new("authz", "Protected by Drupal #{key} (#{value})", TAGGER, requires: requires))
       end
+      # DefaultAccessCheck forbids `_access: 'FALSE'`; added to a tag the
+      # route already has, which `add_tag` merges it into.
+      if requirements["_access"]?.try(&.strip.upcase) == "FALSE" && (tag = endpoint.tags.find(&.tagger.==(TAGGER)))
+        endpoint.add_tag(Tag.new(tag.name, tag.description, TAGGER, requires: [Access::Clause.new([Access::Atom.new(:deny)], "_access: FALSE")]))
+      end
     end
 
     private def analyze_routing_file(path : String) : Array(Endpoint)

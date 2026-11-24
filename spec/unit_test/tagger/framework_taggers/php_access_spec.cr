@@ -33,23 +33,26 @@ describe PhpAccess do
 
   describe ".symfony_attributes" do
     {
-      "#[IsGranted('ROLE_ADMIN')]"                                       => [["role:ROLE_ADMIN"]],
-      "#[IsGranted(attribute: 'ROLE_ADMIN', statusCode: 404)]"           => [["role:ROLE_ADMIN"]],
-      "#[IsGranted('ROLE_ADMIN', 'post')]"                               => [["role:ROLE_ADMIN"]],
-      "#[IsGranted(subject: 'post', attribute: 'POST_EDIT')]"            => [["unresolved:POST_EDIT"]],
-      "#[IsGranted('ROLE_USER')]\n#[IsGranted('ROLE_ADMIN')]"            => [["role:ROLE_USER"], ["role:ROLE_ADMIN"]],
-      "#[Route('/a'), IsGranted('ROLE_USER')]"                           => [["role:ROLE_USER"]],
-      "#[IsGranted(AuthenticatedVoter::IS_AUTHENTICATED_FULLY)]"         => [["authenticated"]],
-      "#[IsGranted(User::ROLE_ADMIN)]"                                   => [["authenticated"], ["unresolved:User::ROLE_ADMIN"]],
-      "#[IsGranted(PostVoter::EDIT, 'post')]"                            => [["unresolved:PostVoter::EDIT"]],
-      "#[IsGranted(new Expression('is_granted(\"ROLE_A\") or x'))]"      => [["authenticated"], ["unresolved:new Expression('is_granted(\"ROLE_A\") or x')"]],
-      "#[IsGranted('PUBLIC_ACCESS')]"                                    => [] of Array(String),
-      "/**\n * @IsGranted(\"ROLE_ADMIN\")\n */"                          => [["role:ROLE_ADMIN"]],
-      "#[Security(\"is_granted('ROLE_ADMIN')\")]"                        => [["authenticated"], ["unresolved:Security(\"is_granted('ROLE_ADMIN')\")"]],
-      "#[Security(name: 'Bearer')]"                                      => [] of Array(String),
-      "#[IsGranted(\n  'ROLE_ADMIN'"                                     => [["authenticated"], ["unresolved:IsGranted"]],
-      "#[IsGranted(\"ROLE_{$x}\")]"                                      => [["authenticated"], ["unresolved:\"ROLE_{$x}\""]],
-      "#[IsGranted(attribute: 'ROLE_A'), IsGranted('IS_AUTHENTICATED')]" => [["role:ROLE_A"], ["authenticated"]],
+      "#[IsGranted('ROLE_ADMIN')]"                                                    => [["role:ROLE_ADMIN"]],
+      "#[IsGranted(attribute: 'ROLE_ADMIN', statusCode: 404)]"                        => [["role:ROLE_ADMIN"]],
+      "#[IsGranted('ROLE_ADMIN', 'post')]"                                            => [["role:ROLE_ADMIN"]],
+      "#[IsGranted(subject: 'post', attribute: 'POST_EDIT')]"                         => [["unresolved:POST_EDIT"]],
+      "#[IsGranted('ROLE_USER')]\n#[IsGranted('ROLE_ADMIN')]"                         => [["role:ROLE_USER"], ["role:ROLE_ADMIN"]],
+      "#[Route('/a'), IsGranted('ROLE_USER')]"                                        => [["role:ROLE_USER"]],
+      "#[IsGranted(AuthenticatedVoter::IS_AUTHENTICATED_FULLY)]"                      => [["authenticated"]],
+      "#[IsGranted(User::ROLE_ADMIN)]"                                                => [["authenticated"], ["unresolved:User::ROLE_ADMIN"]],
+      "#[IsGranted(PostVoter::EDIT, 'post')]"                                         => [["unresolved:PostVoter::EDIT"]],
+      "#[IsGranted(new Expression('is_granted(\"ROLE_A\") or x'))]"                   => [["authenticated"], ["unresolved:new Expression('is_granted(\"ROLE_A\") or x')"]],
+      "#[IsGranted('PUBLIC_ACCESS')]"                                                 => [] of Array(String),
+      "/**\n * @IsGranted(\"ROLE_ADMIN\")\n */"                                       => [["role:ROLE_ADMIN"]],
+      "#[Security(\"is_granted('ROLE_ADMIN')\")]"                                     => [["authenticated"], ["unresolved:Security(\"is_granted('ROLE_ADMIN')\")"]],
+      "#[Security(name: 'Bearer')]"                                                   => [] of Array(String),
+      "#[IsGranted(\n  'ROLE_ADMIN'"                                                  => [["authenticated"], ["unresolved:IsGranted"]],
+      "#[IsGranted(\"ROLE_{$x}\")]"                                                   => [["authenticated"], ["unresolved:\"ROLE_{$x}\""]],
+      "#[IsGranted(attribute: 'ROLE_A'), IsGranted('IS_AUTHENTICATED')]"              => [["role:ROLE_A"], ["authenticated"]],
+      "#[Sec\\IsGranted('ROLE_ADMIN')]"                                               => [["role:ROLE_ADMIN"]],
+      "#[ \\Symfony\\Component\\Security\\Http\\Attribute\\IsGranted('ROLE_ADMIN') ]" => [["role:ROLE_ADMIN"]],
+      "/**\n * @Security(expression=\"is_granted('ROLE_A')\")\n */"                   => [["authenticated"], ["unresolved:Security(expression=\"is_granted('ROLE_A')\")"]],
     }.each do |text, expected|
       it "reads #{text.inspect}" do
         read(PhpAccess.symfony_attributes(text)).should eq(expected)
@@ -97,6 +100,7 @@ describe PhpAccess do
       {["allow_if: is_granted('ROLE_ADMIN') and is_authenticated()"], true}           => [["role:ROLE_ADMIN"], ["authenticated"]],
       {["allow_if: is_granted(\"@api.access\") and is_authenticated()#{note}"], true} => [["unresolved:@api.access"], ["authenticated"]],
       {["@v", "allow_if: is_granted('@w')#{note}"], true}                             => [["unresolved:@v", "unresolved:@w"]],
+      {["allow_if: is_granted('ROLE_USER') and is_granted('ORG\\'ADMIN')"], true}     => [["role:ROLE_USER"], ["unresolved:is_granted('ROLE_USER') and is_granted('ORG\\'ADMIN')"]],
     }.each do |(roles, affirmative), expected|
       it "reads #{roles} (#{affirmative ? "affirmative" : "other strategy"})" do
         read(PhpAccess.symfony_roles(roles, affirmative, note)).should eq(expected)
@@ -187,6 +191,7 @@ describe PhpAccess do
       "a deny for a named role, then an allow" => {[rule.call(false, nil, ["banned"]), rule.call(true, nil, ["@"])], [["authenticated"], ["unresolved:rule"]]},
       "an unread rule"                         => {[rule.call(true, nil, ["admin"]), unread], [["authenticated"], ["role:admin", "unresolved:#{unread.source}"]]},
       "an unread rule of another action"       => {[PhpAccess::YiiRule.new("x", true, ["other"], nil, false), rule.call(true, nil, ["@"])], [["authenticated"]]},
+      "an empty actions list, every action"    => {[rule.call(false, [] of String, ["@"]), rule.call(true, nil, ["admin"])], [["deny"]]},
     }.each do |name, (rules, expected)|
       it "reads #{name}" do
         read(PhpAccess.yii_signed_in(rules, "index")).should eq(expected)

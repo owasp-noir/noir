@@ -166,4 +166,65 @@ describe "PhpAuthTagger requires" do
     atoms(php_auth_tag(source, 5, "php_symfony", existing: access_control)).should eq([["role:ROLE_USER"], ["authenticated"], ["unresolved"]])
     php_auth_tag(source, 5, "php_symfony").try(&.requires).should be_nil
   end
+
+  it "leaves Yii rules unread when another filter or a spread entry also applies" do
+    two_filters = [
+      "<?php",
+      "class AdminController extends Controller",
+      "{",
+      "    public function behaviors()",
+      "    {",
+      "        return [",
+      "            'login' => ['class' => AccessControl::class, 'rules' => [['allow' => true, 'roles' => ['@']]]],",
+      "            'admin' => ['class' => AccessControl::class, 'rules' => [['allow' => true, 'roles' => ['admin']]]],",
+      "        ];",
+      "    }",
+      "    public function actionDelete() {}",
+      "}",
+    ].join("\n")
+    atoms(php_auth_tag(two_filters, 11, "php_yii")).should eq([["authenticated"], ["unresolved"]])
+    spread = [
+      "<?php",
+      "class SpreadController extends Controller",
+      "{",
+      "    public function behaviors()",
+      "    {",
+      "        return ['access' => ['class' => AccessControl::class, 'rules' => [['allow' => true, 'roles' => ['@'], ...$extra]]]];",
+      "    }",
+      "    public function actionView() {}",
+      "}",
+    ].join("\n")
+    atoms(php_auth_tag(spread, 8, "php_yii")).should eq([["authenticated"], ["unresolved"]])
+  end
+
+  it "keeps CakePHP's Authorization layer unread beside the identity check" do
+    tmpdir = File.tempname("php_cake_authz")
+    controllers = File.join(tmpdir, "src", "Controller")
+    Dir.mkdir_p(controllers)
+    Dir.mkdir_p(File.join(tmpdir, "config"))
+    routes = File.join(tmpdir, "config", "routes.php")
+    File.write(routes, "<?php\n$routes->connect('/articles/edit', ['controller' => 'Articles', 'action' => 'edit']);\n")
+    File.write(File.join(controllers, "ArticlesController.php"), <<-PHP)
+      <?php
+      class ArticlesController extends Controller
+      {
+          public function initialize(): void
+          {
+              $this->loadComponent('Authentication.Authentication');
+              $this->loadComponent('Authorization.Authorization');
+          }
+          public function edit($id) { $this->Authorization->authorize($this->Articles->get($id)); }
+      }
+      PHP
+    begin
+      options = create_test_options
+      options["base"] = YAML::Any.new(tmpdir)
+      details = Details.new(PathInfo.new(routes, 2))
+      details.technology = "php_cakephp"
+      endpoint = PhpAuthTagger.new(options).perform([Endpoint.new("/articles/edit", "GET", [] of Param, details)])[0]
+      atoms(endpoint.tags.find(&.tagger.==("php_auth"))).should eq([["authenticated"], ["unresolved"]])
+    ensure
+      FileUtils.rm_rf(tmpdir)
+    end
+  end
 end

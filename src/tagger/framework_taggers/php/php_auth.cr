@@ -180,10 +180,12 @@ class PhpAuthTagger < FrameworkTagger
       next if line_num < 1 || line_num > lines.size
       line_idx = line_num - 1
 
-      if endpoint.details.technology == "php_cakephp" && (description = cakephp_guard(path_info.path, lines, line_idx))
+      if endpoint.details.technology == "php_cakephp" && (cake = cakephp_guard(path_info.path, lines, line_idx))
+        description, unread = cake
         # AuthenticationComponent::doIdentityCheck refuses a request without an identity.
-        identity = Access::Clause.new([Access::Atom.new(:authenticated)], description)
-        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth", requires: [identity]))
+        requires = [Access::Clause.new([Access::Atom.new(:authenticated)], description)]
+        requires << Access::Clause.unresolved(unread, description) if unread
+        endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "php_auth", requires: requires))
         return
       end
       if endpoint.details.technology == "php_yii" && (guard = yii_guard(path_info.path, lines, line_idx))
@@ -304,15 +306,19 @@ class PhpAuthTagger < FrameworkTagger
   CAKE_UNAUTHENTICATED = /->\s*(?:allowUnauthenticated|addUnauthenticatedActions)\s*\(\s*(\[[^\]]*\])?/
   # `loadComponent(..., ['requireIdentity' => false])` or
   # `setConfig('requireIdentity', false)`: no action requires an identity.
-  CAKE_NO_IDENTITY   = /['"]requireIdentity['"]\s*(?:=>|,)\s*false\b/
-  CAKE_TARGET_STRING = /['"](?:\w+(?:\/\w+)*\.)?((?:\w+\/)*)(\w+)::(\w+)['"]/
-  CAKE_EXTENDS       = /\bclass\s+\w+\s+extends\s+\\?(?:\w+\\)*(\w+)/
-  CAKE_PREFIX_SCOPE  = /->\s*prefix\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:\[[^\]]*\]\s*,\s*)?(?:static\s+)?\z/
+  CAKE_NO_IDENTITY     = /['"]requireIdentity['"]\s*(?:=>|,)\s*false\b/
+  CAKE_AUTHZ_COMPONENT = /->\s*loadComponent\s*\(\s*['"](?:Authorization\.)?Authorization['"]/
+  CAKE_TARGET_STRING   = /['"](?:\w+(?:\/\w+)*\.)?((?:\w+\/)*)(\w+)::(\w+)['"]/
+  CAKE_EXTENDS         = /\bclass\s+\w+\s+extends\s+\\?(?:\w+\\)*(\w+)/
+  CAKE_PREFIX_SCOPE    = /->\s*prefix\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:\[[^\]]*\]\s*,\s*)?(?:static\s+)?\z/
 
   # ponytail: the unauthenticated lists of the whole class chain are unioned,
   # though `allowUnauthenticated` replaces the list; a base class can only
   # widen what is exempt, never narrow it.
-  private def cakephp_guard(path : String, lines : Array(String), line_idx : Int32) : String?
+  # Besides the description, the authorization layer it could not read: the
+  # Authorization component or middleware (its policy checks), or a base
+  # controller outside the scan.
+  private def cakephp_guard(path : String, lines : Array(String), line_idx : Int32) : {String, String?}?
     statement = lines[line_idx..statement_end(lines, line_idx, 5)].join(' ')
     if target = statement.match(CAKE_TARGET_STRING)
       prefix, controller, action = target[1].rchop('/'), target[2], target[3]
@@ -327,6 +333,7 @@ class PhpAuthTagger < FrameworkTagger
     file = File.join([root, "src", "Controller", prefix, "#{controller}Controller.php"].reject(&.empty?))
     exempt = Set(String).new
     loaded = false
+    unread = read_file(File.join(root, "src", "Application.php")).try { |app| "AuthorizationMiddleware" if app.includes?("AuthorizationMiddleware") }
     5.times do
       raw = read_file(file) || break
       # Comments dropped: a commented-out `loadComponent` loads nothing.
@@ -337,12 +344,15 @@ class PhpAuthTagger < FrameworkTagger
         list = call[1]? || return
         list.scan(/['"](\w+)['"]/) { |name| exempt << name[1] }
       end
+      unread ||= "Authorization component" if content.matches?(CAKE_AUTHZ_COMPONENT)
       parent = content.match(CAKE_EXTENDS).try(&.[1]) || break
-      file = cakephp_class_file(file, root, parent) || break
+      next_file = cakephp_class_file(file, root, parent)
+      unread ||= "#{parent} (not in the scan)" unless next_file || parent == "Controller"
+      file = next_file || break
     end
     return unless loaded
     return if action ? exempt.includes?(action) : !exempt.empty?
-    "CakePHP AuthenticationComponent (identity required)"
+    {"CakePHP AuthenticationComponent (identity required)", unread}
   end
 
   # The controller namespace of the `$routes->prefix('Admin', function ...)`
@@ -415,7 +425,7 @@ class PhpAuthTagger < FrameworkTagger
         break
       end
       description = "Yii AccessControl (no rule admits a guest)"
-      return {description, yii_requires(parser, filter, rules, action, description)}
+      return {description, yii_requires(parser, open, filter, rules, action, description)}
     end
     nil
   end
@@ -423,13 +433,22 @@ class PhpAuthTagger < FrameworkTagger
   YII_FILTER_KEYS = Set{"class", "only", "except", "rules", "denyCallback"}
   YII_RULE_KEYS   = Set{"allow", "actions", "roles", "denyCallback"}
 
+  # Behaviors another class of the file, a parent's `behaviors()` or a
+  # second AccessControl filter attach, which must allow too.
+  YII_OTHER_FILTERS = /\bclass\s+\w+[^{;]*\{[\s\S]*\bclass\s+\w+[^{;]*\{|\bparent::behaviors\b|\bAccessControl::(?:class\b|className\s*\()[\s\S]*\bAccessControl::(?:class\b|className\s*\()/
+
   # What a signed-in caller needs under the filter's rules. A filter key
-  # such as `ruleConfig` (another rule class) or `user` leaves them unread.
-  private def yii_requires(parser : Noir::PhpBlockParser, filter : Hash(String, Range(Int32, Int32)),
+  # such as `ruleConfig` (another rule class) or `user`, an entry without a
+  # key (`...$extra`), or another filter the reader does not combine leaves
+  # them unread.
+  private def yii_requires(parser : Noir::PhpBlockParser, open : Int32, filter : Hash(String, Range(Int32, Int32)),
                            rules : Array(Noir::PhpBlockParser::ArrayEntry), action : String, description : String) : Array(Access::Clause)
     lexer = parser.lexer
-    if key = filter.keys.find { |name| !YII_FILTER_KEYS.includes?(name) }
-      return Access.clauses([[Access::Atom.new(:authenticated)], [Access::Atom.new(:unresolved, "#{key} => #{lexer.source(filter[key])}")]], description)
+    code = lexer.without_comments(keep_docblocks: false)
+    unread = filter.keys.find { |name| !YII_FILTER_KEYS.includes?(name) }.try { |key| "#{key} => #{lexer.source(filter[key])}" }
+    unread ||= lexer.source(open..(lexer.matching_delimiter(open) || open)) if !yii_keyed?(parser, open) || code.matches?(YII_OTHER_FILTERS)
+    if unread
+      return Access.clauses([[Access::Atom.new(:authenticated)], [Access::Atom.new(:unresolved, unread.gsub(/\s+/, " "))]], description)
     end
     read = rules.map do |entry|
       source = lexer.source(entry.value).gsub(/\s+/, " ")
@@ -439,11 +458,15 @@ class PhpAuthTagger < FrameworkTagger
       actions = rule["actions"]?.try { |range| yii_literals(parser, range) }
       roles = rule["roles"]?.try { |range| yii_literals(parser, range) }
       allow = rule["allow"]?.try { |range| lexer.source(range).strip.downcase }
-      readable = rule.keys.all? { |name| YII_RULE_KEYS.includes?(name) } && (allow.nil? || allow == "true" || allow == "false") &&
+      readable = yii_keyed?(parser, open) && rule.keys.all? { |name| YII_RULE_KEYS.includes?(name) } && (allow.nil? || allow == "true" || allow == "false") &&
                  (!rule.has_key?("actions") || actions) && (!rule.has_key?("roles") || roles)
       PhpAccess::YiiRule.new(source, allow == "true", actions, roles, !!readable)
     end
     Access.clauses(PhpAccess.yii_signed_in(read, action), description)
+  end
+
+  private def yii_keyed?(parser : Noir::PhpBlockParser, open : Int32) : Bool
+    parser.array_entries(open).try(&.all?(&.key)) || false
   end
 
   # The entries of the array literal spanning `range`, when every one is a

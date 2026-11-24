@@ -52,8 +52,8 @@ module PhpAccess
   # `#[IsGranted(...)]`, `@IsGranted(...)` or a later entry of an attribute
   # group, and `Security` given its expression string first: NelmioApiDoc's
   # `#[Security(name: 'Bearer')]` only documents a scheme.
-  SYMFONY_ATTRIBUTE   = /(?:#\[|@|,\s*)(IsGranted|Security)\s*\(/
-  SYMFONY_EXPRESSION  = /\A\s*(?:expression\s*:\s*)?['"]/
+  SYMFONY_ATTRIBUTE   = /(?:#\[\s*|@|,\s*)(?:\\?(?:\w+\\)+)?(IsGranted|Security)\s*\(/
+  SYMFONY_EXPRESSION  = /\A\s*(?:expression\s*[:=]\s*)?['"]/
   AUTHENTICATED_VOTER = /\A\\?(?:[\w\\]*\\)?AuthenticatedVoter::(\w+)\z/
   CLASS_CONSTANT      = /\A\\?[\w\\]+::(\w+)\z/
   NAMED_ARGUMENT      = /\A\s*\w+\s*(?::(?!:)|=(?![=>]))/
@@ -172,10 +172,14 @@ module PhpAccess
   # calls joined by `and`, each of which must hold.
   def symfony_allow_if(expression : String) : CNF
     cnf = CNF.new
+    checks = 0
     expression.scan(ALLOW_IF_CHECK) do |check|
+      checks += 1
       attribute = check[1]? || check[2]?
       cnf.concat(attribute ? symfony_attribute(attribute) : [[Access::Atom.new(:authenticated)]])
     end
+    # A check this pattern did not take (an escaped quote) is still required.
+    cnf << [Access::Atom.new(:unresolved, expression)] if checks != expression.scan(/\bis_(?:granted|authenticated|fully_authenticated)\(/).size
     cnf.empty? ? symfony_unread(expression) : cnf
   end
 
@@ -294,7 +298,8 @@ module PhpAccess
   def yii_signed_in(rules : Array(YiiRule), action : String) : CNF
     alternatives = [] of Access::Atom
     rules.each do |rule|
-      next if (actions = rule.actions) && !actions.includes?(action)
+      # `AccessRule::matchAction`: no actions, or an empty list, is every action.
+      next if (actions = rule.actions) && !actions.empty? && !actions.includes?(action)
       unless rule.readable
         alternatives << Access::Atom.new(:unresolved, rule.source)
         break
