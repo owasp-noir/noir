@@ -163,7 +163,7 @@ module PassiveRulesUpdater
               true
             else
               logger.warning "Failed to update passive rules automatically."
-              notify_user_update_available(behind_count, logger)
+              notify_user_update_available(behind_count, logger, auto_update_failed: true)
               false
             end
           else
@@ -217,12 +217,26 @@ module PassiveRulesUpdater
   end
 
   # Notify user that updates are available
-  private def self.notify_user_update_available(behind_count : Int32, logger : NoirLogger)
-    rules_path = user_rules_path
-    logger.warning "Passive rules are #{behind_count} commits behind the latest version."
-    logger.sub "├── Run 'git pull' in #{rules_path} to update"
-    logger.sub "├── Or use 'git clone #{REPO_URL} #{rules_path}' to get the latest rules"
-    logger.sub "├── Or run 'noir scan . -P --passive-scan-auto-update' to auto-update on startup"
+  private def self.notify_user_update_available(behind_count : Int32, logger : NoirLogger,
+                                                auto_update_failed : Bool = false)
+    logger.warning "Passive rules are #{behind_count} #{behind_count == 1 ? "commit" : "commits"} behind the latest version."
+    update_notice(user_rules_path, auto_update_failed).each { |line| logger.sub line }
+  end
+
+  # What to run when the installed rules are behind. They are a populated
+  # git checkout by then, so a `git clone` into the same path would fail,
+  # and the scan path is the user's, not `.`. When the update just ran and
+  # failed, offering it again goes nowhere: the hint is the pull by hand,
+  # whose own output says what went wrong.
+  def self.update_notice(rules_path : String, auto_update_failed : Bool) : Array(String)
+    if auto_update_failed
+      ["├── Run 'git pull' in #{rules_path} to update by hand"]
+    else
+      [
+        "├── Run 'noir rules update' to update",
+        "├── Or add --passive-scan-auto-update to the scan to update on startup",
+      ]
+    end
   end
 
   # Initialize passive rules if they don't exist
