@@ -30,9 +30,8 @@
 {% set g_started = (u | replace(p ~ "/get_started/", "")) != u %}
 {% set g_usage   = (u | replace(p ~ "/usage/", "")) != u %}
 {% set g_dev     = (u | replace(p ~ "/development/", "")) != u %}
-{% set in_res    = (u | replace(p ~ "/resources/", "")) != u %}
-{% set in_com    = (u | replace(p ~ "/community/", "")) != u %}
-{% set g_res     = in_res or in_com %}
+{% set g_res     = (u | replace(p ~ "/resources/", "")) != u %}
+{% set g_com     = (u | replace(p ~ "/community/", "")) != u %}
 
 {% set s_supported = (u | replace(p ~ "/usage/supported/", "")) != u %}
 {% set s_formats   = (u | replace(p ~ "/usage/output_formats/", "")) != u %}
@@ -209,7 +208,17 @@
         {{ navlink("/resources/troubleshooting/", "sidebar.troubleshooting") }}
         {{ navlink("/resources/artwork/", "sidebar.artwork") }}
         {{ navlink("/resources/contact/", "sidebar.contact") }}
-        {{ navlink("/community/", "sidebar.community") }}
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="community"{% if g_com %} open{% endif %}>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-users"/></svg>
+        <span>{{ "sidebar.community" | t }}</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        {{ navlink("/community/", "sidebar.overview") }}
         {{ navlink("/community/media/", "sidebar.media") }}
         {{ navlink("/community/projects/", "sidebar.related_projects") }}
       </ul>
