@@ -133,8 +133,16 @@ module Noir::CLI::Inspect
   # ponytail: asked together, the two sides pool their rules, so a route
   # added under a rule the same change removed still reads as covered; a
   # diff report read with `--from` carries only its changed rows.
+  #
+  # `verb` and `verb_flags` name the verb's own flags for an unknown-flag
+  # error: a typo in argv is more often one of them than a scan flag.
   def self.load(common : Common, scan_argv : Array(String), changes : Array(String)? = nil,
-                scope : Array(Endpoint)? = nil) : Array(Endpoint)
+                scope : Array(Endpoint)? = nil, *, verb : String,
+                verb_flags : Array(String) = [] of String) : Array(Endpoint)
+    unknown = unknown_flags(report_scan_args(scan_argv))
+    unless unknown.empty?
+      Noir::CLI.die(unknown_flag_message(verb, unknown, verb_flags, scanning: common.from.nil?), EXIT_USAGE)
+    end
     endpoints = load_endpoints(common, scan_argv, changes, scope)
     scope.concat(endpoints) if scope && scope.empty?
     endpoints
@@ -156,10 +164,6 @@ module Noir::CLI::Inspect
       end
       load_report(from, changes)
     else
-      unknown = unknown_flags(scan_argv)
-      unless unknown.empty?
-        Noir::CLI.die("unknown flag(s): #{unknown.join(" ")}. Run `noir scan --help` for the scan flags a verb accepts.", EXIT_USAGE)
-      end
       options, args = ScanCommand.parse_options(scan_argv)
       # Accepted and ignored, it would look like a gate and pass every match.
       # Read off argv, not the options: a config file's `fail_on` is scan's.
@@ -223,12 +227,53 @@ module Noir::CLI::Inspect
 
   # Flags scan's parser would reject. Caught here so the verb keeps its exit
   # code 2 instead of scan's usage page and exit 1.
+  # The value of a scan flag that takes one is skipped, so
+  # `--exclude-path -vendor` names a path, not a flag.
   def self.unknown_flags(scan_argv : Array(String)) : Array(String)
-    scan_argv.select do |arg|
-      next false unless arg.starts_with?('-') && arg.size > 1
+    unknown = [] of String
+    i = 0
+    while i < scan_argv.size
+      arg = scan_argv[i]
+      i += 1
+      next unless arg.starts_with?('-') && arg.size > 1
       name = arg.split('=', 2)[0]
-      ScanFlags::FLAGS.none?(&.names.includes?(name)) && !Legacy::LEGACY_FLAG_ALIASES.has_key?(name)
+      if flag = ScanFlags::FLAGS.find(&.names.includes?(name))
+        i += 1 if flag.takes_value? && !flag.arg.optional_choice? && !arg.includes?('=')
+      elsif !Legacy::LEGACY_FLAG_ALIASES.has_key?(name)
+        unknown << arg
+      end
     end
+    unknown
+  end
+
+  # Flags `parse_common` takes for every verb.
+  COMMON_FLAGS = %w[--help --full --count --from --format --limit]
+
+  # `noir query --no-gaurd`: a token neither the verb nor scan knows. It is
+  # named as not being the verb's own (a query filter), and the hint opens
+  # the verb's help, which lists those. Scan's help is only offered when the
+  # verb scans: with `--from`, no scan flag applies.
+  def self.unknown_flag_message(verb : String, unknown : Array(String), verb_flags : Array(String),
+                                scanning : Bool) : String
+    kind = verb == "query" ? "query filter" : "#{verb} flag"
+    names = unknown.map(&.split('=', 2)[0]).uniq!
+    candidates = verb_flags + COMMON_FLAGS
+    candidates += ScanFlags::FLAGS.flat_map(&.names).select(&.starts_with?("--")) if scanning
+    guesses = names.compact_map do |name|
+      next unless name.starts_with?("--")
+      guess = Levenshtein.find(name, candidates, 2)
+      next unless guess
+      names.size == 1 ? guess : "#{guess} for #{name}"
+    end
+    message = if names.size == 1
+                "#{names[0]} is not a #{kind}#{" or a scan flag" if scanning}"
+              else
+                "#{names.join(", ")} are not #{kind}s#{" or scan flags" if scanning}"
+              end
+    message += " (did you mean #{guesses.join(", ")}?)" unless guesses.empty?
+    help = "Run `noir #{verb} --help`"
+    help += " for the #{kind}s, or `noir scan --help` for the scan flags it accepts" if scanning
+    "#{message}. #{help}."
   end
 
   # Reads the endpoints of a `-f json` document or a `-f jsonl` stream, or

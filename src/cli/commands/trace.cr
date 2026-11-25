@@ -45,7 +45,7 @@ module Noir::CLI::TraceCommand
       Noir::CLI.die("noir trace: expected \"<METHOD> <URL>\" or <URL> first. Run `noir trace --help`.", Inspect::EXIT_USAGE)
     end
 
-    endpoints = Inspect.load(common, scan_args + paths)
+    endpoints = Inspect.load(common, scan_args + paths, verb: "trace")
     matches = Inspect.trace(endpoints, target.method, target.path)
     label = "#{target.method || "ANY"} #{target.path}"
 

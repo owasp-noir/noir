@@ -20,6 +20,9 @@ module Noir::CLI::QueryCommand
   # and gateway switches already come as pairs, so neither is one.
   EXCLUDE_KEYS = VALUE_FLAGS.map(&.lchop("--"))
 
+  # Every flag `parse_filters` reads, for the unknown-flag hint.
+  FLAGS = VALUE_FLAGS + %w[--guard --no-guard --behind-gateway --not-behind-gateway --exclude --change --seen-in --not-seen-in --fail-on-match]
+
   record Parsed, filters : Inspect::Filters, rest : Array(String), errors : Array(String),
     excludes : Array(Inspect::Filters) = [] of Inspect::Filters,
     changes : Array(String) = [] of String, fail_on_match : Bool = false
@@ -221,7 +224,7 @@ module Noir::CLI::QueryCommand
 
     positionals, scan_args = Inspect.split_positionals(parsed.rest)
     scope = [] of Endpoint
-    endpoints = Inspect.load(common, scan_args + positionals, parsed.changes, scope)
+    endpoints = Inspect.load(common, scan_args + positionals, parsed.changes, scope, verb: "query", verb_flags: FLAGS)
     filters = Inspect.with_gateway_rules(parsed.filters, scope)
     Inspect.query_warnings(endpoints, filters, parsed.excludes).each { |w| STDERR.puts "noir query: #{w}" }
     rows = Inspect.query(endpoints, filters, common.full, parsed.excludes)
