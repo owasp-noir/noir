@@ -98,5 +98,10 @@ To contribute, see [CONTRIBUTING.md](./.github/CONTRIBUTING.md) and open a pull 
 
 ## Mascot
 
-| ![](docs/static/images/mascot/hak-wave.webp "Hak") | Hak (학) is the Noir mascot: a crane, which is what "학" means in Korean. <br><br> More artwork is in the [noir-artwork repository](https://github.com/owasp-noir/noir-artwork).|
-| -------------- | -------------- |
+Hak (학) is Noir’s mascot, named after the Korean word for crane.
+
+![Hak overlooking moonlit Seoul from Inwangsan, with red lines tracing routes through the city](docs/static/images/mascot/hak-wallpaper.webp)
+
+The wallpaper draws on an [Inwangsan photograph from the Seoul Tourism Archive](https://commons.wikimedia.org/wiki/File:Downtown_Seoul_from_Inwangsan_in_2023.jpg), licensed under [KOGL Type 1](https://www.kogl.or.kr/info/licenseType1.do).
+
+More artwork is in the [noir-artwork repository](https://github.com/owasp-noir/noir-artwork).
