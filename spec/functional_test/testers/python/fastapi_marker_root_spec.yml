@@ -1,0 +1,11 @@
+# The project marker (`pyproject.toml`) sits at the scan base, and the app
+# imports its routers by the package name (`from pkg.app.api.routers import
+# auth`). A relative base must resolve those imports as an absolute one
+# does, so each router keeps the `/api` prefix of its `include_router`.
+fixture: fixtures/python/fastapi_marker_root/
+counts: {techs: 1, endpoints: 2}
+endpoints:
+  - url: "/api/v1/auth/me"
+    method: "GET"
+  - url: "/api/v1/images/list"
+    method: "GET"

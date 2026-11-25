@@ -739,11 +739,19 @@ module Analyzer::Python
     private def fastapi_project_root_for(app_file : ::String) : ::String
       legacy_root = fastapi_legacy_root(app_file)
       root = python_project_root(app_file)
+      # The marker index holds expanded directories, while a relative scan
+      # keys files by the base as typed (`./app/main.py`, `proj/app/...`).
+      # Respell the root the same way, or the imports it resolves never
+      # match a scanned file. A root at the base itself is the base.
       unless Path.new(app_file).absolute?
         base = import_boundary_for(app_file)
-        unless base.empty? || Path.new(base).absolute? || Noir::PathScope.normalize_root(root) == Noir::PathScope.normalize_root(base)
-          relative_root = Noir::PathScope.relative_under(root, base)
-          root = base == "." ? relative_root : File.join(base, relative_root)
+        unless base.empty? || Path.new(base).absolute?
+          if Noir::PathScope.normalize_root(root) == Noir::PathScope.normalize_root(base)
+            root = base
+          else
+            relative_root = Noir::PathScope.relative_under(root, base)
+            root = base == "." ? relative_root : File.join(base, relative_root)
+          end
         end
       end
       return legacy_root if Noir::PathScope.normalize_root(root) == Noir::PathScope.normalize_root(legacy_root)
