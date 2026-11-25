@@ -227,12 +227,23 @@ module Noir::CLI::Inspect
 
   # Flags scan's parser would reject. Caught here so the verb keeps its exit
   # code 2 instead of scan's usage page and exit 1.
+  # The value of a scan flag that takes one is skipped, so
+  # `--exclude-path -vendor` names a path, not a flag.
   def self.unknown_flags(scan_argv : Array(String)) : Array(String)
-    scan_argv.select do |arg|
-      next false unless arg.starts_with?('-') && arg.size > 1
+    unknown = [] of String
+    i = 0
+    while i < scan_argv.size
+      arg = scan_argv[i]
+      i += 1
+      next unless arg.starts_with?('-') && arg.size > 1
       name = arg.split('=', 2)[0]
-      ScanFlags::FLAGS.none?(&.names.includes?(name)) && !Legacy::LEGACY_FLAG_ALIASES.has_key?(name)
+      if flag = ScanFlags::FLAGS.find(&.names.includes?(name))
+        i += 1 if flag.takes_value? && !flag.arg.optional_choice? && !arg.includes?('=')
+      elsif !Legacy::LEGACY_FLAG_ALIASES.has_key?(name)
+        unknown << arg
+      end
     end
+    unknown
   end
 
   # Flags `parse_common` takes for every verb.
@@ -254,10 +265,11 @@ module Noir::CLI::Inspect
       next unless guess
       names.size == 1 ? guess : "#{guess} for #{name}"
     end
-    subject = names.size == 1 ? "#{names[0]} is not a" : "#{names.join(", ")} are not"
-    what = scanning ? "#{kind} or a scan flag" : kind
-    what = "#{what}s" if names.size > 1
-    message = "#{subject} #{what}"
+    message = if names.size == 1
+                "#{names[0]} is not a #{kind}#{" or a scan flag" if scanning}"
+              else
+                "#{names.join(", ")} are not #{kind}s#{" or scan flags" if scanning}"
+              end
     message += " (did you mean #{guesses.join(", ")}?)" unless guesses.empty?
     help = "Run `noir #{verb} --help`"
     help += " for the #{kind}s, or `noir scan --help` for the scan flags it accepts" if scanning

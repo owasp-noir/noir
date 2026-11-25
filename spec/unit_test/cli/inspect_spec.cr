@@ -797,6 +797,10 @@ describe "query verb reliability (#3139)" do
 
   it "names unknown scan flags before scanning" do
     Noir::CLI::Inspect.unknown_flags(["-b", "x", "--exclude-path", "y", "--bogus", "--no-gaurd=1"]).should eq(["--bogus", "--no-gaurd=1"])
+    # A scan flag's value is not a flag, even when it starts with a dash.
+    Noir::CLI::Inspect.unknown_flags(["--exclude-path", "-vendor", "--exclude-path=-x", "-y"]).should eq(["-y"])
+    # `--ai-context` takes its choice only after `=`.
+    Noir::CLI::Inspect.unknown_flags(["--ai-context", "--bogus"]).should eq(["--bogus"])
   end
 
   it "names an unknown flag as the verb's own and points at the verb's help" do
@@ -807,6 +811,8 @@ describe "query verb reliability (#3139)" do
     Noir::CLI::Inspect.unknown_flag_message("query", ["--methods", "--no-gaurd=1"], flags, scanning: false).should eq(
       "--methods, --no-gaurd are not query filters (did you mean --method for --methods, --no-guard for --no-gaurd?). " \
       "Run `noir query --help`.")
+    Noir::CLI::Inspect.unknown_flag_message("query", ["--methods", "--no-gaurd"], flags, scanning: true).should start_with(
+      "--methods, --no-gaurd are not query filters or scan flags (did you mean")
     # With --from no scan flag applies, so none is offered as a guess.
     Noir::CLI::Inspect.unknown_flag_message("trace", ["--excludepath"], [] of String, scanning: false).should eq(
       "--excludepath is not a trace flag. Run `noir trace --help`.")
