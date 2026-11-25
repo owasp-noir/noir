@@ -10,13 +10,13 @@
         <li><a href="{{ base_url }}{{ lang_prefix }}{{ href }}"{% if page.url == lang_prefix ~ href %} aria-current="page"{% endif %}>{{ key | t }}</a></li>
 {% endmacro %}
 
-{# Only the branch holding the current page starts open. Sixty-one links
+{# Only the branch holding the current page starts open. Sixty-three links
    expanded at once is a list, not a navigation aid. This is computed here
    rather than in nav.js so the sidebar never renders fully open and then
    snaps shut on load.
 
    <details>/<summary> rather than a div plus a click handler: the disclosure
-   works with JavaScript disabled (otherwise a reader reaches 6 of 61 links),
+   works with JavaScript disabled (otherwise a reader reaches 6 of 63 links),
    the summary is focusable and toggles on Enter and Space for free, and the
    browser exposes the expanded state to assistive tech without an
    aria-expanded we would have to keep in sync.
@@ -211,6 +211,7 @@
         {{ navlink("/resources/contact/", "sidebar.contact") }}
         {{ navlink("/community/", "sidebar.community") }}
         {{ navlink("/community/media/", "sidebar.media") }}
+        {{ navlink("/community/projects/", "sidebar.related_projects") }}
       </ul>
     </details>
 
