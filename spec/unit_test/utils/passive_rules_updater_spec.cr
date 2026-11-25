@@ -129,6 +129,22 @@ describe "PassiveRulesUpdater" do
       end
     end
 
+    describe ".update_notice" do
+      it "points rules that are behind at `noir rules update`, not a clone into the populated dir" do
+        lines = PassiveRulesUpdater.update_notice("/home/u/.config/noir/passive_rules", false)
+        lines.should eq([
+          "├── Run 'noir rules update' to update",
+          "├── Or add --passive-scan-auto-update to the scan to update on startup",
+        ])
+        lines.none?(&.includes?("git clone")).should be_true
+        lines.none?(&.includes?("noir scan .")).should be_true
+      end
+
+      it "offers a manual pull, not the update that just failed" do
+        PassiveRulesUpdater.update_notice("/r", true).should eq(["├── Run 'git pull' in /r to update by hand"])
+      end
+    end
+
     describe ".run_git" do
       it "terminates a git call that overruns git_timeout instead of blocking" do
         # A fake `git` that hangs like a fetch against a blackholed remote.
