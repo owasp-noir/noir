@@ -168,6 +168,24 @@ describe "noir CLI surface (built binary)" do
     report.try &.delete
   end
 
+  it "names a mistyped query filter as a query filter, not a scan flag" do
+    report = File.tempfile("noir-report-typo", ".json")
+    report.close
+    File.write(report.path, %({"endpoints":[]}))
+    scanning = run_noir(["query", "--no-gaurd", "/nonexistent/app", "--no-color"])
+    scanning.exit_code.should eq(2)
+    scanning.stderr.should contain("--no-gaurd is not a query filter or a scan flag (did you mean --no-guard?)")
+    scanning.stderr.should contain("`noir query --help`")
+
+    from = run_noir(["query", "--methods", "GET", "--from", report.path, "--no-color"])
+    from.exit_code.should eq(2)
+    from.stderr.should contain("--methods is not a query filter (did you mean --method?). Run `noir query --help`.")
+    from.stderr.should_not contain("scans nothing")
+    from.stderr.should_not contain("noir scan --help")
+  ensure
+    report.try &.delete
+  end
+
   describe "noir help <command>" do
     it "routes every catalog command to a help page" do
       Noir::CLI::Catalog::NAMES.each do |name|

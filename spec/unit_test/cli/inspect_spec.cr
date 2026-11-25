@@ -799,6 +799,21 @@ describe "query verb reliability (#3139)" do
     Noir::CLI::Inspect.unknown_flags(["-b", "x", "--exclude-path", "y", "--bogus", "--no-gaurd=1"]).should eq(["--bogus", "--no-gaurd=1"])
   end
 
+  it "names an unknown flag as the verb's own and points at the verb's help" do
+    flags = Noir::CLI::QueryCommand::FLAGS
+    Noir::CLI::Inspect.unknown_flag_message("query", ["--no-gaurd"], flags, scanning: true).should eq(
+      "--no-gaurd is not a query filter or a scan flag (did you mean --no-guard?). " \
+      "Run `noir query --help` for the query filters, or `noir scan --help` for the scan flags it accepts.")
+    Noir::CLI::Inspect.unknown_flag_message("query", ["--methods", "--no-gaurd=1"], flags, scanning: false).should eq(
+      "--methods, --no-gaurd are not query filters (did you mean --method for --methods, --no-guard for --no-gaurd?). " \
+      "Run `noir query --help`.")
+    # With --from no scan flag applies, so none is offered as a guess.
+    Noir::CLI::Inspect.unknown_flag_message("trace", ["--excludepath"], [] of String, scanning: false).should eq(
+      "--excludepath is not a trace flag. Run `noir trace --help`.")
+    Noir::CLI::Inspect.unknown_flag_message("reach", ["--excludepath"], [] of String, scanning: true).should contain(
+      "(did you mean --exclude-path?)")
+  end
+
   it "keeps the file on via entries outside the row's file and drops duplicates" do
     ep = endpoint("GET", "/", "apps/a/main.go", 5)
     ep.details.code_paths << PathInfo.new("apps/b/main.go", 9)

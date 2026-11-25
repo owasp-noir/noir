@@ -39,7 +39,7 @@ module Noir::CLI::ReachCommand
       Noir::CLI.die("noir reach: #{ex.message}", Inspect::EXIT_USAGE)
     end
 
-    endpoints = Inspect.load(common, scan_args + positionals[1..])
+    endpoints = Inspect.load(common, scan_args + positionals[1..], verb: "reach")
     rows = Inspect.reach(endpoints, file, line, common.full)
     if rows.empty?
       STDERR.puts "noir reach: #{empty_hint(endpoints, file)}"
