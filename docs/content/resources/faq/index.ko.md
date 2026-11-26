@@ -23,7 +23,7 @@ faq_answers = [
   "네, MIT 라이선스의 무료 오픈 소스입니다. 상업적 용도로도 자유롭게 사용할 수 있습니다.",
   "ZAP, Burp Suite, Caido 등과 통합할 수 있습니다. DAST 파이프라인 가이드를 참조하세요.",
   "JSON, YAML, OpenAPI 명세, cURL 등 여러 형식으로 내보냅니다. 출력 형식 섹션을 참조하세요.",
-  "아니요. 기본 noir scan은 네트워크를 쓰지 않습니다. 옵션을 줄 때만 밖으로 나갑니다. --ai-provider는 소스 코드를 LLM 제공업체로 보내고, -P는 git으로 규칙을 내려받고, --probe는 대상에 요청을 보내고, --export 옵션은 찾은 엔드포인트 목록을 보냅니다.",
+  "옵션을 주지 않으면 보내지 않습니다. 기본 noir scan은 네트워크를 쓰지 않습니다. 옵션을 주면 밖으로 나갑니다. --ai-provider는 소스 코드를 LLM 제공업체로 보내고, -P는 git으로 규칙을 내려받고, --probe, --probe-via, --status-codes, --exclude-codes는 찾은 엔드포인트마다 요청을 보내고, --export 옵션은 엔드포인트 목록을 보냅니다. --ai-context를 켜면 이 목록에 소스 일부가 들어갑니다.",
   "GitHub 이슈를 열어 버그를 알리거나 기능을 요청해 주세요."
 ]
 
@@ -63,12 +63,12 @@ JSON, YAML, OpenAPI 명세, cURL 등 여러 형식으로 내보냅니다. [출�
 
 ### Noir가 내 코드를 밖으로 보내나요?
 
-아니요. 기본 `noir scan`은 네트워크를 쓰지 않습니다. 아래 옵션을 줄 때만 밖으로 나갑니다.
+옵션을 주지 않으면 보내지 않습니다. 아래 옵션을 명령줄에도 설정 파일에도 주지 않은 기본 `noir scan`은 네트워크를 쓰지 않습니다. 아래 옵션을 주면 밖으로 나갑니다.
 
-- `--ai-provider`는 분석할 소스 코드를 LLM 제공업체로 보냅니다. 자격 증명 파일은 보내지 않습니다. [전송되는 내용](@/get_started/ai_power/index.ko.md)을 참조하세요
+- `--ai-provider`는 분석할 소스 코드를 LLM 제공업체로 보냅니다. 자격 증명 파일(`.env`, `*.pem`, `id_rsa` 등)은 파일 이름으로 걸러 보내지 않으며, `--ai-include-sensitive`를 주면 보냅니다. [전송되는 내용](@/get_started/ai_power/index.ko.md#전송되는-내용)을 참조하세요
 - `-P`(패시브 스캔)는 규칙 저장소를 `git clone`하거나 `git fetch`합니다. 코드는 보내지 않으며, `--passive-scan-path`나 `--passive-scan-no-update-check`를 주면 내려받지 않습니다. [기본 패시브 스캔 규칙](@/usage/passive_scan/default_rules/index.ko.md)을 참조하세요
-- `--probe`와 `--probe-via`는 찾은 엔드포인트의 HTTP 요청을 `-u`로 준 대상에 보냅니다. [다른 도구로 결과 전송하기](@/usage/more_features/deliver/index.ko.md)를 참조하세요
-- `--export-es`, `--export-opensearch`, `--export-webhook`은 찾은 엔드포인트 목록을 보냅니다. 코드는 보내지 않습니다. [다른 도구로 결과 전송하기](@/usage/more_features/deliver/index.ko.md)를 참조하세요
+- `--probe`, `--probe-via`, `--status-codes`, `--exclude-codes`는 찾은 엔드포인트마다 HTTP 요청을 보냅니다. 대부분 `-u`로 준 대상으로 가지만, 소스에 스킴과 호스트가 직접 적힌 엔드포인트는 그 호스트로 갑니다. [다른 도구로 결과 전송하기](@/usage/more_features/deliver/index.ko.md)를 참조하세요
+- `--export-es`, `--export-opensearch`, `--export-webhook`은 찾은 엔드포인트 목록을 파일 경로와 줄 번호와 함께 보냅니다. `--ai-context`를 켜면 엔드포인트마다 소스 일부도 같이 들어갑니다. [다른 도구로 결과 전송하기](@/usage/more_features/deliver/index.ko.md)를 참조하세요
 
 ### 버그 보고나 기능 요청은 어떻게 하나요?
 
