@@ -104,10 +104,10 @@ module Analyzer::Javascript
           imports[var] = resolved if resolved
         end
         content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-          record_import.call(m[1], m[2]) if m.size >= 3
+          record_import.call(m[1], m[2])
         end
         content.scan(/import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/) do |m|
-          record_import.call(m[1], m[2]) if m.size >= 3
+          record_import.call(m[1], m[2])
         end
 
         # Collect mount edges: parent.use('/prefix', child[.routes()]) and
@@ -121,10 +121,10 @@ module Analyzer::Javascript
         # `child`.
         edges = [] of Tuple(String, String, String)
         content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)(?:\.routes\s*\(\s*\))?/) do |m|
-          edges << {m[1], m[2], m[3]} if m.size >= 4
+          edges << {m[1], m[2], m[3]}
         end
         content.scan(/(\w+)\.use\s*\(\s*(\w+)(?:\.routes\s*\(\s*\))?/) do |m|
-          edges << {m[1], "", m[2]} if m.size >= 3
+          edges << {m[1], "", m[2]}
         end
         next if edges.empty?
 
@@ -211,34 +211,32 @@ module Analyzer::Javascript
       handler_pattern = /#{Regex.escape(router_name)}\.#{method}\s*\(\s*['"]#{Regex.escape(path)}['"][^{]*\{([^}]*(?:\{[^}]*\})*[^}]*)\}/m
 
       match = content.match(handler_pattern)
-      return unless match && match.size > 1
+      return unless match
 
       handler_body = match[1]
       return if handler_body.empty?
 
       handler_body.scan(/ctx\.request\.url\.searchParams\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "query")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "query"))
       end
 
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+ctx\.request\.body\.json\s*\(/) do |m|
-        if m.size > 0
-          m[1].split(",").map(&.strip).each do |param|
-            clean_param = param.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        m[1].split(",").map(&.strip).each do |param|
+          clean_param = param.split("=").first.strip.split(":").first.strip
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
 
       handler_body.scan(/ctx\.request\.headers\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "header")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "header"))
       end
 
       handler_body.scan(/ctx\.cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "cookie")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "cookie"))
       end
 
       handler_body.scan(/ctx\.params\.(\w+)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "path")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "path"))
       end
     end
   end
