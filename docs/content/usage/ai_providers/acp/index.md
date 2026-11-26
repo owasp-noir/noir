@@ -74,3 +74,4 @@ NOIR_ACP_ALLOW_TOOL_PERMISSIONS=1 noir scan ./myapp --ai-provider=acp:codex
 - ACP requests are not retried and do not count toward `--ai-max-requests`.
 - Cache flags (`--cache-disable`, `--cache-clear`) work the same as with other AI providers.
 - `acp:claude-code` is accepted as an alias of `acp:claude`.
+- `NOIR_ACP_CWD` sets the working directory handed to the agent when a session is created. It defaults to the directory `noir` was started in. Set it when you scan from outside the repository: `NOIR_ACP_CWD=./myapp noir scan ./myapp --ai-provider=acp:claude`.
