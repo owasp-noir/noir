@@ -1,0 +1,38 @@
+# Data export and download endpoints: a lot of data leaves in one response.
+# Uploads belong to the file_upload tagger, so `import` is not listed.
+key: export
+name: Export Tagger
+summary: Identifies data export and download endpoints
+order: 190
+tag:
+  tagger: Export
+  description: Data export or download endpoint; review for missing authorization on the exported records (IDOR), bulk data exposure, and CSV/formula injection in generated files.
+match:
+  any:
+    # `downloads` is left out: it is usually the page that lists installers
+    # for an app. A static asset (`/js/export.js`) is not a handler either.
+    - all:
+        - path_segment: [export, exports, exporter, download]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
+    # A listing that can be asked for as a spreadsheet, e.g. /orders?format=csv.
+    # The same parameter on an import route describes the uploaded file.
+    - all:
+        - param:
+            name: [format, export_format, output_format, export_type, file_format]
+            value_contains: [csv, xls, tsv]
+        - not:
+            path_segment: [import, imports, upload, uploads]
+examples:
+  match:
+    - { url: /Documents/Export }
+    - { url: "/Files/{id}/Download" }
+    - { url: /account/keys/export }
+    - { url: /api/orders, params: [{ name: format, value: csv }] }
+    - { url: /reports/sales, params: [{ name: exportFormat, value: XLSX }] }
+  no_match:
+    - { url: /downloads }
+    - { url: /api/orders, params: [{ name: format, value: json }] }
+    - { method: POST, url: /api/import, params: [{ name: format, value: csv }] }
+    - { url: /static/js/export.js }
