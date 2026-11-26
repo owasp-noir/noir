@@ -17,7 +17,9 @@ match:
                card_security_code, card_cvc, card_expiry, card_holder, cardholder_name,
                payment_method, payment_method_id, payment_method_nonce, payment_intent,
                setup_intent, stripe_token, paypal_token, card_token,
-               iban, routing_number, sort_code]
+               iban, routing_number, sort_code,
+               # Toss Payments: the key the client sends to the confirm route.
+               payment_key]
     - all:
         - param: { name: amount }
         - param: { name: [currency, currency_code] }
@@ -36,6 +38,8 @@ examples:
     - { method: POST, url: /api/orders, params: [{ name: cardNumber, type: json }] }
     - { method: POST, url: /api/transfer, params: [{ name: amount, type: json }, { name: currency, type: json }] }
     - { method: POST, url: /api/orders, params: [{ name: total, type: json }] }
+    - { method: POST, url: /confirm, params: [{ name: paymentKey, type: json }, { name: orderId, type: json }] }
   no_match:
     - { url: /api/orders }
     - { url: /api/users, params: [{ name: amount }] }
+    - { method: POST, url: /api/keys, params: [{ name: api_key, type: json }] }
