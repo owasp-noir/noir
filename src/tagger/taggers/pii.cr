@@ -26,6 +26,9 @@ class PiiTagger < Tagger
     "iban", "bank_account", "bank_account_number", "routing_number",
     "sort_code",
     "date_of_birth", "dob", "birthdate", "birth_date",
+    # Korean resident registration number (jumin-deungnok-beonho) and the
+    # alien registration number issued to foreign residents.
+    "rrn", "rrn_no", "rrn_number", "jumin", "juminno", "juminbunho",
   }
 
   # Single, unambiguous tokens. Matched anywhere in a (normalized) param
@@ -33,8 +36,24 @@ class PiiTagger < Tagger
   # `applicantPassport` are caught without enumerating every prefix.
   STRONG_TOKENS = Set{
     "ssn", "cvv", "cvc", "cvv2", "iban", "passport", "dob",
-    "aadhaar", "aadhar",
+    "aadhaar", "aadhar", "juminno", "juminbunho",
   }
+
+  # Identifiers that are only unambiguous as a run of tokens. Matched as
+  # whole tokens anywhere in a (normalized) name, so `userJuminNo` and
+  # `applicantResidentRegistrationNumber` are caught while each word alone
+  # stays benign: `juminCenterId` is a community-center id, `resident` a
+  # tenant, `registrationNumber` a vehicle plate. `rrn` is too short to
+  # look for inside other names, so it is in STRONG_NAMES only.
+  STRONG_PHRASES = [
+    "jumin_no", "jumin_num", "jumin_number", "jumin_bunho",
+    "resident_registration_number", "resident_registration_no", "resident_registration_num",
+    "resident_reg_no",
+    "alien_registration_number", "alien_registration_no", "alien_registration_num",
+    "alien_reg_no",
+    "foreigner_registration_number", "foreigner_registration_no", "foreigner_registration_num",
+    "foreign_registration_number", "foreign_registration_no",
+  ]
 
   # Weaker individually (a single one shows up in countless benign
   # forms), so require at least two before tagging.
@@ -55,7 +74,8 @@ class PiiTagger < Tagger
     param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
 
     has_strong = !(STRONG_NAMES & param_names).empty? ||
-                 param_names.any? { |name| name.split('_').any? { |token| STRONG_TOKENS.includes?(token) } }
+                 param_names.any? { |name| name.split('_').any? { |token| STRONG_TOKENS.includes?(token) } } ||
+                 param_names.any? { |name| strong_phrase?(name) }
     medium_hits = (MEDIUM_NAMES & param_names).size
 
     check = has_strong || medium_hits >= 2
@@ -68,6 +88,13 @@ class PiiTagger < Tagger
       )
       endpoint.add_tag(tag)
     end
+  end
+
+  # True when a STRONG_PHRASES entry appears in the name as consecutive whole
+  # tokens. Padding both sides with `_` turns that into a substring test.
+  private def strong_phrase?(name : String) : Bool
+    padded = "_#{name}_"
+    STRONG_PHRASES.any? { |phrase| padded.includes?("_#{phrase}_") }
   end
 
   # Fold camelCase, separators, and casing into one snake_case form so a
