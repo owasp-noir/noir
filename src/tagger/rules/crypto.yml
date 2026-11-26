@@ -50,6 +50,13 @@ match:
         - path_segment: seed
         - path_segment: [cbc, ecb, ctr, gcm, ccm, cfb, ofb, cmac, enc, dec,
                          encode, decode, sign, verify]
+    # ARIA, the Korean standard block cipher (RFC 5794). `aria` is also
+    # WAI-ARIA (`aria-label`, `/docs/aria/roles`), so it needs a cipher mode
+    # somewhere in the URL. The key size forms are taken alone.
+    - path_segment: [aria128, aria192, aria256]
+    - all:
+        - path_segment: aria
+        - path_segment: [cbc, ecb, ctr, gcm, ccm, cfb, ofb, cmac]
 examples:
   match:
     - { method: POST, url: /api/encrypt }
@@ -57,9 +64,16 @@ examples:
     - { method: POST, url: /api/verify, params: [{ name: signature, type: json }, { name: algorithm, type: json }] }
     - { method: POST, url: /signing/digest }
     - { method: POST, url: /api/seed-cbc }
+    - { method: POST, url: /api/aria/cbc }
+    - { method: POST, url: /api/aria-256-gcm }
+    - { method: POST, url: /api/aria256 }
   no_match:
     - { url: /files/hash }
     - { method: POST, url: /db/seed }
     - { url: /random/seed, params: [{ name: length }] }
+    - { url: /docs/aria/roles }
+    - { url: /components/aria-label, params: [{ name: text }] }
+    - { method: POST, url: /api/aria }
+    - { url: /tools/aria-label/encode }
     - { method: POST, url: /api/signature, params: [{ name: signature, type: json }] }
     - { url: /docs/signatures, params: [{ name: page }] }
