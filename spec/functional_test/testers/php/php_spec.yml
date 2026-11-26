@@ -1,5 +1,5 @@
 fixture: fixtures/php/php/
-counts: {techs: 1, endpoints: 10}
+counts: {techs: 1, endpoints: 14}
 endpoints:
   - url: "/get.php"
     method: "GET"
@@ -10,6 +10,25 @@ endpoints:
     params:
       - {name: "X-API-KEY", type: "header"}
       - {name: "param1", type: "query"}
+  # A JSON body read from php://input: first-level keys are reported as
+  # json params next to the $_POST field, and a file that reads only
+  # php://input still gets its POST endpoint.
+  - url: "/json_input.php"
+    method: "GET"
+  - url: "/json_input.php"
+    method: "POST"
+    params:
+      - {name: "coupon", type: "form"}
+      - {name: "orderId", type: "json"}
+      - {name: "amount", type: "json"}
+      - {name: "customer", type: "json"}
+  - url: "/json_object.php"
+    method: "GET"
+  - url: "/json_object.php"
+    method: "POST"
+    params:
+      - {name: "orderId", type: "json"}
+      - {name: "paymentKey", type: "json"}
   - url: "/modern.php"
     method: "GET"
     params:

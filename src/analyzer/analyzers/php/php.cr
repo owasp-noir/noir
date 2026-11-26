@@ -11,6 +11,14 @@ module Analyzer::Php
     # so one union regex beats seven `includes?` scans per line.
     ALLOW_PATTERNS_RE = Regex.union(["$_GET", "$_POST", "$_REQUEST", "$_SERVER", "$_COOKIE", "$_FILES", "filter_input"])
 
+    # The raw request body: `file_get_contents('php://input')`.
+    PHP_INPUT_READ = %q{file_get_contents\s*\(\s*['"]php://input['"]\s*\)}
+    # `$raw = file_get_contents('php://input');`, possibly wrapped in a call
+    # such as `trim(` — captures the variable holding the body.
+    PHP_INPUT_VAR_RE = /\$(\w+)\s*=\s*(?:\w+\s*\(\s*)*#{PHP_INPUT_READ}/
+    # `$data = json_decode(file_get_contents('php://input'), true);`
+    PHP_INPUT_JSON_VAR_RE = /\$(\w+)\s*=\s*json_decode\s*\(\s*#{PHP_INPUT_READ}/
+
     # Directory names that conventionally hold the document root. A
     # directory only counts as one when it *also* contains an
     # `index.php` front controller — that requirement is what keeps this
@@ -264,6 +272,15 @@ module Analyzer::Php
         end
       end
 
+      # A JSON API reads its body from `php://input` instead of `$_POST`.
+      if content.includes?("php://input")
+        json_keys = php_input_json_keys(php_code(content))
+        if json_keys
+          methods << "POST"
+          json_keys.each { |name| params_body << Param.new(name, "", "json") }
+        end
+      end
+
       # For the pure-PHP analyzer we are parameter-driven (not route-driven).
       # A file with thousands of superglobal references (e.g. a large controller
       # with many action methods) used to produce thousands of near-identical
@@ -325,6 +342,38 @@ module Analyzer::Php
         params_body << Param.new(param_name, "", "file")
         methods << "POST"
       end
+    end
+
+    # Keys read from a JSON body decoded off `php://input`, in first-seen
+    # order, or nil when the file does not read the request body at all.
+    #
+    #   $data = json_decode(file_get_contents('php://input'), true);
+    #   $data['orderId']            # array style
+    #
+    #   $raw  = file_get_contents('php://input');
+    #   $json = json_decode($raw);
+    #   $json->orderId              # object style
+    #
+    # Only the first level is reported: `$data['customer']['email']` is the
+    # `customer` key. A method call (`$json->toArray()`) is not a key.
+    private def php_input_json_keys(code : String) : Array(String)?
+      raw_vars = code.scan(PHP_INPUT_VAR_RE).map(&.[1])
+      json_vars = code.scan(PHP_INPUT_JSON_VAR_RE).map(&.[1])
+      return if raw_vars.empty? && json_vars.empty? && !code.matches?(/#{PHP_INPUT_READ}/)
+
+      raw_vars.uniq.each do |raw|
+        code.scan(/\$(\w+)\s*=\s*json_decode\s*\(\s*\$#{Regex.escape(raw)}\b/) { |m| json_vars << m[1] }
+      end
+
+      keys = [] of String
+      json_vars.uniq.each do |var|
+        escaped = Regex.escape(var)
+        code.scan(/\$#{escaped}\s*(?:\[\s*['"]([^'"\]]+)['"]\s*\]|->\s*([A-Za-z_]\w*)(?!\w|\s*\())/) do |m|
+          name = m[1]? || m[2]?
+          keys << name if name && !keys.includes?(name)
+        end
+      end
+      keys
     end
 
     # Order-preserving dedup of params by (name, param_type).
