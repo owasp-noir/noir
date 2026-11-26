@@ -32,6 +32,18 @@ Noir의 기본 규칙은 코드에 하드코딩된 시크릿(API 키, 토큰, �
 3. 규칙이 오래된 경우 알림
 4. 자동 업데이트를 켰다면 규칙 업데이트
 
+git 명령(`clone`, `fetch`) 하나는 최대 20초까지 실행됩니다. 이 시간을 넘으면 Noir가 명령을 멈추고 경고를 냅니다.
+
+```
+git fetch timed out after 20s (NOIR_RULES_GIT_TIMEOUT raises the limit).
+```
+
+느린 네트워크나 사내 프록시 뒤에서는 `NOIR_RULES_GIT_TIMEOUT`으로 제한 시간을 늘리세요. 값은 초 단위 정수입니다. `0`이나 읽을 수 없는 값이면 기본값 20초를 씁니다.
+
+```bash
+NOIR_RULES_GIT_TIMEOUT=120 noir scan /app -P
+```
+
 저장소: https://github.com/owasp-noir/noir-passive-rules
 
 ## CLI 옵션
