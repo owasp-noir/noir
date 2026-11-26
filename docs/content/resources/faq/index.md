@@ -12,6 +12,7 @@ faq_questions = [
   "Is Noir free?",
   "How do I integrate with other security tools?",
   "How do I export results?",
+  "Does Noir send my code anywhere?",
   "How do I report bugs or request features?"
 ]
 faq_answers = [
@@ -22,6 +23,7 @@ faq_answers = [
   "Yes, Noir is free and open-source under the MIT license. You can use it freely for commercial purposes.",
   "You can integrate with ZAP, Burp Suite, Caido, and more. See the Pipeline for DAST guide.",
   "Noir exports JSON, YAML, OpenAPI Specification, cURL, and many other formats. See the Output Formats section.",
+  "Not unless you ask it to. A plain noir scan makes no network requests. Options you add can: --ai-provider sends source code to the LLM provider, -P downloads rules with git, --probe, --probe-via, --status-codes and --exclude-codes send a request for each endpoint found, and the --export options send the list of endpoints, which includes source snippets when --ai-context is on.",
   "Open a GitHub Issue to report bugs or request features."
 ]
 
@@ -58,6 +60,15 @@ You can integrate with ZAP, Burp Suite, Caido, and more. See the [Pipeline for D
 ### How do I export results?
 
 Noir exports JSON, YAML, OpenAPI Specification, cURL, and many other formats. See the [Output Formats](@/usage/output_formats/_index.md) section.
+
+### Does Noir send my code anywhere?
+
+Not unless you ask it to. A plain `noir scan`, with none of the options below on the command line or in the config file, makes no network requests. These options do:
+
+- `--ai-provider` sends the source code being analyzed to the LLM provider. Credentials files (`.env`, `*.pem`, `id_rsa` and the like) are withheld by file name unless you pass `--ai-include-sensitive`. See [What Gets Sent](@/get_started/ai_power/index.md#what-gets-sent)
+- `-P` (passive scan) runs `git clone` or `git fetch` on the rules repository. No code is sent, and `--passive-scan-path` or `--passive-scan-no-update-check` skips the download. See [Default Passive Scan Rules](@/usage/passive_scan/default_rules/index.md)
+- `--probe`, `--probe-via`, `--status-codes` and `--exclude-codes` send an HTTP request for each endpoint found. Most go to the target given with `-u`. An endpoint whose source names its own scheme and host is requested on that host. See [Delivering Results to Other Tools](@/usage/more_features/deliver/index.md)
+- `--export-es`, `--export-opensearch` and `--export-webhook` send the list of endpoints found, with file paths and line numbers. With `--ai-context`, each endpoint also carries snippets of its source. See [Delivering Results to Other Tools](@/usage/more_features/deliver/index.md)
 
 ### How do I report bugs or request features?
 
