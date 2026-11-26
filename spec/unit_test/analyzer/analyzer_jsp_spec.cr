@@ -80,6 +80,24 @@ describe "JSP JSON body extraction" do
     instance.extract_json_body_params(content).not_nil!.map(&.name).should eq(["eventType", "retry", "data"])
   end
 
+  it "does not take the charset of getBytes for a key" do
+    content = <<-JSP
+      <%
+          BufferedReader br = request.getReader();
+          StringBuilder sb = new StringBuilder();
+          String line;
+          while ((line = br.readLine()) != null) {
+              sb.append(line);
+          }
+          String body = sb.toString();
+          byte[] signed = mac.doFinal(body.getBytes("UTF-8"));
+          JSONObject event = new JSONObject(body);
+          String type = event.getString("type");
+      %>
+      JSP
+    instance.extract_json_body_params(content).not_nil!.map(&.name).should eq(["type"])
+  end
+
   it "reports no keys when the body is read but never parsed into an object" do
     content = %q(<% byte[] raw = request.getInputStream().readAllBytes(); String id = other.get("id"); %>)
     instance.extract_json_body_params(content).not_nil!.should be_empty

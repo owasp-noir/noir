@@ -224,7 +224,8 @@ module Analyzer::Java
 
       params = [] of Param
       tainted.each do |name|
-        content.scan(/\b#{Regex.escape(name)}\s*\.\s*(?:get|opt|path|has)\w*\s*\(\s*"([^"]+)"\s*[,)]/) do |match|
+        # `body.getBytes("UTF-8")` names a charset, not a key.
+        content.scan(/\b#{Regex.escape(name)}\s*\.\s*(?!getBytes\b)(?:get|opt|path|has)\w*\s*\(\s*"([^"]+)"\s*[,)]/) do |match|
           add_param(params, match[1], "json")
         end
       end
