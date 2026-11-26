@@ -1,0 +1,40 @@
+# Coupon, point, reward and gift card endpoints. Payment itself belongs to
+# the payment tagger.
+key: promotion
+name: Promotion Tagger
+summary: Identifies coupon, point, reward and gift card endpoints
+order: 230
+tag:
+  tagger: Promotion
+  description: Coupon, point, reward or gift card endpoint; review for business-logic flaws such as reusing a single-use coupon, race conditions that grant or spend a balance more than once, negative or tampered amounts, and guessable codes.
+match:
+  any:
+    - path_segment: [coupon, coupons, voucher, vouchers, giftcard, giftcards,
+                     reward, rewards, cashback, promotion, promotions, promo, promocode]
+    # A code applied on some other route, e.g. POST /orders with couponCode.
+    - param:
+        name: [coupon_code, coupon_id, promo_code, promotion_code, voucher_code,
+               discount_code, gift_card_code, giftcard_code]
+    # `mileage` is a point balance in Korean shops and an odometer reading
+    # in fleet apps.
+    - all:
+        - path_segment: mileage
+        - not:
+            path_segment: [vehicle, vehicles, car, cars, trip, trips, fleet]
+    # `points` is also map coordinates and game scores, so it needs a verb
+    # that moves a balance.
+    - all:
+        - path_segment: [point, points]
+        - path_segment: [use, earn, redeem, charge, exchange, accumulate]
+examples:
+  match:
+    - { method: POST, url: /api/coupons/apply }
+    - { method: POST, url: /api/orders, params: [{ name: couponCode, type: json }] }
+    - { method: POST, url: /giftcard/redeem }
+    - { url: /member/mileage }
+    - { method: POST, url: /api/points/use }
+  no_match:
+    - { url: /map/points }
+    - { url: /api/games/points }
+    - { url: "/vehicles/{id}/mileage" }
+    - { url: /api/orders }
