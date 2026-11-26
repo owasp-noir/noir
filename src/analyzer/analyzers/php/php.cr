@@ -12,7 +12,7 @@ module Analyzer::Php
     ALLOW_PATTERNS_RE = Regex.union(["$_GET", "$_POST", "$_REQUEST", "$_SERVER", "$_COOKIE", "$_FILES", "filter_input"])
 
     # The raw request body: `file_get_contents('php://input')`.
-    PHP_INPUT_READ = %q{file_get_contents\s*\(\s*['"]php://input['"]\s*\)}
+    PHP_INPUT_READ = %q(file_get_contents\s*\(\s*['"]php://input['"]\s*\))
     # `$raw = file_get_contents('php://input');`, possibly wrapped in a call
     # such as `trim(` — captures the variable holding the body.
     PHP_INPUT_VAR_RE = /\$(\w+)\s*=\s*(?:\w+\s*\(\s*)*#{PHP_INPUT_READ}/
