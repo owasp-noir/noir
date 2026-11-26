@@ -519,6 +519,7 @@ module LLM
       "gpt-oss"           => 128000,
       "gpt-oss-120b"      => 128000,
       "gpt-oss-20b"       => 128000,
+      "exaone3.5"         => 32768,
       "default"           => 4000,
     },
     "google" => {

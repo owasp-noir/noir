@@ -292,6 +292,11 @@ describe LLM do
     context "ollama" do
       ollama = limits["ollama"].as(Hash(String, Int32))
 
+      it "includes exaone3.5 with 32768 tokens" do
+        ollama["exaone3.5"].should eq(32768)
+        LLM.model_token_limit(ollama, "exaone3.5:7.8b").should eq(32768)
+      end
+
       it "includes llama3.1 with 128000 tokens" do
         ollama["llama3.1"].should eq(128000)
       end
