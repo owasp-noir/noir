@@ -48,6 +48,14 @@ Something on fire? Start with the symptom below that matches. Most of these have
 - Rate limits (HTTP 429) and transient gateway errors (502, 503, ...) are retried with backoff, up to three attempts in total. If warnings persist, reduce `--concurrency` or cap the run with `--ai-max-requests`
 - If a proxy or gateway drops connections that sit idle while the model generates, add `--ai-stream` (OpenAI-compatible providers)
 
+## Scan Uses Too Much Memory
+
+**Symptom:** Noir uses a lot of memory on a large repository.
+
+- Analyzers share a cache of file contents, limited to 512MB by default. Lower the limit with `NOIR_CONTENT_CACHE_MAX_MB` (in megabytes): `NOIR_CONTENT_CACHE_MAX_MB=128 noir scan .`
+- Set `NOIR_CONTENT_CACHE_MAX_MB=0` or `NOIR_CONTENT_CACHE_DISABLE=true` to turn the cache off. Every read then goes to disk
+- A smaller cache uses less memory, but the scan can get slower
+
 ## Docker Permission Issues
 
 **Symptom:** Permission denied errors when running via Docker.

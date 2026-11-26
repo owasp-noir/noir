@@ -48,6 +48,14 @@ sort_by = "weight"
 - 요청 한도 초과(HTTP 429)와 일시적인 게이트웨이 오류(502, 503 등)는 백오프를 두고 재시도하며, 최대 3번까지 시도합니다. 경고가 계속되면 `--concurrency`를 낮추거나 `--ai-max-requests`로 요청 수를 제한하세요
 - 모델이 생성하는 동안 유휴 연결을 끊는 프록시나 게이트웨이가 있다면 `--ai-stream`을 추가하세요(OpenAI 호환 제공업체)
 
+## 스캔이 메모리를 너무 많이 씀
+
+**증상:** 큰 저장소를 스캔하면 Noir가 메모리를 많이 씁니다.
+
+- 분석기들은 파일 내용 캐시를 같이 쓰고, 캐시 크기는 기본 512MB로 제한됩니다. `NOIR_CONTENT_CACHE_MAX_MB`(MB 단위)로 줄이세요: `NOIR_CONTENT_CACHE_MAX_MB=128 noir scan .`
+- `NOIR_CONTENT_CACHE_MAX_MB=0`이나 `NOIR_CONTENT_CACHE_DISABLE=true`로 캐시를 끌 수 있습니다. 그러면 파일을 매번 디스크에서 읽습니다
+- 캐시를 줄이면 메모리는 덜 쓰지만 스캔이 느려질 수 있습니다
+
 ## Docker 권한 문제
 
 **증상:** Docker로 실행하면 권한 거부 오류가 납니다.
