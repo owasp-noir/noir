@@ -1,0 +1,32 @@
+# Identity verification (bon-in-injeung): a Korean flow where a carrier or
+# credit bureau confirms who the user is, and the service receives the result.
+# Password reset belongs to the account_recovery tagger.
+key: identity_verification
+name: Identity Verification Tagger
+summary: Identifies identity verification endpoints
+order: 250
+tag:
+  tagger: IdentityVerification
+  description: Identity verification endpoint; check that the result is confirmed server-side with the provider instead of trusted from the client, that a verification cannot be replayed or reused by another account, and that CI/DI values are not exposed.
+match:
+  any:
+    # PortOne V2 looks a verification up at /identity-verifications/{id}.
+    - url_contains: [identity-verification, identity_verification, identityverification]
+    # The id the browser hands back after the PortOne V2 verification window.
+    - param: { name: identity_verification_id }
+    # CI (connecting information) and DI (duplication information) identify
+    # a verified person. Each name is short and common, so take both.
+    - all:
+        - param: { name: ci }
+        - param: { name: di }
+examples:
+  match:
+    - { url: "/identity-verifications/{identityVerificationId}" }
+    - { method: POST, url: /api/identity-verification/complete }
+    - { method: POST, url: /api/signup/verify, params: [{ name: identityVerificationId, type: json }] }
+    - { method: POST, url: /api/members, params: [{ name: ci, type: json }, { name: di, type: json }] }
+  no_match:
+    - { method: POST, url: /api/builds, params: [{ name: ci, type: json }] }
+    - { method: POST, url: /api/password/reset }
+    - { url: /api/identity }
+    - { method: POST, url: /email/verify, params: [{ name: token }] }

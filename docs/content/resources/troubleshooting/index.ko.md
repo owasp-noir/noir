@@ -18,6 +18,8 @@ sort_by = "weight"
 - 프레임워크가 지원되는지 확인하세요: `noir list techs`
 - 로그의 탐지 단계를 확인하세요. 탐지된 기술이 하나씩 나옵니다. `No technologies detected`가 나오면 `-t`로 프레임워크를 직접 지정하세요: `noir scan . -t rails`
 - 지원하지 않는 프레임워크라면 [AI 기반 분석](@/get_started/ai_power/index.ko.md)으로 엔드포인트를 찾으세요
+- 로그에 `Skipped N media/large files out of M total files`가 있는지 확인하세요. 10MB가 넘는 소스 파일과 64MB가 넘는 명세 파일(OpenAPI 등)은 건너뜁니다. `NOIR_MAX_FILE_SIZE`와 `NOIR_MAX_SPEC_FILE_SIZE`로 기준을 올리세요: `NOIR_MAX_SPEC_FILE_SIZE=128MB noir scan .`
+  (값은 `5242880` 같은 바이트 숫자나 `500K`, `5MB`, `1G` 같은 단위로 씁니다. 읽을 수 없는 값이면 기본값을 쓰고, 명세 파일 기준은 `NOIR_MAX_FILE_SIZE`보다 작아지지 않습니다)
 
 ## 스캔이 너무 오래 걸림
 
@@ -45,6 +47,14 @@ sort_by = "weight"
 - 느린 로컬 모델이 실제로 더 오래 걸린다면 `NOIR_AI_TIMEOUT`을 늘리고, 대신 번들을 작게 보내려면 `--ai-max-token`을 낮추세요
 - 요청 한도 초과(HTTP 429)와 일시적인 게이트웨이 오류(502, 503 등)는 백오프를 두고 재시도하며, 최대 3번까지 시도합니다. 경고가 계속되면 `--concurrency`를 낮추거나 `--ai-max-requests`로 요청 수를 제한하세요
 - 모델이 생성하는 동안 유휴 연결을 끊는 프록시나 게이트웨이가 있다면 `--ai-stream`을 추가하세요(OpenAI 호환 제공업체)
+
+## 스캔이 메모리를 너무 많이 씀
+
+**증상:** 큰 저장소를 스캔하면 Noir가 메모리를 많이 씁니다.
+
+- 분석기들은 파일 내용 캐시를 같이 쓰고, 캐시 크기는 기본 512MB로 제한됩니다. `NOIR_CONTENT_CACHE_MAX_MB`(MB 단위)로 줄이세요: `NOIR_CONTENT_CACHE_MAX_MB=128 noir scan .`
+- `NOIR_CONTENT_CACHE_MAX_MB=0`이나 `NOIR_CONTENT_CACHE_DISABLE=true`로 캐시를 끌 수 있습니다. 그러면 파일을 매번 디스크에서 읽습니다
+- 캐시를 줄이면 메모리는 덜 쓰지만 스캔이 느려질 수 있습니다
 
 ## Docker 권한 문제
 

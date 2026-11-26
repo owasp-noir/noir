@@ -240,8 +240,32 @@ module Noir::Detection
     return true if IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
     return true if scoped_names.includes?(entry)
     return true if entry == "vendor" && dependency_vendor_dir?(full_path)
+    return true if eclipse_bin_output?(entry, full_path)
     return true if entry == "share" && crystal_toolchain_share?(full_path)
     entry == "lib" && dir_has_shard
+  end
+
+  GRADLE_BUILD_FILES       = {"build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}
+  ECLIPSE_BIN_OUTPUT_NAMES = Set{"main", "test"}
+
+  # `bin/main` and `bin/test` of a Gradle project opened in an Eclipse-based
+  # IDE (Buildship, VS Code's Java support): one output folder per source
+  # set, holding compiled classes and a copy of every resource and, in a
+  # mixed project, stale sources. When they are committed, each endpoint is
+  # reported from the copy as well as from `src/main`, and the copy is
+  # listed first.
+  #
+  # `bin/` is also where projects keep scripts, so the name alone is not
+  # enough. `main` / `test` directly under `bin/` is pruned only when the
+  # directory holding `bin/` is that kind of project: it has the matching
+  # source set (`src/main` for `bin/main`) or a Gradle build file.
+  def eclipse_bin_output?(entry : String, full_path : String) : Bool
+    return false unless ECLIPSE_BIN_OUTPUT_NAMES.includes?(entry)
+    bin_dir = File.dirname(full_path)
+    return false unless File.basename(bin_dir) == "bin"
+    project = File.dirname(bin_dir)
+    Dir.exists?(File.join(project, "src", entry)) ||
+      GRADLE_BUILD_FILES.any? { |name| File.exists?(File.join(project, name)) }
   end
 
   # The `share/` of an unpacked Crystal toolchain (`crystal-X/share/crystal/

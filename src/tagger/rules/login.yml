@@ -1,0 +1,39 @@
+# Sign-in, sign-up and sign-out endpoints. Password reset and MFA belong to
+# the account_recovery tagger and are left out here on purpose.
+key: login
+name: Login Tagger
+summary: Identifies sign-in, sign-up and sign-out endpoints
+order: 180
+tag:
+  tagger: Login
+  description: Sign-in, sign-up or sign-out endpoint; review for brute force and credential stuffing, account enumeration, missing rate limits, and logout CSRF.
+match:
+  any:
+    # A static asset (`/js/login.js`) is a file served to everyone, not the
+    # handler that checks credentials, so it is exempt.
+    - all:
+        - path_segment: [login, logon, signin, signup, logout, signout, logoff]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
+    # `/users/sign_in` splits into `sign` + `in`, which path_segment has no
+    # way to express. The leading slash keeps `/design-inspiration` out.
+    - url_contains: [/sign-in, /sign_in, /sign-up, /sign_up, /sign-out, /sign_out]
+    # `register` also names device and webhook registration, so it counts
+    # only when the request carries a password.
+    - all:
+        - path_segment: [register, registration, authenticate]
+        - param: { name: [password, passwd, pwd, password_confirmation, confirm_password] }
+examples:
+  match:
+    - { url: /Account/Login }
+    - { method: POST, url: /api/v1/auth/signin }
+    - { method: POST, url: /users/sign_in }
+    - { url: /Documents/Logout }
+    - { method: POST, url: /api/register, params: [{ name: password, type: json }] }
+  no_match:
+    - { method: POST, url: /devices/register, params: [{ name: device_token, type: json }] }
+    - { method: POST, url: /webhooks/register }
+    - { url: /design-inspiration }
+    - { url: /static/js/login.js }
+    - { url: /blog/posts }
