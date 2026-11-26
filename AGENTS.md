@@ -260,7 +260,7 @@ The runtime comparison expands a manifest `ALL` or `ANY` into GET, HEAD, POST, P
 - **Titles and commits** follow `type(scope): summary`, as in `fix(php): read JSON body keys from php://input`. Types in use: `fix`, `feat`, `refactor`, `test`, `perf`, `docs`, `ci`, `style`. Pull requests are usually squash-merged, so the title becomes the commit.
 - **CI gates jobs on the changed paths** (`.github/workflows/ci.yml`, job `changes`). A job that shows as skipped did not apply to your change. `ci-ok` is the one check that summarises the rest.
 - **A change set made only of `src/tagger/rules/*.yml`** takes a short path: `Tag rule examples` and one `tests` run. Adding any other file, a docs line included, puts the pull request back on the full path.
-- **`typos` runs on every pull request** and reads real identifiers as misspellings (`hight`, `ordr`). Add a genuine name to `[default.extend-words]` in `typos.toml` instead of renaming it.
+- **`typos` runs on every pull request** and reads real identifiers as misspellings, such as a cipher or field name one letter away from an English word. Add a genuine name to `[default.extend-words]` in `typos.toml` instead of renaming it.
 - **`Generated docs are current` fails** when `src/techs/**` changed and the support pages were not regenerated. Run `just docs-supported` and commit the result.
 - **Docs come in pairs.** Pages under `docs/content/` have an English `index.md` and a Korean `index.ko.md`; change both in the same pull request. `just docs-i18n-check` lists a page that has only one. CI does not run it.
 - **Scratch files** go outside the repository or under `tmp/`, which is ignored. Do not commit `bin/` or `lib/`.
