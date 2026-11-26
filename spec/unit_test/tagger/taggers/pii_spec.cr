@@ -155,5 +155,48 @@ describe "PiiTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "tags Korean resident and alien registration number parameters" do
+      tagger = PiiTagger.new(default_tagger_options)
+
+      [
+        "juminNo", "jumin_no", "jumin", "juminNumber", "juminBunho", "juminbunho", "JUMIN_NO",
+        "userJuminNo", "member_jumin_no", "rrn", "RRN", "rrnNo",
+        "residentRegistrationNumber", "resident_registration_no", "resident-reg-no",
+        "applicantResidentRegistrationNumber",
+        "alienRegistrationNumber", "alien_registration_no",
+        "foreignerRegistrationNumber", "foreign_registration_no",
+      ].each do |name|
+        endpoint = Endpoint.new("/api/members", "POST", [
+          Param.new("name", "", "json"),
+          Param.new(name, "", "json"),
+        ])
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.map(&.name).should eq(["pii"]), "expected #{name} to be tagged"
+      end
+    end
+
+    it "does not tag names that only share a word with a registration number" do
+      tagger = PiiTagger.new(default_tagger_options)
+
+      # `jumin` next to something other than a number word, `resident` and
+      # `registration_number` on their own, and `rrn` inside a longer name
+      # are not identity numbers.
+      [
+        "juminCenterId", "jumin_center_name", "residentCount", "resident_name",
+        "registrationNumber", "vehicle_registration_number", "businessRegistrationNo",
+        "alienCount", "foreignerType", "rrnSetId", "error_rrn_code", "corrn",
+      ].each do |name|
+        endpoint = Endpoint.new("/api/items", "POST", [
+          Param.new(name, "", "json"),
+        ])
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(0), "expected #{name} not to be tagged"
+      end
+    end
   end
 end
