@@ -74,3 +74,4 @@ NOIR_ACP_ALLOW_TOOL_PERMISSIONS=1 noir scan ./myapp --ai-provider=acp:codex
 - ACP 요청은 재시도하지 않으며 `--ai-max-requests`에도 포함되지 않습니다.
 - 캐시 플래그(`--cache-disable`, `--cache-clear`)는 다른 AI 제공업체와 똑같이 동작합니다.
 - `acp:claude-code`는 `acp:claude`의 별칭입니다.
+- `NOIR_ACP_CWD`는 세션을 만들 때 에이전트에게 넘기는 작업 디렉터리입니다. 지정하지 않으면 `noir`를 실행한 디렉터리를 씁니다. 저장소 밖에서 스캔할 때 절대 경로로 지정하세요: `NOIR_ACP_CWD="$PWD/myapp" noir scan ./myapp --ai-provider=acp:claude`.
