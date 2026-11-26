@@ -1,5 +1,5 @@
 fixture: fixtures/java/jsp/
-counts: {techs: 1, endpoints: 18}
+counts: {techs: 1, endpoints: 22}
 endpoints:
   - url: "/get_param.jsp"
     method: "GET"
@@ -40,6 +40,28 @@ endpoints:
       - {name: "category", type: "query"}
       - {name: "X-Trace", type: "header"}
       - {name: "session_id", type: "cookie"}
+  # A page that reads a JSON body from `request.getInputStream()` or
+  # `request.getReader()` gets a POST endpoint with the first-level keys it
+  # reads. `data.getString("paymentId")` in json_reader.jsp reads a nested
+  # object and is not reported as a body key.
+  - url: "/webhook.jsp"
+    method: "GET"
+  - url: "/webhook.jsp"
+    method: "POST"
+    params:
+      - {name: "secret", type: "json"}
+      - {name: "orderId", type: "json"}
+  - url: "/json_reader.jsp"
+    method: "GET"
+    params:
+      - {name: "X-Signature", type: "header"}
+  - url: "/json_reader.jsp"
+    method: "POST"
+    params:
+      - {name: "X-Signature", type: "header"}
+      - {name: "eventType", type: "json"}
+      - {name: "retry", type: "json"}
+      - {name: "data", type: "json"}
   - url: "/login"
     method: "POST"
     params:
