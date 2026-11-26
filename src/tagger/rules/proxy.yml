@@ -1,0 +1,37 @@
+# Endpoints where the server sends a request on behalf of the caller:
+# proxies, link previews, oEmbed and URL fetchers. The hunt tagger marks the
+# `url` parameter itself; this rule marks the endpoint.
+key: proxy
+name: Proxy Tagger
+summary: Identifies endpoints that fetch a URL or forward a request on the server
+order: 220
+tag:
+  tagger: Proxy
+  description: Server-side proxy or URL fetch endpoint; review for SSRF (internal hosts, cloud metadata, redirects and DNS rebinding), open-proxy abuse, and forwarding of credentials or cookies to the target.
+match:
+  any:
+    # A static asset (`/js/proxy.js`) is not a handler.
+    - all:
+        - path_segment: [proxy, oembed, unfurl]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
+    # These words are common on their own (`/posts/preview` shows a draft),
+    # so they count only when the caller also supplies the address.
+    - all:
+        - path_segment: [fetch, preview, scrape, crawl, screenshot, favicon]
+        - param:
+            name: [url, uri, target, target_url, link, href, src, source_url,
+                   image_url, remote_url, endpoint]
+examples:
+  match:
+    - { url: "/api/proxy/:_" }
+    - { method: DELETE, url: /proxy }
+    - { url: /oembed, params: [{ name: url }] }
+    - { url: /api/link/preview, params: [{ name: url }] }
+    - { method: POST, url: /api/fetch, params: [{ name: targetUrl, type: json }] }
+  no_match:
+    - { url: /posts/preview }
+    - { url: /api/fetch, params: [{ name: id }] }
+    - { url: /api/users, params: [{ name: url }] }
+    - { url: /js/proxy.js }

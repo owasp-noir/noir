@@ -18,6 +18,8 @@ Something on fire? Start with the symptom below that matches. Most of these have
 - Verify that your framework is supported: `noir list techs`
 - Check the detection step in the log. It lists each detected technology. If it says `No technologies detected`, name the framework yourself with `-t`: `noir scan . -t rails`
 - If your framework is not supported, use [AI-Powered Analysis](@/get_started/ai_power/index.md) to detect endpoints
+- Look for `Skipped N media/large files out of M total files` in the log. Source files over 10MB and specification documents (OpenAPI and the like) over 64MB are skipped. Raise the limits with `NOIR_MAX_FILE_SIZE` and `NOIR_MAX_SPEC_FILE_SIZE`: `NOIR_MAX_SPEC_FILE_SIZE=128MB noir scan .`
+  (the value is a byte count such as `5242880` or uses a unit such as `500K`, `5MB`, `1G`; a value Noir cannot read keeps the default, and the specification limit never drops below `NOIR_MAX_FILE_SIZE`)
 
 ## Scan Takes Too Long
 
@@ -45,6 +47,14 @@ Something on fire? Start with the symptom below that matches. Most of these have
 - Raise `NOIR_AI_TIMEOUT` when a slow local model legitimately needs longer to generate; lower `--ai-max-token` to send smaller bundles instead
 - Rate limits (HTTP 429) and transient gateway errors (502, 503, ...) are retried with backoff, up to three attempts in total. If warnings persist, reduce `--concurrency` or cap the run with `--ai-max-requests`
 - If a proxy or gateway drops connections that sit idle while the model generates, add `--ai-stream` (OpenAI-compatible providers)
+
+## Scan Uses Too Much Memory
+
+**Symptom:** Noir uses a lot of memory on a large repository.
+
+- Analyzers share a cache of file contents, limited to 512MB by default. Lower the limit with `NOIR_CONTENT_CACHE_MAX_MB` (in megabytes): `NOIR_CONTENT_CACHE_MAX_MB=128 noir scan .`
+- Set `NOIR_CONTENT_CACHE_MAX_MB=0` or `NOIR_CONTENT_CACHE_DISABLE=true` to turn the cache off. Every read then goes to disk
+- A smaller cache uses less memory, but the scan can get slower
 
 ## Docker Permission Issues
 

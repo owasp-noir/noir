@@ -1,0 +1,32 @@
+# Endpoints that act on many records in one request.
+key: bulk
+name: Bulk Tagger
+summary: Identifies batch and bulk operation endpoints
+order: 200
+tag:
+  tagger: Bulk
+  description: Batch or bulk operation endpoint; check that authorization is enforced for every item in the request, that the number of items is limited, and that bulk writes do not allow mass assignment.
+match:
+  all:
+    # The checks above are about requests that carry many items. Reading the
+    # status of a bulk job (GET /articles/bulk-status) is not one of them.
+    - method_not: safe
+    - any:
+        - path_segment: [bulk, batch, batches]
+        # camelCase actions lowercase into one segment (`/users/bulkDelete`).
+        - url_contains: [bulkcreate, bulkupdate, bulkdelete, bulkinsert, bulkupsert,
+                         batchcreate, batchupdate, batchdelete, batchinsert, batchupsert]
+    # Batched GraphQL queries belong to the graphql tagger.
+    - not:
+        path_segment: graphql
+examples:
+  match:
+    - { method: POST, url: /users/batch }
+    - { method: PATCH, url: /api/bulk }
+    - { method: DELETE, url: /api/v1/items/bulk-delete }
+    - { method: POST, url: /api/users/bulkDelete }
+  no_match:
+    - { url: /api/articles/bulk-status/ }
+    - { url: "/bulk/{bulkId}" }
+    - { method: POST, url: /graphql/batch }
+    - { method: POST, url: /api/users }

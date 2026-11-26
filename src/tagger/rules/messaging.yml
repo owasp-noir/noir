@@ -1,0 +1,38 @@
+# Endpoints that send text messages (SMS/LMS/MMS) or KakaoTalk business
+# messages (AlimTalk, FriendTalk). OTP delivery is also tagged by
+# account_recovery; the overlap is fine.
+key: messaging
+name: Messaging Tagger
+summary: Identifies SMS and KakaoTalk message sending endpoints
+order: 240
+tag:
+  tagger: Messaging
+  description: SMS or KakaoTalk message sending endpoint; review for missing authentication and rate limits (SMS pumping and spam at the operator's cost), caller-controlled recipients or sender numbers, and message content injection.
+match:
+  any:
+    - path_segment: [sms, alimtalk, friendtalk]
+    # `lms` is also a learning management system and `mms` is rarer, so
+    # they count only on a route that sends.
+    - all:
+        - path_segment: [lms, mms]
+        - path_segment: [send, sender, sending]
+    # Names an app passes on to the provider's send API:
+    #   plusFriendId            Naver Cloud SENS AlimTalk
+    #   senderKey               NHN Cloud KakaoTalk Bizmessage
+    #   recipientNo, sendNo,
+    #   recipientList           NHN Cloud SMS
+    # `to`, `from`, `message` and `templateCode` are too common to list.
+    - param:
+        name: [plus_friend_id, sender_key, recipient_no, send_no, recipient_list]
+examples:
+  match:
+    - { method: POST, url: /api/sms/send }
+    - { method: POST, url: /notifications/alimtalk }
+    - { method: POST, url: /api/lms/send }
+    - { method: POST, url: /api/notify, params: [{ name: plusFriendId, type: json }, { name: templateCode, type: json }] }
+    - { method: POST, url: /api/notify, params: [{ name: recipientNo, type: json }] }
+  no_match:
+    - { url: /messages }
+    - { method: POST, url: /api/chat/messages, params: [{ name: message, type: json }] }
+    - { url: /lms/courses }
+    - { method: POST, url: /api/send, params: [{ name: to, type: json }, { name: from, type: json }] }
