@@ -718,7 +718,6 @@ module Analyzer::Javascript
         params << Param.new(name, "", "query") unless name.empty?
       end
       body.scan(QUERY_DESTRUCTURE_RE) do |m|
-        next unless m.size > 0
         (m[1]? || "").split(",").each do |raw|
           name = raw.split("=").first.strip.split(":").first.strip
           params << Param.new(name, "", "query") unless name.empty?
