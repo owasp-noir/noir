@@ -36,3 +36,70 @@ describe "JSP param extraction" do
     instance.internal_servlet_attribute?("customAttribute").should be_false
   end
 end
+
+describe "JSP JSON body extraction" do
+  options = create_test_options
+  instance = Analyzer::Java::Jsp.new(options)
+
+  it "returns nil when the page does not read the request body" do
+    instance.extract_json_body_params(%q(<%= request.getParameter("username") %>)).should be_nil
+  end
+
+  it "reports keys read from a body parsed off getInputStream" do
+    content = <<-JSP
+      <%@ page import="org.json.simple.JSONObject" %>
+      <%@ page import="java.io.*" %>
+      <%
+          Reader reader = new InputStreamReader(request.getInputStream(), "UTF-8");
+          JSONObject jsonObject = (JSONObject) new JSONParser().parse(reader);
+          String secret = (String) jsonObject.get("secret");
+          String orderId = (String) jsonObject.get("orderId");
+      %>
+      JSP
+    params = instance.extract_json_body_params(content).not_nil!
+    params.map(&.name).should eq(["secret", "orderId"])
+    params.map(&.param_type).uniq!.should eq(["json"])
+  end
+
+  it "follows getReader through a StringBuilder and reports first-level keys only" do
+    content = <<-JSP
+      <%
+          BufferedReader br = request.getReader();
+          StringBuilder sb = new StringBuilder();
+          String line;
+          while ((line = br.readLine()) != null) {
+              sb.append(line);
+          }
+          JSONObject event = new JSONObject(sb.toString());
+          String eventType = event.getString("eventType");
+          int retry = event.optInt("retry", 0);
+          JSONObject data = event.getJSONObject("data");
+          String paymentId = data.getString("paymentId");
+      %>
+      JSP
+    instance.extract_json_body_params(content).not_nil!.map(&.name).should eq(["eventType", "retry", "data"])
+  end
+
+  it "does not take the charset of getBytes for a key" do
+    content = <<-JSP
+      <%
+          BufferedReader br = request.getReader();
+          StringBuilder sb = new StringBuilder();
+          String line;
+          while ((line = br.readLine()) != null) {
+              sb.append(line);
+          }
+          String body = sb.toString();
+          byte[] signed = mac.doFinal(body.getBytes("UTF-8"));
+          JSONObject event = new JSONObject(body);
+          String type = event.getString("type");
+      %>
+      JSP
+    instance.extract_json_body_params(content).not_nil!.map(&.name).should eq(["type"])
+  end
+
+  it "reports no keys when the body is read but never parsed into an object" do
+    content = %q(<% byte[] raw = request.getInputStream().readAllBytes(); String id = other.get("id"); %>)
+    instance.extract_json_body_params(content).not_nil!.should be_empty
+  end
+end

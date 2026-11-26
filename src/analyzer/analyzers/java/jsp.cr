@@ -50,6 +50,12 @@ module Analyzer::Java
           params_query = extract_params(content)
           details = Details.new(PathInfo.new(path))
           result << Endpoint.new(jsp_request_path(relative_path), "GET", params_query, details)
+          if body_params = extract_json_body_params(content)
+            # A page that reads the request body is called with one. Headers
+            # and cookies it reads (a webhook signature) come along.
+            carried = params_query.select { |param| param.param_type == "header" || param.param_type == "cookie" }
+            result << Endpoint.new(jsp_request_path(relative_path), "POST", carried + body_params, details)
+          end
           extract_form_endpoints(content, details).each do |endpoint|
             result << endpoint
           end
@@ -166,6 +172,63 @@ module Analyzer::Java
         add_param(params, match[1], "cookie")
       end
 
+      params
+    end
+
+    # `request.getInputStream()` / `request.getReader()`: the raw request body.
+    JSP_BODY_READ_RE = /\brequest\s*\.\s*get(?:InputStream|Reader)\s*\(\s*\)/
+    # How many assignment hops to follow from the body read to the parsed
+    # object (`reader` -> `text` -> `json`). Real pages need two or three.
+    JSP_BODY_TAINT_ROUNDS = 6
+
+    # Keys read from a JSON request body, or nil when the page does not read
+    # the body at all.
+    #
+    #   Reader reader = new InputStreamReader(request.getInputStream(), "UTF-8");
+    #   JSONObject json = (JSONObject) new JSONParser().parse(reader);
+    #   json.get("orderId")
+    #
+    # The body is followed through assignments (and `sb.append(line)`) to
+    # the variable that holds the parsed object, and `get*("key")`,
+    # `opt*("key")`, `path("key")` and `has("key")` calls on it are reported.
+    # A value pulled out by key is not followed any further, so only
+    # first-level keys are reported: after `data = json.getJSONObject("data")`,
+    # `data.getString("id")` is not a body key of its own.
+    def extract_json_body_params(content : String) : Array(Param)?
+      return unless content.matches?(JSP_BODY_READ_RE)
+
+      tainted = [] of String
+      content.scan(/\b([A-Za-z_]\w*)\s*=(?!=)[^;=]*?#{JSP_BODY_READ_RE.source}/) do |match|
+        tainted << match[1] unless tainted.includes?(match[1])
+      end
+
+      JSP_BODY_TAINT_ROUNDS.times do
+        added = false
+        tainted.dup.each do |source|
+          escaped = Regex.escape(source)
+          # `x = ... source ...;` but not `x = source.get("key")`.
+          content.scan(/\b([A-Za-z_]\w*)\s*=(?!=)[^;=]*?\b#{escaped}\b(?!\s*\.\s*(?:get|opt|path|has)\w*\s*\(\s*")/) do |match|
+            next if tainted.includes?(match[1])
+            tainted << match[1]
+            added = true
+          end
+          # `sb.append(source)`
+          content.scan(/\b([A-Za-z_]\w*)\s*\.\s*append\s*\(\s*#{escaped}\b/) do |match|
+            next if tainted.includes?(match[1])
+            tainted << match[1]
+            added = true
+          end
+        end
+        break unless added
+      end
+
+      params = [] of Param
+      tainted.each do |name|
+        # `body.getBytes("UTF-8")` names a charset, not a key.
+        content.scan(/\b#{Regex.escape(name)}\s*\.\s*(?!getBytes\b)(?:get|opt|path|has)\w*\s*\(\s*"([^"]+)"\s*[,)]/) do |match|
+          add_param(params, match[1], "json")
+        end
+      end
       params
     end
 
