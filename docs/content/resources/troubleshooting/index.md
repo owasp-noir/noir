@@ -18,6 +18,8 @@ Something on fire? Start with the symptom below that matches. Most of these have
 - Verify that your framework is supported: `noir list techs`
 - Check the detection step in the log. It lists each detected technology. If it says `No technologies detected`, name the framework yourself with `-t`: `noir scan . -t rails`
 - If your framework is not supported, use [AI-Powered Analysis](@/get_started/ai_power/index.md) to detect endpoints
+- Look for `Skipped N media/large files out of M total files` in the log. Source files over 10MB and specification documents (OpenAPI and the like) over 64MB are skipped. Raise the limits with `NOIR_MAX_FILE_SIZE` and `NOIR_MAX_SPEC_FILE_SIZE`: `NOIR_MAX_SPEC_FILE_SIZE=128MB noir scan .`
+  (the value is a byte count such as `5242880` or uses a unit such as `500K`, `5MB`, `1G`; a value Noir cannot read keeps the default, and the specification limit never drops below `NOIR_MAX_FILE_SIZE`)
 
 ## Scan Takes Too Long
 
