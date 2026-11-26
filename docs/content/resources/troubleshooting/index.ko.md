@@ -18,6 +18,8 @@ sort_by = "weight"
 - 프레임워크가 지원되는지 확인하세요: `noir list techs`
 - 로그의 탐지 단계를 확인하세요. 탐지된 기술이 하나씩 나옵니다. `No technologies detected`가 나오면 `-t`로 프레임워크를 직접 지정하세요: `noir scan . -t rails`
 - 지원하지 않는 프레임워크라면 [AI 기반 분석](@/get_started/ai_power/index.ko.md)으로 엔드포인트를 찾으세요
+- 로그에 `Skipped N media/large files out of M total files`가 있는지 확인하세요. 10MB가 넘는 소스 파일과 64MB가 넘는 명세 파일(OpenAPI 등)은 건너뜁니다. `NOIR_MAX_FILE_SIZE`와 `NOIR_MAX_SPEC_FILE_SIZE`로 기준을 올리세요: `NOIR_MAX_SPEC_FILE_SIZE=128MB noir scan .`
+  (값은 `5242880` 같은 바이트 숫자나 `500K`, `5MB`, `1G` 같은 단위로 씁니다. 읽을 수 없는 값이면 기본값을 쓰고, 명세 파일 기준은 `NOIR_MAX_FILE_SIZE`보다 작아지지 않습니다)
 
 ## 스캔이 너무 오래 걸림
 
