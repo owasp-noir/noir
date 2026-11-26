@@ -15,7 +15,10 @@ match:
     # served to everyone, not an administrative handler, so it is exempt.
     - all:
         - path_segment: [admin, admins, administrator, administration, administrative,
-                         superuser, superadmin, sysadmin, backoffice, impersonate, godmode]
+                         superuser, superadmin, sysadmin, backoffice, impersonate, godmode,
+                         # The admin directory of gnuboard and the Korean
+                         # sites built on it (`/adm/member_list.php`).
+                         adm]
         - not:
             path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
                              woff, woff2, ttf, otf, eot]
@@ -32,10 +35,12 @@ examples:
   match:
     - { url: /admin/users }
     - { method: POST, url: /wp-admin/options.php }
+    - { url: /adm/member_list.php }
     - { method: PATCH, url: /api/users/42, params: [{ name: isSuperuser, type: json }] }
     - { method: POST, url: /api/session, params: [{ name: run_as, type: json }] }
   no_match:
     - { url: /badminton/courts }
+    - { url: /sym/cal/EgovAdministDayCalendar.do }
     - { url: /api/roles, params: [{ name: privilege }] }
     - { method: QUERY, url: /api/roles, params: [{ name: privilege, type: form }] }
     - { url: /static/css/admin.theme.css }
