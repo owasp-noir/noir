@@ -12,6 +12,7 @@ faq_questions = [
   "Is Noir free?",
   "How do I integrate with other security tools?",
   "How do I export results?",
+  "Does Noir send my code anywhere?",
   "How do I report bugs or request features?"
 ]
 faq_answers = [
@@ -22,6 +23,7 @@ faq_answers = [
   "Yes, Noir is free and open-source under the MIT license. You can use it freely for commercial purposes.",
   "You can integrate with ZAP, Burp Suite, Caido, and more. See the Pipeline for DAST guide.",
   "Noir exports JSON, YAML, OpenAPI Specification, cURL, and many other formats. See the Output Formats section.",
+  "No. A plain noir scan makes no network requests. Only options you add do: --ai-provider sends source code to the LLM provider, -P downloads rules with git, --probe sends requests to your target, and the --export options send the list of endpoints found.",
   "Open a GitHub Issue to report bugs or request features."
 ]
 
@@ -58,6 +60,15 @@ You can integrate with ZAP, Burp Suite, Caido, and more. See the [Pipeline for D
 ### How do I export results?
 
 Noir exports JSON, YAML, OpenAPI Specification, cURL, and many other formats. See the [Output Formats](@/usage/output_formats/_index.md) section.
+
+### Does Noir send my code anywhere?
+
+No. A plain `noir scan` makes no network requests. Only these options do:
+
+- `--ai-provider` sends the source code being analyzed to the LLM provider. Credentials files are withheld. See [What Gets Sent](@/get_started/ai_power/index.md)
+- `-P` (passive scan) runs `git clone` or `git fetch` on the rules repository. No code is sent, and `--passive-scan-path` or `--passive-scan-no-update-check` skips the download. See [Default Passive Scan Rules](@/usage/passive_scan/default_rules/index.md)
+- `--probe` and `--probe-via` send HTTP requests for the endpoints found to the target given with `-u`. See [Delivering Results to Other Tools](@/usage/more_features/deliver/index.md)
+- `--export-es`, `--export-opensearch` and `--export-webhook` send the list of endpoints found, not the code. See [Delivering Results to Other Tools](@/usage/more_features/deliver/index.md)
 
 ### How do I report bugs or request features?
 
