@@ -12,13 +12,23 @@ match:
     # SOAP 1.2 carries the action in Content-Type instead.
     - param: { type: header, name: content_type, value_contains: soap+xml }
     # A bare `soap` segment is not enough (store listings sell soap).
-    - url_contains: ["?wsdl", ".wsdl", ".asmx"]
+    # `?singleWsdl` is how WCF serves its WSDL as one file; lowercased it
+    # does not contain `?wsdl`.
+    - url_contains: ["?wsdl", "?singlewsdl", ".wsdl", ".asmx"]
+    # A WCF service address. WCF speaks SOAP unless a webHttpBinding
+    # endpoint is configured, and that REST style puts the operation after
+    # the file (`/OrderService.svc/orders/42`). So only a URL whose path
+    # ends in `.svc` is taken.
+    - path_extension: svc
 examples:
   match:
     - { method: POST, url: /webservice, params: [{ name: SOAPAction, value: GetUser, type: header }] }
     - { method: POST, url: /webservice, params: [{ name: Content-Type, value: application/soap+xml, type: header }] }
     - { url: /Service.asmx }
     - { url: /service?WSDL }
+    - { url: /OrderService.svc?singleWsdl }
+    - { method: POST, url: /OrderService.svc }
   no_match:
     - { url: /products/soap }
+    - { url: /OrderService.svc/orders/42 }
     - { method: POST, url: /api/data, params: [{ name: soapaction, type: json }] }
