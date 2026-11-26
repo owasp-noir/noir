@@ -38,45 +38,73 @@ No local toolchain? Open the repository in [GitHub Codespaces](https://codespace
 ### Clone and Install Dependencies
 
 ```bash
-# If you've forked this repository, clone to https://github.com/<YOU>/noir
-git clone https://github.com/hahwul/noir
+# If you've forked this repository, clone https://github.com/<YOU>/noir instead
+git clone https://github.com/owasp-noir/noir
 cd noir
 shards install
 ```
 
+The commands below come in two forms. Use [`just`](https://github.com/casey/just) if you have it; the plain form does the same thing without it.
+
 ### Build
+
 ```bash
-shards build
+just build        # with just
+shards build      # without (on Linux add --link-flags=-Wl,--no-export-dynamic)
 # ./bin/noir
 ```
 
-### Unit/Functional Test
-```bash
-crystal spec
+### Test
 
-# Want more details?
-crystal spec -v
+The whole suite takes a couple of minutes once it is built, and the first build takes longer. While you work, run only the tests your change touches, then run the whole suite once before you open a pull request.
+
+**What your change touches**
+
+| You changed | With `just` | Without |
+|---|---|---|
+| A tag rule (`src/tagger/rules/*.yml`) | `crystal run scripts/check_tag_rules.cr` | same |
+| One framework's analyzer, fixture or tester | `just test-func-one javascript/hono` | `NOIR_SPEC_DATA_PATH=spec/functional_test/testers/javascript/hono_spec.yml crystal spec spec/functional_test/data_testers_spec.cr` (when the tester is a `.cr` file, `crystal spec` that file instead) |
+| Several frameworks of one language | `just test-func-lang python` | `NOIR_SPEC_DATA_PATH=spec/functional_test/testers/python crystal spec spec/functional_test/data_testers_spec.cr spec/functional_test/testers/python` |
+| A detector, tagger, output format or utility | `crystal spec spec/unit_test/tagger/taggers/pii_spec.cr` | same |
+
+The unit spec for a file under `src/` sits at the matching path under `spec/unit_test/`.
+
+If you expect to run tests many times, build the suite once and filter it. Fixtures and `.yml` testers are read when it starts, so only a change under `src/` needs a rebuild.
+
+```bash
+just spec-build
+./bin/noir_spec -e "[fixtures/javascript/hono/]"   # that fixture's endpoint counts
+./bin/noir_spec -e "::/users/:userId"              # the checks for one endpoint
+./bin/noir_spec -e "PiiTagger"                     # a unit spec, by its describe text
+```
+
+`0 examples` means the filter matched nothing; it is not a pass.
+
+**The whole suite**
+
+```bash
+just test         # with just
+crystal spec      # without
 ```
 
 ### Lint
-```bash
-crystal tool format
-lib/ameba/bin/ameba.cr --fix
 
-# Ameba installation
-# https://github.com/crystal-ameba/ameba#installation
+```bash
+just check        # report format and lint problems
+just fix          # fix what can be fixed automatically
 ```
 
-or
+Without `just`:
 
 ```bash
-just fix
+crystal tool format
+crystal run lib/ameba/bin/ameba.cr -- --fix
 ```
 
 ## 🧭 Code Structure
 
 - spec:
-  - unit_test: Unit test codes (for `crystal spec` command).
+  - unit_test: Unit test codes, mirroring the layout of `src`.
   - functional_test: Functional test codes.
 - src: Contains the source code.
   - analyzer: Code analyzers for Endpoint URL and Parameter analysis.

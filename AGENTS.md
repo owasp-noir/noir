@@ -11,7 +11,7 @@ Crystal-based attack surface detector that identifies endpoints by static analys
 | Command | Alternative | Timeout |
 |---------|-------------|---------|
 | `just build` | `shards build` | 120s (~30s typical) |
-| `just test` | `crystal build spec/suite.cr -o bin/noir_spec && ./bin/noir_spec` | 240s (~2 min typical) |
+| `just test` | `crystal spec` | 240s (~2 min typical) |
 | `just check` | format check + lint | 60s |
 | `just fix` | auto-format + fix lint | 60s |
 
@@ -28,6 +28,8 @@ A compile is the expensive step, and it is memory-bound: the suite with YAML tes
 - **Lint with the built Ameba.** `just check` builds `bin/ameba` once per worktree. Don't add a rule-level `Excluded:` glob that walks `spec/functional_test/fixtures` in `.ameba.yml`: Ameba re-expands those per (rule, file), which once made a full lint take ~10 minutes. Fixtures are excluded at the top level instead.
 
 ### Run one thing, and read the result
+
+Use `just` when it is installed; the Alternative column above is for when it is not. Either way, run the narrowest test that covers the change while working, and the whole suite once before opening a pull request. `.github/CONTRIBUTING.md` gives the same guidance to people.
 
 `-e` matches example descriptions by substring. A filter that matches nothing prints `0 examples, 0 failures` and exits 0, which looks like a pass. Check the example count, not just the failures.
 
