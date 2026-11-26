@@ -32,6 +32,18 @@ With `-P` enabled, Noir:
 3. Notifies you when rules are outdated
 4. Updates them, if auto-update is on
 
+Each git command (`clone`, `fetch`) may take up to 20 seconds. When one runs over, Noir stops it and warns:
+
+```
+git fetch timed out after 20s (NOIR_RULES_GIT_TIMEOUT raises the limit).
+```
+
+On a slow network or behind a corporate proxy, raise the limit with `NOIR_RULES_GIT_TIMEOUT`. The value is a whole number of seconds; `0` or a value Noir cannot read keeps the 20-second default.
+
+```bash
+NOIR_RULES_GIT_TIMEOUT=120 noir scan /app -P
+```
+
 Repository: https://github.com/owasp-noir/noir-passive-rules
 
 ## CLI Options
