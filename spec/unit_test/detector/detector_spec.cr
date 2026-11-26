@@ -339,6 +339,60 @@ describe "detect_techs file walker" do
     end
   end
 
+  it "prunes Eclipse bin/main and bin/test only in a project with that source set or a Gradle build" do
+    temp_dir = File.tempname("noir_detector_eclipse_bin")
+
+    begin
+      kept = [
+        # the real sources
+        File.join(temp_dir, "app", "src", "main", "java", "demo", "ItemController.java"),
+        File.join(temp_dir, "app", "src", "test", "java", "demo", "ItemControllerTest.java"),
+        # other children of the same bin/ are left alone
+        File.join(temp_dir, "app", "bin", "deploy", "Release.java"),
+        File.join(temp_dir, "gradle-app", "bin", "run.js"),
+        # a scripts bin/ in a project with no src/main, src/test or Gradle file
+        File.join(temp_dir, "tools", "bin", "main", "cli.js"),
+        File.join(temp_dir, "tools", "bin", "test", "smoke.js"),
+        File.join(temp_dir, "tools", "src", "index.js"),
+        # src/test exists here, src/main does not: only bin/test is output
+        File.join(temp_dir, "partial", "src", "test", "java", "demo", "T.java"),
+        File.join(temp_dir, "partial", "bin", "main", "entry.js"),
+        # `main` deeper than directly under bin/
+        File.join(temp_dir, "app", "src", "main", "java", "demo", "bin", "main", "Nested.java"),
+      ]
+      pruned = [
+        File.join(temp_dir, "app", "bin", "main", "demo", "ItemController.java"),
+        File.join(temp_dir, "app", "bin", "test", "demo", "ItemControllerTest.java"),
+        File.join(temp_dir, "partial", "bin", "test", "demo", "T.java"),
+        # a Gradle subproject whose sources live elsewhere (custom source sets)
+        File.join(temp_dir, "gradle-app", "bin", "main", "demo", "Ctl.java"),
+        File.join(temp_dir, "gradle-app", "bin", "test", "demo", "CtlTest.java"),
+      ]
+      Dir.mkdir_p(File.join(temp_dir, "gradle-app"))
+      File.write(File.join(temp_dir, "pom.xml"), "<project></project>\n")
+      File.write(File.join(temp_dir, "gradle-app", "build.gradle.kts"), "plugins { java }\n")
+      (kept + pruned).each do |path|
+        Dir.mkdir_p(File.dirname(path))
+        File.write(path, "// x\n")
+      end
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      kept.each { |path| files.should contain(path) }
+      pruned.each { |path| files.should_not contain(path) }
+    ensure
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
+
   it "prunes coding-agent state directories" do
     temp_dir = File.tempname("noir_detector_agent_state")
 
