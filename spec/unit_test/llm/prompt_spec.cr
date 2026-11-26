@@ -294,7 +294,7 @@ describe LLM do
 
       it "includes exaone3.5 with 32768 tokens" do
         ollama["exaone3.5"].should eq(32768)
-        LLM.get_max_tokens("ollama", "exaone3.5:7.8b").should eq(32768)
+        LLM.model_token_limit(ollama, "exaone3.5:7.8b").should eq(32768)
       end
 
       it "includes llama3.1 with 128000 tokens" do
