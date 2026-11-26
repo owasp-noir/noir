@@ -1,0 +1,40 @@
+# Endpoints a scheduler calls over HTTP to run a job (Vercel Cron, Cloud
+# Scheduler, App Engine cron). Anyone can run the job if the route does not
+# check a secret.
+key: cron
+name: Cron Tagger
+summary: Identifies scheduled job trigger endpoints
+order: 270
+tag:
+  tagger: Cron
+  description: Scheduled job trigger endpoint; check that it verifies the scheduler (a shared secret such as CRON_SECRET, an OIDC token, or a platform header that cannot be spoofed from outside), and that repeated or concurrent runs are safe.
+match:
+  any:
+    # `/api/cron-key` manages the key instead of running the job.
+    - all:
+        - path_segment: [cron, crons, cronjob, cronjobs, scheduler]
+        - not:
+            path_segment: [key, keys, secret, secrets, token, tokens]
+    # `jobs` and `tasks` are mostly listings. They count with a verb that
+    # starts a run, on a state-changing method.
+    - all:
+        - method_not: safe
+        - path_segment: [job, jobs, task, tasks]
+        - path_segment: [run, trigger, execute]
+    # Headers Cloud Scheduler and App Engine cron add to the request.
+    - param:
+        type: header
+        name: [x_cloudscheduler, x_cloudscheduler_jobname, x_appengine_cron]
+examples:
+  match:
+    - { method: POST, url: /api/cron }
+    - { url: /api/cron/cleanup }
+    - { method: POST, url: /internal/jobs/run }
+    - { method: POST, url: "/api/tasks/{id}/trigger" }
+    - { url: /tasks/daily-report, params: [{ name: X-Appengine-Cron, type: header }] }
+  no_match:
+    - { url: /api/cron-key }
+    - { method: POST, url: /api/cron-key }
+    - { url: /api/jobs }
+    - { method: POST, url: /api/jobs }
+    - { url: /api/jobs/run }
