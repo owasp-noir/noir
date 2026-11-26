@@ -1,0 +1,43 @@
+# Endpoints that pass a request on to a large language model. MCP endpoints
+# belong to the mcp tagger.
+key: llm
+name: LLM Tagger
+summary: Identifies chat completion, embedding and other LLM-backed endpoints
+order: 260
+tag:
+  tagger: LLM
+  description: LLM-backed endpoint; review for prompt injection, system prompt and context leakage, missing authentication or quotas (cost abuse of an open LLM proxy), and unsafe use of model output.
+match:
+  all:
+    - not:
+        path_segment: mcp
+    - any:
+        # OpenAI-compatible routes. `completions` alone also counts finished
+        # courses or tasks, so it needs the `chat` or version segment.
+        - url_contains: [/chat/completions, /v1/completions, /v1/embeddings]
+        - path_segment: embeddings
+        - param: { name: [system_prompt, system_message, system_instruction] }
+        # Each name is common alone: `messages` in chat apps, `model` in
+        # catalogs, `prompt` in OIDC (`prompt=login`). Two different ones
+        # describe a model call.
+        - at_least:
+            count: 2
+            of:
+              - param: { name: messages }
+              - param: { name: model }
+              - param: { name: prompt }
+              - param: { name: [temperature, top_p, top_k, max_tokens, max_completion_tokens] }
+examples:
+  match:
+    - { method: POST, url: /v1/chat/completions }
+    - { method: POST, url: /api/v1/embeddings }
+    - { method: POST, url: /api/chat, params: [{ name: messages, type: json }, { name: model, type: json }] }
+    - { method: POST, url: /v1/messages, params: [{ name: model, type: json }, { name: messages, type: json }, { name: max_tokens, type: json }] }
+    - { method: POST, url: /api/generate, params: [{ name: prompt, type: json }, { name: temperature, type: json }] }
+    - { method: POST, url: /api/assistant, params: [{ name: systemPrompt, type: json }] }
+  no_match:
+    - { method: POST, url: /api/chat/messages, params: [{ name: messages, type: json }] }
+    - { url: /oauth/authorize, params: [{ name: prompt }] }
+    - { url: "/courses/{id}/completions" }
+    - { url: /api/cars, params: [{ name: model }] }
+    - { method: POST, url: /mcp, params: [{ name: messages, type: json }, { name: model, type: json }] }
