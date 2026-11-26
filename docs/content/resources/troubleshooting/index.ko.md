@@ -30,6 +30,8 @@ sort_by = "weight"
 - 탐지됐지만 필요 없는 프레임워크의 분석기는 `--exclude-techs`로 건너뛰세요(로그에 `(skip)`으로 표시됩니다)
 - `--exclude-path`로 vendor·생성 코드 트리를 건너뛰세요: `--exclude-path "vendor/*,**/node_modules/**"`
 - AI 응답은 캐시되므로 같은 코드를 다시 스캔하면 더 빠릅니다
+- `NOIR_PARSE_TIMEOUT_MS`는 tree-sitter가 파일 하나를 파싱하는 시간 제한입니다(기본값 `10000`, 10초). 제한을 넘은 파일만 빠지고 스캔은 계속됩니다. 값을 줄이면 느린 파일을 더 빨리 포기하지만, 그 파일의 엔드포인트는 놓칩니다
+- `NOIR_PARSER_MAX_DEPTH`는 Flask와 Quart 분석이 import를 따라가는 깊이를 제한합니다(기본값은 제한 없음). `0`은 시작 파일만, `1`은 직접 import한 파일까지 읽습니다. 값을 줄이면 빨라지지만, 더 깊은 import 뒤에 있는 엔드포인트를 놓칠 수 있습니다. 다른 프레임워크와 언어에는 쓰이지 않습니다
 
 ## AI 제공업체 연결 오류
 
