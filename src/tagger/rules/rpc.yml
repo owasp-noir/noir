@@ -1,0 +1,29 @@
+# JSON-RPC and XML-RPC endpoints: one URL fronts many methods, and each of
+# them needs its own authorization check.
+key: rpc
+name: RPC Tagger
+summary: Identifies JSON-RPC and XML-RPC endpoints
+order: 210
+tag:
+  tagger: RPC
+  description: JSON-RPC or XML-RPC endpoint; many methods sit behind one URL, so check authorization per method, look for exposed internal methods, and review batch calls and XML-RPC system.multicall for brute-force amplification.
+match:
+  any:
+    # `/xmlrpc.php` splits on `.` into an `xmlrpc` segment, and `/json-rpc`
+    # into `json` + `rpc`. gRPC is a different protocol: `grpc` is its own
+    # segment and is not listed.
+    - path_segment: [rpc, xmlrpc, jsonrpc]
+    # Every JSON-RPC 2.0 request carries `"jsonrpc": "2.0"`. `method`,
+    # `params` and `id` are too common to count on their own.
+    - param: { name: jsonrpc }
+examples:
+  match:
+    - { method: POST, url: /xmlrpc.php }
+    - { method: POST, url: "/xmlrpc/2/{service}" }
+    - { method: POST, url: /api/rpc }
+    - { method: POST, url: /rest/v1/rpc/search_posts }
+    - { method: POST, url: /api, params: [{ name: jsonrpc, value: "2.0", type: json }, { name: method, type: json }] }
+  no_match:
+    - { method: POST, url: /grpc/health }
+    - { method: POST, url: /helloworld.Greeter/SayHello }
+    - { method: POST, url: /api/users, params: [{ name: method, type: json }, { name: params, type: json }, { name: id, type: json }] }
