@@ -28,6 +28,8 @@ Something on fire? Start with the symptom below that matches. Most of these have
 - Use `--exclude-techs` to skip the analyzers of detected frameworks you don't need (the log marks them `(skip)`)
 - Use `--exclude-path` to skip vendored or generated trees: `--exclude-path "vendor/*,**/node_modules/**"`
 - AI responses are cached, so repeat runs on the same code are faster
+- `NOIR_PARSE_TIMEOUT_MS` limits how long tree-sitter may spend parsing one file (default `10000`, 10 seconds). A file that runs over is left out and the scan continues. A lower value gives up on slow files sooner, but endpoints in those files are missed
+- `NOIR_PARSER_MAX_DEPTH` limits how far Python analysis follows imports (no limit by default). `0` reads only the starting file and `1` also reads its direct imports. A lower value is faster, but endpoints behind deeper imports can be missed. Other languages do not use it
 
 ## AI Provider Connection Errors
 
