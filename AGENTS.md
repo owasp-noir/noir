@@ -11,9 +11,11 @@ Crystal-based attack surface detector that identifies endpoints by static analys
 | Command | Alternative | Timeout |
 |---------|-------------|---------|
 | `just build` | `shards build` | 120s (~30s typical) |
-| `just test` | `crystal build spec/suite.cr -o bin/noir_spec && ./bin/noir_spec` | 240s (~2 min typical) |
+| `just test` | `crystal spec` | 240s (~2 min typical) |
 | `just check` | format check + lint | 60s |
 | `just fix` | auto-format + fix lint | 60s |
+
+The timeouts are for a warm compiler cache on a development machine. A cold build takes longer: on a 4-core, 16 GB Linux machine (GitHub Codespaces) the first `just build` took 135-198 s and the first spec build 245-337 s, so allow 600 s there.
 
 On Linux the bare alternatives need `--link-flags=-Wl,--no-export-dynamic`, or the binary exits at start with `symbol lookup error`. The `just` recipes add it.
 
@@ -24,6 +26,25 @@ A compile is the expensive step, and it is memory-bound: the suite with YAML tes
 - **Compile the spec binary once, then filter it.** Run `just spec-build` (or `just test`), then iterate with `./bin/noir_spec -e hono`, `--location spec/...:42` or `--tag functional`. The binary reads YAML testers at startup, so edits to their expectations take effect on the next run. Do not run `crystal spec <file>` per change: each invocation compiles `src/` and gets its own compiler cache.
 - **Go through `just`.** Compiling recipes run under `scripts/compile_gate.sh`, which caps concurrent compiles across all worktrees (`NOIR_COMPILE_SLOTS`, default 2, `0` disables). A bare `crystal build` bypasses the cap.
 - **Lint with the built Ameba.** `just check` builds `bin/ameba` once per worktree. Don't add a rule-level `Excluded:` glob that walks `spec/functional_test/fixtures` in `.ameba.yml`: Ameba re-expands those per (rule, file), which once made a full lint take ~10 minutes. Fixtures are excluded at the top level instead.
+
+### Run one thing, and read the result
+
+Use `just` when it is installed; the Alternative column above is for when it is not. Either way, run the narrowest test that covers the change while working, and the whole suite once before opening a pull request. `.github/CONTRIBUTING.md` gives the same guidance to people.
+
+`-e` matches example descriptions by substring. A filter that matches nothing prints `0 examples, 0 failures` and exits 0, which looks like a pass. Check the example count, not just the failures.
+
+| What you changed | Command | Notes |
+|---|---|---|
+| A YAML functional tester or its fixture | `./bin/noir_spec -e "[fixtures/php/php/]"` | Runs that fixture's two count checks. No rebuild: YAML and fixtures are read at startup. |
+| One endpoint of a fixture | `./bin/noir_spec -e "::/get.php"` | Endpoint checks are named `endpoint check [METHOD::/url]`, so filter on `::` plus the URL. The tester's file name (`php_spec`) matches nothing. |
+| A unit spec | `./bin/noir_spec -e "PiiTagger"` | The `describe` text. |
+| A tag rule (`src/tagger/rules/*.yml`) | `crystal run scripts/check_tag_rules.cr` | Seconds, no suite build. CI runs the same script. |
+| A spec that requires only `spec` and the file under test (several under `spec/unit_test/utils/`) | `crystal spec spec/unit_test/utils/call_fold_spec.cr` | Compiles only that file, so the rule against `crystal spec <file>` below does not apply. |
+| One tester without a built suite | `just test-func-one javascript/hono` | Compiles `src/`; `just test-func-lang python` does a whole language. |
+
+A functional tester names what is wrong: `MISSING PARAM [orderId] on [POST::/confirm.php] in tester: fixtures/php/php/`, `UNASSERTED PARAMS [coupon (form)] ...`, or a count mismatch (`counts` in the YAML must match the scan). After changing `src/`, rebuild with `just spec-build` before trusting any of these.
+
+`bin/` is not tracked and `git pull` does not rebuild it. If `./bin/noir` predates your checkout, its scan output describes old code.
 
 ```bash
 # Docker build (for CI or consistent environments)
@@ -37,16 +58,19 @@ sudo apt install -y just
 ## Usage
 
 ```bash
-./bin/noir -h                                           # Help (includes all output formats)
-./bin/noir list techs                                   # List all supported technologies
-./bin/noir list taggers                                 # List available taggers
-./bin/noir -b path/to/source                            # Basic analysis
-./bin/noir -b . -f json                                 # JSON output (see -h for all formats)
-./bin/noir -b . --verbose                               # Detailed analysis
-./bin/noir -b . -P                                      # Passive security scan
-./bin/noir -b . --probe-via http://127.0.0.1:8080      # Forward to proxy (Burp/ZAP)
-./bin/noir -b . --ai-provider openai --ai-model gpt-4  # AI-powered analysis
+./bin/noir -h                                             # Subcommands; `noir scan -h` lists every scan flag
+./bin/noir list techs                                     # List all supported technologies
+./bin/noir list taggers                                   # List available taggers
+./bin/noir scan path/to/source                            # Basic analysis
+./bin/noir scan . -f json --no-log                        # JSON only on stdout: {"endpoints": [...]}
+./bin/noir scan . --include path                          # Add the source file behind each endpoint
+./bin/noir scan . -T                                      # Run every tagger
+./bin/noir scan . -P                                      # Passive security scan
+./bin/noir scan . --probe-via http://127.0.0.1:8080       # Forward to proxy (Burp/ZAP)
+./bin/noir scan . --ai-provider openai --ai-model <name>  # AI-powered analysis
 ```
+
+The v0 form (`noir -b path`) is still routed to `scan`, but write the `scan` form in docs, tests and examples.
 
 ## Repository Structure
 
@@ -106,15 +130,15 @@ An analyzer is composed of three layers. Keep them separate — a framework adap
 
 **Scan file access**: Resolve source paths through `CodeLocator#source_path?`, `source_files_under`, or its directory, extension and basename indexes. Read them with `CodeLocator#read_source` (or `Analyzer#read_file_content`). For static URL enumeration, `static_files_under` can return media paths without reading their bytes. The analysis pipeline enforces registry membership even when the scan found zero files. `spec/unit_test/analyzer/scan_source_boundary_spec.cr` checks direct file reads and directory walks under `src/` against the existing call-site inventory.
 
-**Reference implementation**: `src/analyzer/analyzers/javascript/hapi.cr` (86 lines) is the whole model. It inherits `JavascriptEngine`, gets its file set from `ordered_scan_files(get_files_by_extensions(...))` (worker pool, content cache, per-file error isolation, results in input order), and hands each file to `Noir::TreeSitterHapiExtractor.extract_routes`, doing nothing but map the result onto `Endpoint`s and `Param`s (plus the shared `RouterMountScanner` for mount prefixes). `src/analyzer/engines/file_scan_engine.cr` is the exemplary shared layer itself.
+**Reference implementation**: `src/analyzer/analyzers/javascript/hapi.cr` is the whole model. It inherits `JavascriptEngine`, gets its file set from `ordered_scan_files(get_files_by_extensions(...))` (worker pool, content cache, per-file error isolation, results in input order), and hands each file to `Noir::TreeSitterHapiExtractor.extract_routes`, doing nothing but map the result onto `Endpoint`s and `Param`s (plus the shared `RouterMountScanner` for mount prefixes). `src/analyzer/engines/file_scan_engine.cr` is the exemplary shared layer itself.
 
 Counter-examples, so you don't copy the wrong half:
 
 - `hono.cr` is right on L0 and **wrong on L2**. Only its `analyze` block delegates to the extractor; the rest is layers 2 and 3 fused — a regex line-walk fallback (`analyze_with_regex`), full inline route/param regex tables, and the HTTP verb list spelled twice in one file (`HTTP_METHODS` and the `app.all` expansion literal). The char-by-char `split_top_level_args` it used to carry now comes from `JavascriptEngine`; other adapters still have private copies (`grep -rn 'def \(self\.\)\?split_top_level_args' src/` lists them all — every hit outside `src/miniparsers/js_http_route_extractor.cr` and `src/analyzer/engines/javascript_engine.cr` is a framework adapter carrying its own). `app.on(...)` used to be a second regex walk there; it is now read by `JSParser` (`on_routes:`), so it takes mount prefixes and handlers like every other route.
-- `javascript/adonisjs.cr` (198), `kotlin/http4k.cr` (91) are right on L2 and **wrong on L0**: they extend `Analyzer` directly and re-walk `all_files()` themselves with a `File.exists?` guard that is redundant on detector-registered paths. They should ride their language engine the way `hapi.cr` now does.
+- `javascript/adonisjs.cr` and `kotlin/http4k.cr` are right on L2 and **wrong on L0**: they extend `Analyzer` directly and re-walk `all_files()` themselves with a `File.exists?` guard that is redundant on detector-registered paths. They should ride their language engine the way `hapi.cr` now does.
 
 **Current coverage**:
-- Language engines (`src/analyzer/engines/`, **direct** subclass count in parentheses — re-derive any of them with `grep -rc "< {Engine}" src/`; transitive inheritors are deliberately *not* counted, so `Bandit < Plug < ElixirEngine` contributes only `Plug` to `ElixirEngine`'s count): `SpecificationEngine` (57), `JavascriptEngine` (37), `PythonEngine` (25), `PhpEngine` (20), `GoEngine` (19), `RustEngine` (11), `RubyEngine` (10), `CrystalEngine` (6), `ScalaEngine` (6), `CfmlEngine` (5), `SwiftEngine` (3), `PerlEngine` (3), `CEngine` (3), `ElixirEngine` (3), `TSContractEngine` (3). `TSContractEngine` is itself a `JavascriptEngine` subclass: the shared base of the contract-first TypeScript routers (ts-rest, oRPC, Effect HttpApi). `ServerlessFunctionSupport` is a mixin for the file-routed serverless adapters (Cloudflare Pages, Vercel, Netlify Functions). `java_engine.cr` and `kotlin_engine.cr` are **not** engines — nothing inherits from them. `KotlinEngine` only exposes a shared `self.test_path?`; `JavaEngine` is also a mixin the JVM adapters `include` for shared helpers (JAX-RS bean/sub-resource indexes, Spring/Micronaut/Quarkus config readers). `PlayRouteSupport` (`src/analyzer/engines/play_route_support.cr`) is the same kind of mixin for the Java and Scala Play routes-file parsers.
+- Language engines (`src/analyzer/engines/`, **direct** subclass count in parentheses — re-derive any of them with `grep -rc "< {Engine}" src/`; transitive inheritors are deliberately *not* counted, so `Bandit < Plug < ElixirEngine` contributes only `Plug` to `ElixirEngine`'s count): `SpecificationEngine` (57), `JavascriptEngine` (36), `PythonEngine` (28), `PhpEngine` (22), `GoEngine` (20), `RustEngine` (11), `RubyEngine` (10), `CrystalEngine` (6), `ScalaEngine` (6), `CfmlEngine` (5), `SwiftEngine` (3), `PerlEngine` (3), `CEngine` (3), `ElixirEngine` (3), `TSContractEngine` (3). `TSContractEngine` is itself a `JavascriptEngine` subclass: the shared base of the contract-first TypeScript routers (ts-rest, oRPC, Effect HttpApi). `ServerlessFunctionSupport` is a mixin for the file-routed serverless adapters (Cloudflare Pages, Vercel, Netlify Functions). `java_engine.cr` and `kotlin_engine.cr` are **not** engines — nothing inherits from them. `KotlinEngine` only exposes a shared `self.test_path?`; `JavaEngine` is also a mixin the JVM adapters `include` for shared helpers (JAX-RS bean/sub-resource indexes, Spring/Micronaut/Quarkus config readers). `PlayRouteSupport` (`src/analyzer/engines/play_route_support.cr`) is the same kind of mixin for the Java and Scala Play routes-file parsers.
 - `FileScanEngine` (`src/analyzer/engines/file_scan_engine.cr`) is the shared base *under* eight of those engines (C, Crystal, Elixir, Perl, Php, Rust, Scala, Swift). It owns the `analyze` + `parallel_file_scan` skeleton those engines used to each carry a copy of.
 - `CliEndpointSupport` (`src/analyzer/engines/cli_endpoint_support.cr`) is a **mixin**, not a base: it holds the `fetch_endpoint` that all 21 `analyzers/{lang}/cli.cr` files carried an identical copy of. Those 21 have no common base below `Analyzer` — 17 extend `Analyzer` directly and Go/JavaScript/Python/Ruby extend their language engine — so shared CLI behaviour has to be `include`d. CLI analyzers that previously defined `cli_test_path?` now select their own `Noir::FileRole` conventions. Use `file_role(path, convention)` on an analyzer or framework tagger to match within the owning scan base. Detectors and parsers can pass their scan-base-relative path to `Noir::FileRole.classify`. The remaining predicate definitions are listed in `spec/unit_test/analyzer/file_role_predicates.txt`. Remove entries as gates migrate. Binary-name and evidence helpers still use language-specific constants.
 - Languages with no engine — including CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua and Groovy — extend the `Analyzer` base directly: their flows orchestrate multiple phases or carry self-contained extraction that doesn't share with other analyzers.
@@ -228,8 +252,18 @@ The runtime comparison expands a manifest `ALL` or `ANY` into GET, HEAD, POST, P
 
 1. `just build` - Ensure compilation succeeds
 2. `just test` - Ensure all tests pass
-3. `crystal tool format` - Format code
-4. Verify basic functionality: `./bin/noir -b spec/functional_test/fixtures/crystal`
+3. `just check` - Format check and lint (`just fix` applies what can be fixed automatically)
+4. Verify basic functionality: `./bin/noir scan spec/functional_test/fixtures/crystal`
+
+## Pull Requests and CI
+
+- **Titles and commits** follow `type(scope): summary`, as in `fix(php): read JSON body keys from php://input`. Types in use: `fix`, `feat`, `refactor`, `test`, `perf`, `docs`, `ci`, `style`. Pull requests are usually squash-merged, so the title becomes the commit.
+- **CI gates jobs on the changed paths** (`.github/workflows/ci.yml`, job `changes`). A job that shows as skipped did not apply to your change. `ci-ok` is the one check that summarises the rest.
+- **A change set made only of `src/tagger/rules/*.yml`** takes a short path: `Tag rule examples` and one `tests` run. Adding any other file, a docs line included, puts the pull request back on the full path.
+- **`typos` runs on every pull request** and reads real identifiers as misspellings, such as a cipher or field name one letter away from an English word. Add a genuine name to `[default.extend-words]` in `typos.toml` instead of renaming it.
+- **`Generated docs are current` fails** when `src/techs/**` changed and the support pages were not regenerated. Run `just docs-supported` and commit the result.
+- **Docs come in pairs.** Pages under `docs/content/` have an English `index.md` and a Korean `index.ko.md`; change both in the same pull request. `just docs-i18n-check` lists a page that has only one. CI does not run it.
+- **Scratch files** go outside the repository or under `tmp/`, which is ignored. Do not commit `bin/` or `lib/`.
 
 ## Environment
 - Crystal ~> 1.19 (CI: 1.21.0 and 1.22.0)
