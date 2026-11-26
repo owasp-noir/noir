@@ -43,13 +43,23 @@ match:
           - param: { name: cipher }
           - param: { name: key_id }
           - param: { name: kid }
+    # SEED, the Korean standard block cipher (RFC 4269). `seed` is also
+    # database seeding (`/db/seed`) and a PRNG seed, so it needs a cipher
+    # mode or operation next to it.
+    - all:
+        - path_segment: seed
+        - path_segment: [cbc, ecb, ctr, gcm, ccm, cfb, ofb, cmac, enc, dec,
+                         encode, decode, sign, verify]
 examples:
   match:
     - { method: POST, url: /api/encrypt }
     - { method: POST, url: /api/data, params: [{ name: privateKey, type: json }] }
     - { method: POST, url: /api/verify, params: [{ name: signature, type: json }, { name: algorithm, type: json }] }
     - { method: POST, url: /signing/digest }
+    - { method: POST, url: /api/seed-cbc }
   no_match:
     - { url: /files/hash }
+    - { method: POST, url: /db/seed }
+    - { url: /random/seed, params: [{ name: length }] }
     - { method: POST, url: /api/signature, params: [{ name: signature, type: json }] }
     - { url: /docs/signatures, params: [{ name: page }] }
