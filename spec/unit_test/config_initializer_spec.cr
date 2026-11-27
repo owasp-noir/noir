@@ -512,6 +512,15 @@ describe ConfigInitializer do
       File.write(path, "format: json\n")
       File.chmod(path, 0o000)
       begin
+        # Mode bits do not apply to root, so probe by reading.
+        still_readable = begin
+          File.read(path)
+          true
+        rescue File::Error
+          false
+        end
+        pending! "requires a non-root user: mode 000 is not enforced here" if still_readable
+
         options = ConfigInitializer.new(path).read_config
         options["format"].to_s.should eq("plain")
       ensure
