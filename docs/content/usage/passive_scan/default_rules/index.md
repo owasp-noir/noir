@@ -24,6 +24,12 @@ If `NOIR_HOME` is set, rules live in `$NOIR_HOME/passive_rules/` instead. `noir 
 
 The official Docker image ships a rules snapshot at `/opt/noir/passive_rules`. When the user directory is empty, Noir uses that snapshot and skips the clone and the update check, so `-P` works in the container without git or network.
 
+`NOIR_BUNDLED_RULES_PATH` points Noir at a different snapshot directory. It is for packagers and custom images that keep the rules somewhere other than `/opt/noir/passive_rules`. A user directory that has rules in it still wins.
+
+```bash
+NOIR_BUNDLED_RULES_PATH=/usr/share/noir/passive_rules noir scan /app -P
+```
+
 ## Automatic Initialization and Update Checks
 
 With `-P` enabled, Noir:
