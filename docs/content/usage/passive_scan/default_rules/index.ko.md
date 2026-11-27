@@ -24,6 +24,12 @@ Noir의 기본 규칙은 코드에 하드코딩된 시크릿(API 키, 토큰, �
 
 공식 Docker 이미지에는 `/opt/noir/passive_rules`에 규칙 스냅숏이 들어 있습니다. 사용자 디렉터리가 비어 있으면 Noir는 이 스냅숏을 쓰고 클론과 업데이트 확인을 건너뜁니다. 그래서 컨테이너에서는 git이나 네트워크 없이도 `-P`가 동작합니다.
 
+`NOIR_BUNDLED_RULES_PATH`를 설정하면 Noir가 다른 스냅숏 디렉터리를 사용합니다. 규칙을 `/opt/noir/passive_rules`가 아닌 곳에 두는 패키지나 커스텀 이미지를 위한 설정입니다. 사용자 디렉터리에 규칙이 있으면 여전히 그쪽이 우선합니다.
+
+```bash
+NOIR_BUNDLED_RULES_PATH=/usr/share/noir/passive_rules noir scan /app -P
+```
+
 ## 자동 초기화와 업데이트 확인
 
 `-P`를 켜면 Noir는 다음 순서로 동작합니다.
