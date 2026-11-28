@@ -42,7 +42,7 @@ examples:
     - { method: POST, url: /api/orders, params: [{ name: total, type: json }] }
     - { method: POST, url: /confirm, params: [{ name: paymentKey, type: json }, { name: orderId, type: json }] }
     - { method: POST, url: /brandpay/approve }
-    - { method: POST, url: /naverpay/payments/v2.2/apply/payment, params: [{ name: paymentId, type: string }] }
+    - { method: GET, url: /order/complete, params: [{ name: paymentId }] }
   no_match:
     - { url: /api/orders }
     - { url: /api/users, params: [{ name: amount }] }
@@ -50,4 +50,3 @@ examples:
     - { url: /samsung/support }
     - { method: POST, url: /brands/qna }
     - { url: /api/posts, params: [{ name: postId }] }
-
