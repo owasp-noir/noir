@@ -29,6 +29,10 @@ class PiiTagger < Tagger
     # Korean resident registration number (jumin-deungnok-beonho) and the
     # alien registration number issued to foreign residents.
     "rrn", "rrn_no", "rrn_number", "jumin", "juminno", "juminbunho",
+    # eGovFrame (Korean e-Government Standard Framework) carries the
+    # resident registration number as `ihidNum`, short for the Korean
+    # term for a unique identification number.
+    "ihidnum", "ihid_num",
   }
 
   # Single, unambiguous tokens. Matched anywhere in a (normalized) param
@@ -36,7 +40,7 @@ class PiiTagger < Tagger
   # `applicantPassport` are caught without enumerating every prefix.
   STRONG_TOKENS = Set{
     "ssn", "cvv", "cvc", "cvv2", "iban", "passport", "dob",
-    "aadhaar", "aadhar", "juminno", "juminbunho",
+    "aadhaar", "aadhar", "juminno", "juminbunho", "ihidnum",
   }
 
   # Identifiers that are only unambiguous as a run of tokens. Matched as
@@ -47,6 +51,7 @@ class PiiTagger < Tagger
   # look for inside other names, so it is in STRONG_NAMES only.
   STRONG_PHRASES = [
     "jumin_no", "jumin_num", "jumin_number", "jumin_bunho",
+    "ihid_num",
     "resident_registration_number", "resident_registration_no", "resident_registration_num",
     "resident_reg_no",
     "alien_registration_number", "alien_registration_no", "alien_registration_num",
