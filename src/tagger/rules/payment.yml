@@ -20,7 +20,9 @@ match:
                setup_intent, stripe_token, paypal_token, card_token,
                iban, routing_number, sort_code, paymentId,
                # Toss Payments: the key the client sends to the confirm route.
-               payment_key]
+               payment_key,
+               # NICEPAY: card installment months (cardQuota).
+               card_quota]
     - all:
         - param: { name: amount }
         - param: { name: [currency, currency_code] }
@@ -43,6 +45,7 @@ examples:
     - { method: POST, url: /confirm, params: [{ name: paymentKey, type: json }, { name: orderId, type: json }] }
     - { method: POST, url: /brandpay/approve }
     - { method: GET, url: /order/complete, params: [{ name: paymentId }] }
+    - { method: POST, url: /confirm, params: [{ name: cardQuota, type: json }] }
   no_match:
     - { url: /api/orders }
     - { url: /api/users, params: [{ name: amount }] }
@@ -50,3 +53,4 @@ examples:
     - { url: /samsung/support }
     - { method: POST, url: /brands/qna }
     - { url: /api/posts, params: [{ name: postId }] }
+    - { method: POST, url: /api/storage, params: [{ name: quota, type: json }] }
