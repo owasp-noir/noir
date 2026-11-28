@@ -1,0 +1,28 @@
+# Sending and receiving a gift is distinct from redeeming a gift card.
+key: gift
+name: Gift Tagger
+summary: Identifies gift sending and receiving endpoints
+order: 670
+tag:
+  tagger: Gift
+  description: Gift sending or receiving endpoint; review recipient and quantity tampering, authorization to view or claim another person's gift, and duplicate claims.
+match:
+  any:
+    - all:
+        - path_segment: [gift, gifts]
+        # Gift card redemption belongs to the promotion tagger.
+        - not:
+            url_contains: [/gift-card, /gift_card, /gift.card]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
+examples:
+  match:
+    - { method: POST, url: /gift/send }
+    - { method: GET, url: /api/gifts/42 }
+    - { method: POST, url: /api/gifts/42/claim }
+  no_match:
+    - { method: POST, url: /giftcards/redeem }
+    - { method: POST, url: /gift-card/redeem }
+    - { url: /presentations/quarterly }
+    - { url: /static/js/gift.js }
