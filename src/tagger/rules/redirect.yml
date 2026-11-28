@@ -3,7 +3,6 @@ name: Redirect Tagger
 summary: Identifies endpoints that send the client to another location
 order: 560
 tag:
-  name: redirect
   tagger: Redirect
   description: Redirect endpoint; check whether the destination can be controlled by the client. A client-controlled destination is an open redirect, which is used for phishing, for stealing OAuth codes through a trusted callback, and as a pivot into SSRF.
 match:
