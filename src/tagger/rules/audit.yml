@@ -1,0 +1,27 @@
+key: audit
+name: Audit Tagger
+summary: Identifies audit log and activity history endpoints
+order: 370
+tag:
+  tagger: Audit
+  description: Audit or log endpoint; review access and protection against log tampering.
+match:
+  any:
+    - path_segment: [audit, audits, log, logs]
+    - all:
+        - path_segment: [history, activity]
+        - not:
+            path_segment: [order, orders]
+examples:
+  match:
+    - { url: /api/audit/events }
+    - { method: POST, url: /Log/Edit }
+    - { url: /Log/Feed }
+    - { url: /sym/log/clg/SelectLoginLogList.do }
+    - { url: /users/activity }
+    - { url: /users/history }
+  no_match:
+    - { url: /login }
+    - { url: /blog/posts }
+    - { url: /orders/history }
+    - { url: /orders/activity }
