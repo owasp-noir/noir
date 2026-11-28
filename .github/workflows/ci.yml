@@ -613,7 +613,7 @@ jobs:
           crystal: 1.22.0
       - name: Check packaging/nix/shards.nix against shard.lock
         run: crystal run scripts/check_shards_nix.cr
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@v32
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
