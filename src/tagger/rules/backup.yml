@@ -1,0 +1,36 @@
+# Backup, restore and dump endpoints.
+key: backup
+name: Backup Tagger
+summary: Identifies backup, restore and dump endpoints
+order: 580
+tag:
+  tagger: Backup
+  description: Backup or restore endpoint; review data exposure and unauthorized data restoration risks.
+match:
+  any:
+    - all:
+        - path_segment: [backup, backups, dump, dumps]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
+    - all:
+        - path_segment: [restore]
+        - not:
+            path_segment: [post, posts, comment, comments]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
+examples:
+  match:
+    - { url: /backup }
+    - { url: /restore }
+    - { url: /api/backups }
+    - { url: /database/dump }
+    - { method: POST, url: /database/restore }
+    - { url: /debug/dump }
+  no_match:
+    - { url: "/posts/{id}/restore" }
+    - { url: "/comments/{id}/restore" }
+    - { url: /js/backup.js }
+    - { url: /css/restore.css }
+    - { url: /api/backupinfo }
