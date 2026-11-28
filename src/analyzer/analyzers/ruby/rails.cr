@@ -267,6 +267,7 @@ module Analyzer::Ruby
     # drawn, and explicit `patch "x"` lines are no-ops. Per draw (top-level
     # routes file plus the files it `draw`s, which share its mapper).
     @disabled_route_verbs = Set(String).new
+    @drawing_files = Set(String).new
 
     def analyze
       files = all_files.reject { |file| ruby_non_production_path?(file) }
@@ -794,14 +795,27 @@ module Analyzer::Ruby
       end
     end
 
+    DRAW_ARRAY = /\A\(?\s*(?:\[|%[iw][\[\(])/
+
     # draw :admin / draw("api") loads config/routes/admin.rb inline.
+    # draw [:admin, :accounts] is the path form, config/routes/admin/accounts.rb.
     # Rails evaluates those files in the current mapper scope.
     private def handle_draw(args : String, scan : RouteFileState)
-      parse_symbol_list(args).each do |draw_name|
+      names = parse_symbol_list(args)
+      names = [names.join('/')] if args.matches?(DRAW_ARRAY)
+      names.each do |draw_name|
         draw_path = File.join(scan.framework_root, "config", "routes", "#{draw_name}.rb")
         next unless known_file?(draw_path)
-        parse_routes_file(draw_path, scan.framework_root, scan.parsed_route_files,
-          scan.stack, scan.concerns)
+        expanded = Noir::PathScope.expand(draw_path)
+        # A file that draws itself, directly or through others, would
+        # otherwise recurse under an ever-deeper scope stack.
+        next unless @drawing_files.add?(expanded)
+        begin
+          parse_routes_file(draw_path, scan.framework_root, scan.parsed_route_files,
+            scan.stack, scan.concerns)
+        ensure
+          @drawing_files.delete(expanded)
+        end
       end
     end
 
