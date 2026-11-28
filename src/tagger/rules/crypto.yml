@@ -57,6 +57,14 @@ match:
     - all:
         - path_segment: aria
         - path_segment: [cbc, ecb, ctr, gcm, ccm, cfb, ofb, cmac]
+    # LEA, the Korean lightweight block cipher (TTAK.KO-12.0223). `lea` is
+    # also a law enforcement agency (`/lea/requests`) or a local education
+    # agency, so it needs a cipher mode somewhere in the URL. The key size
+    # forms are taken alone.
+    - path_segment: [lea128, lea192, lea256]
+    - all:
+        - path_segment: lea
+        - path_segment: [cbc, ecb, ctr, gcm, ccm, cfb, ofb, cmac]
 examples:
   match:
     - { method: POST, url: /api/encrypt }
@@ -67,6 +75,9 @@ examples:
     - { method: POST, url: /api/aria/cbc }
     - { method: POST, url: /api/aria-256-gcm }
     - { method: POST, url: /api/aria256 }
+    - { method: POST, url: /api/lea/gcm }
+    - { method: POST, url: /api/lea-128-ctr }
+    - { method: POST, url: /api/lea256 }
   no_match:
     - { url: /files/hash }
     - { method: POST, url: /db/seed }
@@ -77,3 +88,6 @@ examples:
     - { url: /tools/aria-label/encode }
     - { method: POST, url: /api/signature, params: [{ name: signature, type: json }] }
     - { url: /docs/signatures, params: [{ name: page }] }
+    - { method: POST, url: /api/lea }
+    - { url: /api/lea/requests, params: [{ name: case_id }] }
+    - { url: /districts/lea, params: [{ name: state }] }

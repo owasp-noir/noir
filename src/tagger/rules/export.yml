@@ -12,7 +12,10 @@ match:
     # `downloads` is left out: it is usually the page that lists installers
     # for an app. A static asset (`/js/export.js`) is not a handler either.
     - all:
-        - path_segment: [export, exports, exporter, download]
+        - any:
+          - path_segment: [export, exports, exporter, download]
+          # Combined Excel download action names.
+          - url_contains: [exceldown]
         - not:
             path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
                              woff, woff2, ttf, otf, eot]
@@ -31,8 +34,13 @@ examples:
     - { url: /account/keys/export }
     - { url: /api/orders, params: [{ name: format, value: csv }] }
     - { url: /reports/sales, params: [{ name: exportFormat, value: XLSX }] }
+    - { url: /board/excelDownload.do }
+    - { url: /member/excelDown.do }
   no_match:
     - { url: /downloads }
     - { url: /api/orders, params: [{ name: format, value: json }] }
     - { method: POST, url: /api/import, params: [{ name: format, value: csv }] }
     - { url: /static/js/export.js }
+    - { url: /excellent }
+    - { url: /excellence }
+    - { url: /static/js/excelDownload.js }

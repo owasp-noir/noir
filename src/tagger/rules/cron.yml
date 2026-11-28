@@ -9,6 +9,7 @@ tag:
   tagger: Cron
   description: Scheduled job trigger endpoint; check that it verifies the scheduler (a shared secret such as CRON_SECRET, an OIDC token, or a platform header that cannot be spoofed from outside), and that repeated or concurrent runs are safe.
 match:
+  not: { protocol: cli }
   any:
     # `/api/cron-key` manages the key instead of running the job.
     - all:
@@ -38,3 +39,5 @@ examples:
     - { url: /api/jobs }
     - { method: POST, url: /api/jobs }
     - { url: /api/jobs/run }
+    - { method: CLI, url: "cli://sharedtool/jobs/run", protocol: cli }
+    - { method: CLI, url: "cli://sharedtool/cron/cleanup", protocol: cli }
