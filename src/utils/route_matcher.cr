@@ -3,6 +3,7 @@ require "../models/endpoint"
 require "../techs/techs"
 require "./url_path"
 require "./http_symbols"
+require "./utils"
 
 # Shared request-to-route matching for trace and service links.
 module Noir::RouteMatcher
@@ -377,10 +378,13 @@ module Noir::RouteMatcher
       route = normalize(request_path(endpoint.url))
       if route == wanted
         exact << Match.new(endpoint, "exact")
-      elsif (regex = route_regex(endpoint)) && regex.matches?(wanted)
+        # The pattern comes from the scanned source and may backtrack past PCRE2's
+        # match limit, which raises instead of failing to match; that route is
+        # then simply not the one that served the request.
+      elsif (regex = route_regex(endpoint)) && regex_matches_bounded?(regex, wanted)
         spec = specificity(endpoint.url)
         pattern << {Match.new(endpoint, spec[0] > 0 ? "wildcard" : "pattern"), spec}
-      elsif case_insensitive_router?(endpoint) && (route.compare(wanted, case_insensitive: true) == 0 || ((regex = route_regex(endpoint, true)) && regex.matches?(wanted)))
+      elsif case_insensitive_router?(endpoint) && (route.compare(wanted, case_insensitive: true) == 0 || ((regex = route_regex(endpoint, true)) && regex_matches_bounded?(regex, wanted)))
         # A case-folded hit ranks below every case-exact pattern match.
         spec = specificity(endpoint.url)
         kind = route.compare(wanted, case_insensitive: true) == 0 ? "exact_ci" : (spec[0] > 0 ? "wildcard_ci" : "pattern_ci")
