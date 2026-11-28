@@ -36,6 +36,7 @@ examples:
     - { url: /admin/users }
     - { method: POST, url: /wp-admin/options.php }
     - { url: /adm/member_list.php }
+    - { url: /mng/board/noticeList }
     - { method: PATCH, url: /api/users/42, params: [{ name: isSuperuser, type: json }] }
     - { method: POST, url: /api/session, params: [{ name: run_as, type: json }] }
   no_match:
@@ -45,3 +46,4 @@ examples:
     - { method: QUERY, url: /api/roles, params: [{ name: privilege, type: form }] }
     - { url: /static/css/admin.theme.css }
     - { url: /js/admin-panel.js?v=2 }
+    - { url: /country/MNG } # Country code for Mongolia, not management
