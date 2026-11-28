@@ -1,0 +1,32 @@
+key: redirect
+name: Redirect Tagger
+summary: Identifies endpoints that send the client to another location
+order: 560
+tag:
+  name: redirect
+  tagger: Redirect
+  description: Redirect endpoint; check whether the destination can be controlled by the client. A client-controlled destination is an open redirect, which is used for phishing, for stealing OAuth codes through a trusted callback, and as a pivot into SSRF.
+match:
+  all:
+    - path_segment:
+        - redirect
+        - redirects
+        - redirection
+        - redirections
+        - redirector
+        - redir
+        - goto
+    - not:
+        path_extension: [css, js, mjs, map, json, png, svg, ico]
+examples:
+  match:
+    - { method: GET, url: /redirect, params: [{ name: url, value: "https://example.com" }] }
+    - { method: GET, url: /goto }
+    - { method: GET, url: /api/v1/redirects }
+    - { method: POST, url: /account/redirect-to }
+    - { method: GET, url: /redir }
+  no_match:
+    - { method: POST, url: /oauth/authorize, params: [{ name: redirect_uri, value: "https://app.example.com/callback" }] }
+    - { method: GET, url: /api/users, params: [{ name: next, value: "/dashboard" }] }
+    - { method: GET, url: /integrations/gotomeeting/webhook }
+    - { method: GET, url: /static/js/redirect.js }
