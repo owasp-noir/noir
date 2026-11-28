@@ -1,0 +1,36 @@
+# Routes an application itself labels as old: `/legacy/...`, `/deprecated/...`.
+# They tend to outlive the checks added to the routes that replaced them.
+key: legacy
+name: Legacy Tagger
+summary: Identifies legacy and deprecated endpoints
+order: 400
+tag:
+  tagger: Legacy
+  description: Legacy or deprecated endpoint; check that it enforces the same authentication, authorization and input validation as the route that replaced it, and whether it still needs to be reachable at all.
+match:
+  all:
+    # A CLI command is not a route that was left exposed.
+    - not: { protocol: cli }
+    - path_segment: [legacy, deprecated]
+    # At the end of a slug the word is part of a title
+    # (`/games/hogwarts-legacy`), so only `legacy` on its own or at the start
+    # of a name (`/legacy-api`) counts.
+    - not: { url_contains: [-legacy] }
+    # Build tools name the bundle for old browsers `index-legacy.js`; a
+    # static asset is not a handler.
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+examples:
+  match:
+    - { url: /legacy }
+    - { url: /Legacy/Index }
+    - { method: DELETE, url: /legacy/ping }
+    - { url: "/legacy/:id" }
+    - { method: POST, url: /api/deprecated/login }
+    - { url: /legacy-api/users }
+  no_match:
+    - { url: /games/hogwarts-legacy }
+    - { url: /assets/legacy.js }
+    - { url: /api/v1/users }
+    - { method: CLI, url: "cli://sharedtool/legacy/export", protocol: cli }
