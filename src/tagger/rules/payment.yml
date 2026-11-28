@@ -2,7 +2,7 @@
 key: payment
 name: Payment Tagger
 summary: Identifies payment and financial transaction endpoints
-order: 120
+order: 3941
 tag:
   tagger: Payment
   description: Payment or financial transaction endpoint; review for business-logic flaws (amount/price tampering, currency confusion), IDOR on financial records, and replay.
@@ -10,7 +10,7 @@ match:
   any:
     - path_segment: [payment, payments, checkout, billing, invoice, invoices,
                      refund, refunds, payout, payouts, withdrawal, withdrawals,
-                     paypal, stripe, braintree, pay, purchase, purchases]
+                     paypal, stripe, braintree, pay, purchase, purchases, brandpay]
     # Card / bank data names a payment flow on any route.
     - param:
         name: [card_number, cc_number, cvv, cvc, cvv2, cvn, csc, security_code,
