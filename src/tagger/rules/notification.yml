@@ -1,0 +1,45 @@
+# The notification inbox, notification settings and push sending. Text
+# messages sent through a provider belong to the messaging tagger, and
+# registering a device or push token belongs to the device tagger.
+key: notification
+name: Notification Tagger
+summary: Identifies push and in-app notification endpoints
+order: 690
+tag:
+  tagger: Notification
+  description: Push or in-app notification endpoint; review for IDOR on another user's notifications and settings, missing authorization on routes that send a push to arbitrary users or topics, and content injection in the message.
+match:
+  any:
+    # A static asset (`/js/notifications.js`) is not a handler.
+    - all:
+        - path_segment: [notification, notifications]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
+    # `/notify` is also where a payment gateway or another service calls
+    # back. Those routes say so in the path and stay with the payment and
+    # webhook taggers; a plain `/notify` may carry both tags.
+    - all:
+        - path_segment: notify
+        - not:
+            path_segment: [pay, payment, payments, ipn, webhook, webhooks, callback]
+    # `push` alone is also `git push` (`POST /repos/push`). It counts next
+    # to a word about sending or targeting a notification. `/push/token` has
+    # none of them, so it is left to the device tagger.
+    - all:
+        - path_segment: push
+        - path_segment: [send, notify, message, messages, broadcast, campaign, campaigns,
+                         audience, audiences, topic, topics]
+examples:
+  match:
+    - { url: /preferences/notifications }
+    - { url: /push_audiences }
+    - { url: /notify }
+    - { method: PATCH, url: "/api/notifications/{id}/read" }
+    - { method: POST, url: /api/push/send }
+  no_match:
+    - { method: POST, url: /repos/push }
+    - { method: POST, url: /push/token }
+    - { method: POST, url: /payment/notify }
+    - { method: POST, url: /devices/register }
+    - { url: /static/js/notifications.js }
