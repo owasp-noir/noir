@@ -16,6 +16,12 @@ match:
     - param: { name: identity_verification_id }
     # KG Inicis unified auth posts authRequestUrl back to the merchant's successUrl.
     - param: { name: authRequestUrl }
+    # KCB OkName, as gnuboard5 ships it under /plugin/okname/
+    # (hpcert*.php for mobile phone, ipin*.php for i-PIN).
+    - url_contains: [/plugin/okname/]
+    # Values KCB posts back with the result: the mobile transaction number
+    # and the encrypted i-PIN personal info.
+    - param: { name: [hs_cert_svc_tx_seqno, encPsnlInfo] }
     # CI (connecting information) and DI (duplication information) identify
     # a verified person. Each name is short and common, so take both.
     - all:
@@ -28,9 +34,13 @@ examples:
     - { method: POST, url: /api/signup/verify, params: [{ name: identityVerificationId, type: json }] }
     - { method: POST, url: /api/members, params: [{ name: ci, type: json }, { name: di, type: json }] }
     - { method: POST, url: /member/inicis/success, params: [{ name: authRequestUrl }, { name: txId }] }
+    - { url: /plugin/okname/hpcert1.php }
+    - { method: POST, url: /plugin/okname/ipin2.php, params: [{ name: encPsnlInfo, type: form }] }
+    - { method: POST, url: /bbs/cert_result.php, params: [{ name: hs_cert_svc_tx_seqno, type: form }] }
   no_match:
     - { method: POST, url: /api/builds, params: [{ name: ci, type: json }] }
     - { method: POST, url: /api/password/reset }
     - { url: /api/identity }
     - { method: POST, url: /email/verify, params: [{ name: token }] }
     - { method: POST, url: /order/inicis/return, params: [{ name: authUrl }, { name: authToken }] }
+    - { url: /plugin/editor/cheditor5/upload.php }
