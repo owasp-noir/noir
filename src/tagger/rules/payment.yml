@@ -2,7 +2,7 @@
 key: payment
 name: Payment Tagger
 summary: Identifies payment and financial transaction endpoints
-order: 3941
+order: 120
 tag:
   tagger: Payment
   description: Payment or financial transaction endpoint; review for business-logic flaws (amount/price tampering, currency confusion), IDOR on financial records, and replay.
@@ -39,7 +39,9 @@ examples:
     - { method: POST, url: /api/transfer, params: [{ name: amount, type: json }, { name: currency, type: json }] }
     - { method: POST, url: /api/orders, params: [{ name: total, type: json }] }
     - { method: POST, url: /confirm, params: [{ name: paymentKey, type: json }, { name: orderId, type: json }] }
+    - { method: POST, url: /brandpay/approve }
   no_match:
     - { url: /api/orders }
     - { url: /api/users, params: [{ name: amount }] }
     - { method: POST, url: /api/keys, params: [{ name: api_key, type: json }] }
+    - { method: POST, url: /brands/qna }
