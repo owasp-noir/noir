@@ -4,7 +4,7 @@
 key: identity_verification
 name: Identity Verification Tagger
 summary: Identifies identity verification endpoints
-order: 250
+order: 3937
 tag:
   tagger: IdentityVerification
   description: Identity verification endpoint; check that the result is confirmed server-side with the provider instead of trusted from the client, that a verification cannot be replayed or reused by another account, and that CI/DI values are not exposed.
