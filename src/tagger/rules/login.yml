@@ -19,7 +19,7 @@ match:
     # `/users/sign_in` splits into `sign` + `in`, which path_segment has no
     # way to express. The leading slash keeps `/design-inspiration` out.
     - url_contains: [/sign-in, /sign_in, /sign-up, /sign_up, /sign-out, /sign_out]
-    - url_contains: [/uat/uia/egovloginusr.do, /uat/uia/actionlogin.do, /uat/uia/actionlogout.do]
+    - url_contains: [actionlogin, actionlogout, egovloginusr]
     # `register` also names device and webhook registration, so it counts
     # only when the request carries a password.
     - all:
