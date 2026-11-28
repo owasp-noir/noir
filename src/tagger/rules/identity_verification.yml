@@ -14,17 +14,17 @@ match:
     - url_contains: [identity-verification, identity_verification, identityverification]
     # The id the browser hands back after the PortOne V2 verification window.
     - param: { name: identity_verification_id }
-    # CI (connecting information) and DI (duplication information) identify
-    # a verified person. Each name is short and common, so take both.
-    - all:
-        - param: { name: ci }
-        - param: { name: di }
     # KCB OkName, as gnuboard5 ships it under /plugin/okname/
     # (hpcert*.php for mobile phone, ipin*.php for i-PIN).
     - url_contains: [/plugin/okname/]
     # Values KCB posts back with the result: the mobile transaction number
     # and the encrypted i-PIN personal info.
     - param: { name: [hs_cert_svc_tx_seqno, encPsnlInfo] }
+    # CI (connecting information) and DI (duplication information) identify
+    # a verified person. Each name is short and common, so take both.
+    - all:
+        - param: { name: ci }
+        - param: { name: di }
 examples:
   match:
     - { url: "/identity-verifications/{identityVerificationId}" }
@@ -40,7 +40,3 @@ examples:
     - { url: /api/identity }
     - { method: POST, url: /email/verify, params: [{ name: token }] }
     - { url: /plugin/editor/cheditor5/upload.php }
-
-
-
-    
