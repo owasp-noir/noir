@@ -60,6 +60,9 @@ match:
     # LSH, the Korean standard hash function. Only the digest size forms are
     # taken; a bare `lsh` segment is not enough on its own.
     - path_segment: [lsh256, lsh512]
+    - all:
+        - path_segment: lsh
+        - path_segment: ["256", "384", "512"]
 examples:
   match:
     - { method: POST, url: /api/encrypt }
