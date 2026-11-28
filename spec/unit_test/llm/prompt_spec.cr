@@ -219,7 +219,8 @@ describe LLM do
       end
 
       it "includes the Claude 5.x models with 1000000 tokens" do
-        %w[claude-opus-5 claude-opus-5-5 claude-sonnet-5-5 claude-haiku-5-5 claude-fable-5-1 claude-mythos-5-1].each do |m|
+        %w[claude-opus-5 claude-opus-5-5 claude-sonnet-5-5 claude-haiku-5-5 claude-fable-5-1 claude-mythos-5-1
+          claude-fable-5-2 claude-mythos-5-2].each do |m|
           anthropic[m].should eq(1000000)
         end
       end
@@ -457,6 +458,8 @@ describe LLM do
       LLM.model_token_limit(xai, "grok-4-0709").should eq(xai["grok-4"])
       LLM.model_token_limit(anthropic, "us.anthropic.claude-opus-4-7-v1:0").should eq(anthropic["claude-opus-4-7"])
       LLM.model_token_limit(anthropic, "anthropic/claude-opus-4.7").should eq(anthropic["claude-opus-4-7"])
+      # "-2" is a minor version, not a snapshot suffix, so 5.2 needs its own key.
+      LLM.model_token_limit(anthropic, "anthropic/claude-fable-5.2").should eq(anthropic["claude-fable-5-2"])
       LLM.model_token_limit(openai, "GPT-4o").should eq(openai["gpt-4o"])
       LLM.model_token_limit(openai, "o3-2025-04-16").should eq(openai["o3"])
       LLM.model_token_limit(openai, "openai/gpt-5-mini").should eq(openai["gpt-5-mini"])
