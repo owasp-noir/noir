@@ -65,6 +65,12 @@ match:
     - all:
         - path_segment: lea
         - path_segment: [cbc, ecb, ctr, gcm, ccm, cfb, ofb, cmac]
+    # LSH, the Korean standard hash function. Only the digest size forms are
+    # taken; a bare `lsh` segment is not enough on its own.
+    - path_segment: [lsh256, lsh512]
+    - all:
+        - path_segment: lsh
+        - path_segment: ["256", "384", "512"]
 examples:
   match:
     - { method: POST, url: /api/encrypt }
@@ -78,6 +84,7 @@ examples:
     - { method: POST, url: /api/lea/gcm }
     - { method: POST, url: /api/lea-128-ctr }
     - { method: POST, url: /api/lea256 }
+    - { method: POST, url: /api/lsh256 }
   no_match:
     - { url: /files/hash }
     - { method: POST, url: /db/seed }
@@ -86,6 +93,7 @@ examples:
     - { url: /components/aria-label, params: [{ name: text }] }
     - { method: POST, url: /api/aria }
     - { url: /tools/aria-label/encode }
+    - { method: POST, url: /api/lsh }
     - { method: POST, url: /api/signature, params: [{ name: signature, type: json }] }
     - { url: /docs/signatures, params: [{ name: page }] }
     - { method: POST, url: /api/lea }
