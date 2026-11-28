@@ -547,17 +547,17 @@ module LLM
       "command-light"         => 4096,
       "command-nightly"       => 8192,
       "command-light-nightly" => 8192,
-      "kanana-nano-2.1b-instruct" => 8192,
       "default"               => 4096,
     },
     "vllm" => {
       "default" => 4000,
     },
     "lmstudio" => {
-      "gpt-oss"      => 128000,
-      "gpt-oss-120b" => 128000,
-      "gpt-oss-20b"  => 128000,
-      "default"      => 4000,
+      "gpt-oss"                   => 128000,
+      "gpt-oss-120b"              => 128000,
+      "gpt-oss-20b"               => 128000,
+      "kanana-nano-2.1b-instruct" => 8192,
+      "default"                   => 4000,
     },
     # OpenRouter proxies many large-context frontier models whose exact ids we
     # don't control, so use a generous model-agnostic default rather than the
