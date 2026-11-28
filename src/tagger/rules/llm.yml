@@ -20,6 +20,13 @@ match:
         # Each name is common alone: `messages` in chat apps, `model` in
         # catalogs, `prompt` in OIDC (`prompt=login`). Two different ones
         # describe a model call.
+
+        # section for Clova API
+        - url_contains: [/chat/completions, /v1/completions, /v1/embeddings]
+        - path_segment: embeddings
+        - url_contains: [/chat-completions, /api-tools/embedding]
+        - param: { name: [system_prompt, system_message, system_instruction] }
+
         - at_least:
             count: 2
             of:
@@ -27,10 +34,6 @@ match:
               - param: { name: model }
               - param: { name: prompt }
               - param: { name: [temperature, top_p, top_k, max_tokens, max_completion_tokens] }
-              # for Clova's API directory
-              - url_contains: [/chat/completions, /v1/completions, /v1/embeddings]
-              - url_contains: [/chat-completions, /api-tools/embedding]
-              - path_segment: embeddings
               
 examples:
   match:
@@ -41,7 +44,6 @@ examples:
     - { method: POST, url: /api/generate, params: [{ name: prompt, type: json }, { name: temperature, type: json }] }
     - { method: POST, url: /api/assistant, params: [{ name: systemPrompt, type: json }] }
     # for Clova
-    - { method: POST, url: /api/assistant, params: [{ name: systemPrompt, type: json }] }
     - { method: POST, url: /testapp/v1/chat-completions/HCX-003 }
     - { method: POST, url: /v3/chat-completions/HCX-005 }
     - { method: POST, url: /v1/api-tools/embedding/v2 }
@@ -53,6 +55,5 @@ examples:
     - { url: /api/cars, params: [{ name: model }] }
     - { method: POST, url: /mcp, params: [{ name: messages, type: json }, { name: model, type: json }] }
     # for Clova
-    - { method: POST, url: /mcp, params: [{ name: messages, type: json }, { name: model, type: json }] }
     - { url: /api/my-chat-completions }
     - { url: /docs/api-tools }
