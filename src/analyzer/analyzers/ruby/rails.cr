@@ -1587,13 +1587,17 @@ module Analyzer::Ruby
       @engine_namespaces = Hash(String, String).new
       @isolated_namespaces = Hash(String, String).new
       files.sort.each do |file|
-        next unless file.ends_with?("engine.rb") && file.includes?("/lib/")
+        # Checked on the raw text first: this loop sees every Ruby file in
+        # the scan, and `ruby_source` masks heredocs again on each call.
+        next unless read_file_content(file).includes?("Rails::Engine")
         content = ruby_source(file)
         next unless klass = content.match(/^\s*class\s+(?:::)?([A-Z][\w:]*)\s*<\s*(?:::)?Rails::Engine\b/m)
         isolated = content.match(/^\s*isolate_namespace\s+(?:::)?([A-Z][\w:]*)/m).try(&.[1].gsub("::", "/").underscore) || ""
+        isolated = "" if content.matches?(/^\s*routes\.default_scope\s*=\s*\{\s*\}/m)
         modules = content.scan(/^\s*module\s+(?:::)?([A-Z][\w:]*)/m).map(&.[1])
         @engine_namespaces[(modules << klass[1]).join("::")] = isolated
         next if isolated.empty?
+        next unless file.ends_with?("engine.rb") && file.includes?("/lib/")
         next unless root = roots.select { |r| file.starts_with?("#{r}/lib/") }.max_by?(&.size)
         @isolated_namespaces[root] ||= isolated
       end
