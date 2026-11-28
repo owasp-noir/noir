@@ -75,6 +75,7 @@ OWASP Noir joined the OWASP Foundation in **June 2024**.
 
 ## News & Updates
 
+* Nov 2026: Conducted a hands-on session at [OWASP Korea Day 2026](https://www.owaspkr.org/2026/)
 * May 2026: Released **v1.0.0**, the stable 1.x line with a verb-based CLI.
 * May 2026: Refreshed the roadmap to serve human reviewers, AI auditors, and DAST tools equally.
 * August 2025: Presented at the OWASP Seoul Meetup. ([Open Source Gardening](https://owasp-noir.github.io/noir/community/media/#featured-owasp-seoul-aug-2025-open-source-gardening))
