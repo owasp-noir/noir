@@ -1,0 +1,43 @@
+# Approve and reject steps of a workflow: expense reports, leave requests,
+# content moderation, document sign-off.
+key: approval
+name: Approval Tagger
+summary: Identifies approve and reject workflow endpoints
+order: 610
+tag:
+  tagger: Approval
+  description: Approval workflow endpoint; review for skipping a required approval step, approving one's own request, approving on behalf of another approver, and changing a request after it was approved.
+match:
+  all:
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
+        - all:
+            - path_segment: [approval, approvals, approve, approver, approvers, reject, disapprove]
+            # Payment confirmation belongs to the payment tagger. Invoice
+            # and refund approvals can also be workflow steps.
+            - not:
+                path_segment: [pay, payment, payments, paypal, stripe, braintree, samsungpay,
+                               brandpay, kakaopay, naverpay, checkout]
+            - not:
+                param: { name: pg_token }
+        # eGovFrame names its approval routes `Sanctn`.
+        - url_contains: sanctn
+examples:
+  match:
+    - { method: POST, url: /approve }
+    - { method: POST, url: "/approval/{id}/reject" }
+    - { url: /api/approvals }
+    - { method: POST, url: "/api/leave-requests/{id}/approve" }
+    - { url: /uss/ion/ism/selectInfrmlSanctn.do }
+    - { url: /uss/ion/ism/selectSanctnerList.do }
+    - { method: POST, url: "/invoices/{id}/approve" }
+  no_match:
+    - { method: POST, url: /samsungpay/approve }
+    - { url: /kakaopay/approve, params: [{ name: pg_token }] }
+    - { url: /payment/approve, params: [{ name: pg_token }] }
+    - { url: /static/js/approve.js }
+    - { url: /api/requests }
+    - { url: /static/js/sanctn.js }
+    - { method: POST, url: "/payments/{id}/approve" }
