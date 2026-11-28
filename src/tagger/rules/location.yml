@@ -7,28 +7,25 @@ tag:
   tagger: Location
   description: Location or geolocation endpoint; review for IDOR on another user's position or location history, coordinates returned with more precision than the feature needs, and distance results that let a caller triangulate someone.
 match:
-  any:
-    # A static asset (`/js/geo.js`) is not a handler.
-    - all:
+  all:
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
         - path_segment: [geo, geolocation, geolocate, geocode, geocoding,
                          geofence, geofences, nearby]
-        - not:
-            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
-                             woff, woff2, ttf, otf, eot]
-    # `/locations` on its own is often public data such as a store list. It
-    # counts when the path says whose location it is, or when the request
-    # carries coordinates.
-    - all:
-        - path_segment: [location, locations]
-        - any:
-            - path_segment: [user, users, me, member, members, driver, drivers,
-                             rider, riders, device, devices, vehicle, vehicles,
-                             live, current, history, share]
-            - param: { name: [lat, latitude, lng, lon, longitude, coords, coordinates] }
-    # A latitude and a longitude together are a position on any route.
-    - all:
-        - param: { name: [lat, latitude] }
-        - param: { name: [lng, lon, long, longitude] }
+        # Locations alone may be a public directory. Look for whose
+        # position is involved or for coordinate parameters.
+        - all:
+            - path_segment: [location, locations]
+            - any:
+                - path_segment: [user, users, me, member, members, driver, drivers,
+                                 rider, riders, device, devices, vehicle, vehicles,
+                                 live, current, history, share]
+                - param: { name: [lat, latitude, lng, lon, longitude, coords, coordinates] }
+        - all:
+            - param: { name: [lat, latitude] }
+            - param: { name: [lng, lon, long, longitude] }
 examples:
   match:
     - { url: /geo }
@@ -43,3 +40,4 @@ examples:
     - { url: /api/stores, params: [{ name: lat }] }
     - { url: /static/js/geo.js }
     - { url: /api/users }
+    - { url: /static/js/users-location.js }
