@@ -32,9 +32,9 @@ describe "Noir::RouteMatcher.trace" do
   end
 
   it "keeps matching an exact route next to a regex that cannot be judged" do
-    exact = Endpoint.new("/call", "GET")
+    exact = Endpoint.new("/" + "a" * 40 + "c!", "GET")
 
-    matches = Noir::RouteMatcher.trace([regex_route("/(a|aa)+c"), exact], "GET", "/call")
+    matches = Noir::RouteMatcher.trace([regex_route("/(a|aa)+c"), exact], "GET", exact.url)
 
     matches.map(&.endpoint.url).should eq([exact.url])
   end
