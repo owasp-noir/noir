@@ -7,30 +7,25 @@ tag:
   tagger: Device
   description: Device or push token registration endpoint; review for binding a device or token to another user's account (intercepting their notifications), IDOR on the list of registered devices, and tokens that stay registered after logout.
 match:
-  any:
-    - all:
+  all:
+    # OAuth device authorization belongs to the OAuth tagger.
+    - not:
+        path_segment: [oauth, oauth2]
+    - not:
+        url_contains: [device/code, device_authorization, device-authorization,
+                       deviceauthorization]
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
         - path_segment: [device, devices, fcm, apns]
-        # The OAuth device flow (`/oauth/device/code`,
-        # `/device_authorization`) signs a user in on a device; it belongs
-        # to the oauth tagger.
-        - not:
-            path_segment: [oauth, oauth2]
-        - not:
-            url_contains: [device/code, device_authorization, device-authorization,
-                           deviceauthorization]
-        # A static asset (`/js/device.js`) is not a handler.
-        - not:
-            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
-                             woff, woff2, ttf, otf, eot]
-    # `push` alone is also `git push`. It counts next to the token it
-    # registers.
-    - all:
-        - path_segment: push
-        - path_segment: [token, tokens, register, registration]
-    # A push token names a device registration on any route. A bare `token`
-    # is too common to list.
-    - param:
-        name: [device_token, fcm_token, push_token, apns_token, registration_token]
+        # A token or registration term distinguishes push registration
+        # from repository pushes.
+        - all:
+            - path_segment: push
+            - path_segment: [token, tokens, register, registration]
+        - param:
+            name: [device_token, fcm_token, push_token, apns_token]
 examples:
   match:
     - { url: /devices }
@@ -44,3 +39,6 @@ examples:
     - { method: POST, url: /repos/push }
     - { method: POST, url: /api/login, params: [{ name: token, type: json }] }
     - { url: /static/js/device.js }
+    - { url: /static/js/push-token.js }
+    - { method: POST, url: /oauth/device/code, params: [{ name: deviceToken, type: json }] }
+    - { method: POST, url: /api/signup, params: [{ name: registration_token, type: json }] }
