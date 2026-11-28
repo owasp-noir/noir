@@ -44,4 +44,4 @@ examples:
     - { url: /api/orders }
     - { url: /api/users, params: [{ name: amount }] }
     - { method: POST, url: /api/keys, params: [{ name: api_key, type: json }] }
-    - { url: /naverpay/payments }
+    - { method: GET, url: /api/approve, params: [{ name: paymentId }] }
