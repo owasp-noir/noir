@@ -547,6 +547,7 @@ module LLM
       "command-light"         => 4096,
       "command-nightly"       => 8192,
       "command-light-nightly" => 8192,
+      "kanana-nano-2.1b-instruct" => 8192,
       "default"               => 4096,
     },
     "vllm" => {
