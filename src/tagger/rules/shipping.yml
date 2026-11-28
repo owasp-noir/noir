@@ -1,0 +1,41 @@
+# Shipping, delivery and parcel tracking. Paying for the order belongs to
+# the payment tagger.
+key: shipping
+name: Shipping Tagger
+summary: Identifies shipping, delivery and parcel tracking endpoints
+order: 700
+tag:
+  tagger: Shipping
+  description: Shipping or delivery tracking endpoint; review for IDOR on another customer's shipment, waybill or delivery address, tampering with the address or shipping fee after payment, and tracking numbers that can be enumerated.
+match:
+  any:
+    # Shopify's Fulfillment REST resource includes shipment tracking.
+    # https://shopify.dev/docs/api/admin-rest/2026-07/resources/fulfillment
+    - path_segment: [shipping, shipment, shipments, waybill, waybills,
+                     fulfillment, fulfillments]
+    # Delivery may refer to webhooks, content or mail.
+    - all:
+        - path_segment: [delivery, deliveries]
+        - not:
+            path_segment: [hook, hooks, webhook, webhooks, content, cdn, email, mail]
+    # Tracking alone may refer to analytics.
+    - all:
+        - path_segment: tracking
+        - path_segment: [order, orders, parcel, parcels, package, packages,
+                         courier, couriers, carrier, carriers]
+    - param:
+        name: [tracking_number, tracking_no, waybill_number, waybill_no]
+examples:
+  match:
+    - { url: "/api/orders/{id}/shipping" }
+    - { method: POST, url: /api/shipments }
+    - { url: "/delivery/{id}/status" }
+    - { url: "/orders/{id}/tracking" }
+    - { url: /api/track, params: [{ name: trackingNumber }] }
+    - { method: POST, url: "/admin/api/2026-07/fulfillments/{fulfillment_id}/update_tracking.json" }
+  no_match:
+    - { url: /analytics/tracking }
+    - { url: "/api/posts/{id}/tracking" }
+    - { url: "/repos/{owner}/{repo}/hooks/{hook_id}/deliveries" }
+    - { method: POST, url: /api/checkout }
+    - { url: /api/orders }
