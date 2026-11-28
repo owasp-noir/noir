@@ -4,7 +4,7 @@
 key: identity_verification
 name: Identity Verification Tagger
 summary: Identifies identity verification endpoints
-order: 3937
+order: 250
 tag:
   tagger: IdentityVerification
   description: Identity verification endpoint; check that the result is confirmed server-side with the provider instead of trusted from the client, that a verification cannot be replayed or reused by another account, and that CI/DI values are not exposed.
@@ -16,19 +16,15 @@ match:
     - param: { name: identity_verification_id }
     # CI (connecting information) and DI (duplication information) identify
     # a verified person. Each name is short and common, so take both.
-    
+    - all:
+        - param: { name: ci }
+        - param: { name: di }
     # KCB OkName, as gnuboard5 ships it under /plugin/okname/
     # (hpcert*.php for mobile phone, ipin*.php for i-PIN).
     - url_contains: [/plugin/okname/]
     # Values KCB posts back with the result: the mobile transaction number
     # and the encrypted i-PIN personal info.
     - param: { name: [hs_cert_svc_tx_seqno, encPsnlInfo] }
-
-
-    
-    - all:
-        - param: { name: ci }
-        - param: { name: di }
 examples:
   match:
     - { url: "/identity-verifications/{identityVerificationId}" }
