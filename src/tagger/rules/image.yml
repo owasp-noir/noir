@@ -9,27 +9,24 @@ tag:
   tagger: Image
   description: Image resize or thumbnail endpoint; review for denial of service through very large dimensions or many size variants, SSRF when the source image is fetched from a URL, path traversal in the file name, and bugs in the image library on crafted files.
 match:
-  any:
-    # `thumbnail` also covers `/getThumbnail` and `/thumbnails`. The result
-    # of a resize is an image, so image extensions stay in; a script or
-    # style sheet is a static asset.
-    - all:
-        - any:
-            - url_contains: thumbnail
-            - path_segment: thumb
-        - not:
-            path_extension: [css, js, mjs, map, woff, woff2, ttf, otf, eot]
-    # `resize` is also a server or volume action (`/servers/{id}/resize`)
-    # and `crop` a field in farming data, so they count only next to an
-    # image word or with dimensions.
-    - all:
-        - path_segment: [resize, crop]
-        - any:
-            - path_segment: [image, images, img, photo, photos, picture, pictures,
-                             avatar, avatars, media]
-            - param: { name: [width, height, w, h] }
-    # camelCase actions lowercase into one segment (`/api/resizeImage`).
-    - url_contains: [resizeimage, imageresize, cropimage, imagecrop]
+  all:
+    # Generated images may have image extensions.
+    - not:
+        path_extension: [css, js, mjs, map, woff, woff2, ttf, otf, eot]
+    - any:
+        - url_contains: thumbnail
+        - path_segment: thumb
+        # Resizing and cropping also occur outside image processing.
+        - all:
+            - path_segment: [resize, crop]
+            - any:
+                - path_segment: [image, images, img, photo, photos, picture, pictures,
+                                 avatar, avatars, media]
+                - param: { name: [width, height] }
+                - all:
+                    - param: { name: w }
+                    - param: { name: h }
+        - url_contains: [resizeimage, imageresize, cropimage, imagecrop]
 examples:
   match:
     - { url: /thumbnail }
@@ -44,3 +41,6 @@ examples:
     - { url: "/posts/{id}/thumbs-up" }
     - { url: /static/js/thumbnail.js }
     - { url: /api/images }
+    - { url: /static/js/resizeImage.js }
+    - { url: /static/css/image-resize.css }
+    - { url: /api/resize, params: [{ name: h }] }
