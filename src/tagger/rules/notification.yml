@@ -9,27 +9,24 @@ tag:
   tagger: Notification
   description: Push or in-app notification endpoint; review for IDOR on another user's notifications and settings, missing authorization on routes that send a push to arbitrary users or topics, and content injection in the message.
 match:
-  any:
-    # A static asset (`/js/notifications.js`) is not a handler.
-    - all:
+  all:
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
         - path_segment: [notification, notifications]
-        - not:
-            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
-                             woff, woff2, ttf, otf, eot]
-    # `/notify` is also where a payment gateway or another service calls
-    # back. Those routes say so in the path and stay with the payment and
-    # webhook taggers; a plain `/notify` may carry both tags.
-    - all:
-        - path_segment: notify
-        - not:
-            path_segment: [pay, payment, payments, ipn, webhook, webhooks, callback]
-    # `push` alone is also `git push` (`POST /repos/push`). It counts next
-    # to a word about sending or targeting a notification. `/push/token` has
-    # none of them, so it is left to the device tagger.
-    - all:
-        - path_segment: push
-        - path_segment: [send, notify, message, messages, broadcast, campaign, campaigns,
-                         audience, audiences, topic, topics]
+        # A plain `/notify` may overlap with webhook. Explicit callback
+        # paths belong to the payment and webhook taggers.
+        - all:
+            - path_segment: notify
+            - not:
+                path_segment: [pay, payment, payments, ipn, webhook, webhooks, callback, callbacks]
+        # Require a sending or targeting term to distinguish this from
+        # repository pushes and token registration.
+        - all:
+            - path_segment: push
+            - path_segment: [send, message, messages, broadcast, campaign, campaigns,
+                             audience, audiences, topic, topics]
 examples:
   match:
     - { url: /preferences/notifications }
@@ -43,3 +40,6 @@ examples:
     - { method: POST, url: /payment/notify }
     - { method: POST, url: /devices/register }
     - { url: /static/js/notifications.js }
+    - { url: /static/js/push-send.js }
+    - { method: POST, url: /payments/push/notify }
+    - { method: POST, url: /callbacks/notify }
