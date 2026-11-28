@@ -1,0 +1,1953 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <meta name="description" content="Code analyzer recall and agreement against pinned repositories&#39; own API specifications.">
+  <title>API agreement scoreboard - OWASP Noir</title>
+  
+
+  
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+
+  
+  <script>
+    (function () {
+      var r = document.documentElement;
+      r.classList.add("js");
+      try {
+        var t = localStorage.getItem("noir-theme");
+        if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+
+  
+  <meta property="og:title" content="API agreement scoreboard">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/usage/accuracy/">
+  <meta property="og:description" content="Code analyzer recall and agreement against pinned repositories&apos; own API specifications.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/usage-accuracy.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="API agreement scoreboard">
+  <meta name="twitter:description" content="Code analyzer recall and agreement against pinned repositories&apos; own API specifications.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/usage-accuracy.png">
+  
+  
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/usage/accuracy/">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"API agreement scoreboard","url":"https://owasp-noir.github.io/noir/usage/accuracy/","dateModified":"2026-11-29T00:31:45+09:00","description":"Code analyzer recall and agreement against pinned repositories' own API specifications.","image":"https://owasp-noir.github.io/noir/og-images/usage-accuracy.png"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"OWASP Noir","item":"https://owasp-noir.github.io/noir/"},{"@type":"ListItem","position":2,"name":"Usage Guide","item":"https://owasp-noir.github.io/noir/usage/"},{"@type":"ListItem","position":3,"name":"API agreement scoreboard"}]}</script>
+  
+  <link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/accuracy/">
+<link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/accuracy/">
+<link rel="alternate" hreflang="x-default" href="https://owasp-noir.github.io/noir/usage/accuracy/">
+  
+  
+
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/geist-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+    <path d="M21 21l-6 -6" />
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+  </symbol>
+  <symbol id="i-contrast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M12 17a5 5 0 0 0 0 -10v10" />
+  </symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 9l6 6l6 -6" />
+  </symbol>
+  <symbol id="i-menu-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 6l16 0" />
+    <path d="M4 12l16 0" />
+    <path d="M4 18l16 0" />
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+    <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l5 5l10 -10" />
+  </symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M13 18l6 -6" />
+    <path d="M13 6l6 6" />
+  </symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 7l-10 10" />
+    <path d="M8 7l9 0l0 9" />
+  </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M5 12l6 6" />
+    <path d="M5 12l6 -6" />
+  </symbol>
+  <symbol id="i-brand-github" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+    <path d="M13.5 6.5l4 4" />
+  </symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 13a8 8 0 0 1 7 7a6 6 0 0 0 3 -5a9 9 0 0 0 6 -8a3 3 0 0 0 -3 -3a9 9 0 0 0 -8 6a6 6 0 0 0 -5 3" />
+    <path d="M7 14a6 6 0 0 0 -3 6a6 6 0 0 0 6 -3" />
+    <path d="M14 9a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+  </symbol>
+  <symbol id="i-terminal-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 9l3 3l-3 3" />
+    <path d="M13 15l3 0" />
+    <path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />
+  </symbol>
+  <symbol id="i-lifebuoy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M15 15l3.35 3.35" />
+    <path d="M9 15l-3.35 3.35" />
+    <path d="M5.65 5.65l3.35 3.35" />
+    <path d="M18.35 5.65l-3.35 3.35" />
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l11 0" />
+    <path d="M9 12l11 0" />
+    <path d="M9 18l11 0" />
+    <path d="M5 6l0 .01" />
+    <path d="M5 12l0 .01" />
+    <path d="M5 18l0 .01" />
+  </symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 8l-4 4l4 4" />
+    <path d="M17 8l4 4l-4 4" />
+    <path d="M14 4l-4 16" />
+  </symbol>
+  <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    <path d="M21 21v-2a4 4 0 0 0 -3 -3.85" />
+  </symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    <path d="M4 4a16 16 0 0 1 16 16" />
+    <path d="M4 11a9 9 0 0 1 9 9" />
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12" />
+    <path d="M16 3v4" />
+    <path d="M8 3v4" />
+    <path d="M4 11h16" />
+    <path d="M11 15h1" />
+    <path d="M12 15v3" />
+  </symbol>
+</svg>
+
+<header class="site-header">
+  <div class="header-inner">
+    <button class="icon-btn hamburger" id="drawerToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar">
+      <svg class="ic" aria-hidden="true"><use href="#i-menu-2"/></svg>
+    </button>
+
+    <a href="https://owasp-noir.github.io/noir/" class="header-logo" aria-label="OWASP Noir, home">
+      <img class="logo-dark" src="https://owasp-noir.github.io/noir/images/noir-dark.png" alt="OWASP Noir" width="1280" height="337">
+      <img class="logo-light" src="https://owasp-noir.github.io/noir/images/noir-light.png" alt="OWASP Noir" width="1280" height="337">
+    </a>
+    <a class="header-version" href="https://github.com/owasp-noir/noir/releases" target="_blank" rel="noopener noreferrer">v1.5.0</a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a href="https://owasp-noir.github.io/noir/get_started/overview/">Get Started</a>
+      <a href="https://owasp-noir.github.io/noir/usage/">Usage</a>
+      <a href="https://owasp-noir.github.io/noir/development/">Development</a>
+      <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+      <a href="https://owasp-noir.github.io/noir/resources/">Resources</a>
+    </nav>
+
+    <div class="header-right">
+      <button class="header-btn search-trigger" id="searchTrigger" aria-label="Search documentation">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <span>Search</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      
+      
+      <nav class="lang-switcher" aria-label="Language">
+        
+        <a href="https://owasp-noir.github.io/noir/usage/accuracy/" hreflang="en" aria-current="true">EN</a>
+        
+        <a href="https://owasp-noir.github.io/noir/ko/usage/accuracy/" hreflang="ko">KO</a>
+        
+      </nav>
+      
+
+      <a class="icon-btn" href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer" aria-label="OWASP Noir on GitHub">
+        <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
+      </a>
+
+      
+      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="Theme">
+        <svg class="ic ic-auto" aria-hidden="true"><use href="#i-contrast"/></svg>
+        <svg class="ic ic-light" aria-hidden="true"><use href="#i-sun"/></svg>
+        <svg class="ic ic-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<div class="search-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="Search documentation" hidden>
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="searchInput" aria-label="Search documentation" placeholder="Search the docs" autocomplete="off" spellcheck="false">
+      <kbd id="searchClose" role="button" tabindex="0">Esc</kbd>
+    </div>
+    <div class="search-results" id="searchResults" role="listbox" aria-label="Search"></div>
+  </div>
+</div>
+<div class="docs-container">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="drawer-scrim" id="drawerScrim"></div>
+<aside class="docs-sidebar" id="sidebar">
+  <nav class="sidebar-nav" aria-label="Documentation">
+
+    <details class="sidebar-group" data-group="get_started">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-rocket"/></svg>
+        <span>Get Started</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/overview/">What is Noir?</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/installation/">Install Noir</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/running/">Your First Scan</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/ai_power/">AI-Powered Analysis</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/migrate_v0_to_v1/">Migrating from v0 to v1</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="usage" open>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-terminal-2"/></svg>
+        <span>Usage</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/cli_commands/">CLI Commands</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/accuracy/" aria-current="page">API agreement</a></li>
+
+
+        <li>
+        <details class="sidebar-subgroup" data-group="supported">
+          <summary class="sidebar-subheading">
+            <span>Supported</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/">Languages &amp; Frameworks</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/specification/">Specifications</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/callee_coverage/">Callee Coverage</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">AI Context Coverage</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/mobile/">Mobile Apps</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/cli/">CLI Apps</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/tech-commands/">Technology Scopes</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="formats">
+          <summary class="sidebar-subheading">
+            <span>Output Formats</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/json/">JSON and JSONL</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/yaml/">YAML</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/curl/">HTTP Client Commands</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/openapi/">OpenAPI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/sarif/">SARIF</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/html/">HTML Report</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/mermaid/">Mermaid Chart</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/more/">Additional Formats</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="passive">
+          <summary class="sidebar-subheading">
+            <span>Passive Scan</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/rule/">Writing a Rule</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/default_rules/">Default Rules</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/community_rules/">Community Rules</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="more_features">
+          <summary class="sidebar-subheading">
+            <span>More Features</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/tagger/">Tagger</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/deliver/">Deliver</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/diff/">Diff Mode</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/pipeline-for-dast/">Pipeline for DAST</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="ai_providers">
+          <summary class="sidebar-subheading">
+            <span>AI Providers</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/openai/">OpenAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/xai/">xAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/azure/">Azure AI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/github_marketplace/">GitHub Models (retired)</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/openrouter/">OpenRouter</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/ollama/">Ollama</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/vllm/">vLLM</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/lmstudio/">LM Studio</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/acp/">ACP Agents</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="configurations">
+          <summary class="sidebar-subheading">
+            <span>Configuration</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/configuration_file/">Configuration File</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/shell-completion/">Shell Completions</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/github_action/">GitHub Action</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="development">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>
+        <span>Development</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/how_to_build/">How to Build</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/analyzer_architecture/">Analyzer Architecture</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/nix_environment/">Nix Environment</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/debug_flags/">Debug Flags</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/how_to_release/">How to Release</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="resources">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-lifebuoy"/></svg>
+        <span>Resources</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/faq/">FAQ</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/troubleshooting/">Troubleshooting</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/artwork/">Artwork</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/contact/">Contact</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="community">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-users"/></svg>
+        <span>Community</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/community/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/community/media/">Articles &amp; Talks</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/community/projects/">Related Projects</a></li>
+
+      </ul>
+    </details>
+
+  </nav>
+</aside>
+  <main id="main" class="docs-main">
+    <article>
+      <h1 class="docs-title">API agreement scoreboard</h1>
+      <p class="docs-lede">Code analyzer recall and agreement against pinned repositories&#39; own API specifications.</p>
+      <div class="prose">
+        <p>This source-only measurement compares code analyzers with the OpenAPI contracts kept in real repositories. Fixtures are not ground truth. The corpus pins 17 repositories across 10 technologies. listmonk joins Vikunja for Echo and Meshery joins podinfo for Gorilla mux. Flowable is the sole Spring pin. ASP.NET Core minimal APIs and NestJS each have one pin. The tables show the pins included in the dated run. It is selected for inspectable contracts; its numbers do not represent all projects using a framework.</p>
+<!-- SCOREBOARD -->
+<p>Measured: 2026-11-22. Analyzer source: <code>cf17712744df4334c00705d50f8ec7411f7b7820</code>.</p>
+<p>A technology measured on one repository is a single data point.</p>
+<table>
+<thead>
+<tr>
+<th>Technology</th>
+<th style="text-align: right;">Repositories</th>
+<th style="text-align: right;">Matched</th>
+<th style="text-align: right;">Spec-only</th>
+<th style="text-align: right;">Code-only</th>
+<th style="text-align: right;">Recall</th>
+<th style="text-align: right;">Agreement</th>
+<th style="text-align: right;">Marked</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cs_aspnet_core_minimal_api</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+<tr>
+<td>go_chi</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">264</td>
+<td style="text-align: right;">41</td>
+<td style="text-align: right;">249</td>
+<td style="text-align: right;">86.6%</td>
+<td style="text-align: right;">51.5%</td>
+<td style="text-align: right;">21 (4.1%)</td>
+</tr>
+<tr>
+<td>go_echo</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">225</td>
+<td style="text-align: right;">19</td>
+<td style="text-align: right;">233</td>
+<td style="text-align: right;">92.2%</td>
+<td style="text-align: right;">49.1%</td>
+<td style="text-align: right;">156 (34.1%)</td>
+</tr>
+<tr>
+<td>go_gin</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">238</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">44</td>
+<td style="text-align: right;">98.8%</td>
+<td style="text-align: right;">84.4%</td>
+<td style="text-align: right;">230 (81.6%)</td>
+</tr>
+<tr>
+<td>go_mux</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">91</td>
+<td style="text-align: right;">64</td>
+<td style="text-align: right;">286</td>
+<td style="text-align: right;">58.7%</td>
+<td style="text-align: right;">24.1%</td>
+<td style="text-align: right;">108 (28.6%)</td>
+</tr>
+<tr>
+<td>java_spring</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">182</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">28</td>
+<td style="text-align: right;">98.9%</td>
+<td style="text-align: right;">86.7%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+<tr>
+<td>js_express</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">411</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">264</td>
+<td style="text-align: right;">95.4%</td>
+<td style="text-align: right;">60.9%</td>
+<td style="text-align: right;">228 (33.8%)</td>
+</tr>
+<tr>
+<td>python_django</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">235</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">300</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">43.9%</td>
+<td style="text-align: right;">1 (0.2%)</td>
+</tr>
+<tr>
+<td>python_fastapi</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">348</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">114</td>
+<td style="text-align: right;">99.7%</td>
+<td style="text-align: right;">75.3%</td>
+<td style="text-align: right;">21 (4.5%)</td>
+</tr>
+<tr>
+<td>ts_nestjs</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">287</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">94.4%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Repository</th>
+<th style="text-align: right;">Matched</th>
+<th style="text-align: right;">Spec-only</th>
+<th style="text-align: right;">Code-only</th>
+<th style="text-align: right;">Recall</th>
+<th style="text-align: right;">Agreement</th>
+<th style="text-align: right;">Marked</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>InvokeAI</td>
+<td style="text-align: right;">264</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">99.6%</td>
+<td style="text-align: right;">98.9%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+<tr>
+<td>NodeBB</td>
+<td style="text-align: right;">358</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">253</td>
+<td style="text-align: right;">94.7%</td>
+<td style="text-align: right;">58.6%</td>
+<td style="text-align: right;">228 (37.3%)</td>
+</tr>
+<tr>
+<td>answer</td>
+<td style="text-align: right;">196</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">34</td>
+<td style="text-align: right;">98.5%</td>
+<td style="text-align: right;">85.2%</td>
+<td style="text-align: right;">228 (99.1%)</td>
+</tr>
+<tr>
+<td>auth</td>
+<td style="text-align: right;">23</td>
+<td style="text-align: right;">41</td>
+<td style="text-align: right;">60</td>
+<td style="text-align: right;">35.9%</td>
+<td style="text-align: right;">27.7%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+<tr>
+<td>dvws-node</td>
+<td style="text-align: right;">53</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">82.8%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+<tr>
+<td>eShop</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+<tr>
+<td>flowable-engine</td>
+<td style="text-align: right;">182</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">28</td>
+<td style="text-align: right;">98.9%</td>
+<td style="text-align: right;">86.7%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+<tr>
+<td>gotify</td>
+<td style="text-align: right;">42</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">80.8%</td>
+<td style="text-align: right;">2 (3.8%)</td>
+</tr>
+<tr>
+<td>immich</td>
+<td style="text-align: right;">287</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">94.4%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+<tr>
+<td>langflow</td>
+<td style="text-align: right;">84</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">111</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">43.1%</td>
+<td style="text-align: right;">21 (10.8%)</td>
+</tr>
+<tr>
+<td>listmonk</td>
+<td style="text-align: right;">72</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">118</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">37.9%</td>
+<td style="text-align: right;">151 (79.5%)</td>
+</tr>
+<tr>
+<td>meshery</td>
+<td style="text-align: right;">65</td>
+<td style="text-align: right;">63</td>
+<td style="text-align: right;">198</td>
+<td style="text-align: right;">50.8%</td>
+<td style="text-align: right;">24.7%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+<tr>
+<td>owncast</td>
+<td style="text-align: right;">241</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">189</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">56.0%</td>
+<td style="text-align: right;">21 (4.9%)</td>
+</tr>
+<tr>
+<td>podinfo</td>
+<td style="text-align: right;">26</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">88</td>
+<td style="text-align: right;">96.3%</td>
+<td style="text-align: right;">22.8%</td>
+<td style="text-align: right;">108 (94.7%)</td>
+</tr>
+<tr>
+<td>pokeapi</td>
+<td style="text-align: right;">102</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">0 (0.0%)</td>
+</tr>
+<tr>
+<td>pretalx</td>
+<td style="text-align: right;">133</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">300</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">30.7%</td>
+<td style="text-align: right;">1 (0.2%)</td>
+</tr>
+<tr>
+<td>vikunja</td>
+<td style="text-align: right;">153</td>
+<td style="text-align: right;">19</td>
+<td style="text-align: right;">115</td>
+<td style="text-align: right;">89.0%</td>
+<td style="text-align: right;">57.1%</td>
+<td style="text-align: right;">5 (1.9%)</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th style="text-align: right;">Estimated precision</th>
+<th style="text-align: right;">Estimated recall</th>
+<th style="text-align: right;">Marked matched / code-only</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cs_aspnet_core_minimal_api</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>go_chi</td>
+<td style="text-align: right;">100.0% (n=17, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 21</td>
+</tr>
+<tr>
+<td>go_echo</td>
+<td style="text-align: right;">100.0% (n=17, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">95.0% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">64 / 92</td>
+</tr>
+<tr>
+<td>go_gin</td>
+<td style="text-align: right;">100.0% (n=22, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=3, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">198 / 32</td>
+</tr>
+<tr>
+<td>go_mux</td>
+<td style="text-align: right;">100.0% (n=16, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">74.3% (n=9, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">26 / 82</td>
+</tr>
+<tr>
+<td>java_spring</td>
+<td style="text-align: right;">100.0% (n=23, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=2, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>js_express</td>
+<td style="text-align: right;">91.7% (n=17, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">99.4% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">108 / 120</td>
+</tr>
+<tr>
+<td>python_django</td>
+<td style="text-align: right;">100.0% (n=25, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 1</td>
+</tr>
+<tr>
+<td>python_fastapi</td>
+<td style="text-align: right;">100.0% (n=24, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=1, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">19 / 2</td>
+</tr>
+<tr>
+<td>ts_nestjs</td>
+<td style="text-align: right;">100.0% (n=17, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>InvokeAI</td>
+<td style="text-align: right;">100.0% (n=3, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=1, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>NodeBB</td>
+<td style="text-align: right;">90.8% (n=9, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">99.3% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">108 / 120</td>
+</tr>
+<tr>
+<td>answer</td>
+<td style="text-align: right;">100.0% (n=12, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=3, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">196 / 32</td>
+</tr>
+<tr>
+<td>auth</td>
+<td style="text-align: right;">100.0% (n=9, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>dvws-node</td>
+<td style="text-align: right;">100.0% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>eShop</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>flowable-engine</td>
+<td style="text-align: right;">100.0% (n=23, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=2, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>gotify</td>
+<td style="text-align: right;">100.0% (n=10, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">2 / 0</td>
+</tr>
+<tr>
+<td>immich</td>
+<td style="text-align: right;">100.0% (n=17, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>langflow</td>
+<td style="text-align: right;">100.0% (n=21, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">19 / 2</td>
+</tr>
+<tr>
+<td>listmonk</td>
+<td style="text-align: right;">100.0% (n=9, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">64 / 87</td>
+</tr>
+<tr>
+<td>meshery</td>
+<td style="text-align: right;">100.0% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">67.4% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>owncast</td>
+<td style="text-align: right;">100.0% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 21</td>
+</tr>
+<tr>
+<td>podinfo</td>
+<td style="text-align: right;">100.0% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=1, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">26 / 82</td>
+</tr>
+<tr>
+<td>pokeapi</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 0</td>
+</tr>
+<tr>
+<td>pretalx</td>
+<td style="text-align: right;">100.0% (n=25, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">100.0% (n=0, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 1</td>
+</tr>
+<tr>
+<td>vikunja</td>
+<td style="text-align: right;">100.0% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">92.8% (n=8, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">0 / 5</td>
+</tr>
+<tr>
+<td>Total</td>
+<td style="text-align: right;">98.5% (n=178, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">98.0% (n=39, 0 unlabelled, 0 undecided)</td>
+<td style="text-align: right;">415 / 350</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Technology</th>
+<th style="text-align: right;">Detected / repositories</th>
+<th>Other technologies detected</th>
+<th style="text-align: right;">Forced-only rows</th>
+<th style="text-align: right;">Automatic-only rows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cs_aspnet_core_minimal_api</td>
+<td style="text-align: right;">1 / 1</td>
+<td>http_file, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>go_chi</td>
+<td style="text-align: right;">2 / 2</td>
+<td>caddy, go_cli, go_http, js_cli, js_http, js_nextjs, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>go_echo</td>
+<td style="text-align: right;">2 / 2</td>
+<td>go_cli, go_http, go_huma, oas2, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>go_gin</td>
+<td style="text-align: right;">2 / 2</td>
+<td>go_cli, go_http, k8s_ingress, oas2</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>go_mux</td>
+<td style="text-align: right;">2 / 2</td>
+<td>go_cli, graphql_sdl, grpc, k8s_gateway_api, k8s_ingress, oas2, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>java_spring</td>
+<td style="text-align: right;">1 / 1</td>
+<td>oas2</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>js_express</td>
+<td style="text-align: right;">2 / 2</td>
+<td>js_apollo, js_cli, js_socketio, js_sveltekit, oas3, wsdl</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>python_django</td>
+<td style="text-align: right;">2 / 2</td>
+<td>graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>python_fastapi</td>
+<td style="text-align: right;">2 / 2</td>
+<td>oas3, python_cli, python_fastmcp, python_starlette</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>ts_nestjs</td>
+<td style="text-align: right;">1 / 1</td>
+<td>js_express, js_socketio, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Repository</th>
+<th>Technology</th>
+<th>Detected</th>
+<th>Other technologies detected</th>
+<th style="text-align: right;">Forced-only rows</th>
+<th style="text-align: right;">Automatic-only rows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>InvokeAI</td>
+<td>python_fastapi</td>
+<td>true</td>
+<td>oas3, python_cli, python_starlette</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>NodeBB</td>
+<td>js_express</td>
+<td>true</td>
+<td>js_cli, js_socketio, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>answer</td>
+<td>go_gin</td>
+<td>true</td>
+<td>go_cli, k8s_ingress, oas2</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>auth</td>
+<td>go_chi</td>
+<td>true</td>
+<td>go_cli, go_http, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>dvws-node</td>
+<td>js_express</td>
+<td>true</td>
+<td>js_apollo, js_sveltekit, oas3, wsdl</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>eShop</td>
+<td>cs_aspnet_core_minimal_api</td>
+<td>true</td>
+<td>http_file, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>flowable-engine</td>
+<td>java_spring</td>
+<td>true</td>
+<td>oas2</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>gotify</td>
+<td>go_gin</td>
+<td>true</td>
+<td>go_cli, go_http, oas2</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>immich</td>
+<td>ts_nestjs</td>
+<td>true</td>
+<td>js_express, js_socketio, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>langflow</td>
+<td>python_fastapi</td>
+<td>true</td>
+<td>oas3, python_cli, python_fastmcp, python_starlette</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>listmonk</td>
+<td>go_echo</td>
+<td>true</td>
+<td>go_cli, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>meshery</td>
+<td>go_mux</td>
+<td>true</td>
+<td>graphql_sdl, grpc, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>owncast</td>
+<td>go_chi</td>
+<td>true</td>
+<td>caddy, go_cli, go_http, js_cli, js_http, js_nextjs, oas3</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>podinfo</td>
+<td>go_mux</td>
+<td>true</td>
+<td>go_cli, grpc, k8s_gateway_api, k8s_ingress, oas2</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>pokeapi</td>
+<td>python_django</td>
+<td>true</td>
+<td>graphql_operation, hasura, js_cli, k8s_ingress, nginx, oas3, python_cli</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>pretalx</td>
+<td>python_django</td>
+<td>true</td>
+<td>oas3, python_cli</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>vikunja</td>
+<td>go_echo</td>
+<td>true</td>
+<td>go_cli, go_http, go_huma, oas2</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Technology</th>
+<th>Inputs on matched rows</th>
+<th style="text-align: right;">Both</th>
+<th style="text-align: right;">Document only</th>
+<th style="text-align: right;">Code only</th>
+<th style="text-align: right;">Recall</th>
+<th style="text-align: right;">Agreement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cs_aspnet_core_minimal_api</td>
+<td>Parameters</td>
+<td style="text-align: right;">44</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">100.0%</td>
+</tr>
+<tr>
+<td>cs_aspnet_core_minimal_api</td>
+<td>Body fields</td>
+<td style="text-align: right;">39</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">100.0%</td>
+<td style="text-align: right;">100.0%</td>
+</tr>
+<tr>
+<td>go_chi</td>
+<td>Parameters</td>
+<td style="text-align: right;">57</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">110</td>
+<td style="text-align: right;">98.3%</td>
+<td style="text-align: right;">34.1%</td>
+</tr>
+<tr>
+<td>go_chi</td>
+<td>Body fields</td>
+<td style="text-align: right;">168</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">37</td>
+<td style="text-align: right;">94.4%</td>
+<td style="text-align: right;">82.0%</td>
+</tr>
+<tr>
+<td>go_echo</td>
+<td>Parameters</td>
+<td style="text-align: right;">254</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">78</td>
+<td style="text-align: right;">94.1%</td>
+<td style="text-align: right;">76.5%</td>
+</tr>
+<tr>
+<td>go_echo</td>
+<td>Body fields</td>
+<td style="text-align: right;">428</td>
+<td style="text-align: right;">169</td>
+<td style="text-align: right;">295</td>
+<td style="text-align: right;">71.7%</td>
+<td style="text-align: right;">59.2%</td>
+</tr>
+<tr>
+<td>go_gin</td>
+<td>Parameters</td>
+<td style="text-align: right;">130</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">122</td>
+<td style="text-align: right;">92.2%</td>
+<td style="text-align: right;">51.6%</td>
+</tr>
+<tr>
+<td>go_gin</td>
+<td>Body fields</td>
+<td style="text-align: right;">326</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">467</td>
+<td style="text-align: right;">95.3%</td>
+<td style="text-align: right;">41.1%</td>
+</tr>
+<tr>
+<td>go_mux</td>
+<td>Parameters</td>
+<td style="text-align: right;">51</td>
+<td style="text-align: right;">97</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">34.5%</td>
+<td style="text-align: right;">100.0%</td>
+</tr>
+<tr>
+<td>go_mux</td>
+<td>Body fields</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">92</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0.0%</td>
+<td style="text-align: right;">n/a</td>
+</tr>
+<tr>
+<td>java_spring</td>
+<td>Parameters</td>
+<td style="text-align: right;">544</td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">109</td>
+<td style="text-align: right;">96.3%</td>
+<td style="text-align: right;">83.3%</td>
+</tr>
+<tr>
+<td>java_spring</td>
+<td>Body fields</td>
+<td style="text-align: right;">378</td>
+<td style="text-align: right;">67</td>
+<td style="text-align: right;">90</td>
+<td style="text-align: right;">84.9%</td>
+<td style="text-align: right;">80.8%</td>
+</tr>
+<tr>
+<td>js_express</td>
+<td>Parameters</td>
+<td style="text-align: right;">313</td>
+<td style="text-align: right;">35</td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;">89.9%</td>
+<td style="text-align: right;">79.6%</td>
+</tr>
+<tr>
+<td>js_express</td>
+<td>Body fields</td>
+<td style="text-align: right;">164</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">79</td>
+<td style="text-align: right;">89.1%</td>
+<td style="text-align: right;">67.5%</td>
+</tr>
+<tr>
+<td>python_django</td>
+<td>Parameters</td>
+<td style="text-align: right;">609</td>
+<td style="text-align: right;">19</td>
+<td style="text-align: right;">381</td>
+<td style="text-align: right;">97.0%</td>
+<td style="text-align: right;">61.5%</td>
+</tr>
+<tr>
+<td>python_django</td>
+<td>Body fields</td>
+<td style="text-align: right;">393</td>
+<td style="text-align: right;">60</td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">86.8%</td>
+<td style="text-align: right;">94.9%</td>
+</tr>
+<tr>
+<td>python_fastapi</td>
+<td>Parameters</td>
+<td style="text-align: right;">454</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">95.8%</td>
+<td style="text-align: right;">98.1%</td>
+</tr>
+<tr>
+<td>python_fastapi</td>
+<td>Body fields</td>
+<td style="text-align: right;">363</td>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">92.4%</td>
+<td style="text-align: right;">96.8%</td>
+</tr>
+<tr>
+<td>ts_nestjs</td>
+<td>Parameters</td>
+<td style="text-align: right;">312</td>
+<td style="text-align: right;">35</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">89.9%</td>
+<td style="text-align: right;">99.4%</td>
+</tr>
+<tr>
+<td>ts_nestjs</td>
+<td>Body fields</td>
+<td style="text-align: right;">492</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">99.4%</td>
+<td style="text-align: right;">99.8%</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Technology</th>
+<th style="text-align: right;">Both guarded</th>
+<th style="text-align: right;">Both open</th>
+<th style="text-align: right;">Document guarded, code open</th>
+<th style="text-align: right;">Document open, code guarded</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cs_aspnet_core_minimal_api</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>go_chi</td>
+<td style="text-align: right;">120</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">133</td>
+</tr>
+<tr>
+<td>go_echo</td>
+<td style="text-align: right;">135</td>
+<td style="text-align: right;">81</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">8</td>
+</tr>
+<tr>
+<td>go_gin</td>
+<td style="text-align: right;">162</td>
+<td style="text-align: right;">56</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">10</td>
+</tr>
+<tr>
+<td>go_mux</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">90</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>java_spring</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">182</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>js_express</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">170</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">233</td>
+</tr>
+<tr>
+<td>python_django</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">230</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">5</td>
+</tr>
+<tr>
+<td>python_fastapi</td>
+<td style="text-align: right;">325</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>ts_nestjs</td>
+<td style="text-align: right;">268</td>
+<td style="text-align: right;">19</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>Technology</th>
+<th>Resolution claim</th>
+<th style="text-align: right;">Marked endpoints</th>
+<th style="text-align: right;">Share of code endpoints</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>go_chi</td>
+<td><code>handler:heuristic</code></td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">4.1%</td>
+</tr>
+<tr>
+<td>go_echo</td>
+<td><code>handler:heuristic</code></td>
+<td style="text-align: right;">151</td>
+<td style="text-align: right;">33.0%</td>
+</tr>
+<tr>
+<td>go_echo</td>
+<td><code>prefix:heuristic</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0.2%</td>
+</tr>
+<tr>
+<td>go_echo</td>
+<td><code>prefix:unresolved</code></td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">0.9%</td>
+</tr>
+<tr>
+<td>go_gin</td>
+<td><code>handler:heuristic</code></td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">2.8%</td>
+</tr>
+<tr>
+<td>go_gin</td>
+<td><code>prefix:unresolved</code></td>
+<td style="text-align: right;">228</td>
+<td style="text-align: right;">80.9%</td>
+</tr>
+<tr>
+<td>go_mux</td>
+<td><code>prefix:heuristic</code></td>
+<td style="text-align: right;">108</td>
+<td style="text-align: right;">28.6%</td>
+</tr>
+<tr>
+<td>js_express</td>
+<td><code>prefix:heuristic</code></td>
+<td style="text-align: right;">217</td>
+<td style="text-align: right;">32.1%</td>
+</tr>
+<tr>
+<td>js_express</td>
+<td><code>prefix:unresolved</code></td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">1.6%</td>
+</tr>
+<tr>
+<td>python_django</td>
+<td><code>prefix:unresolved</code></td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0.2%</td>
+</tr>
+<tr>
+<td>python_fastapi</td>
+<td><code>prefix:heuristic</code></td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">4.5%</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><a href="https://github.com/invoke-ai/InvokeAI/tree/9264acf9e542d51a21467013029b755686dee375">InvokeAI</a> · <code>9264acf9e542d51a21467013029b755686dee375</code> · <code>python_fastapi</code> · scope <code>invokeai/app</code> · <code>invokeai/frontend/api/openapi.json</code>. openapi-checks.yml regenerates the schema from FastAPI and diffs it. Only invokeai/app is scanned; frontend and other packages are excluded.</li>
+<li><a href="https://github.com/NodeBB/NodeBB/tree/5456eac373abbc93136fed7b02ce8f58060f14cc">NodeBB</a> · <code>5456eac373abbc93136fed7b02ce8f58060f14cc</code> · <code>js_express</code> · scope <code>.</code> · <code>public/openapi/read.yaml</code>, <code>public/openapi/write.yaml</code>. test/api/routes.js:24-86 compares mounted Express routes against both committed contracts, with explicit exclusions at lines 62-81. Together they cover the forum read and write APIs; UI, federation and plugin routes remain in scope as undocumented routes. The real /api/v3 mount is retained. install/web.js:63-68 starts a separate setup server and is excluded. Outside this service: <code>./install</code>.</li>
+<li><a href="https://github.com/apache/answer/tree/6744295fa888e0621fc9f9a8ace04f1a4daf8554">answer</a> · <code>6744295fa888e0621fc9f9a8ace04f1a4daf8554</code> · <code>go_gin</code> · scope <code>.</code> · <code>docs/swagger.json</code>. Makefile generate runs go generate; swag annotations live on the handlers for this Gin service. Known stale annotations: personal question page lacks its service prefix; activation uses plural users instead of user; notification config documents POST instead of GET.</li>
+<li><a href="https://github.com/supabase/auth/tree/3e79d8513b67d7dc3f234153aacc074daf82db5f">auth</a> · <code>3e79d8513b67d7dc3f234153aacc074daf82db5f</code> · <code>go_chi</code> · scope <code>.</code> · <code>openapi.yaml</code>. Maintained beside internal/api; the hosted prefix is declared at openapi.yaml:38 and absent from the root-local router (api.go:219-222,498,520). Reauthenticate has a stale documented verb. Spec rows are compared without the deployment <code>/auth/v1</code> prefix.</li>
+<li><a href="https://github.com/snoopysecurity/dvws-node/tree/4221c04f132960a0ccca4bf5aa5f3a9f53172778">dvws-node</a> · <code>4221c04f132960a0ccca4bf5aa5f3a9f53172778</code> · <code>js_express</code> · scope <code>.</code> · <code>docs/openapi/openapi.json</code>. scripts/generate-openapi.js generates this contract with swagger-autogen from src/routes; test/openapi.test.js checks the document.</li>
+<li><a href="https://github.com/dotnet/eShop/tree/913acea66708a59595351174cee9b29f37179d29">eShop</a> · <code>913acea66708a59595351174cee9b29f37179d29</code> · <code>cs_aspnet_core_minimal_api</code> · scope <code>src/Catalog.API</code> · <code>src/Catalog.API/Catalog.API.json</code>, <code>src/Catalog.API/Catalog.API_v2.json</code>. Catalog.API.csproj exports OpenAPI during build with Microsoft.Extensions.ApiDescription.Server. Both API versions are included; query-parameter version distinctions are outside endpoint scoring. Only Catalog.API source is scanned, not other services or shared default endpoints.</li>
+<li><a href="https://github.com/flowable/flowable-engine/tree/055f90ad53a581c76ec2a6f4973acd2498c443fd">flowable-engine</a> · <code>055f90ad53a581c76ec2a6f4973acd2498c443fd</code> · <code>java_spring</code> · scope <code>modules/flowable-rest/src/main</code> · <code>docs/public-api/references/swagger/process/flowable-swagger-process.yaml</code>. Hand-written process-service controllers. docs/public-api/references/swagger/README.md:7-13 identifies the stable contract as generated from source annotations with manual corrections; docs/public-api/tools/flowable-oas-generator/pom.xml:51-84 selects this package. The application deployment prefix is declared by modules/flowable-app-rest/src/main/resources/flowable-default.properties:2,43; the scoped controller library registers local paths. Spec rows are compared without the deployment <code>/flowable-rest/service</code> prefix.</li>
+<li><a href="https://github.com/gotify/server/tree/01086b95a8b69ee87383f6e8bcae601d8c33384b">gotify</a> · <code>01086b95a8b69ee87383f6e8bcae601d8c33384b</code> · <code>go_gin</code> · scope <code>.</code> · <code>docs/spec.json</code>. Makefile:41-50 regenerates docs/spec.json from source annotations and fails on a diff. Covers this notification service, including users, clients, applications, messages and plugins; UI and optional transport routes remain in scope. No prefix adjustment. plugin/example/echo/echo.go:74-77 defines an example plugin webhook, not a core service registration, and is excluded. Outside this service: <code>plugin/example</code>.</li>
+<li><a href="https://github.com/immich-app/immich/tree/e5d6eb7be67834f59d90e4b7a86f5dec7ac9af86">immich</a> · <code>e5d6eb7be67834f59d90e4b7a86f5dec7ac9af86</code> · <code>ts_nestjs</code> · scope <code>server</code> · <code>open-api/immich-openapi-specs.json</code>. Generated from server controllers by the OpenAPI tooling; .github/workflows/check-openapi.yml checks contract changes. Only server is scanned.</li>
+<li><a href="https://github.com/langflow-ai/langflow/tree/e8bbae8eeb8729abd650f07bfc55957cbdbc1636">langflow</a> · <code>e8bbae8eeb8729abd650f07bfc55957cbdbc1636</code> · <code>python_fastapi</code> · scope <code>src/backend/base</code> · <code>docs/openapi/openapi.json</code>. docs/openapi/generate_openapi.py:83-93 writes create_app().openapi(); lines 96-103 select this committed document. Pinned to the schema-generator introduction, before workflow routes moved into the separate lfx package, so src/backend/base contains all service routers (langflow/main.py:532-534). Component examples, frontend and tests are outside scope. No prefix adjustment.</li>
+<li><a href="https://github.com/knadh/listmonk/tree/878b5313d51942b722c33d33f9d1be955578d7e3">listmonk</a> · <code>878b5313d51942b722c33d33f9d1be955578d7e3</code> · <code>go_echo</code> · scope <code>cmd</code> · <code>docs/swagger/collections.yaml</code>. .github/workflows/github-pages.yml renders Swagger UI from this hand-maintained collection. cmd/handlers.go registers both the mailing-list API and subscriber-facing pages. Keep its literal /api prefix. The collection omits GET /api/subscribers/:id/activity and the user-management endpoints.</li>
+<li><a href="https://github.com/meshery/meshery/tree/016b42910216f2072b4f6a1527cf3a90f1191c00">meshery</a> · <code>016b42910216f2072b4f6a1527cf3a90f1191c00</code> · <code>go_mux</code> · scope <code>server</code> · <code>docs/data/openapi.yml</code>. The Meshery Server contract is bundled from API definitions maintained in meshery/schemas. The contributing-schemas guide describes the OSS bundle. server/router/server.go registers the Gorilla mux routes, including /api/registry and its deprecated /api/meshmodels alias through registerRegistryRoute. The contract includes controller status subscriptions but omits GET /api/system/events/subscribe and the /api/user/prefs routes.</li>
+<li><a href="https://github.com/owncast/owncast/tree/c3a9ac1c46c043358fe7382a6d62d5227e4b2efe">owncast</a> · <code>c3a9ac1c46c043358fe7382a6d62d5227e4b2efe</code> · <code>go_chi</code> · scope <code>.</code> · <code>openapi.yaml</code>. Makefile api-generate produces the checked-in chi server from this spec; /api is a real mount, not a prefix to strip.</li>
+<li><a href="https://github.com/stefanprodan/podinfo/tree/fd3a834ed8d14b80ea334cf8a2fddd4597924da6">podinfo</a> · <code>fd3a834ed8d14b80ea334cf8a2fddd4597924da6</code> · <code>go_mux</code> · scope <code>.</code> · <code>pkg/api/http/docs/swagger.json</code>. Makefile swagger regenerates this document from handler annotations; runtime path helpers remain part of the analyzer task. token/validate is annotated POST although registered GET.</li>
+<li><a href="https://github.com/PokeAPI/pokeapi/tree/8a92bfa7dab2f12b84b5d151562f9857c133ff30">pokeapi</a> · <code>8a92bfa7dab2f12b84b5d151562f9857c133ff30</code> · <code>python_django</code> · scope <code>.</code> · <code>openapi.yml</code>. Makefile openapi-generate uses Django spectacular; describes the REST API, not the separate GraphQL service.</li>
+<li><a href="https://github.com/pretalx/pretalx/tree/1510dea9aafd580d1b2d7b8466736a09cd0298ec">pretalx</a> · <code>1510dea9aafd580d1b2d7b8466736a09cd0298ec</code> · <code>python_django</code> · scope <code>src/pretalx</code> · <code>doc/api/schema.yml</code>. justfile:125-128 regenerates this committed schema through Django spectacular; src/pretalx/common/management/commands/spectacular.py:9-16 delegates to drf-spectacular. Covers the complete REST API (src/pretalx/urls.py:42 and api/urls.py); the scoped application also contains organiser, agenda and submission UI routes, which remain visible as code-only rows. No prefix adjustment.</li>
+<li><a href="https://github.com/go-vikunja/vikunja/tree/293264397571be437c9bc9a32b4c492bd566dbc2">vikunja</a> · <code>293264397571be437c9bc9a32b4c492bd566dbc2</code> · <code>go_echo</code> · scope <code>pkg</code> · <code>pkg/swagger/swagger.json</code>. magefile.go Generate.SwaggerDocs runs swag; release automation regenerates and commits pkg/swagger. Only pkg is scanned; standalone example plugins and the frontend are outside this service scope. Known stale annotations: singular image instead of images in the Unsplash proxy; PUT rather than POST for label updates.</li>
+</ul>
+<!-- /SCOREBOARD -->
+<h2 id="runtime-route-reference">Runtime route reference</h2>
+<p>For Express, Hono, FastAPI and Gin, Noir also compares its HTTP endpoints with the framework's registered routes. On these small purpose-written apps, precision is the share of reported method/path pairs in the route table. Recall is the share of registered pairs Noir finds. The scoreboard measures agreement with real repositories’ OpenAPI contracts, where an undocumented route can still be live. The runtime corpus covers selected routing features and cannot estimate accuracy across production applications. It scores registration only. Parameters, guards and implicit dispatch such as HEAD falling back to GET are outside the comparison.</p>
+<p>Run <code>just runtime-reference</code> to generate the sorted tables and their framework versions and UTC dates. Express records a route-level <code>.all()</code> as <code>_all</code>, rendered as <code>ALL</code>. Hono reports <code>ALL</code> and its pass-through middleware is excluded. FastAPI lists the methods supplied to <code>api_route</code> and the reference app disables automatic docs. Gin lists each verb registered by <code>Any</code>. The comparison preserves these method differences and applies Noir’s placeholder normalization on both sides.</p>
+<p>The functional suite scans only each app’s <code>src/</code>. A missing <code>routes.json</code> makes that example pending. Each app’s <code>known-gaps.txt</code> records missed and extra pairs. A new difference fails the spec, and a resolved difference fails until its entry is removed.</p>
+<h2 id="method">Method</h2>
+<p>Each entry in <a href="https://github.com/owasp-noir/noir/blob/main/scripts/scoreboard/corpus.json"><code>scripts/scoreboard/corpus.json</code></a> contains only its repository pin, code technology, service scope, selected in-tree OpenAPI files, optional <code>spec_prefix</code> and <code>exclude_paths</code>, and a short note. Exclusions are explicit service boundaries passed to Noir's existing <code>--exclude-path</code> option and included in snapshot identity: NodeBB's separate web installer (<code>install/web.js:63-68</code>) and Gotify's example plugin (<code>plugin/example/echo/echo.go:74-77</code>) are outside their scored services. The runner shallow-fetches the pinned object and exports that service and the selected spec files into scratch space. Other OpenAPI entry documents are removed. Compiled WebAssembly (<code>*.wasm</code>) and CSV datasets (<code>*.csv</code>) are excluded; neither is route source for a scored analyzer. Scanner errors stop publication. Corpus applications are never built, installed, or run.</p>
+<p>The original endpoint series uses a combined scan with the pinned code analyzers forced and the OAS2/OAS3 detectors enabled. The counts use its optimized HTTP rows: <strong>matched</strong> has both the scored code technology and a <code>spec</code> contributor in <code>details.technologies</code>; <strong>spec-only</strong> lacks the scored code contributor; <strong>code-only</strong> lacks a spec contributor. A singleton contributor comes from <code>details.technology</code>. Technology totals sum repository counts before computing ratios.</p>
+<ul>
+<li><strong>Recall</strong> = matched / (matched + spec-only), the share of documented HTTP operations found by the code analyzer.</li>
+<li><strong>Agreement</strong> = matched / (matched + code-only), the share of code output also documented. It is a lower bound on precision if matched spec operations are valid, not measured precision. Real undocumented health, admin and UI routes lower it.</li>
+<li><strong>Marked</strong> counts code endpoints carrying any nonempty <code>resolution</code> map once. Each <code>claim:status</code> is also counted separately against the same code denominator; claims can overlap. Unmarked does not mean verified correct. This scan runs with taggers and AI context disabled.</li>
+<li>Empty denominators are <code>null</code> in results and <code>n/a</code> in tables. Only HTTP rows that Noir imports can enter the denominators. Schema types, values, WebSocket operations and runtime reachability are outside these measurements.</li>
+</ul>
+<h3 id="detection-parameters-and-guards">Detection, parameters and guards</h3>
+<p><strong>Detection.</strong> An unrestricted scan of the same staged files and exclusions supplies the technology inventory, including detectors that emitted no endpoints. Each repository/technology row records whether Noir detected that pin and lists every detected technology outside the repository’s code pins, including OpenAPI. Forced-only and automatic-only count HTTP rows carrying the scored contributor in just one scan. The comparison uses the method, Noir’s normalized whole-segment placeholders and the contributor’s origin scope. Equal keys retain their multiplicity. The per-repository detection files in <code>tmp/scoreboard/</code> list the differing methods, URLs and locations. Technology totals sum the differences and list the union of other technologies. Additional detections can be legitimate.</p>
+<p><strong>Parameters.</strong> Credentials a document declares through its security schemes (an <code>Authorization</code> header, an API-key header or cookie) are left out of this comparison on both sides; the guard counts below cover them. For each HTTP row matched by the original combined scan, the runner looks up its independent rows in a code-only scan for that technology and an OAS-only scan. It uses the same method and Noir’s placeholder normalization, then the merged row’s source locations and exact URL to distinguish same-shaped candidates. A missing or ambiguous join stops publication. Each side contributes a set of (location, name) pairs per row. Header names are case-insensitive. Whole-segment path parameters compare by slot in their respective URLs. Other path names, query names and cookie names compare literally, including case. A separate set compares JSON, body and form fields by exact name across encodings. A JSON/body input named <code>body</code> supplies no identifiable field and is omitted on either side, including a literal JSON property of that name. Named fields on the other side still count. Noir can infer path parameters from URLs and credentials from security schemes, so these counts describe its imported reports. For each set, recall divides the shared count by the document count, and agreement divides it by the code count, after summing across rows.</p>
+<p><strong>Guards.</strong> The OAS-only scan retains the importer’s <code>auth</code> tag from <code>oas2_access</code> or <code>oas3_access</code>. Operation-level <code>security</code> overrides the root declaration. An explicit empty list, an anonymous <code>{}</code> alternative or no declaration counts as open. The importer filters unknown schemes when a scheme registry exists. The code-only scan enables <code>--use-all-taggers</code> and counts an endpoint as guarded when a framework tagger ending in <code>_auth</code> emits the endpoint tag <code>auth</code>. Authorization-only and credential parameter tags supply no authentication signal. Each matched row contributes to one of four counts according to those two signals. Open on the code side means Noir found no authentication guard. A stale document or a guard beyond the tagger’s coverage can produce a disagreement.</p>
+<p>The current corpus has one code technology per repository. It therefore takes four scans per repository instead of one (68 scans across the 17 pins). Allow roughly four times the scanning time as a planning estimate. Automatic detection and tagging costs depend on the service, and each checkout and export is shared.</p>
+<h3 id="explicit-deployment-prefix-adjustment">Explicit deployment-prefix adjustment</h3>
+<p>Supabase Auth declares <code>spec_prefix: &quot;/auth/v1&quot;</code>. Its <code>openapi.yaml:37-38</code> declares the hosted server URL <code>https://{project}.supabase.co/auth/v1</code>. The service itself registers root-local routes: <code>internal/api/api.go:219-222</code> opens the <code>/</code> router, and <code>:268</code> registers <code>/token</code>. <code>internal/api/router.go:17-31</code> passes these paths directly to chi. The API forwards directly to that router (<code>api.go:498,520</code>), and <code>cmd/serve_cmd.go:63-75</code> installs the API as the HTTP server handler without an <code>/auth/v1</code> mount. So the prefix is a hosted deployment boundary, not a missing source prefix.</p>
+<p>Before importing that spec, the runner removes the explicitly declared prefix from its <strong>staged copy's root server URLs</strong>, which makes its spec rows local before Noir joins them. It validates that every declared server path exactly equals the configured prefix, and rejects scoped server overrides. The original checkout and code rows stay unchanged. Spec line numbers for adjusted documents refer to the retained staged copy; code locations refer to the pinned source. No endpoint matcher is added.</p>
+<p>Flowable declares <code>spec_prefix: &quot;/flowable-rest/service&quot;</code> for its process-controller library. The committed Swagger 2 document declares that <code>basePath</code> at line 20. The separate REST application supplies <code>/flowable-rest</code> through <code>modules/flowable-app-rest/src/main/resources/flowable-default.properties:2</code> and the <code>/service</code> servlet path at line 43. <code>BaseRestApiConfiguration.java:41-48</code> in the Spring Boot autoconfigure module installs that servlet mapping. These deployment settings are outside the scoped <code>modules/flowable-rest/src/main</code> library; its hand-written controllers register local paths (for example, <code>DeploymentCollectionResource.java:106</code>). The runner requires an exact Swagger 2 <code>basePath</code> match and changes only the staged value to <code>/</code>. It does not alter operation paths.</p>
+<p>Owncast is different: <code>webserver/router/router.go:93</code> mounts the generated API at <code>/api/</code>. Its spec's <code>/api</code> is in the source and is retained. Only Supabase Auth and Flowable have prefix adjustments. Noir's own normalization still handles placeholder spellings; this recipe adds no case, slash, <code>ANY</code>, wildcard, constant-prefix or gateway-rewrite matching. Gateway technologies are excluded because coverage rules are not one-to-one API operations.</p>
+<h3 id="source-labelled-estimates">Source-labelled estimates</h3>
+<p>Each technology contributes at most 25 unmatched rows <strong>across both sides combined</strong>. The sampler shares those slots among repositories and sides, then takes evenly spaced rows from each sorted list. A conditional registration counts as real when the code shows a configuration that serves it. A method the router registers also counts as real when the handler it reaches then rejects that method itself, as the runtime comparison below does: the router dispatches the request. A documented spelling already served by a correctly reported pattern is <code>covered</code>. The original join still shows both spellings.</p>
+<p>Estimated precision is (matched + estimated real code-only rows) / all reported rows. Estimated recall is matched / (matched + estimated document-only misses and wrong addresses). Each repository projects its decided sample share onto its own unmatched count before the scoreboard sums across repositories. Both estimates assume matched rows are valid. The deterministic sample gives no confidence interval and cannot measure routes absent from both sources. Each estimate includes its decided sample size, unlabelled count and <code>cannot_tell</code> count. A nonempty side with no decided sample makes the corresponding estimate unavailable. In the JSON, compare <code>marked_by_verdict</code> with each code verdict count to see how often resolution marks identify errors or appear on real routes.</p>
+<p>To label a row, open the technology’s <code>*-audit-sample.json</code> in the scoreboard artifact. Trace the handler and its mounts in the pinned source. Add one tab-separated line to <code>scripts/scoreboard/labels.tsv</code> with the repository, technology, application commit, exact side, method, URL, verdict, relative <code>file:line</code> and a sentence of evidence. Use <code>real</code>, <code>false_positive</code> or <code>wrong_address</code> on the code side and <code>miss</code>, <code>not_served</code>, <code>covered</code> or <code>wrong_address</code> on the document side. Use <code>cannot_tell</code> on either side and record what the source leaves unresolved. A changed pin or sample can leave a label stale. Check the new evidence before updating it.</p>
+<h3 id="historical-source-audits">Historical source audits</h3>
+<p>The dated table below records a manual audit of the measured snapshot. The initial audit sampled up to 25 unmatched rows per technology. Slots are allocated across repository/side buckets, then evenly spaced positions are taken within each sorted bucket. These are sample counts, not estimated totals. An operation can appear on both unmatched sides.</p>
+<p>Classifications are analyzer miss, analyzer false positive, stale or wrong spec, undocumented route, prefix/method/slash difference that is not an analyzer error, and other. They do not change the ratios. These historical counts predate the checked-in row labels.</p>
+<!-- AUDIT -->
+<p>Audit date: 2026-11-15. 153 unmatched rows checked against the pinned sources.</p>
+<table>
+<thead>
+<tr>
+<th>Technology</th>
+<th style="text-align: right;">Audited</th>
+<th style="text-align: right;">Analyzer miss</th>
+<th style="text-align: right;">Stale spec</th>
+<th style="text-align: right;">Undocumented route</th>
+<th style="text-align: right;">Prefix/method/slash</th>
+<th style="text-align: right;">Other</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>cs_aspnet_core_minimal_api</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>go_chi</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">1</td>
+</tr>
+<tr>
+<td>go_echo</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>go_gin</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>go_mux</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">24</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>js_express</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>python_django</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>python_fastapi</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>ts_nestjs</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+</tbody>
+</table>
+<p>This audit was taken at analyzer revision <code>8184cd4</code>. Two of the misses it found have since been fixed: the FastAPI row's 25 misses were all InvokeAI's dropped <code>/api</code> prefix (<a href="https://github.com/owasp-noir/noir/issues/3614">#3614</a>), and the go_chi miss was supabase/auth's SCIM prefix (<a href="https://github.com/owasp-noir/noir/issues/3616">#3616</a>). FastAPI's remaining 4 unmatched rows have not been re-audited. Residual slash differences are left visible. All 11 unmatched Express rows were audited.</p>
+<p>Expansion audit: 2026-11-15, analyzer revision <code>54ff7225277f691ac19816faad875c52979e39c0</code>. Another 137 unmatched rows were checked against the five new pinned repositories; the langflow row was re-audited on 2026-11-16 at <code>830b4cfce775d24812f4b0305df6fc24359dcdcb</code>. Each side is sampled separately: all rows if there are at most 25, otherwise 25 evenly spaced rows from the sorted list, at index <code>floor(i * count / 25)</code>. The historical table above is retained; it is not a current re-audit of the original corpus. All metric fields for the ten original repositories are unchanged from the committed baseline.</p>
+<table>
+<thead>
+<tr>
+<th>Repository</th>
+<th style="text-align: right;">Spec-only audited</th>
+<th style="text-align: right;">Code-only audited</th>
+<th style="text-align: right;">Analyzer miss</th>
+<th style="text-align: right;">Analyzer false positive</th>
+<th style="text-align: right;">Stale spec</th>
+<th style="text-align: right;">Undocumented route</th>
+<th style="text-align: right;">Prefix/method/slash</th>
+<th style="text-align: right;">Other</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>flowable-engine</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">24</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<td>NodeBB</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">23</td>
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>gotify</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr>
+<td>langflow</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">24</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1</td>
+</tr>
+<tr>
+<td>pretalx</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">0</td>
+</tr>
+</tbody>
+</table>
+<p>Flowable's three “other” rows are two documented literal <code>users</code> operations and one sampled controller row with <code>{family}</code>. <code>ProcessInstanceIdentityLinkResource.java:49,73,98-100</code> registers and validates <code>users</code> or <code>groups</code>; this is a literal-versus-parameter specialization. Its other sampled operations are real registrations absent from the contract. Gotify's sample contains UI/docs, explicit HEAD health and conditional MCP routes. Pretalx's sample contains organiser, agenda and submission UI routes outside its REST contract.</p>
+<p>NodeBB passes each route module its mount name as an argument. <code>src/routes/index.js:236-254</code> takes the names from a plugin hook whose defaults are <code>admin</code>, <code>user</code>, <code>tags</code> and so on, and modules such as <code>src/routes/admin.js</code> build their paths as <code>/${name}/...</code>. The spec documents the default names; Noir emits <code>/api/{name}/...</code> and <code>/{name}/...</code>, so one route shows up on both unmatched sides. This accounts for 23 sampled misses and 16 false positives. One further false positive is the middleware-only <code>router.all</code> regex at <code>index.js:136</code>; <code>src/middleware/index.js:130-133</code> only calls <code>next()</code>. The stale row documents the removed read-API session-delete path; <code>src/routes/write/users.js:66</code> registers its replacement. The prefix row is <code>/ping</code>, whose source prepends configurable <code>relative_path</code> (<code>src/webserver.js:152,191</code>).</p>
+<p>Langflow first matched 4 of its 84 documented operations: routers re-exported through package <code>__init__.py</code> files lost <code>/api/v1</code> and <code>/api/v2</code> (<a href="https://github.com/owasp-noir/noir/issues/3625">#3625</a>). With that fixed, all 84 match. Of the 25 sampled code-only rows, 24 are routes the project hides from its contract with <code>include_in_schema=False</code>, on the router (<code>api/v1/deployments.py:36</code>, <code>models.py:24</code>, <code>knowledge_bases.py:35</code>) or on the route; the other is the static-file mount at <code>main.py:584</code>.</p>
+<!-- /AUDIT -->
+<h3 id="re-run-and-artifacts">Re-run and artifacts</h3>
+<pre><code class="language-sh hljs">just scoreboard
+bash docs/scripts/check_doc_parity.sh
+hwaro build -i docs
+</code></pre>
+<p>The weekly and manually dispatched scoreboard workflow runs this recipe on the default branch. It uploads the row reports and flags repositories with fewer matches or more document-only rows than the committed snapshot. The recipe uses <code>build-release</code> through the compile gate. It needs git, tar, and network access for uncached pins. Checkouts and exports live under <code>$TMPDIR/noir-codex-scoreboard/</code> (or <code>/tmp/noir-codex-scoreboard/</code>). Per-repository matched/spec-only/code-only lists and per-technology audit samples are written to ignored <code>tmp/scoreboard/</code>; they are not committed.</p>
+<p>The compact regression snapshot is <a href="https://github.com/owasp-noir/noir/blob/main/scripts/scoreboard/results.json"><code>scripts/scoreboard/results.json</code></a>. It contains counts, ratios, marks, repository pins, date and analyzer revision. The snapshot date is preserved when analyzer revision and corpus pins are unchanged. Commit analyzer/dependency changes before running; dirty or untracked <code>src</code> files and modified shard manifests are rejected. Output is sorted and excludes durations and absolute scratch paths.</p>
+<p>Hwaro renders the committed Markdown tables. It does not read the results file at build time, so the file lives with the corpus rather than in <code>docs/data/</code>. CI's supported-doc generator does not call this recipe or fetch the corpus. Site builds work offline.</p>
+<h3 id="candidates-not-selected">Candidates not selected</h3>
+<ul>
+<li><strong>spring-petclinic-rest</strong>: method mappings are generated from its spec during build and absent from the checkout, so a 0% score would not be an analyzer failure.</li>
+<li><strong>juice-shop</strong>: its spec intentionally covers B2B orders only; scoring the entire service made agreement primarily a measure of that limited scope.</li>
+<li><strong>Earlier Spring replacements</strong>: spring-cloud-dataflow, ThingsBoard and Stirling-PDF had no suitable committed contract in the initial investigation. This expansion admits Flowable's 184-operation process-service Swagger 2 contract instead of its 15-operation decision contract. Its OpenAPI 3 alternatives remain excluded: <code>docs/public-api/references/openapi/README.md:5-7</code> explicitly says they are incomplete. The stable Swagger documents are identified as generated from source annotations with manual corrections in <code>references/swagger/README.md:7-13</code>; the generator selects the process-controller package at <code>tools/flowable-oas-generator/pom.xml:51-84</code>.</li>
+<li><strong>Second Express candidate</strong>: Directus has a broad contract, but it omits current Access, Policies, Panels, Notifications and Deployment APIs and retains obsolete OAuth/relation paths. It was not added; NodeBB now provides the second Express data point. The RealWorld Express app had no committed OpenAPI document.</li>
+<li><strong>OWASP/crAPI</strong>: its shared contract spans several services and cannot supply a separate denominator for one code technology.</li>
+<li><strong>spring-petclinic-microservices</strong>: no checked-in OpenAPI document at the inspected pin.</li>
+<li><strong>VAmPI</strong>: Connexion constructs routes from the same spec rather than independent Flask declarations.</li>
+<li><strong>shlink</strong>: left out because the corpus already covered enough technologies, not because its contract is stale.</li>
+<li><strong>ASP.NET Core minimal APIs</strong> — CleanArchitecture builds <code>src/Web/wwwroot/openapi/v1.json</code>. Its two committed NSwag files configure client generation. dotnet-starter-kit serves a document per API version, and TodoApp calls <code>MapOpenApi()</code> in <code>Todo.Api/Program.cs</code>. None of the three commits its service document.</li>
+<li><strong>Echo</strong> — Gotenberg registers module routes on Echo, but its contributing guide places the OpenAPI generator and its output in the separate gotenberg.dev repository. Memos commits 92 operations in <code>proto/gen/openapi.yaml</code>. Protoc generates them from protobuf definitions served through gRPC-Gateway.</li>
+<li><strong>Gorilla mux</strong> — Mattermost's Makefile concatenates <code>api/v4/source/</code> fragments. The checkout lacks the assembled v4 document. Tyk commits a 66-operation Gateway contract, but <code>swagger.yml</code> references a schema on the remote master branch. Noir reports an incomplete import, which stops the scoreboard.</li>
+<li><strong>Nakadi</strong> — Its hand-maintained contract is suitable, and 43 routes agree by method and path. The multi-module Gradle build places the document and controllers in different projects, so the scoreboard cannot pair their rows under its merged-row matching rule.</li>
+<li><strong>Spring</strong> — Halo's CI regenerates the 410-operation <code>aggregated.json</code> from Spring WebFlux. <code>SwaggerConfig.java</code> selects v1alpha1 API paths and specific login and setup paths. Apollo's portal generates Spring interfaces from a versioned document in the separate apollo-openapi repository.</li>
+<li><strong>NestJS</strong> — NocoDB's versioned schemas include licensed operations, such as v3 scripts and dashboards, whose controllers are absent from the community checkout. Its per-base Swagger endpoint describes a single database. Ghostfolio documents selected public routes in its README. Amplication creates Swagger documents from running NestJS services. Neither commits a service contract.</li>
+</ul>
+<p>Also inspected for this expansion and not added: apache/fineract (JAX-RS <code>@Path</code> resources, not Spring mappings); novuhq/novu (its export removes endpoints without API-key authentication); thomiceli/opengist (the document covers only the token API and nothing checks it against the routes); dyrector-io/dyrectorio (the Swagger configuration is committed, the generated document is not); and PrefectHQ/prefect, freqtrade/freqtrade, healthchecks/healthchecks, PostHog/posthog, wger-project/wger and statping-ng/statping-ng (no committed service OpenAPI document). Langflow is pinned to the commit that introduced its schema generator: at its current head the workflow routes come from the separate <code>lfx</code> package, outside the scanned scope. The pin was chosen before its score was seen and does not measure current Langflow.</p>
+
+      </div>
+      
+      
+      <footer class="docs-article-footer">
+        <a class="edit-link"
+           href="https://github.com/owasp-noir/noir/edit/main/docs/content/usage/accuracy/index.md"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>
+          Edit this page on GitHub
+        </a>
+        
+
+
+
+      </footer>
+    </article>
+  </main>
+  
+<nav class="docs-toc" aria-label="On this page">
+  <p class="docs-toc-title">
+    <svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>
+    On this page
+  </p>
+  <ul><li><a href="#runtime-route-reference">Runtime route reference</a></li><li><a href="#method">Method</a><ul><li><a href="#detection-parameters-and-guards">Detection, parameters and guards</a></li><li><a href="#explicit-deployment-prefix-adjustment">Explicit deployment-prefix adjustment</a></li><li><a href="#source-labelled-estimates">Source-labelled estimates</a></li><li><a href="#historical-source-audits">Historical source audits</a></li><li><a href="#re-run-and-artifacts">Re-run and artifacts</a></li><li><a href="#candidates-not-selected">Candidates not selected</a></li></ul></li></ul>
+</nav>
+
+    </main>
+  </div>
+
+  <footer class="site-footer">
+  <div class="footer-inner">
+    <span>OWASP Noir is free and open source under the MIT license.</span>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="https://owasp-noir.github.io/noir/get_started/overview/">Docs</a>
+      <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+      <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://owasp.org/projects/noir" target="_blank" rel="noopener noreferrer">OWASP</a>
+      <a href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">Contributing</a>
+    </nav>
+  </div>
+</footer>
+  
+<script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js" defer></script>
+<script>
+  window.NOIR_BASE = "https://owasp-noir.github.io/noir";
+  
+  window.NOIR_I18N = {
+    copy: "Copy",
+    copied: "Copied",
+    copyManual: "Press Ctrl C",
+    noResults: "No results for",
+    theme: "Theme",
+    themeAuto: "auto",
+    themeLight: "light",
+    themeDark: "dark"
+  };
+</script>
+<script src="https://owasp-noir.github.io/noir/js/theme.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/nav.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/code.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/toc.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/reveal.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/mermaid.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+
+</body>
+</html>
