@@ -8,25 +8,22 @@ tag:
   tagger: Approval
   description: Approval workflow endpoint; review for skipping a required approval step, approving one's own request, approving on behalf of another approver, and changing a request after it was approved.
 match:
-  any:
-    - all:
-        - path_segment: [approval, approvals, approve, approver, approvers, reject, disapprove]
-        # The approve step of a payment gateway (`/samsungpay/approve`,
-        # KakaoPay's `pg_token` redirect) confirms a payment and belongs to
-        # the payment tagger. Approving an invoice or a refund is still a
-        # workflow step, so those may carry both tags.
-        - not:
-            path_segment: [pay, paypal, stripe, braintree, samsungpay, brandpay,
-                           kakaopay, naverpay, checkout]
-        - not:
-            param: { name: pg_token }
-        # A static asset (`/js/approve.js`) is not a handler.
-        - not:
-            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
-                             woff, woff2, ttf, otf, eot]
-    # eGovFrame names its approval routes `Sanctn`:
-    # `/uss/ion/ism/selectInfrmlSanctn.do`, `selectSanctnerList.do`.
-    - url_contains: [sanctn]
+  all:
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
+        - all:
+            - path_segment: [approval, approvals, approve, approver, approvers, reject, disapprove]
+            # Payment confirmation belongs to the payment tagger. Invoice
+            # and refund approvals can also be workflow steps.
+            - not:
+                path_segment: [pay, payment, payments, paypal, stripe, braintree, samsungpay,
+                               brandpay, kakaopay, naverpay, checkout]
+            - not:
+                param: { name: pg_token }
+        # eGovFrame names its approval routes `Sanctn`.
+        - url_contains: sanctn
 examples:
   match:
     - { method: POST, url: /approve }
@@ -35,9 +32,12 @@ examples:
     - { method: POST, url: "/api/leave-requests/{id}/approve" }
     - { url: /uss/ion/ism/selectInfrmlSanctn.do }
     - { url: /uss/ion/ism/selectSanctnerList.do }
+    - { method: POST, url: "/invoices/{id}/approve" }
   no_match:
     - { method: POST, url: /samsungpay/approve }
     - { url: /kakaopay/approve, params: [{ name: pg_token }] }
     - { url: /payment/approve, params: [{ name: pg_token }] }
     - { url: /static/js/approve.js }
     - { url: /api/requests }
+    - { url: /static/js/sanctn.js }
+    - { method: POST, url: "/payments/{id}/approve" }
