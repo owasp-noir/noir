@@ -1,0 +1,34 @@
+# Endpoints that pull records from, or push them to, another system in one
+# request.
+key: sync
+name: Sync Tagger
+summary: Identifies data synchronization endpoints
+order: 710
+tag:
+  tagger: Sync
+  description: Data synchronization endpoint; review for missing authentication on a route that returns or overwrites many records at once, IDOR on the account or tenant being synchronized, and replayed or out-of-order sync requests.
+match:
+  all:
+    # A CLI command is not a route.
+    - not: { protocol: cli }
+    # `/async` splits into the single segment `async`, which is not listed.
+    - path_segment: [sync, resync, synchronize, synchronise, synchronization, synchronisation]
+    # A static asset (`/js/sync.js`) is a script served to everyone, not the
+    # handler that moves the data.
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+examples:
+  match:
+    - { url: /api/sync }
+    - { method: POST, url: /api/sync }
+    - { method: POST, url: /svc/sync }
+    - { method: POST, url: /sync/diagnosis }
+    - { method: PATCH, url: /sync-media }
+    - { method: POST, url: "/api/accounts/{id}/resync" }
+  no_match:
+    - { url: /async }
+    - { method: POST, url: /api/async/jobs }
+    - { url: /static/js/sync.js }
+    - { method: CLI, url: "cli://sharedtool/sync/run", protocol: cli }
+    - { url: /api/users }
