@@ -62,6 +62,10 @@ describe Noir::RubyInflector do
 
     it "keeps a word that is already singular" do
       Noir::RubyInflector.singularize("class").should eq("class")
+      Noir::RubyInflector.singularize("status").should eq("status")
+      Noir::RubyInflector.singularize("scheduled_status").should eq("scheduled_status")
+      Noir::RubyInflector.singularize("bus").should eq("bus")
+      Noir::RubyInflector.singularize("virus").should eq("virus")
       Noir::RubyInflector.singularize("user").should eq("user")
       Noir::RubyInflector.singularize("s").should eq("s")
       Noir::RubyInflector.singularize("").should eq("")
@@ -83,6 +87,11 @@ describe Noir::RubyInflector do
       Noir::RubyInflector.pluralize("status").should eq("statuses")
       Noir::RubyInflector.pluralize("branch").should eq("branches")
       Noir::RubyInflector.pluralize("dish").should eq("dishes")
+    end
+
+    it "doubles the z in quiz" do
+      Noir::RubyInflector.pluralize("quiz").should eq("quizzes")
+      Noir::RubyInflector.pluralize("practice_quiz").should eq("practice_quizzes")
     end
 
     it "adds -s otherwise" do

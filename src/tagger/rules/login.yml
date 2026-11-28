@@ -32,9 +32,9 @@ examples:
     - { method: POST, url: /users/sign_in }
     - { url: /Documents/Logout }
     - { method: POST, url: /api/register, params: [{ name: password, type: json }] }
+    - { url: /uat/uia/egovLoginUsr.do }
     - { method: POST, url: /uat/uia/actionLogin.do }
     - { method: POST, url: /uat/uia/actionLogout.do }
-    - { url: /uat/uia/egovLoginUsr.do }
   no_match:
     - { method: POST, url: /devices/register, params: [{ name: device_token, type: json }] }
     - { method: POST, url: /webhooks/register }
