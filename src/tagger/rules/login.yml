@@ -19,6 +19,7 @@ match:
     # `/users/sign_in` splits into `sign` + `in`, which path_segment has no
     # way to express. The leading slash keeps `/design-inspiration` out.
     - url_contains: [/sign-in, /sign_in, /sign-up, /sign_up, /sign-out, /sign_out]
+    - url_contains: [/uat/uia/egovloginusr.do, /uat/uia/actionlogin.do, /uat/uia/actionlogout.do]
     # `register` also names device and webhook registration, so it counts
     # only when the request carries a password.
     - all:
@@ -31,9 +32,14 @@ examples:
     - { method: POST, url: /users/sign_in }
     - { url: /Documents/Logout }
     - { method: POST, url: /api/register, params: [{ name: password, type: json }] }
+    - { url: /uat/uia/egovLoginUsr.do }
+    - { method: POST, url: /uat/uia/actionLogin.do }
+    - { method: POST, url: /uat/uia/actionLogout.do }
   no_match:
     - { method: POST, url: /devices/register, params: [{ name: device_token, type: json }] }
     - { method: POST, url: /webhooks/register }
     - { url: /design-inspiration }
     - { url: /static/js/login.js }
     - { url: /blog/posts }
+    - { url: /sym/log/clg/SelectLoginLogList.do }
+    - { method: POST, url: /uat/uap/addLoginPolicy.do }

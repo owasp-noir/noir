@@ -10,7 +10,8 @@ match:
   any:
     - path_segment: [payment, payments, checkout, billing, invoice, invoices,
                      refund, refunds, payout, payouts, withdrawal, withdrawals,
-                     paypal, stripe, braintree, pay, purchase, purchases, brandpay]
+                     paypal, stripe, braintree, pay, purchase, purchases, samsungpay,
+                     brandpay]
     # Card / bank data names a payment flow on any route.
     - param:
         name: [card_number, cc_number, cvv, cvc, cvv2, cvn, csc, security_code,
@@ -35,6 +36,7 @@ match:
 examples:
   match:
     - { method: POST, url: /api/checkout }
+    - { method: POST, url: /samsungpay/approve }
     - { method: POST, url: /api/orders, params: [{ name: cardNumber, type: json }] }
     - { method: POST, url: /api/transfer, params: [{ name: amount, type: json }, { name: currency, type: json }] }
     - { method: POST, url: /api/orders, params: [{ name: total, type: json }] }
@@ -44,4 +46,5 @@ examples:
     - { url: /api/orders }
     - { url: /api/users, params: [{ name: amount }] }
     - { method: POST, url: /api/keys, params: [{ name: api_key, type: json }] }
+    - { url: /samsung/support }
     - { method: POST, url: /brands/qna }
