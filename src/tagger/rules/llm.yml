@@ -19,7 +19,6 @@ match:
         # CLOVA Studio (HyperCLOVA X) hyphenates the route and uses a
         # singular embedding path under api-tools.
         - url_contains: [/chat-completions, /api-tools/embedding]
-        - path_segment: embeddings
         - param: { name: [system_prompt, system_message, system_instruction] }
         # Each name is common alone: `messages` in chat apps, `model` in
         # catalogs, `prompt` in OIDC (`prompt=login`). Two different ones
@@ -31,7 +30,6 @@ match:
               - param: { name: model }
               - param: { name: prompt }
               - param: { name: [temperature, top_p, top_k, max_tokens, max_completion_tokens] }
-              
 examples:
   match:
     - { method: POST, url: /v1/chat/completions }
