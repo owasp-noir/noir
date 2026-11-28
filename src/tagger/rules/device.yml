@@ -1,0 +1,44 @@
+# Endpoints that register a device or store its push token (FCM, APNs).
+key: device
+name: Device Tagger
+summary: Identifies device and push token registration endpoints
+order: 630
+tag:
+  tagger: Device
+  description: Device or push token registration endpoint; review for binding a device or token to another user's account (intercepting their notifications), IDOR on the list of registered devices, and tokens that stay registered after logout.
+match:
+  all:
+    # OAuth device authorization belongs to the OAuth tagger.
+    - not:
+        path_segment: [oauth, oauth2]
+    - not:
+        url_contains: [device/code, device_authorization, device-authorization,
+                       deviceauthorization]
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
+        - path_segment: [device, devices, fcm, apns]
+        # A token or registration term distinguishes push registration
+        # from repository pushes.
+        - all:
+            - path_segment: push
+            - path_segment: [token, tokens, register, registration]
+        - param:
+            name: [device_token, fcm_token, push_token, apns_token]
+examples:
+  match:
+    - { url: /devices }
+    - { method: POST, url: /push/token }
+    - { method: POST, url: /v1/fcm/token }
+    - { method: POST, url: /devices/register, params: [{ name: device_token, type: json }] }
+    - { method: POST, url: /api/users/me, params: [{ name: fcmToken, type: json }] }
+  no_match:
+    - { method: POST, url: /oauth/device/code }
+    - { method: POST, url: /device_authorization }
+    - { method: POST, url: /repos/push }
+    - { method: POST, url: /api/login, params: [{ name: token, type: json }] }
+    - { url: /static/js/device.js }
+    - { url: /static/js/push-token.js }
+    - { method: POST, url: /oauth/device/code, params: [{ name: deviceToken, type: json }] }
+    - { method: POST, url: /api/signup, params: [{ name: registration_token, type: json }] }
