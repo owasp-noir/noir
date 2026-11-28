@@ -16,17 +16,14 @@ match:
         # courses or tasks, so it needs the `chat` or version segment.
         - url_contains: [/chat/completions, /v1/completions, /v1/embeddings]
         - path_segment: embeddings
+        # CLOVA Studio (HyperCLOVA X) hyphenates the route and uses a
+        # singular embedding path under api-tools.
+        - url_contains: [/chat-completions, /api-tools/embedding]
+        - path_segment: embeddings
         - param: { name: [system_prompt, system_message, system_instruction] }
         # Each name is common alone: `messages` in chat apps, `model` in
         # catalogs, `prompt` in OIDC (`prompt=login`). Two different ones
         # describe a model call.
-
-        # section for Clova API
-        - url_contains: [/chat/completions, /v1/completions, /v1/embeddings]
-        - path_segment: embeddings
-        - url_contains: [/chat-completions, /api-tools/embedding]
-        - param: { name: [system_prompt, system_message, system_instruction] }
-
         - at_least:
             count: 2
             of:
@@ -47,7 +44,6 @@ examples:
     - { method: POST, url: /testapp/v1/chat-completions/HCX-003 }
     - { method: POST, url: /v3/chat-completions/HCX-005 }
     - { method: POST, url: /v1/api-tools/embedding/v2 }
-    
   no_match:
     - { method: POST, url: /api/chat/messages, params: [{ name: messages, type: json }] }
     - { url: /oauth/authorize, params: [{ name: prompt }] }
