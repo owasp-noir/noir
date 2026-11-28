@@ -1,0 +1,29 @@
+# API key management endpoints.
+key: api_key
+name: API Key Tagger
+summary: Identifies API key management endpoints
+order: 500
+tag:
+  tagger: API Key
+  description: API key management endpoint; review credential exposure and unauthorized key access.
+match:
+  all:
+    - any:
+        - path_segment: [apikey, apikeys]
+        - url_contains: [api-key, api_key]
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+examples:
+  match:
+    - { url: /api-keys }
+    - { url: /apikeys }
+    - { url: "/users/{id}/api_keys" }
+    - { method: POST, url: /api/api-keys }
+    - { method: DELETE, url: "/api/api-keys/{id}" }
+  no_match:
+    - { url: "/caches/{id}/keys" }
+    - { url: /.well-known/jwks.json }
+    - { url: /api/products }
+    - { url: /js/api-keys.js }
+    - { url: /css/apikeys.css }

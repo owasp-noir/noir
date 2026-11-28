@@ -1,0 +1,32 @@
+key: consent
+name: Consent Tagger
+summary: Identifies terms and consent endpoints
+order: 660
+tag:
+  tagger: Consent
+  description: Terms or consent endpoint; review consent bypass, unauthorized record changes, and OAuth scope escalation.
+match:
+  all:
+    - any:
+        - path_segment: [consent, consents, agreement, agreements]
+        - all:
+            - path_segment: terms
+            - not:
+                path_segment: glossary
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp, woff, woff2, ttf, otf, eot] ## 정적 파일은 제외
+examples:
+  match:
+    - { url: /consent }
+    - { url: /terms }
+    - { url: /agreements }
+    - { method: POST, url: /api/users/consents }
+    - { url: /legal/terms }
+    - { method: POST, url: /api/users/agreements }
+    - { url: /oauth/consent }
+  no_match:
+    - { url: /glossary/terms }
+    - { url: /api/users }
+    - { url: /legal/terminology }
+    - { url: /static/js/consent.js }
+    - { url: /assets/terms.css }

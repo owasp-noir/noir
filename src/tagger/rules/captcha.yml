@@ -1,0 +1,43 @@
+# CAPTCHA endpoints: the handlers that issue a challenge (image, audio,
+# token) and the ones that check the answer, plus requests that carry a
+# CAPTCHA response for the server to verify.
+key: captcha
+name: CAPTCHA Tagger
+summary: Identifies endpoints that generate or verify CAPTCHAs
+order: 590
+
+tag:
+  tagger: CAPTCHA
+  description: CAPTCHA generation or verification endpoint; review for answer reuse and replay, missing server-side verification, answers leaked in responses or cookies, and verification that can be skipped by omitting the parameter.
+
+match:
+  any:
+    # `captcha` is usually glued to other words (`kcaptcha_image.php`,
+    # `getCaptchaImage.do`, `recaptcha`, `hcaptcha`), which path_segment
+    # cannot split, so a substring match covers them all. Static assets such
+    # as the widget script (`/js/recaptcha.js`) are served to everyone and
+    # are not the handler that checks the answer, so they are exempt.
+    - all:
+        - url_contains: [captcha]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+              woff, woff2, ttf, otf, eot]
+
+    # A form protected by a CAPTCHA posts the widget's response token, which
+    # the server must verify. Names come from the official docs of
+    # reCAPTCHA, hCaptcha and Cloudflare Turnstile.
+    - param: { name: [g-recaptcha-response, h-captcha-response, cf-turnstile-response,
+        captcha, captcha_code, captcha_answer] }
+
+examples:
+  match:
+    - { url: /captcha }
+    - { method: POST, url: /captcha/verify }
+    - { url: /plugin/kcaptcha/kcaptcha_image.php }
+    - { url: /getCaptchaImage.do }
+    - { method: POST, url: /contact, params: [{ name: g-recaptcha-response, type: form }] }
+  no_match:
+    - { url: /static/js/recaptcha.js }
+    - { method: POST, url: /payments/capture }
+    - { url: /captain/profile }
+    - { url: /blog/posts }

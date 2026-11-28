@@ -520,6 +520,7 @@ module LLM
       "gpt-oss-120b"      => 128000,
       "gpt-oss-20b"       => 128000,
       "exaone3.5"         => 32768,
+      "exaone-deep"       => 32768,
       "default"           => 4000,
     },
     "google" => {
@@ -553,10 +554,11 @@ module LLM
       "default" => 4000,
     },
     "lmstudio" => {
-      "gpt-oss"      => 128000,
-      "gpt-oss-120b" => 128000,
-      "gpt-oss-20b"  => 128000,
-      "default"      => 4000,
+      "gpt-oss"                   => 128000,
+      "gpt-oss-120b"              => 128000,
+      "gpt-oss-20b"               => 128000,
+      "kanana-nano-2.1b-instruct" => 8192,
+      "default"                   => 4000,
     },
     # OpenRouter proxies many large-context frontier models whose exact ids we
     # don't control, so use a generous model-agnostic default rather than the
