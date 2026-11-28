@@ -11,6 +11,7 @@ module Noir
 
     def self.singularize(name : String) : String
       return name if name.matches?(/(?:\A|_)(?:news|series|species|information|equipment|money|rice|fish|sheep|jeans|police)\z/)
+      return name if name.matches?(/(?:status|bus|virus)\z/)
       SINGULAR_IRREGULARS.each { |plural, single| return name.rchop(plural) + single if name.ends_with?(plural) }
       return name.rchop("zes") if name.ends_with?("zzes")
       return name.rchop("es") if name.matches?(/(?:alias|status|bus|ss|x|ch|sh)es\z/)
@@ -25,6 +26,7 @@ module Noir
     # ponytail: no irregulars; add one when a name comes out wrong.
     def self.pluralize(name : String) : String
       return "#{name.rchop('y')}ies" if name.matches?(/(?:[^aeiouy]|qu)y\z/)
+      return "#{name}zes" if name.ends_with?("quiz")
       return "#{name}es" if name.matches?(/(?:s|x|z|ch|sh)\z/)
       "#{name}s"
     end
