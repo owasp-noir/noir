@@ -1,0 +1,134 @@
+# Search, lookup and autocomplete endpoints: caller-controlled text goes into
+# a query or filter, and the results can list records the caller should not
+# see. The hunt tagger marks the search parameter itself; this rule marks the
+# endpoint.
+key: search
+name: Search Tagger
+summary: Identifies search, lookup and autocomplete endpoints
+order: 280
+tag:
+  tagger: Search
+  description: Search, lookup or autocomplete endpoint; review for injection into the query backend (SQL LIKE, NoSQL operators, Elasticsearch/Lucene query syntax), ReDoS through user-supplied regex or wildcards, results or suggestions that leak records the caller may not read (missing authorization filtering, user enumeration), unbounded page sizes or expensive queries, and reflected XSS of the search term.
+match:
+  all:
+    # A static asset (`/js/search.js`, `/img/search.svg`) is a file served to
+    # everyone, not the handler that runs the query.
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
+        # Search and autocomplete paths. Whole segments only, so `/research` and
+        # `/searchlight` stay out; `/products/_search` splits on `_` into a
+        # `search` segment. A write manages saved searches or settings instead
+        # of running a search (Elasticsearch `_search` takes POST, which stays).
+        # Search history, saved searches and settings sit under the same words
+        # (`/users/search-history/{id}`, `POST /api/saved-searches`,
+        # `/admin/search/settings`).
+        - all:
+            - method_not: [PUT, PATCH, DELETE]
+            - not:
+                path_segment: [history, histories, saved, setting, settings, preference,
+                               preferences, config, configuration]
+            - any:
+                - path_segment: [search, searches, autocomplete, autocompletion,
+                                 autosuggest, typeahead]
+                # camelCase actions lowercase into one segment
+                # (`/api/autocompleteUsers`). These words have no other meaning,
+                # so a prefix is safe; `search` is not, because of `/searchlight`.
+                # A camelCase setting (`/users/autocompleteEnabled`) is not.
+                - all:
+                    - url_contains: [/autocomplete, /autosuggest, /typeahead]
+                    - not:
+                        url_contains: [enable, disable, toggle, setting, preference, config]
+        # `lookup` also names a read of one record by its id
+        # (`/author-lookup/{id}`), which is not a search. A write updates a
+        # reference-data row; POST stays for bulk lookups.
+        - all:
+            - method_not: [PUT, PATCH, DELETE]
+            - path_segment: [lookup, lookups]
+            - any:
+                - not:
+                    param: { type: path }
+                # A path parameter can scope a lookup by a separate input.
+                - param: { type: [query, form, json], name: [email, name, q, query, term, prefix, filter] }
+        # `find` has the same single-record form (`/user/find-one`,
+        # `/employees/find/{id}`). It also names account recovery on Korean sites
+        # (`/member/find-id`, `/find_password`), which is not a search.
+        - all:
+            - method_not: [PUT, PATCH, DELETE]
+            - path_segment: [find, finder]
+            - not:
+                path_segment: [id, pw, pwd, passwd, password, username, userid, account, email, one]
+            - any:
+                - not:
+                    param: { type: path }
+                - param: { type: [query, form, json], name: [email, name, q, query, term, prefix, filter] }
+        # `suggest` is also a form that submits a feature request, so it counts
+        # only on a read.
+        - all:
+            - path_segment: suggest
+            - method: safe
+        # Feedback boards also use `suggestions`. Look for a completion input.
+        - all:
+            - path_segment: suggestions
+            - method: safe
+            - param: { type: [query, form, json], name: [q, query, term, prefix] }
+        # A search term on a listing, e.g. GET /products?keyword=shoes or the
+        # eGov board list with `searchWrd`. `q`, `query` and `term` are left out:
+        # `q` alone is too broad, `query` is also GraphQL and metrics queries,
+        # and `term` is also a semester or a loan term. Names are listed instead
+        # of a `search` prefix so that `searchable` or `searchEngine` settings
+        # stay out. An update that stores a saved search is not a search.
+        - all:
+            - method_not: [PUT, PATCH, DELETE]
+            - param:
+                type: [query, form, json]
+                name: [search, keyword, keywords, search_keyword, search_keywords,
+                       search_word, search_wrd, search_term, search_query, search_text,
+                       search_string, search_value]
+examples:
+  match:
+    - { url: /Search }
+    - { method: POST, url: /products/_search, params: [{ name: query, type: json }] }
+    - { url: /api/users/autocomplete, params: [{ name: term }] }
+    - { url: /api/autocompleteUsers, params: [{ name: prefix }] }
+    - { url: /lookup }
+    - { url: /api/users/lookup, params: [{ name: email }] }
+    - { url: "/tenants/{tenantId}/users/lookup", params: [{ name: tenantId, type: path }, { name: email }] }
+    - { url: /api/stores/find, params: [{ name: zip }] }
+    - { url: "/api/app/book/author-lookup/{authorId}", params: [{ name: authorId, type: path }, { name: filter }] }
+    - { url: /api/suggest, params: [{ name: prefix }] }
+    - { url: /suggestions, params: [{ name: q, value: shoes }] }
+    - { method: QUERY, url: /api/orders, params: [{ name: keyword, type: json }] }
+    - { url: /api/products, params: [{ name: keyword, value: shoes }] }
+    - { method: POST, url: /board/selectArticleList.do, params: [{ name: searchCnd, type: form }, { name: searchWrd, type: form }] }
+  no_match:
+    - { url: /research/papers }
+    - { url: /searchlight }
+    - { url: "/author-lookup/{id}", params: [{ name: id, type: path }] }
+    - { url: "/author-lookup/{id}", params: [{ name: id, type: path }, { name: locale }] }
+    - { url: /api/products, params: [{ name: q, value: shoes }] }
+    - { method: POST, url: /graphql, params: [{ name: query, type: json }] }
+    - { method: QUERY, url: /graphql, params: [{ name: query, type: json }] }
+    - { method: QUERY, url: /api/orders, params: [{ name: status, type: json }] }
+    - { url: /api/courses, params: [{ name: term, value: fall }] }
+    - { url: /static/js/search.js }
+    - { url: /assets/img/search.svg }
+    - { method: POST, url: /features/suggest, params: [{ name: title, type: json }] }
+    - { url: /suggestions, params: [{ name: page }] }
+    - { method: POST, url: /suggestions, params: [{ name: title, type: json }] }
+    - { method: PATCH, url: "/api/saved-filters/{id}", params: [{ name: id, type: path }, { name: keyword, type: json }] }
+    - { method: POST, url: /api/fields, params: [{ name: searchable, type: json }] }
+    - { url: /member/find-id }
+    - { method: POST, url: /member/find_password, params: [{ name: email, type: form }] }
+    - { method: DELETE, url: "/users/search-history/{id}", params: [{ name: id, type: path }] }
+    - { url: /users/search-history }
+    - { url: /admin/search/settings }
+    - { method: PATCH, url: /users/autocompleteEnabled, params: [{ name: enabled, type: json }] }
+    - { url: /users/autocompleteEnabled }
+    - { url: /user/find-one }
+    - { method: DELETE, url: /user/find-one }
+    - { url: "/api/employees/find/{id}", params: [{ name: id, type: path }] }
+    - { method: PUT, url: "/api/lookups/{id}", params: [{ name: id, type: path }, { name: name, type: json }] }
+    - { method: POST, url: /api/saved-searches, params: [{ name: name, type: json }, { name: query, type: json }] }
+    - { url: /admin/search/configuration }

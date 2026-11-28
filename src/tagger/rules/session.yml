@@ -1,0 +1,49 @@
+# Endpoints that create, refresh, inspect or end a session or token: where
+# session fixation, refresh-token reuse and tokens that outlive a logout show
+# up. The jwt and oauth taggers look at token values and grant parameters;
+# this one marks the lifecycle routes themselves, so overlapping is expected.
+# Sign-in and sign-out handlers belong to the login tagger.
+key: session
+name: Session Tagger
+summary: Identifies session and token lifecycle endpoints
+order: 360
+tag:
+  tagger: Session
+  description: Session or token lifecycle endpoint; review for session fixation, refresh token reuse and rotation, and sessions or tokens that stay valid after logout.
+match:
+  any:
+    - all:
+        - path_segment: [session, sessions, token, tokens, revoke, introspect]
+        # One-time tokens for CSRF, CAPTCHA, password reset, e-mail
+        # confirmation and invitations are not session credentials.
+        - not:
+            path_segment: [csrf, xsrf, captcha, recaptcha, reset, confirm, confirmation,
+                           verify, verification, invite, invitation, unsubscribe]
+        # API keys and personal access tokens belong to the api_key tagger.
+        - not:
+            url_contains: [api-token, api_token, apitoken, access-tokens, personal-access]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
+    # `refresh` alone also names cache, feed and data reloads.
+    - all:
+        - path_segment: refresh
+        - not:
+            path_segment: [cache, caches, feed, feeds, index, data, view, views, stats, sitemap]
+    # A refresh token in the request makes any route a token refresh.
+    - param: { name: refresh_token }
+examples:
+  match:
+    - { method: POST, url: /refresh }
+    - { url: /session }
+    - { url: /tokens/ }
+    - { method: DELETE, url: /api/sessions/42 }
+    - { method: POST, url: /oauth/revoke }
+    - { method: POST, url: /api/auth/renew, params: [{ name: refreshToken, type: json }] }
+  no_match:
+    - { method: POST, url: /cache/refresh }
+    - { url: /api/csrf-token }
+    - { method: POST, url: /settings/api-tokens }
+    - { method: POST, url: /password/reset/token }
+    - { url: /static/js/session.js }
+    - { url: /blog/posts }
