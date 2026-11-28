@@ -1,0 +1,42 @@
+# Surveys, questionnaires and polls. A single vote on a post belongs to the
+# reaction tagger.
+key: survey
+name: Survey Tagger
+summary: Identifies survey and poll endpoints
+order: 640
+tag:
+  tagger: Survey
+  description: Survey or poll endpoint; review for answering more than once, anonymous responses that can be linked back to the respondent, and results or other people's answers readable without permission.
+match:
+  all:
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
+        - path_segment: [survey, surveys, questionnaire, questionnaires, polls]
+        # Use the path and parameters to distinguish polls from long polling.
+        - all:
+            - path_segment: poll
+            - not:
+                path_segment: [event, events, update, updates, message, messages,
+                               notification, notifications, status, job, jobs, task,
+                               tasks, queue, change, changes]
+            - not:
+                param: { name: [timeout, wait, since, cursor, last_event_id] }
+        # eGovFrame names its survey routes `Qustnr`.
+        - url_contains: qustnr
+examples:
+  match:
+    - { url: "/surveys/{id}/answers" }
+    - { url: /poll }
+    - { method: POST, url: "/api/polls/{id}/responses" }
+    - { method: POST, url: /api/questionnaire }
+    - { url: /uss/olp/qim/EgovQustnrItemManageList.do }
+  no_match:
+    - { url: /api/events/poll }
+    - { url: /poll, params: [{ name: timeout }] }
+    - { url: "/api/jobs/{id}/poll" }
+    - { url: /static/js/survey.js }
+    - { url: /api/posts }
+    - { url: /static/js/poll.js }
+    - { url: /static/js/qustnr.js }
