@@ -4,7 +4,7 @@
     <source media="(prefers-color-scheme: light)" srcset="https://github.com/owasp-noir/noir/assets/13212227/0577860e-3d7e-4294-8f1f-dc7b87ce2b2b" width="500px;">
     <img alt="OWASP Noir Logo" src="https://github.com/owasp-noir/noir/assets/13212227/04aee7d0-c224-481b-8d79-2dbdcf3ad84b" width="500px;">
   </picture>
-  <p>Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface.</p>
+  <p>Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface!</p>
 </div>
 
 <p align="center">

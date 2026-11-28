@@ -1,0 +1,36 @@
+# Subscribe and unsubscribe endpoints, for newsletters and paid plans alike.
+# Both share the same checks: who may change whose subscription.
+key: subscription
+name: Subscription Tagger
+summary: Identifies subscribe and unsubscribe endpoints
+order: 620
+tag:
+  tagger: Subscription
+  description: Subscribe or unsubscribe endpoint; review for unsubscribe links without a token that change other users' subscriptions, and for tampering with paid subscription state.
+match:
+  any:
+    # WebSocket (STOMP) subscribe frames reuse the word but are message
+    # routing, already covered by the websocket tagger, so ws is exempt.
+    # A static asset (`/js/subscribe.js`) is not a handler either.
+    - all:
+        - path_segment: [subscribe, unsubscribe, subscription, subscriptions, unsub, resubscribe]
+        - not:
+            protocol: [ws, wss, websocket]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
+    # `opt-out` splits into `opt` + `out`, which path_segment cannot express.
+    - url_contains: [/opt-out, /opt_out, /optout]
+examples:
+  match:
+    - { url: /subscribe }
+    - { url: /unsubscribe, params: [{ name: email }] }
+    - { method: POST, url: /api/v1/newsletter/subscribe }
+    - { method: PATCH, url: /api/subscriptions/42 }
+    - { url: /mail/opt-out }
+  no_match:
+    - { url: /topic/subscribe, protocol: ws }
+    - { method: POST, url: /graphql }
+    - { url: /static/js/subscribe.js }
+    - { url: /blog/posts }
+    - { url: /api/subscribers-count/description }

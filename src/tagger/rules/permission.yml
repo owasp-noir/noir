@@ -1,0 +1,30 @@
+# Role and permission management endpoints.
+key: permission
+name: Permission Tagger
+summary: Identifies role and permission management endpoints
+order: 510
+tag:
+  tagger: Permission
+  description: Role or permission management endpoint; review authorization and privilege escalation risks.
+match:
+  any:
+    - all:
+        - path_segment: [role, roles, permission, permissions,
+                         grant, grants, acl, acls]
+        - not:
+            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                             woff, woff2, ttf, otf, eot]
+examples:
+  match:
+    - { url: /roles }
+    - { url: /permissions }
+    - { url: "/api/users/{id}/roles" }
+    - { url: /admin/permissions }
+    - { method: POST, url: /api/grants }
+    - { method: PATCH, url: /api/acl }
+  no_match:
+    - { url: /api/payroll }
+    - { url: /api/roleplay }
+    - { url: /css/roles.css }
+    - { url: /js/permissions.js }
+    - { method: POST, url: /oauth/token, params: [{ name: grant_type }] }
