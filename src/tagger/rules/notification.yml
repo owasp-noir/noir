@@ -1,0 +1,45 @@
+# The notification inbox, notification settings and push sending. Text
+# messages sent through a provider belong to the messaging tagger, and
+# registering a device or push token belongs to the device tagger.
+key: notification
+name: Notification Tagger
+summary: Identifies push and in-app notification endpoints
+order: 690
+tag:
+  tagger: Notification
+  description: Push or in-app notification endpoint; review for IDOR on another user's notifications and settings, missing authorization on routes that send a push to arbitrary users or topics, and content injection in the message.
+match:
+  all:
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
+        - path_segment: [notification, notifications]
+        # A plain `/notify` may overlap with webhook. Explicit callback
+        # paths belong to the payment and webhook taggers.
+        - all:
+            - path_segment: notify
+            - not:
+                path_segment: [pay, payment, payments, ipn, webhook, webhooks, callback, callbacks]
+        # Require a sending or targeting term to distinguish this from
+        # repository pushes and token registration.
+        - all:
+            - path_segment: push
+            - path_segment: [send, message, messages, broadcast, campaign, campaigns,
+                             audience, audiences, topic, topics]
+examples:
+  match:
+    - { url: /preferences/notifications }
+    - { url: /push_audiences }
+    - { url: /notify }
+    - { method: PATCH, url: "/api/notifications/{id}/read" }
+    - { method: POST, url: /api/push/send }
+  no_match:
+    - { method: POST, url: /repos/push }
+    - { method: POST, url: /push/token }
+    - { method: POST, url: /payment/notify }
+    - { method: POST, url: /devices/register }
+    - { url: /static/js/notifications.js }
+    - { url: /static/js/push-send.js }
+    - { method: POST, url: /payments/push/notify }
+    - { method: POST, url: /callbacks/notify }

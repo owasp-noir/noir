@@ -4,7 +4,7 @@
     <source media="(prefers-color-scheme: light)" srcset="https://github.com/owasp-noir/noir/assets/13212227/0577860e-3d7e-4294-8f1f-dc7b87ce2b2b" width="500px;">
     <img alt="OWASP Noir Logo" src="https://github.com/owasp-noir/noir/assets/13212227/04aee7d0-c224-481b-8d79-2dbdcf3ad84b" width="500px;">
   </picture>
-  <p>Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface.</p>
+  <p>Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface!</p>
 </div>
 
 <p align="center">
@@ -75,6 +75,7 @@ OWASP Noir joined the OWASP Foundation in **June 2024**.
 
 ## News & Updates
 
+* Nov 2026: Conducted a hands-on session at [OWASP Korea Day 2026](https://www.owaspkr.org/2026/)
 * May 2026: Released **v1.0.0**, the stable 1.x line with a verb-based CLI.
 * May 2026: Refreshed the roadmap to serve human reviewers, AI auditors, and DAST tools equally.
 * August 2025: Presented at the OWASP Seoul Meetup. ([Open Source Gardening](https://owasp-noir.github.io/noir/community/media/#featured-owasp-seoul-aug-2025-open-source-gardening))

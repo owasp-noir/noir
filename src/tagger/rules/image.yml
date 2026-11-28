@@ -1,0 +1,46 @@
+# Endpoints that resize or crop an image or build a thumbnail. One that
+# downloads the image from a caller-supplied address is also a proxy; the
+# proxy tagger marks that side and the overlap is fine.
+key: image
+name: Image Tagger
+summary: Identifies image resize, crop and thumbnail endpoints
+order: 570
+tag:
+  tagger: Image
+  description: Image resize or thumbnail endpoint; review for denial of service through very large dimensions or many size variants, SSRF when the source image is fetched from a URL, path traversal in the file name, and bugs in the image library on crafted files.
+match:
+  all:
+    # Generated images may have image extensions.
+    - not:
+        path_extension: [css, js, mjs, map, woff, woff2, ttf, otf, eot]
+    - any:
+        - url_contains: thumbnail
+        - path_segment: thumb
+        # Resizing and cropping also occur outside image processing.
+        - all:
+            - path_segment: [resize, crop]
+            - any:
+                - path_segment: [image, images, img, photo, photos, picture, pictures,
+                                 avatar, avatars, media]
+                - param: { name: [width, height] }
+                - all:
+                    - param: { name: w }
+                    - param: { name: h }
+        - url_contains: [resizeimage, imageresize, cropimage, imagecrop]
+examples:
+  match:
+    - { url: /thumbnail }
+    - { url: "/api/files/{id}/thumbnail.jpg" }
+    - { url: "/thumb/{size}/{name}" }
+    - { url: /images/resize, params: [{ name: url }] }
+    - { url: /resize, params: [{ name: w }, { name: h }] }
+    - { method: POST, url: /api/resizeImage }
+  no_match:
+    - { method: POST, url: "/servers/{id}/resize" }
+    - { url: /api/crop/yields }
+    - { url: "/posts/{id}/thumbs-up" }
+    - { url: /static/js/thumbnail.js }
+    - { url: /api/images }
+    - { url: /static/js/resizeImage.js }
+    - { url: /static/css/image-resize.css }
+    - { url: /api/resize, params: [{ name: h }] }

@@ -198,5 +198,41 @@ describe "PiiTagger" do
         endpoint.tags.size.should eq(0), "expected #{name} not to be tagged"
       end
     end
+
+    it "tags eGovFrame's ihidNum resident registration number parameters" do
+      tagger = PiiTagger.new(default_tagger_options)
+
+      [
+        "ihidNum", "ihidnum", "IHIDNUM", "ihid_num", "ihid-num",
+        "applcntIhidnum", "applcntIhidNum", "applcnt_ihidnum", "mberIhidNum",
+      ].each do |name|
+        endpoint = Endpoint.new("/uss/umt/EgovMberInsert.do", "POST", [
+          Param.new(name, "", "query"),
+        ])
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.map(&.name).should eq(["pii"]), "expected #{name} to be tagged"
+      end
+    end
+
+    it "does not tag names that only share a word with ihidNum" do
+      tagger = PiiTagger.new(default_tagger_options)
+
+      # `ihid` without the number word, the two words in the other order or
+      # apart, and `ihidnum` as part of a longer word are not the identifier.
+      [
+        "ihid", "ihidCode", "ihid_type", "numIhid", "ihidPageNum",
+        "ihidnumbering", "num",
+      ].each do |name|
+        endpoint = Endpoint.new("/api/items", "POST", [
+          Param.new(name, "", "query"),
+        ])
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(0), "expected #{name} not to be tagged"
+      end
+    end
   end
 end

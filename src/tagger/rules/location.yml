@@ -1,0 +1,43 @@
+# Endpoints that receive or return where a person or device is.
+key: location
+name: Location Tagger
+summary: Identifies location and geolocation endpoints
+order: 600
+tag:
+  tagger: Location
+  description: Location or geolocation endpoint; review for IDOR on another user's position or location history, coordinates returned with more precision than the feature needs, and distance results that let a caller triangulate someone.
+match:
+  all:
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
+        - path_segment: [geo, geolocation, geolocate, geocode, geocoding,
+                         geofence, geofences, nearby]
+        # Locations alone may be a public directory. Look for whose
+        # position is involved or for coordinate parameters.
+        - all:
+            - path_segment: [location, locations]
+            - any:
+                - path_segment: [user, users, me, member, members, driver, drivers,
+                                 rider, riders, device, devices, vehicle, vehicles,
+                                 live, current, history, share]
+                - param: { name: [lat, latitude, lng, lon, longitude, coords, coordinates] }
+        - all:
+            - param: { name: [lat, latitude] }
+            - param: { name: [lng, lon, long, longitude] }
+examples:
+  match:
+    - { url: /geo }
+    - { url: /nearby }
+    - { url: /geolocation }
+    - { url: "/api/users/{id}/location" }
+    - { method: POST, url: /api/location, params: [{ name: latitude, type: json }, { name: longitude, type: json }] }
+    - { url: /api/stores, params: [{ name: lat }, { name: lng }] }
+  no_match:
+    - { url: /locations }
+    - { url: /api/geometry }
+    - { url: /api/stores, params: [{ name: lat }] }
+    - { url: /static/js/geo.js }
+    - { url: /api/users }
+    - { url: /static/js/users-location.js }

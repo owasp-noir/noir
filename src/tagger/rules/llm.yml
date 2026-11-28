@@ -16,6 +16,9 @@ match:
         # courses or tasks, so it needs the `chat` or version segment.
         - url_contains: [/chat/completions, /v1/completions, /v1/embeddings]
         - path_segment: embeddings
+        # CLOVA Studio (HyperCLOVA X) hyphenates the route and uses a
+        # singular embedding path under api-tools.
+        - url_contains: [/chat-completions, /api-tools/embedding]
         - param: { name: [system_prompt, system_message, system_instruction] }
         # Each name is common alone: `messages` in chat apps, `model` in
         # catalogs, `prompt` in OIDC (`prompt=login`). Two different ones
@@ -35,9 +38,16 @@ examples:
     - { method: POST, url: /v1/messages, params: [{ name: model, type: json }, { name: messages, type: json }, { name: max_tokens, type: json }] }
     - { method: POST, url: /api/generate, params: [{ name: prompt, type: json }, { name: temperature, type: json }] }
     - { method: POST, url: /api/assistant, params: [{ name: systemPrompt, type: json }] }
+    # for Clova
+    - { method: POST, url: /testapp/v1/chat-completions/HCX-003 }
+    - { method: POST, url: /v3/chat-completions/HCX-005 }
+    - { method: POST, url: /v1/api-tools/embedding/v2 }
   no_match:
     - { method: POST, url: /api/chat/messages, params: [{ name: messages, type: json }] }
     - { url: /oauth/authorize, params: [{ name: prompt }] }
     - { url: "/courses/{id}/completions" }
     - { url: /api/cars, params: [{ name: model }] }
     - { method: POST, url: /mcp, params: [{ name: messages, type: json }, { name: model, type: json }] }
+    # for Clova
+    - { url: /api/my-chat-completions }
+    - { url: /docs/api-tools }
