@@ -1,0 +1,36 @@
+# Stock levels, warehouses and goods movements in shops and ERP systems.
+key: inventory
+name: Inventory Tagger
+summary: Identifies stock, inventory and warehouse endpoints
+order: 680
+tag:
+  tagger: Inventory
+  description: Stock or warehouse endpoint; review for quantity tampering (negative or oversized amounts), race conditions between concurrent stock updates, and IDOR on another warehouse's or seller's inventory.
+match:
+  any:
+    - path_segment: [inventory, inventories, warehouse, warehouses]
+    # `stock` is also a share price (`/stocks/AAPL`) and a kind of photo
+    # (`/stock-photos`), so it counts only next to the thing that is stocked.
+    - all:
+        - path_segment: [stock, stocks]
+        - path_segment: [item, items, product, products, goods, sku, skus, variant,
+                         variants, size, sizes, option, options]
+        - not:
+            path_segment: [photo, photos, image, images, video, videos]
+    # Names that only an inventory request carries.
+    - param:
+        name: [stock_quantity, stock_qty, warehouse_id]
+examples:
+  match:
+    - { url: /inventory }
+    - { method: POST, url: /inventory }
+    - { method: PATCH, url: "/api/v2/items/{id}/stock" }
+    - { url: "/sizes/{size_id}/stocks" }
+    - { method: POST, url: "/warehouse/{id}" }
+    - { method: PUT, url: "/api/products/{id}", params: [{ name: stockQuantity, type: json }] }
+  no_match:
+    - { url: /stocks/AAPL }
+    - { url: /api/market/stocks }
+    - { url: /stock-photos/items }
+    - { url: /store/items }
+    - { url: /api/products }
