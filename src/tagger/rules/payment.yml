@@ -18,7 +18,7 @@ match:
                card_security_code, card_cvc, card_expiry, card_holder, cardholder_name,
                payment_method, payment_method_id, payment_method_nonce, payment_intent,
                setup_intent, stripe_token, paypal_token, card_token,
-               iban, routing_number, sort_code,
+               iban, routing_number, sort_code, paymentId,
                # Toss Payments: the key the client sends to the confirm route.
                payment_key]
     - all:
@@ -42,9 +42,11 @@ examples:
     - { method: POST, url: /api/orders, params: [{ name: total, type: json }] }
     - { method: POST, url: /confirm, params: [{ name: paymentKey, type: json }, { name: orderId, type: json }] }
     - { method: POST, url: /brandpay/approve }
+    - { method: GET, url: /order/complete, params: [{ name: paymentId }] }
   no_match:
     - { url: /api/orders }
     - { url: /api/users, params: [{ name: amount }] }
     - { method: POST, url: /api/keys, params: [{ name: api_key, type: json }] }
     - { url: /samsung/support }
     - { method: POST, url: /brands/qna }
+    - { url: /api/posts, params: [{ name: postId }] }
