@@ -8,27 +8,23 @@ tag:
   tagger: Survey
   description: Survey or poll endpoint; review for answering more than once, anonymous responses that can be linked back to the respondent, and results or other people's answers readable without permission.
 match:
-  any:
-    # A static asset (`/js/survey.js`) is not a handler.
-    - all:
+  all:
+    - not:
+        path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
+                         woff, woff2, ttf, otf, eot]
+    - any:
         - path_segment: [survey, surveys, questionnaire, questionnaires, polls]
-        - not:
-            path_extension: [css, js, mjs, map, png, jpg, jpeg, gif, svg, ico, webp,
-                             woff, woff2, ttf, otf, eot]
-    # `poll` is also long polling: a client asking again and again for new
-    # events (`/events/poll`, `/poll?timeout=30`). It counts when neither
-    # the path nor the parameters say so.
-    - all:
-        - path_segment: poll
-        - not:
-            path_segment: [event, events, update, updates, message, messages,
-                           notification, notifications, status, job, jobs, task,
-                           tasks, queue, change, changes]
-        - not:
-            param: { name: [timeout, wait, since, cursor, last_event_id] }
-    # eGovFrame names its survey routes `Qustnr`:
-    # `/uss/olp/qim/EgovQustnrItemManageList.do`.
-    - url_contains: [qustnr]
+        # Use the path and parameters to distinguish polls from long polling.
+        - all:
+            - path_segment: poll
+            - not:
+                path_segment: [event, events, update, updates, message, messages,
+                               notification, notifications, status, job, jobs, task,
+                               tasks, queue, change, changes]
+            - not:
+                param: { name: [timeout, wait, since, cursor, last_event_id] }
+        # eGovFrame names its survey routes `Qustnr`.
+        - url_contains: qustnr
 examples:
   match:
     - { url: "/surveys/{id}/answers" }
@@ -42,3 +38,5 @@ examples:
     - { url: "/api/jobs/{id}/poll" }
     - { url: /static/js/survey.js }
     - { url: /api/posts }
+    - { url: /static/js/poll.js }
+    - { url: /static/js/qustnr.js }
